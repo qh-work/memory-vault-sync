@@ -1,0 +1,525 @@
+{
+  "author": "qh-work",
+  "control_credential_host": "github.com",
+  "control_privacy_verifier": "github-private-v1",
+  "file_count": 102,
+  "files": [
+    {
+      "path": ".agents/plugins/marketplace.json",
+      "sha256": "e739344a394ccbc15f3c040fef22ff1c3860f3a127c7afbd87fb1a3e7f748e65",
+      "size": 395
+    },
+    {
+      "path": ".codex/skills/sync-memory-vault/SKILL.md",
+      "sha256": "1c6f72768cbf6523d98c9d5f844997eef7ced276ff3f509087e1d347583a975e",
+      "size": 8250
+    },
+    {
+      "path": ".codex/skills/sync-memory-vault/agents/openai.yaml",
+      "sha256": "cf795f6c8e2bbc4736249cab10ae2534d73edbb79bc718653bbe8772271065ae",
+      "size": 293
+    },
+    {
+      "path": ".gitattributes",
+      "sha256": "3c3a7833c6ca04e7148a842bec081deb19dbef5a007f4774f6859898b2275eb3",
+      "size": 792
+    },
+    {
+      "path": ".github/CODEOWNERS",
+      "sha256": "68c52a2dcdc1b2b055779d542dc165fdf8a40be0699fc4d61cf58f02b2c23cf7",
+      "size": 11
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
+      "sha256": "e4313e22de5cccda8c5a485fbdf20d51f26336695690ffdbab5ca96bc2bb9793",
+      "size": 1449
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/config.yml",
+      "sha256": "5a4506714a199e93c2dfac30e611e58ba9946d620c9afe29d1d82adfe3a016dc",
+      "size": 413
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/feature_request.yml",
+      "sha256": "0faf0e6fc3b5f737f972054d011ff07284488da6cdd9fd618d01592c65249663",
+      "size": 987
+    },
+    {
+      "path": ".github/pull_request_template.md",
+      "sha256": "090f624eb56996af1cd8b964cd0319bf474299006d353b59abc6ea1779e69f52",
+      "size": 496
+    },
+    {
+      "path": ".github/workflows/memory-vault-sync.yml",
+      "sha256": "9b292a6d12efa4445aba50fbb8d72ecfe1f1343bf0d3a3a96d2b8b4285a8e953",
+      "size": 2196
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "d78c97ff5b332647c23a0e933ed394f4bbd28102543398dc41d35cb5b6df9eec",
+      "size": 149
+    },
+    {
+      "path": "ADAPTER_CONTRACT.md",
+      "sha256": "9319adff57455279dd62c4b07b7f825316eda5dd16cf89e2dcc6d3173d7d4dc0",
+      "size": 5999
+    },
+    {
+      "path": "ARCHITECTURE.md",
+      "sha256": "c34d8b03d73611a1ae4eaee14fb1e30a8de83cf9d08bafdd2cbdb0d47a5d7f8b",
+      "size": 7796
+    },
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "aa83a24a441a650b8e2cacd0c5d70facde8ed160344a9f0c254cccad5c53c0dd",
+      "size": 1860
+    },
+    {
+      "path": "CHUNK_PROTOCOL.md",
+      "sha256": "d2906d523a7a0f6079d53fa25818cc28541f4226080a8f9cede28cef4e029990",
+      "size": 9414
+    },
+    {
+      "path": "CLIENT_SYNC_CONTRACT.md",
+      "sha256": "4dd14bede09fc88ba17e49cc7b8ce36f7c898d9b02b3eebfe034df78b6cef3da",
+      "size": 6207
+    },
+    {
+      "path": "CODE_OF_CONDUCT.md",
+      "sha256": "b19003b3dbdc1c44e45a9ea939f2786d31a54a212ed68503cb4e25bad6f3cbba",
+      "size": 1167
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "a198a45371dca3a9597575597bce3f8f915ae4ff20616787a582e73c7c43da43",
+      "size": 1910
+    },
+    {
+      "path": "DESIGN_BENCHMARKS.md",
+      "sha256": "e454fa9f01574abffd984c70165048fc176ce03fbecc3b3cb5d571f76b6cac52",
+      "size": 7269
+    },
+    {
+      "path": "DEVELOPMENT.md",
+      "sha256": "0cb1aef028d2ccbbd00cd7cff6bebef60b1d52bc72d940a35801873cbc989437",
+      "size": 6012
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "size": 11357
+    },
+    {
+      "path": "MEMORY_NETWORK.md",
+      "sha256": "8fd5dbb85f409cd9764fa457e960c702fb4ea68f73c05f32f1b28da4163ef070",
+      "size": 19101
+    },
+    {
+      "path": "NOTICE",
+      "sha256": "8e8dd610fed44e032a3c04670e26960836bfcbe0db059e15fc0ac61cdb9fa172",
+      "size": 369
+    },
+    {
+      "path": "OPEN_SOURCE_READINESS.md",
+      "sha256": "1682ceb7bae0bce66f18cd0b341d3fea4baebd62284b4261edcbb4d906651512",
+      "size": 6086
+    },
+    {
+      "path": "PRIVATE_DIAGNOSTICS.md",
+      "sha256": "c4465f86846f3d9c3e3629e11478e0d52e8308a47385efc989071ca2b0ddc500",
+      "size": 4301
+    },
+    {
+      "path": "README.md",
+      "sha256": "b43edd00aa39e52692476dd28772e2c1c517174b3c3755ec3bb37235184024a0",
+      "size": 5097
+    },
+    {
+      "path": "RELEASE.md",
+      "sha256": "4c2010a7370e8e8684eea8ce2a7c694a6bff6f1c4fcb251eb8086a3774082424",
+      "size": 8057
+    },
+    {
+      "path": "ROADMAP.md",
+      "sha256": "ac079aecb9bc3af32b865ef1fdbcae20edd10987d90856343030b61d0d6b7526",
+      "size": 2277
+    },
+    {
+      "path": "RUNTIME_MODULES.md",
+      "sha256": "4863a07377f7892953d184f42ce88976203c0d018cd76082b4b2d5f4b3c17744",
+      "size": 8292
+    },
+    {
+      "path": "SECURITY.md",
+      "sha256": "d120d457029e4297c7c198f6a615fba47d7aed0ee8e68b32559de9b254094e6c",
+      "size": 7651
+    },
+    {
+      "path": "SIGNED_UPDATES.md",
+      "sha256": "74d57fb9d9b8b72e82676cc5933f75c31e37b62355a1cf8344ef29236d93a5dc",
+      "size": 10704
+    },
+    {
+      "path": "STATUS.md",
+      "sha256": "333584b7919af899d136424b8cebdbc93040c58d40b3796dcb7908e131ec24f7",
+      "size": 3622
+    },
+    {
+      "path": "SUPPORT.md",
+      "sha256": "41d3c98720e96da05770a5b5be41e471ecb2e942875d0c7f4ce9c5a9b1821a6e",
+      "size": 715
+    },
+    {
+      "path": "benchmarks/chunk-protocol-v1.json",
+      "sha256": "eb3f402da3b2e5ce76fee3bf5384c47785e7881fe73ee0afdc4b6ad8f57b1ea2",
+      "size": 3103
+    },
+    {
+      "path": "benchmarks/memory-network-v1.json",
+      "sha256": "d03483e67f08d8e26284664a39b6be068347668ecbc0eb358559831cd625c315",
+      "size": 1918
+    },
+    {
+      "path": "plugins/memory-vault-sync/.codex-plugin/plugin.json",
+      "sha256": "61bd207d83fe415c919f9785626fee04e3adeb1f6eca2252b39d2f52c79331e1",
+      "size": 4401
+    },
+    {
+      "path": "plugins/memory-vault-sync/hooks/hooks.json",
+      "sha256": "63144f764053d50f76018b76d85766010f584bafc5eb6e79d49f05b047279da8",
+      "size": 12158
+    },
+    {
+      "path": "plugins/memory-vault-sync/references/CONFIG.md",
+      "sha256": "51d3f35ae7ff7ef4294605f11332e28882a2da73389b7c32db12e87241a0611e",
+      "size": 9107
+    },
+    {
+      "path": "plugins/memory-vault-sync/references/FAILURE_RECOVERY.md",
+      "sha256": "e2fddb8a6d8536de99b622296214f2afb3e11cfd4835ad8ce05b48a120931d36",
+      "size": 4017
+    },
+    {
+      "path": "plugins/memory-vault-sync/references/WINDOWS_SETUP.md",
+      "sha256": "f8a83f4fd070dd891b72038d83a63bf7123a56119a3f513b762ce329c7012992",
+      "size": 4341
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/__init__.py",
+      "sha256": "57ef658b869ac3d435ea0ce6cc2a0d4562648a9acb43d073655d22411b496f3d",
+      "size": 642
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/bundle.py",
+      "sha256": "e67e938c6cafad980d0611748d1e161b602a6401bfd92f1969812669b797b0b2",
+      "size": 4834
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/checkpoint.py",
+      "sha256": "f51331fd04afd6b0baeb117bb3e9c4508a64d0d9477e269f8e08b734e3574183",
+      "size": 4117
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/chunks.py",
+      "sha256": "a6cea869e88ee569f6b4d1660ac4121ab4abcd582101ebda31640dbed7605ecb",
+      "size": 11340
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/core.py",
+      "sha256": "96cbce1fe55834063a50d143344603f6775ad810707ef44b543a70cbfde514be",
+      "size": 1598514
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/crypto_adapter.py",
+      "sha256": "3edc4acaf7507de6ccc256c2488933dfa3cdf014882f4dbb49879746d56295eb",
+      "size": 13871
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/device_trust.py",
+      "sha256": "8b0e273cea4ea8cc6bcc16e58a163ac86402e0e9fc690373f55d630d9e8952f0",
+      "size": 18966
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/diagnostics.py",
+      "sha256": "f0f352beba93ce006d31e04423829049bb6cd427d8f2dd3c031aaeeff24a73fd",
+      "size": 17207
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/encrypted_replication.py",
+      "sha256": "32741c8ec29d82a1235dadbd942396e61ccc75052058d17a4b682490d242ae63",
+      "size": 15611
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/errors.py",
+      "sha256": "0eccee4905dae6d43825a051e61607b692b5072526583642937bf4828f768388",
+      "size": 1031
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/graph_views.py",
+      "sha256": "4c53f1c8235eec1e3e20299df18cfca5ca5074e9ce605d00bdbf339e542a7e2e",
+      "size": 15831
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/memory_network.py",
+      "sha256": "fc064cfe6bc959a4087243e0036356474884f2b13d4c72680530efd090aff3c0",
+      "size": 68555
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/packs.py",
+      "sha256": "ccb1d31974b158b49f074692b278e768f00cc9c97b89f1a1aebdb1c6cdc87f62",
+      "size": 14684
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/privacy.py",
+      "sha256": "aac41d45e462d125dfa7886f17a9ac0eb97b1df361223787e569941f8fc8fd30",
+      "size": 5729
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/protocol.py",
+      "sha256": "a86730df936e15010e55347424db578cc41f49b7b894c86225e0e3b780fa9d04",
+      "size": 3192
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/retrieval.py",
+      "sha256": "45329d5831db48966e64bd6b830725e14f20b6e896e05e3256f27df6e2cb89eb",
+      "size": 4524
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/sharing.py",
+      "sha256": "06ca411644a32485cb18bf7f6627ced4b590e3d026ab281a3d813ac8a703a940",
+      "size": 25579
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/signed_updates.py",
+      "sha256": "8f3e9504c8574d249c5e0483ea72241626b283851aeed1f171fd1ed6ebceb781",
+      "size": 46562
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/transport.py",
+      "sha256": "13b020a07375c243934b0a72866c2e2a01a1e092d73b94504fcd09ee5ee97141",
+      "size": 6339
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/vault_sync.py",
+      "sha256": "ba3ea3fccbb12140d78a2b0260742bd90bc231a03bd3f6bc768f9ac6e99c451b",
+      "size": 1334
+    },
+    {
+      "path": "plugins/memory-vault-sync/scripts/windows_launcher.ps1",
+      "sha256": "04dfba6ada2ffdd184012fdfada950a2d613c1dc03a47876b3213bbc25ef548f",
+      "size": 7060
+    },
+    {
+      "path": "plugins/memory-vault-sync/skills/sync-memory-vault/SKILL.md",
+      "sha256": "fd03224bedd2b376b6d70f1c965b400dc578b2b1fc660986b230812de51cadfa",
+      "size": 11526
+    },
+    {
+      "path": "plugins/memory-vault-sync/skills/sync-memory-vault/agents/openai.yaml",
+      "sha256": "4141782e53d8cd1a5f700ca72291c1ccdf82c3b478e2270558017876bca5ef05",
+      "size": 311
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_chunk_protocol.py",
+      "sha256": "b0e8691e62e7d20e285795445c8b5df1b5b7928ab5effd78e9e3a7fc806c92f9",
+      "size": 5370
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_compact_reconciliation_v2.py",
+      "sha256": "ae48a862212b5a8ef6c8494188b9686227dab5729aacdfa5a9ded29cb1d48580",
+      "size": 178933
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_device_trust.py",
+      "sha256": "2246b3e0f2efaaf3c36011487ed218f610e96a290a1b01cc593d671adf39c942",
+      "size": 4086
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_encrypted_replication.py",
+      "sha256": "3f913491ebb7f4148d661a27e074f403ba987217b5f08ee04c62e420b155d36d",
+      "size": 4499
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_final_regressions.py",
+      "sha256": "11108e057c36a210996465b7249f334ac5e780e6d9ed395e7ff0ee3aa2e4fda3",
+      "size": 23579
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_graph_views.py",
+      "sha256": "9604e46fd4f234b8a8cda6f857dd971f461c35741f268570e3a8622efe171577",
+      "size": 5929
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_legacy_projection_bootstrap.py",
+      "sha256": "0864d2c0c86da969ca286c8a9ebbd2293d6f4ae8d647d23fb95af37292e53893",
+      "size": 35358
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_memory_network.py",
+      "sha256": "29203ce72e2eeccfdbd774d5739f009b7e77222aad1e7ca49562fc38397e4863",
+      "size": 28615
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_packs.py",
+      "sha256": "31288e3b2935e0b6c26e3fb088b9793ce319c99765c07084a9b8d1b3a3cbdc3b",
+      "size": 5776
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_private_diagnostics.py",
+      "sha256": "e7560e7d218f240ed6a2a1bc77b238b16deabc2f62982a758ea601e8eaa4bce8",
+      "size": 17497
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_projection_handoff_semantics.py",
+      "sha256": "efa1047bda4040035a1cffbd01834f6330fd7334728077a661f68dddcbff952c",
+      "size": 13654
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_rclone_object_store.py",
+      "sha256": "14cd883e89f0c960bf7d6b2bff033ea9d3be08e57dd12e9accd1df391e2075fe",
+      "size": 81119
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_redirect_policy.py",
+      "sha256": "b97a333c734c81ebd47de6191a0b58d6f6e84655d149a1f1db6bb70860933b3a",
+      "size": 8396
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_runtime_module_contract.py",
+      "sha256": "7dad4ddb4233b06d47ceb2ab17a0657128abd6c68b887aafad256437126df5a9",
+      "size": 5335
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_sharing.py",
+      "sha256": "ad20da4b6ee9307daa17374ac59edeb6bb15462c6e304c66943f66d6e7369486",
+      "size": 14261
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_signed_updates.py",
+      "sha256": "c395330d3da8a77bf73b8d11094a10c713196569bfbc52e0b0172d4a681aebeb",
+      "size": 47258
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_trace_readiness_hardening.py",
+      "sha256": "ba04e4e5c5804e232c5e4d7975afa1afd4a4675104c3b3605967d2a9f50567b7",
+      "size": 8573
+    },
+    {
+      "path": "plugins/memory-vault-sync/tests/test_vault_sync.py",
+      "sha256": "c2222811c8dd5c3a5f5c8896cdd2d84742769ccc98f12db98cbb30f6e1525fd4",
+      "size": 550480
+    },
+    {
+      "path": "schemas/binding.schema.json",
+      "sha256": "3c70308ec75e4b55d4ba69a52071381a8e52dde5ba117a68d0da3a9789d9dece",
+      "size": 13456
+    },
+    {
+      "path": "schemas/conversation_export.schema.json",
+      "sha256": "79b43975fc4293498c7156d214cfac1ebc0275c131fc28e3bd9e4139f0beceed",
+      "size": 2265
+    },
+    {
+      "path": "schemas/drive_import.schema.json",
+      "sha256": "cd3dbc1f01c3941eec60445d9dc2ba67baa8f5a1d53fe39770becf13f70c3577",
+      "size": 5429
+    },
+    {
+      "path": "schemas/memory_checkpoint.schema.json",
+      "sha256": "44ee1a7357a0d36ffa3233a1164592ba5d39ebc842d2bd1ead46ee262fc7039f",
+      "size": 5796
+    },
+    {
+      "path": "schemas/memory_episode.schema.json",
+      "sha256": "8fd3e69af98df0a899605679f65180f194d485b4b647c6a520aafac5d88889de",
+      "size": 2870
+    },
+    {
+      "path": "schemas/memory_event.schema.json",
+      "sha256": "a0ba0d91d2aeb23203cfda6f45e3d02c649008366d592f17c53f35316ee0459d",
+      "size": 4284
+    },
+    {
+      "path": "schemas/memory_event_v2.schema.json",
+      "sha256": "cdfe9e0b14cf8d8c48307c995a9d0cdf908091ab3df35835d600f24a176b9632",
+      "size": 6128
+    },
+    {
+      "path": "schemas/portable_workspace_identity.schema.json",
+      "sha256": "1a83d39c0670c62b9012b773b7c2680545373e045c0b061d54ee361c3544eb91",
+      "size": 2683
+    },
+    {
+      "path": "schemas/source.schema.json",
+      "sha256": "8c8103912868a7a3ec61e9bb5d87730ca5532e2aa99db436f71447f04dd56159",
+      "size": 5109
+    },
+    {
+      "path": "schemas/task.schema.json",
+      "sha256": "dd12782732ebab45dc69e6267f75c620346bd01457e694aae437085ac8a6aa0d",
+      "size": 6461
+    },
+    {
+      "path": "schemas/task_current.schema.json",
+      "sha256": "1b992461f1170871f172b13eb379e13d8f4fdf840e2bd9c0eb7780dcba3c8860",
+      "size": 2177
+    },
+    {
+      "path": "schemas/task_memory_projection.schema.json",
+      "sha256": "012f02651c3ff3c103aba4934fe93cfcb5fe99c93033257c74863826ee733d1b",
+      "size": 42440
+    },
+    {
+      "path": "schemas/task_version.schema.json",
+      "sha256": "c8308f8b2a21ec3fe12e9ba9b3b46bb5b0d752abd4210313550289b427c4ac94",
+      "size": 13025
+    },
+    {
+      "path": "scripts/benchmark_chunk_protocol.py",
+      "sha256": "195a180d1c1ebb4b402d5404bad6102ba39840f2c0afa69fe7d5fbfaab021697",
+      "size": 14477
+    },
+    {
+      "path": "scripts/benchmark_memory_network.py",
+      "sha256": "8b8cfef6cfb6569ba698982adf3da158f171736465d5bb8013b442964063fb7b",
+      "size": 5520
+    },
+    {
+      "path": "scripts/export_open_source_bundle.py",
+      "sha256": "e07e33ec148f0f8834e3728cf70925620dbb8a2491a345a7ad713b42487a5b5d",
+      "size": 14439
+    },
+    {
+      "path": "scripts/memory_vault_validator/__init__.py",
+      "sha256": "11f9f684766899122111e84f225a336501881fb2ddcf40d90dcb58440b041490",
+      "size": 129
+    },
+    {
+      "path": "scripts/memory_vault_validator/core.py",
+      "sha256": "21bca7b0b1d1e2e2cbf00a15187f251f89788ee1e19818ed2b824efc6e17392f",
+      "size": 324107
+    },
+    {
+      "path": "scripts/validate_layout_v1.py",
+      "sha256": "8332727a416dfc382f7ae26bcb97faa1d7e90cbe8e8467ab19514027e8e2456b",
+      "size": 701
+    },
+    {
+      "path": "tests/test_export_open_source_bundle.py",
+      "sha256": "c55aec273b2e226164bcf894b764c9deace4c9ae55143d83b0171f8cc3d829d0",
+      "size": 17012
+    },
+    {
+      "path": "tests/test_validate_layout_v1.py",
+      "sha256": "748cfa7beec5b3ae911f1eacb93c3ac24a9dd46090a6de95b1a438113204ffdd",
+      "size": 136433
+    }
+  ],
+  "marketplace_display_name": "Memory Vault",
+  "marketplace_name": "memory-vault-public",
+  "private_state_included": false,
+  "repository_id": "qh-work/memory-vault-sync",
+  "repository_url": "https://github.com/qh-work/memory-vault-sync.git",
+  "schema_version": "memory-vault-open-source-export/v1",
+  "total_bytes": 3750757
+}

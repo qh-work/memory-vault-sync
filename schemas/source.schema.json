@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-memory-vault.invalid/schemas/source.schema.json",
+  "title": "Vault Source v1",
+  "description": "输入来源身份及其不可变修订清单。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source_id",
+    "source_type",
+    "external_source_key_sha256",
+    "source_instance_id",
+    "visibility",
+    "sensitivity",
+    "current_revision_id",
+    "revisions",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "source/v1"
+    },
+    "source_id": {
+      "$ref": "#/$defs/safe_id"
+    },
+    "source_type": {
+      "enum": [
+        "chat_thread",
+        "codex_task",
+        "workspace_import",
+        "document",
+        "artifact_manifest",
+        "external_note",
+        "legacy_record"
+      ]
+    },
+    "external_source_key_sha256": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "source_instance_id": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/safe_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "visibility": {
+      "const": "private"
+    },
+    "sensitivity": {
+      "enum": [
+        "ordinary",
+        "restricted",
+        "encrypted"
+      ]
+    },
+    "current_revision_id": {
+      "$ref": "#/$defs/safe_id"
+    },
+    "revisions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/revision"
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "safe_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+      "not": {
+        "enum": ["con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"]
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^(?!0{64}$)[0-9a-f]{64}$"
+    },
+    "revision": {
+      "type": "object",
+      "required": [
+        "revision_id",
+        "previous_revision_id",
+        "source_sequence",
+        "captured_at",
+        "coverage",
+        "content_ref",
+        "content_sha256",
+        "redaction"
+      ],
+      "properties": {
+        "revision_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "previous_revision_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/safe_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "coverage": {
+          "enum": [
+            "full",
+            "partial",
+            "unknown"
+          ]
+        },
+        "content_ref": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/content_ref"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content_sha256": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "redaction": {
+          "type": "object",
+          "required": [
+            "credentials_scanned",
+            "content_removed"
+          ],
+          "properties": {
+            "credentials_scanned": {
+              "type": "boolean"
+            },
+            "content_removed": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "content_ref": {
+      "type": "object",
+      "required": [
+        "storage",
+        "object_id",
+        "object_revision_id",
+        "byte_size",
+        "media_type"
+      ],
+      "properties": {
+        "storage": {
+          "enum": [
+            "git_blob",
+            "google_drive_file",
+            "encrypted_object"
+          ]
+        },
+        "object_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{2,256}$"
+        },
+        "object_revision_id": {
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,256}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "media_type": {
+          "type": "string",
+          "pattern": "^[a-z0-9.+-]+/[a-z0-9.+-]+$",
+          "maxLength": 127
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$comment": "current_revision_id 必须由语义校验器确认存在于 revisions 且序列唯一递增。content_ref 使用不透明对象 ID，不接受本地路径。"
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sync Memory Vault"
+  short_description: "Match, load, and publish cross-device task memory"
+  default_prompt: "Use $sync-memory-vault to reconcile local task entries with the remote catalog, load the latest verified state, and publish a safe checkpoint afterward."

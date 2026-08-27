@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a taskless memory-network improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem should be solved?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain how it preserves taskless ownership and permission separation.
+    validations:
+      required: true
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: Architecture confirmation
+      options:
+        - label: The proposal does not make tasks, projects, chats, devices, or agents own memory.
+          required: true
+        - label: The proposal does not treat recalled text as instruction or authorization.
+          required: true
+        - label: The proposal contains no private memory, credentials, paths, or account identifiers.
+          required: true

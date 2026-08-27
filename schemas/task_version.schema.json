@@ -1,0 +1,505 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-memory-vault.invalid/schemas/task_version.schema.json",
+  "title": "Immutable Task Version Manifest v1",
+  "description": "任务的不可变版本清单。大文件由经过核验的私有 Drive 对象承载。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task_id",
+    "snapshot_id",
+    "generation",
+    "state",
+    "transaction_id",
+    "change_type",
+    "continuation_readiness",
+    "parents",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "task-version/v1"
+    },
+    "task_id": {
+      "$ref": "#/$defs/safe_id"
+    },
+    "snapshot_id": {
+      "$ref": "#/$defs/safe_id"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "state": {
+      "enum": [
+        "published",
+        "candidate",
+        "rejected",
+        "superseded"
+      ]
+    },
+    "transaction_id": {
+      "$ref": "#/$defs/safe_id"
+    },
+    "change_type": {
+      "enum": [
+        "control_plane_rewrite",
+        "metadata_import",
+        "content_revision",
+        "artifact_update",
+        "merge",
+        "fork",
+        "rollback",
+        "structural_event"
+      ]
+    },
+    "continuation_readiness": {
+      "enum": [
+        "ready",
+        "partial",
+        "blocked"
+      ]
+    },
+    "parents": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "snapshot_id",
+          "commit",
+          "path"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "legacy_snapshot",
+              "version_snapshot",
+              "fork_baseline",
+              "merge_parent",
+              "rollback_target"
+            ]
+          },
+          "snapshot_id": {
+            "$ref": "#/$defs/safe_id"
+          },
+          "commit": {
+            "$ref": "#/$defs/git_object_sha"
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^tasks/[a-z0-9][a-z0-9_-]{1,63}/versions/[a-z0-9][a-z0-9_-]{1,63}\\.(?:json|yaml)$"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    },
+    "conversation_sources": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": [
+          "source_id",
+          "revision_id",
+          "content_path",
+          "content_sha256"
+        ],
+        "properties": {
+          "source_id": {
+            "$ref": "#/$defs/safe_id"
+          },
+          "revision_id": {
+            "$ref": "#/$defs/safe_id"
+          },
+          "content_path": {
+            "type": "string",
+            "pattern": "^sources/[a-z0-9][a-z0-9_-]{1,63}/revisions/[a-z0-9][a-z0-9_-]{1,63}\\.json$"
+          },
+          "content_sha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "evidence_sources": {
+      "description": "投影长期引用的原始来源修订。它独立于最多 8 条的启动叙事窗口，并随仍有效的证据引用跨版本继承。",
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": [
+          "source_id",
+          "revision_id",
+          "source_sequence",
+          "binding_id",
+          "content_path",
+          "content_sha256"
+        ],
+        "properties": {
+          "source_id": {
+            "$ref": "#/$defs/safe_id"
+          },
+          "revision_id": {
+            "$ref": "#/$defs/safe_id"
+          },
+          "source_sequence": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "binding_id": {
+            "$ref": "#/$defs/safe_id"
+          },
+          "content_path": {
+            "type": "string",
+            "pattern": "^sources/[a-z0-9][a-z0-9_-]{1,63}/revisions/[a-z0-9][a-z0-9_-]{1,63}\\.json$"
+          },
+          "content_sha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "memory_checkpoint": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^memory/checkpoints/[a-z0-9][a-z0-9_-]{1,63}\\.json$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "memory_projection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "projection_id",
+            "path",
+            "content_sha256"
+          ],
+          "properties": {
+            "projection_id": {
+              "$ref": "#/$defs/safe_id"
+            },
+            "path": {
+              "type": "string",
+              "pattern": "^tasks/[a-z0-9][a-z0-9_-]{1,63}/projections/[a-z0-9][a-z0-9_-]{1,63}\\.json$"
+            },
+            "content_sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "remaining_work": {
+      "$ref": "#/$defs/safe_text_array"
+    },
+    "open_questions": {
+      "$ref": "#/$defs/safe_text_array"
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "artifacts",
+        "conversation",
+        "decisions"
+      ],
+      "properties": {
+        "artifacts": {
+          "enum": [
+            "not_catalogued",
+            "partial",
+            "catalogued",
+            "complete"
+          ]
+        },
+        "conversation": {
+          "enum": [
+            "not_exported",
+            "partial",
+            "complete"
+          ]
+        },
+        "decisions": {
+          "enum": [
+            "not_exported",
+            "partial",
+            "complete"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "verification": {
+      "type": "object",
+      "required": [
+        "level",
+        "remote_content_checksum"
+      ],
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "remote_content_checksum": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "const": "not_exposed_by_connector"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "observed_children": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": [
+          "task_id",
+          "snapshot_id",
+          "authority"
+        ],
+        "properties": {
+          "task_id": {
+            "$ref": "#/$defs/safe_id"
+          },
+          "snapshot_id": {
+            "$ref": "#/$defs/safe_id"
+          },
+          "authority": {
+            "const": "observation_only"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "safe_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+      "not": {
+        "enum": ["con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"]
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^(?!0{64}$)[0-9a-f]{64}$"
+    },
+    "git_object_sha": {
+      "type": "string",
+      "pattern": "^(?!(?:0{40}|0{64})$)(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "safe_human_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000,
+      "allOf": [
+        {
+          "not": {
+            "pattern": "(?:^|[\\s\"'])(?:/(?:Users|home|root|tmp|var|private|Volumes|content|mnt)/|[A-Za-z]:[\\\\/]|\\\\\\\\)"
+          }
+        },
+        {
+          "not": {
+            "pattern": "(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)"
+          }
+        }
+      ]
+    },
+    "safe_text_array": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/safe_human_text"
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "display_name",
+        "logical_path",
+        "mime_type",
+        "role",
+        "sha256",
+        "size",
+        "storage_mode"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "storage_ref"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "drive_file_id"
+                ]
+              },
+              {
+                "required": [
+                  "drive_parent_id"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "required": [
+            "drive_file_id",
+            "drive_parent_id"
+          ],
+          "not": {
+            "required": [
+              "storage_ref"
+            ]
+          }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "storage_mode": {
+                "const": "chunked-v1"
+              }
+            },
+            "required": [
+              "storage_mode"
+            ]
+          },
+          "then": {
+            "required": [
+              "storage_ref"
+            ],
+            "properties": {
+              "size": {
+                "maximum": 68719476736
+              },
+              "storage_ref": {
+                "properties": {
+                  "driver": {
+                    "const": "rclone-crypt"
+                  },
+                  "object_id": {
+                    "pattern": "^chunk-manifest-[0-9a-f]{64}$"
+                  },
+                  "verification_level": {
+                    "const": "rclone-crypt-chunk-manifest-sha256"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "artifact_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[^/\\\\\\r\\n]+$"
+        },
+        "drive_file_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{2,256}$"
+        },
+        "drive_parent_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{2,256}$"
+        },
+        "storage_ref": {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "store_id",
+            "driver",
+            "object_id",
+            "container_id",
+            "verification_level"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "artifact-storage-ref/v1"
+            },
+            "store_id": {
+              "$ref": "#/$defs/safe_id"
+            },
+            "driver": {
+              "$ref": "#/$defs/safe_id"
+            },
+            "object_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._~-]{1,511}$"
+            },
+            "container_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._~-]{1,511}$"
+            },
+            "verification_level": {
+              "$ref": "#/$defs/safe_id"
+            }
+          },
+          "additionalProperties": false
+        },
+        "logical_path": {
+          "type": "string",
+          "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*(?:^|/)\\.(?:/|$))[A-Za-z0-9._/-]{1,512}$"
+        },
+        "mime_type": {
+          "type": "string",
+          "pattern": "^[a-z0-9.+-]+/[a-z0-9.+-]+$",
+          "maxLength": 127
+        },
+        "role": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "storage_mode": {
+          "enum": [
+            "full",
+            "chunked-v1"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$comment": "语义校验器必须确认文件名、snapshot_id、generation、task_id 与 CURRENT 一致；若存在 memory_projection，还必须核验 path 中的 task_id、文件名中的 projection_id、精确文件字节 content_sha256，以及投影 basis 的 task_id/snapshot_id/generation/transaction_id/manifest_path 与本 manifest 和 CURRENT 完全一致。evidence_sources 是独立于近期 conversation_sources 窗口的长期证据索引；每项必须以不可变 confirmed binding 把 source revision 及其 sequence 明确绑定到本任务。新成果使用 provider-neutral storage_ref，历史 Drive 字段保持只读兼容；任何对象发布前都必须完成大小和 SHA-256 核验。任何凭据或本地绝对路径均须在提交前被递归扫描并阻断。"
+}

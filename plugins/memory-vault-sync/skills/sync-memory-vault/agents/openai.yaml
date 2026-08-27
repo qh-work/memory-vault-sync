@@ -1,0 +1,4 @@
+interface:
+  display_name: "Private Memory Vault"
+  short_description: "Match and continue private tasks across devices"
+  default_prompt: "Use the private Memory Vault to reconcile local entries with the remote task catalog, load the authoritative checkpoint, continue the work, and safely publish a handoff."

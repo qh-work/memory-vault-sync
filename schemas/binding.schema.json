@@ -1,0 +1,554 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-memory-vault.invalid/schemas/binding.schema.json",
+  "title": "Vault Binding v1",
+  "description": "来源、工作区谱系或旧记录与一个或多个语义任务之间的可审计关系。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "binding_id",
+    "subject",
+    "targets",
+    "effective_range",
+    "state",
+    "confidence",
+    "confirmation_basis",
+    "evidence",
+    "created_at",
+    "created_by"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "binding/v1"
+    },
+    "binding_id": {
+      "$ref": "#/$defs/safe_id"
+    },
+    "subject": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "source",
+            "workspace_lineage",
+            "legacy_record"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/safe_id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": [
+          "semantic_task_id",
+          "relation",
+          "role"
+        ],
+        "properties": {
+          "semantic_task_id": {
+            "$ref": "#/$defs/safe_id"
+          },
+          "relation": {
+            "enum": [
+              "source_for",
+              "workspace_for",
+              "legacy_record_of",
+              "alias_of",
+              "forked_from",
+              "related_to"
+            ]
+          },
+          "role": {
+            "enum": [
+              "primary",
+              "supporting",
+              "coordination",
+              "reference"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "effective_range": {
+      "type": "object",
+      "required": [
+        "source_sequence_from",
+        "source_sequence_to"
+      ],
+      "properties": {
+        "source_sequence_from": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_sequence_to": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "state": {
+      "enum": [
+        "proposed",
+        "confirmed",
+        "rejected",
+        "superseded"
+      ]
+    },
+    "confidence": {
+      "enum": [
+        "user_confirmed",
+        "portable_identity_verified",
+        "lineage_verified",
+        "artifact_verified",
+        "imported_unverified",
+        "assistant_inferred"
+      ]
+    },
+    "confirmation_basis": {
+      "oneOf": [
+        {
+          "enum": [
+            "user_confirmation",
+            "portable_identity",
+            "verified_lineage",
+            "legacy_authority",
+            "user_authorized_semantic_quorum",
+            "full_content_review_and_next_visible_choice_v1"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "evidence_id",
+          "kind",
+          "strength"
+        ],
+        "properties": {
+          "evidence_id": {
+            "$ref": "#/$defs/safe_id"
+          },
+          "kind": {
+            "enum": [
+              "user_confirmation",
+              "portable_identity",
+              "immutable_manifest_lineage",
+              "git_ancestry",
+              "full_hash",
+              "partial_hash",
+              "title_similarity",
+              "content_similarity",
+              "cloud_consistency_check",
+              "user_policy_authorization",
+              "legacy_record"
+            ]
+          },
+          "strength": {
+            "enum": [
+              "authoritative",
+              "strong",
+              "supporting",
+              "weak"
+            ]
+          },
+          "object_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "assertion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "method": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "score_basis_points": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "input_digest_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "independence_group": {
+            "type": "string",
+            "enum": [
+              "visible_goal",
+              "distinctive_context",
+              "local_visible_task",
+              "verified_cloud_checkpoint"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_by": {
+      "type": "object",
+      "required": [
+        "actor_kind",
+        "actor_id"
+      ],
+      "properties": {
+        "actor_kind": {
+          "enum": [
+            "user_action",
+            "migration",
+            "client"
+          ]
+        },
+        "actor_id": {
+          "$ref": "#/$defs/safe_id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "decision_event_id": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/safe_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "supersedes_binding_id": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/safe_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "route_correction": {
+      "type": "object",
+      "required": [
+        "previous_task_id",
+        "effective_source_sequence_from",
+        "historical_content_review_required",
+        "potentially_misrouted_sequence_count"
+      ],
+      "properties": {
+        "previous_task_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "effective_source_sequence_from": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "historical_content_review_required": {
+          "type": "boolean"
+        },
+        "potentially_misrouted_sequence_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "route_revalidation": {
+      "type": "object",
+      "required": [
+        "reason",
+        "target_task_id"
+      ],
+      "properties": {
+        "reason": {
+          "const": "missing_current_content_attestation"
+        },
+        "target_task_id": {
+          "$ref": "#/$defs/safe_id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "content_review_attestation": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "authority_epoch",
+        "matching_policy_version",
+        "source_id",
+        "request_id",
+        "review_nonce",
+        "reviewed_remote_commit_sha",
+        "candidate_set_sha256",
+        "selected_task_id",
+        "remote_evidence_receipt_sha256",
+        "local_evidence_receipt_sha256",
+        "choice_sha256",
+        "decision_prompt_sha256",
+        "local_transcript_sha256",
+        "reviewed_turn_anchor_set_sha256",
+        "conversation_coverage",
+        "confirmation_mode"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory-vault-source-route-content-attestation/v1"
+        },
+        "authority_epoch": {
+          "const": "full-content-routing-v1"
+        },
+        "matching_policy_version": {
+          "const": "content-evidence-bidirectional-artifact-blocks-explicit-confirmation-v4"
+        },
+        "source_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "request_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "review_nonce": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "reviewed_remote_commit_sha": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "candidate_set_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "selected_task_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "remote_evidence_receipt_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "local_evidence_receipt_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "choice_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "decision_prompt_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "local_transcript_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "reviewed_turn_anchor_set_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "conversation_coverage": {
+          "const": "full_visible_task"
+        },
+        "confirmation_mode": {
+          "const": "next_visible_numeric_choice"
+        }
+      },
+      "additionalProperties": false
+    },
+    "proposal_assessment": {
+      "type": "object",
+      "required": [
+        "policy_version",
+        "goal_score_basis_points",
+        "distinctive_score_basis_points",
+        "runner_up_score_basis_points",
+        "runner_up_margin_basis_points",
+        "candidate_count",
+        "independent_signal_groups",
+        "contradiction_count",
+        "evidence_digest_sha256",
+        "basis_remote_commit_sha",
+        "basis_current_blob_sha"
+      ],
+      "properties": {
+        "policy_version": {
+          "const": "user-authorized-semantic-quorum-v1"
+        },
+        "goal_score_basis_points": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "distinctive_score_basis_points": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "runner_up_score_basis_points": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "runner_up_margin_basis_points": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "candidate_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "independent_signal_groups": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 8
+        },
+        "contradiction_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidence_digest_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "basis_remote_commit_sha": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "basis_current_blob_sha": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "confirmed"
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "confirmation_basis": {
+            "type": "string"
+          },
+          "evidence": {
+            "contains": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "user_confirmation",
+                    "portable_identity",
+                    "immutable_manifest_lineage",
+                    "user_policy_authorization",
+                    "legacy_record"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "minContains": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "enum": [
+              "proposed",
+              "rejected"
+            ]
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "confirmation_basis": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "confirmation_basis": {
+            "const": "full_content_review_and_next_visible_choice_v1"
+          }
+        },
+        "required": [
+          "confirmation_basis"
+        ]
+      },
+      "then": {
+        "required": [
+          "content_review_attestation"
+        ],
+        "properties": {
+          "confidence": {
+            "const": "user_confirmed"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "safe_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+      "not": {
+        "enum": ["con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"]
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^(?!0{64}$)[0-9a-f]{64}$"
+    }
+  },
+  "$comment": "effective_range 仅用于有来源序列的 subject；非 source subject 的两个值应为 null。语义校验器必须检查结束序列不小于开始序列，并额外阻止仅凭哈希或相似度确认 alias_of。"
+}

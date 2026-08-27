@@ -1,0 +1,1671 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-memory-vault.invalid/schemas/task_memory_projection.schema.json",
+  "title": "Immutable Task State and Handoff Projection v1",
+  "description": "随单个任务版本发布的不可变、可重建任务状态与接续胶囊。它只投影已核验的原始证据，不是独立真相。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "projection_id",
+    "authority",
+    "basis",
+    "completeness",
+    "current_goal",
+    "scope_boundaries",
+    "unprojected_deltas",
+    "reconciliation_receipts",
+    "effective_claims",
+    "contested_claims",
+    "superseded_claims",
+    "rejected_options",
+    "artifact_authorities",
+    "unclassified_artifact_policy",
+    "completed",
+    "in_progress",
+    "next_actions",
+    "open_questions",
+    "risks",
+    "blocking_conflicts",
+    "nonblocking_contradictions",
+    "known_gaps",
+    "evidence_index",
+    "trace_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "task-memory-projection/v1"
+    },
+    "projection_id": {
+      "$ref": "#/$defs/safe_id"
+    },
+    "authority": {
+      "const": "rebuildable_task_handoff_cache"
+    },
+    "basis": {
+      "$ref": "#/$defs/projection_basis"
+    },
+    "completeness": {
+      "$ref": "#/$defs/completeness"
+    },
+    "completeness_basis": {
+      "$ref": "#/$defs/completeness_basis"
+    },
+    "current_goal": {
+      "$ref": "#/$defs/current_goal"
+    },
+    "scope_boundaries": {
+      "description": "任务边界。in_scope 与 out_of_scope 共享同一个 boundary_id 命名空间；ID 必须跨两个列表唯一。新投影若两个列表都为空，必须登记 goal_and_scope known_gap，且不得把该维度宣称为 complete。",
+      "$ref": "#/$defs/scope_boundaries"
+    },
+    "unprojected_deltas": {
+      "description": "已核验但尚未经语义整理写入结构化状态的新消息。存在时必须先读取这些消息，再使用较旧的结构化状态。",
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/unprojected_delta"
+      }
+    },
+    "reconciliation_receipts": {
+      "description": "本次投影转换新产生的语义对账收据；保存被处理 delta 的原始消息证据及其投影结果索引。既往收据通过不可变版本祖先追溯，不在后续投影中累积复制。",
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/reconciliation_receipt"
+      }
+    },
+    "effective_claims": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/effective_claim"
+      }
+    },
+    "contested_claims": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/contested_claim"
+      }
+    },
+    "superseded_claims": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/superseded_claim"
+      }
+    },
+    "rejected_options": {
+      "description": "有原始证据支持的已否决方案；option_id 必须唯一。允许为空，严禁为了填满交接清单而虚构被否决方案。",
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/rejected_option"
+      }
+    },
+    "artifact_authorities": {
+      "type": "array",
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/artifact_authority"
+      }
+    },
+    "unclassified_artifact_policy": {
+      "const": "reference_only_do_not_infer_from_filename_or_inventory"
+    },
+    "completed": {
+      "description": "已完成进度项。item_id 在本列表中唯一，并与 in_progress.item_id、next_actions.action_id 共享互斥的进度身份命名空间。",
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/completed_item"
+      }
+    },
+    "in_progress": {
+      "description": "进行中进度项。item_id 在本列表中唯一，并且同一 ID 不得同时出现在 completed 或 next_actions。",
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/in_progress_item"
+      }
+    },
+    "next_actions": {
+      "description": "可执行的下一步。action_id 在本列表中唯一，并且同一 ID 不得同时出现在 completed 或 in_progress。新投影存在 active current_goal 却没有下一步时，必须以 progress known_gap 或 completeness_basis.progress=unknown 明示原因。",
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/next_action"
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/open_question"
+      }
+    },
+    "risks": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/risk"
+      }
+    },
+    "blocking_conflicts": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/blocking_conflict"
+      }
+    },
+    "nonblocking_contradictions": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/nonblocking_contradiction"
+      }
+    },
+    "known_gaps": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/known_gap"
+      }
+    },
+    "evidence_index": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/evidence_index_entry"
+      }
+    },
+    "trace_policy": {
+      "$ref": "#/$defs/trace_policy"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "safe_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+      "not": {
+        "enum": [
+          "con",
+          "prn",
+          "aux",
+          "nul",
+          "com1",
+          "com2",
+          "com3",
+          "com4",
+          "com5",
+          "com6",
+          "com7",
+          "com8",
+          "com9",
+          "lpt1",
+          "lpt2",
+          "lpt3",
+          "lpt4",
+          "lpt5",
+          "lpt6",
+          "lpt7",
+          "lpt8",
+          "lpt9"
+        ]
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^(?!0{64}$)[0-9a-f]{64}$"
+    },
+    "git_object_sha": {
+      "type": "string",
+      "pattern": "^(?!(?:0{40}|0{64})$)(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "safe_human_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000,
+      "allOf": [
+        {
+          "not": {
+            "pattern": "[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]"
+          }
+        },
+        {
+          "not": {
+            "pattern": "(?:^|[\\s\"'])(?:/(?:Users|home|root|tmp|var|private|Volumes|content|mnt)/|[A-Za-z]:[\\\\/]|\\\\\\\\)"
+          }
+        },
+        {
+          "not": {
+            "pattern": "(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer[ \\t]+[A-Za-z0-9._~+/-]{16,}|Cookie[ \\t]*:)"
+          }
+        }
+      ]
+    },
+    "projection_basis": {
+      "type": "object",
+      "required": [
+        "task_id",
+        "snapshot_id",
+        "generation",
+        "transaction_id",
+        "manifest_path",
+        "source_current_precondition"
+      ],
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "snapshot_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "transaction_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "manifest_path": {
+          "type": "string",
+          "pattern": "^tasks/[a-z0-9][a-z0-9_-]{1,63}/versions/[a-z0-9][a-z0-9_-]{1,63}\\.json$"
+        },
+        "source_current_precondition": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/source_current_precondition"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "source_current_precondition": {
+      "type": "object",
+      "required": [
+        "current_blob_sha",
+        "snapshot_id",
+        "generation",
+        "transaction_id"
+      ],
+      "properties": {
+        "current_blob_sha": {
+          "$ref": "#/$defs/git_object_sha"
+        },
+        "snapshot_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "transaction_id": {
+          "$ref": "#/$defs/safe_id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "completeness": {
+      "type": "object",
+      "required": [
+        "overall",
+        "goal_and_scope",
+        "decisions",
+        "rationales",
+        "progress",
+        "artifacts",
+        "conflicts",
+        "evidence"
+      ],
+      "properties": {
+        "overall": {
+          "enum": [
+            "complete",
+            "partial"
+          ]
+        },
+        "goal_and_scope": {
+          "$ref": "#/$defs/coverage_level"
+        },
+        "decisions": {
+          "$ref": "#/$defs/coverage_level"
+        },
+        "rationales": {
+          "$ref": "#/$defs/coverage_level"
+        },
+        "progress": {
+          "$ref": "#/$defs/coverage_level"
+        },
+        "artifacts": {
+          "$ref": "#/$defs/coverage_level"
+        },
+        "conflicts": {
+          "$ref": "#/$defs/coverage_level"
+        },
+        "evidence": {
+          "$ref": "#/$defs/coverage_level"
+        }
+      },
+      "additionalProperties": false
+    },
+    "coverage_level": {
+      "enum": [
+        "complete",
+        "partial",
+        "unknown"
+      ]
+    },
+    "completeness_basis": {
+      "type": "object",
+      "description": "七个完整性维度当前状态的持久理由与证据。未变化维度逐代原样继承；摘要可重建，但本依据不可由摘要替代。",
+      "required": [
+        "goal_and_scope",
+        "decisions",
+        "rationales",
+        "progress",
+        "artifacts",
+        "conflicts",
+        "evidence"
+      ],
+      "properties": {
+        "goal_and_scope": {
+          "$ref": "#/$defs/completeness_basis_entry"
+        },
+        "decisions": {
+          "$ref": "#/$defs/completeness_basis_entry"
+        },
+        "rationales": {
+          "$ref": "#/$defs/completeness_basis_entry"
+        },
+        "progress": {
+          "$ref": "#/$defs/completeness_basis_entry"
+        },
+        "artifacts": {
+          "$ref": "#/$defs/completeness_basis_entry"
+        },
+        "conflicts": {
+          "$ref": "#/$defs/completeness_basis_entry"
+        },
+        "evidence": {
+          "$ref": "#/$defs/completeness_basis_entry"
+        }
+      },
+      "additionalProperties": false
+    },
+    "completeness_basis_entry": {
+      "type": "object",
+      "required": [
+        "status",
+        "reason",
+        "evidence"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/coverage_level"
+        },
+        "reason": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "current_goal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "statement",
+            "evidence"
+          ],
+          "properties": {
+            "status": {
+              "const": "active"
+            },
+            "statement": {
+              "$ref": "#/$defs/safe_human_text"
+            },
+            "evidence": {
+              "$ref": "#/$defs/nonempty_evidence"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "reason",
+            "evidence"
+          ],
+          "properties": {
+            "status": {
+              "const": "unknown"
+            },
+            "reason": {
+              "$ref": "#/$defs/safe_human_text"
+            },
+            "evidence": {
+              "$ref": "#/$defs/evidence"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "scope_boundaries": {
+      "type": "object",
+      "required": [
+        "in_scope",
+        "out_of_scope"
+      ],
+      "properties": {
+        "in_scope": {
+          "$ref": "#/$defs/scope_boundary_items"
+        },
+        "out_of_scope": {
+          "$ref": "#/$defs/scope_boundary_items"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scope_boundary_items": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/scope_boundary_item"
+      }
+    },
+    "scope_boundary_item": {
+      "type": "object",
+      "required": [
+        "boundary_id",
+        "statement",
+        "evidence"
+      ],
+      "properties": {
+        "boundary_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "statement": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonempty_evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "unprojected_delta": {
+      "type": "object",
+      "required": [
+        "delta_id",
+        "status",
+        "evidence_entry_id",
+        "message_evidence",
+        "handling"
+      ],
+      "properties": {
+        "delta_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "status": {
+          "const": "requires_semantic_reconciliation"
+        },
+        "evidence_entry_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "message_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/source_message_evidence"
+          }
+        },
+        "handling": {
+          "const": "read_newest_verified_messages_before_relying_on_prior_structured_state"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reconciliation_receipt": {
+      "type": "object",
+      "required": [
+        "receipt_id",
+        "source_projection_id",
+        "resolved_delta_ids",
+        "message_evidence",
+        "outcome",
+        "outcome_rationale",
+        "result_refs",
+        "retired_refs",
+        "retirement_message_evidence",
+        "evidence_entry_ids",
+        "status"
+      ],
+      "properties": {
+        "receipt_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "source_projection_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "resolved_delta_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safe_id"
+          }
+        },
+        "message_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/source_message_evidence"
+          }
+        },
+        "outcome": {
+          "enum": [
+            "state_updated",
+            "evidence_only_no_semantic_change"
+          ]
+        },
+        "outcome_rationale": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "result_refs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/reconciliation_result_ref"
+          }
+        },
+        "retired_refs": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/reconciliation_retired_ref"
+          }
+        },
+        "retirement_message_evidence": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/source_message_evidence"
+          }
+        },
+        "completeness_transitions": {
+          "type": "array",
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/completeness_transition"
+          }
+        },
+        "evidence_entry_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safe_id"
+          }
+        },
+        "status": {
+          "const": "semantically_reconciled"
+        }
+      },
+      "additionalProperties": false
+    },
+    "completeness_transition": {
+      "type": "object",
+      "required": [
+        "dimension",
+        "before",
+        "after",
+        "change_kind",
+        "before_basis_sha256",
+        "after_basis_sha256",
+        "reason",
+        "evidence"
+      ],
+      "properties": {
+        "dimension": {
+          "enum": [
+            "goal_and_scope",
+            "decisions",
+            "rationales",
+            "progress",
+            "artifacts",
+            "conflicts",
+            "evidence"
+          ]
+        },
+        "before": {
+          "$ref": "#/$defs/coverage_level"
+        },
+        "after": {
+          "$ref": "#/$defs/coverage_level"
+        },
+        "change_kind": {
+          "enum": [
+            "status_changed",
+            "basis_refreshed"
+          ]
+        },
+        "before_basis_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "after_basis_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "reason": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonempty_evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reconciliation_result_ref": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "current_goal",
+            "scope_boundary",
+            "effective_claim",
+            "contested_claim",
+            "superseded_claim",
+            "rejected_option",
+            "artifact_authority",
+            "completed_item",
+            "in_progress_item",
+            "next_action",
+            "open_question",
+            "risk",
+            "blocking_conflict",
+            "nonblocking_contradiction",
+            "known_gap",
+            "completeness",
+            "evidence_index_entry"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/safe_id"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "current_goal"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "id": {
+                "const": "current_goal"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "reconciliation_retired_ref": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "scope_boundary",
+            "effective_claim",
+            "contested_claim",
+            "superseded_claim",
+            "rejected_option",
+            "artifact_authority",
+            "completed_item",
+            "in_progress_item",
+            "next_action",
+            "open_question",
+            "risk",
+            "blocking_conflict",
+            "nonblocking_contradiction",
+            "known_gap"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/safe_id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim_kind": {
+      "enum": [
+        "decision",
+        "constraint",
+        "user_preference",
+        "factual_state",
+        "scope_boundary",
+        "artifact_selection"
+      ]
+    },
+    "rationale": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "statement",
+            "evidence"
+          ],
+          "properties": {
+            "status": {
+              "const": "known"
+            },
+            "statement": {
+              "$ref": "#/$defs/safe_human_text"
+            },
+            "evidence": {
+              "$ref": "#/$defs/nonempty_evidence"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "status",
+            "gap_id",
+            "evidence"
+          ],
+          "properties": {
+            "status": {
+              "const": "not_recovered"
+            },
+            "gap_id": {
+              "$ref": "#/$defs/safe_id"
+            },
+            "evidence": {
+              "$ref": "#/$defs/evidence"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "effective_claim": {
+      "type": "object",
+      "required": [
+        "claim_id",
+        "claim_key",
+        "kind",
+        "statement",
+        "rationale",
+        "settled",
+        "superseded_claim_ids",
+        "reask_policy",
+        "evidence"
+      ],
+      "properties": {
+        "claim_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "claim_key": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "kind": {
+          "$ref": "#/$defs/claim_kind"
+        },
+        "statement": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "rationale": {
+          "$ref": "#/$defs/rationale"
+        },
+        "settled": {
+          "const": true
+        },
+        "superseded_claim_ids": {
+          "$ref": "#/$defs/claim_ids"
+        },
+        "reask_policy": {
+          "enum": [
+            "do_not_reask",
+            "reask_only_on_blocking_conflict",
+            "reask_only_if_user_explicitly_reopens",
+            "reask_on_blocking_conflict_or_explicit_reopen"
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonempty_evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "contested_claim": {
+      "type": "object",
+      "required": [
+        "claim_id",
+        "claim_key",
+        "kind",
+        "statement",
+        "rationale",
+        "settled",
+        "evidence"
+      ],
+      "properties": {
+        "claim_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "claim_key": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "kind": {
+          "$ref": "#/$defs/claim_kind"
+        },
+        "statement": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "rationale": {
+          "$ref": "#/$defs/rationale"
+        },
+        "settled": {
+          "const": false
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonempty_evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "superseded_claim": {
+      "type": "object",
+      "required": [
+        "claim_id",
+        "claim_key",
+        "kind",
+        "statement",
+        "rationale",
+        "superseded_by_claim_id",
+        "evidence"
+      ],
+      "properties": {
+        "claim_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "claim_key": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "kind": {
+          "$ref": "#/$defs/claim_kind"
+        },
+        "statement": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "rationale": {
+          "$ref": "#/$defs/rationale"
+        },
+        "superseded_by_claim_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonempty_evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rejected_option": {
+      "type": "object",
+      "required": [
+        "option_id",
+        "claim_key",
+        "statement",
+        "rejection_rationale",
+        "evidence"
+      ],
+      "properties": {
+        "option_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "claim_key": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "statement": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "rejection_rationale": {
+          "type": "object",
+          "required": [
+            "statement",
+            "evidence"
+          ],
+          "properties": {
+            "statement": {
+              "$ref": "#/$defs/safe_human_text"
+            },
+            "evidence": {
+              "$ref": "#/$defs/nonempty_evidence"
+            }
+          },
+          "additionalProperties": false
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonempty_evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifact_authority": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "sha256",
+        "purpose",
+        "role",
+        "authority_status",
+        "source_snapshot_id",
+        "dependencies",
+        "verification",
+        "relations"
+      ],
+      "properties": {
+        "artifact_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "purpose": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "role": {
+          "description": "稳定的成果权威分槽（authority slot）。不同 role 可以各自拥有一个 current_authoritative；只有同一 role 内出现多个 current_authoritative 才构成必须登记 blocking_conflict 的歧义。",
+          "$ref": "#/$defs/safe_id"
+        },
+        "authority_status": {
+          "enum": [
+            "current_authoritative",
+            "current_companion",
+            "reference_only",
+            "historical",
+            "rejected"
+          ]
+        },
+        "source_snapshot_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "dependencies": {
+          "$ref": "#/$defs/artifact_ids"
+        },
+        "verification": {
+          "$ref": "#/$defs/artifact_verification"
+        },
+        "relations": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/artifact_relation"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "authority_status": {
+                "enum": [
+                  "current_authoritative",
+                  "current_companion"
+                ]
+              }
+            },
+            "required": [
+              "authority_status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "verification": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "const": "verified"
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "artifact_verification": {
+      "type": "object",
+      "required": [
+        "status",
+        "checks",
+        "evidence"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "verified",
+            "partially_verified",
+            "unverified",
+            "rejected"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/verification_check"
+          }
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "verified"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "checks": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "verification_check": {
+      "type": "object",
+      "required": [
+        "check_id",
+        "kind",
+        "result",
+        "evidence"
+      ],
+      "properties": {
+        "check_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "kind": {
+          "enum": [
+            "sha256",
+            "size",
+            "remote_identity",
+            "content",
+            "provenance",
+            "user_confirmation",
+            "manual_inspection"
+          ]
+        },
+        "result": {
+          "enum": [
+            "passed",
+            "failed",
+            "not_run"
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifact_relation": {
+      "type": "object",
+      "required": [
+        "kind",
+        "target_artifact_id"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "derived_from",
+            "supersedes",
+            "companion_to",
+            "alternative_to",
+            "rejected_in_favor_of",
+            "source_for",
+            "contains"
+          ]
+        },
+        "target_artifact_id": {
+          "$ref": "#/$defs/safe_id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "completed_item": {
+      "type": "object",
+      "required": [
+        "item_id",
+        "statement",
+        "evidence"
+      ],
+      "properties": {
+        "item_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "statement": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonempty_evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "in_progress_item": {
+      "type": "object",
+      "required": [
+        "item_id",
+        "statement",
+        "next_checkpoint",
+        "evidence"
+      ],
+      "properties": {
+        "item_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "statement": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "next_checkpoint": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonempty_evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "next_action": {
+      "type": "object",
+      "required": [
+        "action_id",
+        "statement",
+        "depends_on_claim_ids",
+        "evidence"
+      ],
+      "properties": {
+        "action_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "statement": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "depends_on_claim_ids": {
+          "$ref": "#/$defs/claim_ids"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "open_question": {
+      "type": "object",
+      "required": [
+        "question_id",
+        "question",
+        "blocking",
+        "claim_key",
+        "related_claim_ids",
+        "blocking_conflict_id",
+        "evidence"
+      ],
+      "properties": {
+        "question_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "question": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "blocking": {
+          "type": "boolean"
+        },
+        "claim_key": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/safe_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "related_claim_ids": {
+          "$ref": "#/$defs/claim_ids"
+        },
+        "blocking_conflict_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/safe_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonempty_evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "risk": {
+      "type": "object",
+      "required": [
+        "risk_id",
+        "statement",
+        "severity",
+        "blocking",
+        "evidence"
+      ],
+      "properties": {
+        "risk_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "statement": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "severity": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "blocking": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "blocking_conflict": {
+      "type": "object",
+      "required": [
+        "conflict_id",
+        "statement",
+        "claim_ids",
+        "artifact_ids",
+        "evidence",
+        "handling"
+      ],
+      "properties": {
+        "conflict_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "statement": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "claim_ids": {
+          "$ref": "#/$defs/claim_ids"
+        },
+        "artifact_ids": {
+          "$ref": "#/$defs/artifact_ids"
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        },
+        "handling": {
+          "const": "stop_disputed_work_and_request_resolution"
+        }
+      },
+      "additionalProperties": false
+    },
+    "nonblocking_contradiction": {
+      "type": "object",
+      "required": [
+        "contradiction_id",
+        "statement",
+        "effective_claim_id",
+        "historical_claim_ids",
+        "evidence",
+        "handling"
+      ],
+      "properties": {
+        "contradiction_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "statement": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "effective_claim_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "historical_claim_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/safe_id"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/evidence_ref"
+          }
+        },
+        "handling": {
+          "const": "treat_history_as_reference_and_do_not_reask"
+        }
+      },
+      "additionalProperties": false
+    },
+    "known_gap": {
+      "type": "object",
+      "required": [
+        "gap_id",
+        "area",
+        "statement",
+        "trace_status",
+        "evidence"
+      ],
+      "properties": {
+        "gap_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "area": {
+          "enum": [
+            "goal_and_scope",
+            "decision",
+            "rationale",
+            "progress",
+            "artifact",
+            "conflict",
+            "evidence"
+          ]
+        },
+        "statement": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "trace_status": {
+          "enum": [
+            "not_attempted",
+            "partial",
+            "exhausted"
+          ]
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence_index_entry": {
+      "type": "object",
+      "required": [
+        "entry_id",
+        "topic",
+        "references"
+      ],
+      "properties": {
+        "entry_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "topic": {
+          "$ref": "#/$defs/safe_human_text"
+        },
+        "references": {
+          "$ref": "#/$defs/nonempty_evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "trace_policy": {
+      "type": "object",
+      "required": [
+        "mode",
+        "triggers",
+        "action"
+      ],
+      "properties": {
+        "mode": {
+          "const": "on_demand_verified_evidence"
+        },
+        "triggers": {
+          "type": "object",
+          "required": [
+            "missing_rationale",
+            "blocking_conflict",
+            "multiple_same_role_current_authoritative_artifacts",
+            "user_says_previously_explained",
+            "projection_gap"
+          ],
+          "properties": {
+            "missing_rationale": {
+              "const": true
+            },
+            "blocking_conflict": {
+              "const": true
+            },
+            "multiple_same_role_current_authoritative_artifacts": {
+              "const": true
+            },
+            "user_says_previously_explained": {
+              "const": true
+            },
+            "projection_gap": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "action": {
+          "const": "trace_to_original_verified_evidence_before_asking_or_changing_state"
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim_ids": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/safe_id"
+      }
+    },
+    "artifact_ids": {
+      "type": "array",
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/safe_id"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/evidence_ref"
+      }
+    },
+    "nonempty_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/evidence_ref"
+      }
+    },
+    "evidence_ref": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/memory_event_evidence"
+        },
+        {
+          "$ref": "#/$defs/source_message_evidence"
+        },
+        {
+          "$ref": "#/$defs/artifact_evidence"
+        }
+      ]
+    },
+    "memory_event_evidence": {
+      "type": "object",
+      "required": [
+        "kind",
+        "memory_event_id",
+        "event_sha256"
+      ],
+      "properties": {
+        "kind": {
+          "const": "memory_event"
+        },
+        "memory_event_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "event_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "source_message_evidence": {
+      "type": "object",
+      "required": [
+        "kind",
+        "source_id",
+        "revision_id",
+        "source_sequence",
+        "revision_content_sha256",
+        "message_ordinal",
+        "evidence_anchor_sha256"
+      ],
+      "properties": {
+        "kind": {
+          "const": "source_message"
+        },
+        "source_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "revision_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "source_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "revision_content_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "message_ordinal": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidence_anchor_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifact_evidence": {
+      "type": "object",
+      "required": [
+        "kind",
+        "artifact_id",
+        "sha256"
+      ],
+      "properties": {
+        "kind": {
+          "const": "artifact"
+        },
+        "artifact_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$comment": "读取器必须从 CURRENT 反向核验 version manifest，再核验 memory_projection 引用的路径、精确文件字节 SHA-256、projection_id 和 basis 身份元组。投影是可重建接续缓存，原始 source、event 与 artifact 仍是证据真相。source_message 证据必须由 version.evidence_sources 长期钉住，并通过不可变 confirmed binding 绑定到本任务；先用 revision_content_sha256 核验完整 revision 字节，再用 message_ordinal 定位消息并核验 evidence_anchor_sha256=SHA-256(UTF-8 message.text)。memory_event 证据还必须继续追溯 event.source、revision、消息锚点和任务 binding。unprojected_deltas 中的新消息必须先于旧结构化状态显示，且在语义重建前不得宣称完整或 ready。每个 completeness 维度都必须有同状态的 completeness_basis，记录当前理由与钉住证据；摘要只能重建，不能替代这些依据。scope boundary、rejected option 与各进度列表的标识符必须按其语义命名空间唯一；同一个进度 ID 不得同时处于 completed、in_progress 和 next_actions。新投影存在 active goal 却没有 next action 时，必须由 progress known_gap 或 unknown progress basis 明示缺口；空 scope 必须登记 goal_and_scope gap，且不能宣称完整。旧版缺少 completeness_basis 的不可变投影仍可作为 unknown/partial 参考读取，但不得借此获得新的可执行完整性。rejected_options 可以为空，不得虚构。每个 artifact_authority 必须解析到当前或祖先 task version 中同 ID、同 SHA-256 的 artifact；current_authoritative/current_companion 必须验证通过，且 status=verified 时所有检查均须 passed。current_authoritative 的唯一性按稳定 role 分槽判断：跨 role 并存合法，同一 role 多个 current_authoritative 必须由一个 blocking_conflict 覆盖该槽全部候选。未分类成果固定按 reference-only 处理，严禁从文件名或平铺 inventory 推断当前决定。basis 不得包含最终 CURRENT blob 或 manifest 内容哈希，以避免投影与引用它的 manifest 形成哈希循环。source_current_precondition 仅记录发布者执行 CAS 时看到的上一版 CURRENT Git blob，并必须解析到 parent commit 的确切 CURRENT 路径；第一代可为 null。"
+}

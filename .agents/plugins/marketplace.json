@@ -1,0 +1,20 @@
+{
+  "name": "memory-vault-public",
+  "interface": {
+    "displayName": "Memory Vault"
+  },
+  "plugins": [
+    {
+      "name": "memory-vault-sync",
+      "source": {
+        "source": "local",
+        "path": "./plugins/memory-vault-sync"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

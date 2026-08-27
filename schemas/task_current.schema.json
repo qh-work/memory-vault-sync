@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-memory-vault.invalid/schemas/task_current.schema.json",
+  "title": "Task Current Pointer v1",
+  "description": "单个任务的唯一权威继续指针；只能通过 Git blob SHA compare-and-swap 推进。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task_id",
+    "generation",
+    "state",
+    "snapshot_id",
+    "manifest_path",
+    "continuation_readiness",
+    "published_transaction_id",
+    "authority"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "task-current/v1"
+    },
+    "task_id": {
+      "$ref": "#/$defs/safe_id"
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "state": {
+      "enum": [
+        "active",
+        "paused",
+        "archived",
+        "candidate"
+      ]
+    },
+    "snapshot_id": {
+      "$ref": "#/$defs/safe_id"
+    },
+    "manifest_path": {
+      "type": "string",
+      "pattern": "^tasks/[a-z0-9][a-z0-9_-]{1,63}/versions/[a-z0-9][a-z0-9_-]{1,63}\\.json$"
+    },
+    "continuation_readiness": {
+      "enum": [
+        "ready",
+        "partial",
+        "blocked"
+      ]
+    },
+    "published_transaction_id": {
+      "$ref": "#/$defs/safe_id"
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "strategy",
+        "timestamps_are_authoritative"
+      ],
+      "properties": {
+        "strategy": {
+          "const": "git-blob-sha-compare-and-swap"
+        },
+        "timestamps_are_authoritative": {
+          "const": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "safe_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+      "not": {
+        "enum": ["con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"]
+      }
+    }
+  },
+  "$comment": "语义校验器必须确认路径中的 task_id、manifest 中的 task_id/snapshot_id/generation/transaction 与本文件一致，并以 CURRENT.json 的 Git blob SHA 执行 CAS。"
+}

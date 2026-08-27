@@ -1,0 +1,92 @@
+{
+  "algorithm": "fixed-16m-domain-sha256-v1",
+  "chunk_size_bytes": 16777216,
+  "network_timing_claimed": false,
+  "reader_protocol": "encrypted-fixed-chunks-v1",
+  "scenarios": [
+    {
+      "artifact_bytes": 104857600,
+      "artifact_mib": 100,
+      "change_bytes": 1048576,
+      "change_ratio": 0.01,
+      "cold_upload": {
+        "chunk_count": 7,
+        "local_commit_seconds": 0.001122,
+        "manifest_bytes": 1541,
+        "scan_seconds": 0.094076,
+        "selective_stage_seconds": 0.105881,
+        "transfer_ratio": 1.0,
+        "transferred_bytes": 104857600,
+        "unique_chunk_count": 7
+      },
+      "fixture_generation_seconds": 0.07765,
+      "interrupted_retry": {
+        "first_attempt_transferred_bytes": 16777216,
+        "interruption_point": "chunks_committed_before_manifest",
+        "manifest_bytes": 1541,
+        "manifest_id": "bd909973b83cacb0a57fdb8833e59ef72f3e7f745023d45e08d83620f9bb98f6",
+        "remote_deletion_performed": false,
+        "retry_missing_chunk_count": 0,
+        "retry_scan_seconds": 0.100699,
+        "retry_transferred_bytes": 0
+      },
+      "one_percent_change": {
+        "changed_chunk_count": 1,
+        "preflight_sha256_seconds": 0.049999,
+        "scan_seconds": 0.095217,
+        "selective_stage_seconds": 0.017161,
+        "transfer_ratio": 0.16,
+        "transferred_bytes": 16777216
+      },
+      "restore": {
+        "atomic_publish": true,
+        "final_sha256_verified": true,
+        "restored_bytes": 104857600,
+        "seconds": 0.142219
+      }
+    },
+    {
+      "artifact_bytes": 1073741824,
+      "artifact_mib": 1024,
+      "change_bytes": 10737419,
+      "change_ratio": 0.01,
+      "cold_upload": {
+        "chunk_count": 64,
+        "local_commit_seconds": 0.008826,
+        "manifest_bytes": 8842,
+        "scan_seconds": 0.947437,
+        "selective_stage_seconds": 1.155459,
+        "transfer_ratio": 1.0,
+        "transferred_bytes": 1073741824,
+        "unique_chunk_count": 64
+      },
+      "fixture_generation_seconds": 0.863833,
+      "interrupted_retry": {
+        "first_attempt_transferred_bytes": 16777216,
+        "interruption_point": "chunks_committed_before_manifest",
+        "manifest_bytes": 8842,
+        "manifest_id": "68efd4e2b903a19d5b58202d6dad6f729a5798dced54fa2acc48a04c9abd78a6",
+        "remote_deletion_performed": false,
+        "retry_missing_chunk_count": 0,
+        "retry_scan_seconds": 0.968036,
+        "retry_transferred_bytes": 0
+      },
+      "one_percent_change": {
+        "changed_chunk_count": 1,
+        "preflight_sha256_seconds": 0.567795,
+        "scan_seconds": 0.955548,
+        "selective_stage_seconds": 0.0155,
+        "transfer_ratio": 0.015625,
+        "transferred_bytes": 16777216
+      },
+      "restore": {
+        "atomic_publish": true,
+        "final_sha256_verified": true,
+        "restored_bytes": 1073741824,
+        "seconds": 1.640029
+      }
+    }
+  ],
+  "schema_version": "memory-vault-chunk-benchmark/v1",
+  "transport_model": "production scan/stage/manifest/restore with ephemeral local content-addressed provider substitute"
+}

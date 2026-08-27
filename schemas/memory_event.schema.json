@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-memory-vault.invalid/schemas/memory_event.schema.json",
+  "title": "Memory Event v1",
+  "description": "追加式、可追溯、不可修改的记忆事件。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "memory_event_id",
+    "kind",
+    "confidence",
+    "semantic_task_ids",
+    "source",
+    "claim_key",
+    "parents",
+    "supersedes",
+    "conflicts_with",
+    "resolves",
+    "payload",
+    "payload_sha256",
+    "hash_profile",
+    "created_at",
+    "event_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "memory-event/v1"
+    },
+    "memory_event_id": {
+      "$ref": "#/$defs/safe_id"
+    },
+    "kind": {
+      "enum": [
+        "decision",
+        "constraint",
+        "progress",
+        "next_action",
+        "hypothesis",
+        "artifact_created",
+        "artifact_verified",
+        "correction",
+        "user_preference",
+        "binding_decision",
+        "conflict_declared",
+        "conflict_resolved",
+        "checkpoint_note"
+      ]
+    },
+    "confidence": {
+      "enum": [
+        "user_confirmed",
+        "artifact_verified",
+        "source_explicit",
+        "imported_unverified",
+        "assistant_inferred"
+      ]
+    },
+    "semantic_task_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/safe_id"
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "revision_id",
+        "source_sequence",
+        "evidence_anchor_sha256"
+      ],
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "revision_id": {
+          "$ref": "#/$defs/safe_id"
+        },
+        "source_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidence_anchor_sha256": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim_key": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/safe_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "parents": {
+      "$ref": "#/$defs/event_ids"
+    },
+    "supersedes": {
+      "$ref": "#/$defs/event_ids"
+    },
+    "conflicts_with": {
+      "$ref": "#/$defs/event_ids"
+    },
+    "resolves": {
+      "$ref": "#/$defs/event_ids"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "payload_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "hash_profile": {
+      "const": "jcs-rfc8785+sha256/event-v1"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "event_sha256": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "conflict_declared"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "conflicts_with": {
+            "minItems": 2
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "conflict_resolved"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "resolves": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "safe_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+      "not": {
+        "enum": ["con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"]
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^(?!0{64}$)[0-9a-f]{64}$"
+    },
+    "event_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/safe_id"
+      }
+    }
+  },
+  "$comment": "payload_sha256=SHA-256(JCS(payload))；event_sha256=SHA-256(JCS(event 去掉 event_sha256 字段))。语义校验器必须递归拒绝 payload 中的 float、重复键、NaN 和 Infinity。"
+}
