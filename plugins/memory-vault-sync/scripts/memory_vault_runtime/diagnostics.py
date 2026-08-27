@@ -80,11 +80,15 @@ def _record_metadata_matches(
     expected_modified = int(
         getattr(expected, "st_mtime_ns", getattr(expected, "modified_ns", -1))
     )
-    return (
-        _identity_matches(expected, observed)
-        and expected_size == int(observed.st_size)
-        and expected_modified == int(observed.st_mtime_ns)
-    )
+    if (
+        not _identity_matches(expected, observed)
+        or expected_size != int(observed.st_size)
+    ):
+        return False
+    # Windows DirEntry/path stat and CRT handle fstat do not expose identical
+    # timestamp representations.  The device/inode identity and exact size
+    # remain stable across those interfaces.
+    return os.name == "nt" or expected_modified == int(observed.st_mtime_ns)
 
 
 def _validate_directory_stat(observed: os.stat_result) -> None:
@@ -264,7 +268,9 @@ def _inventory(records: Path) -> list[_RecordInventory]:
                 "private diagnostic directory contains an unexpected entry"
             )
         try:
-            observed = entry.stat(follow_symlinks=False)
+            # DirEntry.stat reports zero device/inode/link values on Windows;
+            # a fresh path stat supplies the real identity and link count.
+            observed = os.stat(entry.path, follow_symlinks=False)
         except OSError as exc:
             raise DiagnosticError(
                 "private diagnostic entry changed during listing"

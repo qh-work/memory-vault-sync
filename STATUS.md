@@ -2,13 +2,17 @@
 
 Last updated: 2026-08-27
 
-Current version: `0.20.0+codex.20260816101500`
+Current version: `0.20.1+codex.20260827153312`
 
 Memory Vault Sync is released as an Apache-2.0 source distribution. The public
 repository is generated from an explicit allowlist into a new history and
 contains no user memory, conversation source, task/binding state, device
 instance, handoff, credential, local index, outbox, diagnostic record, private
 trust state, or production key material.
+
+The 0.20.1 patch adds native no-reparse Windows directory handles, portable
+file-identity checks, Windows-safe test fixtures, and deterministic closure of
+SQLite test connections. It changes no memory ownership or instruction model.
 
 ## Implemented
 

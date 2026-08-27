@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 
@@ -481,7 +482,7 @@ class MemoryNetworkTests(unittest.TestCase):
             created_at="2026-08-13T00:00:00Z",
         )
         self.index.apply([old, new], remote_head="a" * 40)
-        with sqlite3.connect(self.index.path) as connection:
+        with closing(sqlite3.connect(self.index.path)) as connection:
             before = connection.execute(
                 "SELECT COUNT(*) FROM documents"
             ).fetchone()[0], connection.execute(
@@ -502,7 +503,7 @@ class MemoryNetworkTests(unittest.TestCase):
         self.assertEqual(len(first["consolidation_proposals"]), 1)
         filtered = reopened.claim_views(claim_key="claim-sync-policy", include_proposals=False)
         self.assertEqual(filtered["consolidation_proposals"], [])
-        with sqlite3.connect(self.index.path) as connection:
+        with closing(sqlite3.connect(self.index.path)) as connection:
             after = connection.execute(
                 "SELECT COUNT(*) FROM documents"
             ).fetchone()[0], connection.execute(
@@ -515,7 +516,7 @@ class MemoryNetworkTests(unittest.TestCase):
             [conversation("src-dialog-a", "rev-0", "migration-preserves-memory")],
             remote_head="3" * 40,
         )
-        with sqlite3.connect(self.index.path) as connection:
+        with closing(sqlite3.connect(self.index.path)) as connection:
             connection.execute(
                 "UPDATE metadata SET value = ? WHERE key = 'contract'",
                 ("memory-network-index/v1",),
@@ -630,7 +631,7 @@ class MemoryNetworkTests(unittest.TestCase):
         self.assertLess(total_index_bytes, 64 * 1024 * 1024)
 
     def test_sparse_semantic_query_avoids_full_scan_at_100k_fragments(self) -> None:
-        with self.index._connect() as connection:
+        with closing(self.index._connect()) as connection:
             connection.execute(
                 """
                 INSERT INTO documents(
