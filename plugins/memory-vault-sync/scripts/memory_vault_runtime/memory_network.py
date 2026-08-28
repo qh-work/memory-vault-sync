@@ -613,11 +613,18 @@ class AssociativeIndex:
         with _suppress_os_error():
             self.path.parent.chmod(0o700)
         connection = sqlite3.connect(str(self.path), timeout=10.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
-        connection.execute("PRAGMA synchronous = FULL")
-        self._initialize(connection)
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("PRAGMA synchronous = FULL")
+            self._initialize(connection)
+        except Exception:
+            # Initialization errors are expected when a derived index was
+            # created by an incompatible schema.  Close before propagating so
+            # Windows can quarantine the database without an open-file lock.
+            connection.close()
+            raise
         with _suppress_os_error():
             self.path.chmod(0o600)
         return connection

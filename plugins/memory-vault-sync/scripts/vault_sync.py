@@ -20,7 +20,7 @@ if str(SCRIPT_DIRECTORY) not in sys.path:
 from memory_vault_runtime import core as _core  # noqa: E402
 
 
-VERSION = "0.20.0+codex.20260816101500"
+VERSION = "0.20.1+codex.20260827153312"
 EXPECTED_CORE = (
     SCRIPT_DIRECTORY / "memory_vault_runtime" / "core.py"
 ).resolve()

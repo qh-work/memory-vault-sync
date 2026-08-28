@@ -2,6 +2,28 @@
 
 All notable public changes are documented here.
 
+## 0.20.1 — 2026-08-27
+
+Windows portability and release-CI maintenance patch.
+
+### Fixed
+
+- verify private Windows directory chains with native no-reparse directory
+  handles and stable file IDs instead of the CRT file-only open API;
+- compare path and handle metadata using the stable fields each Windows API
+  actually guarantees, while retaining type, size, identity, and reparse
+  checks;
+- obtain fresh diagnostic file identity rather than cached zero-valued
+  `DirEntry` identity fields on Windows;
+- close incompatible SQLite indexes before recoverable quarantine, use native
+  absolute paths in rclone fixtures, and close test connections deterministically
+  so Windows can move or remove temporary files.
+
+### Maintenance
+
+- update pinned official GitHub Actions to their Node 24 releases without
+  introducing floating action tags.
+
 ## 0.20.0 — 2026-08-27
 
 Initial Apache-2.0 open-source release.

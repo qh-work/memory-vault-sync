@@ -107,9 +107,20 @@ def _stable_observations_match(
     left: os.stat_result,
     right: os.stat_result,
 ) -> bool:
-    return _same_identity(left, right) and all(
+    if (
+        not _same_identity(left, right)
+        or stat.S_IFMT(left.st_mode) != stat.S_IFMT(right.st_mode)
+        or int(left.st_size) != int(right.st_size)
+    ):
+        return False
+    if os.name == "nt":
+        # Windows pathname stat and CRT handle fstat expose different mode and
+        # timestamp representations for the same open file.  Stable device,
+        # inode, type and size still bind the handle to the named object.
+        return True
+    return all(
         int(getattr(left, field, 0)) == int(getattr(right, field, 0))
-        for field in ("st_mode", "st_size", "st_mtime_ns", "st_ctime_ns")
+        for field in ("st_mode", "st_mtime_ns", "st_ctime_ns")
     )
 
 

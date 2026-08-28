@@ -161,7 +161,7 @@ DEPLOYMENT_DEFAULT_REPO_URL = (
 DEPLOYMENT_CONTROL_PRIVACY_VERIFIER = "github-private-v1"
 DEPLOYMENT_CONTROL_CREDENTIAL_HOST = "github.com"
 
-VERSION = "0.20.0+codex.20260816101500"
+VERSION = "0.20.1+codex.20260827153312"
 LEGACY_CONFIG_SCHEMA = "memory-vault-sync-config/v1"
 CONFIG_SCHEMA = "memory-vault-sync-config/v2"
 PROVIDER_CONFIG_SCHEMA = "provider-config/v2"
@@ -712,6 +712,128 @@ def assert_plain_path(path: Path, *, require_file: bool | None = None) -> None:
         raise IdentityError(f"required directory is missing: {path.name}")
 
 
+def _windows_plain_directory_identity(path: Path) -> tuple[int, bytes]:
+    """Open one Windows directory without traversing a reparse point.
+
+    The CRT ``os.open`` API cannot open directories on Windows.  Use the
+    native directory-handle contract instead, retaining the no-reparse check
+    and a stable file identity for the before/after proof.
+    """
+
+    if os.name != "nt":
+        raise OSError("Windows directory handles are unavailable")
+
+    import ctypes
+    from ctypes import wintypes
+
+    class _ByHandleFileInformation(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime", wintypes.FILETIME),
+            ("ftLastAccessTime", wintypes.FILETIME),
+            ("ftLastWriteTime", wintypes.FILETIME),
+            ("dwVolumeSerialNumber", wintypes.DWORD),
+            ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD),
+            ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD),
+            ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    class _FileId128(ctypes.Structure):
+        _fields_ = [("identifier", ctypes.c_ubyte * 16)]
+
+    class _FileIdInfo(ctypes.Structure):
+        _fields_ = [
+            ("volume_serial_number", ctypes.c_ulonglong),
+            ("file_id", _FileId128),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file.restype = wintypes.HANDLE
+    get_information = kernel32.GetFileInformationByHandle
+    get_information.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(_ByHandleFileInformation),
+    ]
+    get_information.restype = wintypes.BOOL
+    get_information_ex = kernel32.GetFileInformationByHandleEx
+    get_information_ex.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    get_information_ex.restype = wintypes.BOOL
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    file_read_attributes = 0x0080
+    share_read_write_delete = 0x0001 | 0x0002 | 0x0004
+    open_existing = 3
+    file_flag_open_reparse_point = 0x00200000
+    file_flag_backup_semantics = 0x02000000
+    invalid_handle = ctypes.c_void_p(-1).value
+    handle = create_file(
+        os.fspath(path),
+        file_read_attributes,
+        share_read_write_delete,
+        None,
+        open_existing,
+        file_flag_open_reparse_point | file_flag_backup_semantics,
+        None,
+    )
+    if handle == invalid_handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        information = _ByHandleFileInformation()
+        if not get_information(handle, ctypes.byref(information)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        attributes = int(information.dwFileAttributes)
+        directory_attribute = 0x0010
+        reparse_attribute = 0x0400
+        if not attributes & directory_attribute or attributes & reparse_attribute:
+            raise PrivacyError(
+                f"private directory links are forbidden: {path.name}"
+            )
+
+        # FileIdInfo is a 128-bit identity and remains unambiguous on ReFS.
+        # Fall back to the older volume/index tuple if a filesystem does not
+        # implement that information class.
+        file_id_info = _FileIdInfo()
+        file_id_info_class = 18
+        if get_information_ex(
+            handle,
+            file_id_info_class,
+            ctypes.byref(file_id_info),
+            ctypes.sizeof(file_id_info),
+        ):
+            return (
+                int(file_id_info.volume_serial_number),
+                bytes(file_id_info.file_id.identifier),
+            )
+        file_index = (
+            int(information.nFileIndexHigh) << 32
+        ) | int(information.nFileIndexLow)
+        return (
+            int(information.dwVolumeSerialNumber),
+            file_index.to_bytes(8, "little", signed=False),
+        )
+    finally:
+        close_handle(handle)
+
+
 def assert_plain_directory_chain(root: Path, leaf: Path) -> None:
     """Require every existing component from ``root`` through ``leaf`` plain.
 
@@ -746,6 +868,25 @@ def assert_plain_directory_chain(root: Path, leaf: Path) -> None:
             raise PrivacyError(
                 f"private directory links are forbidden: {directory.name}"
             )
+        if os.name == "nt":
+            try:
+                opened_identity = _windows_plain_directory_identity(directory)
+                named_after = directory.lstat()
+                reopened_identity = _windows_plain_directory_identity(directory)
+            except OSError as exc:
+                raise PrivacyError(
+                    "private directory could not be opened safely: "
+                    f"{directory.name}"
+                ) from exc
+            if (
+                opened_identity != reopened_identity
+                or not _stable_file_observations_match(named, named_after)
+                or _is_reparse_point(directory)
+            ):
+                raise PrivacyError(
+                    f"private directory changed during verification: {directory.name}"
+                )
+            continue
         flags = (
             os.O_RDONLY
             | getattr(os, "O_DIRECTORY", 0)

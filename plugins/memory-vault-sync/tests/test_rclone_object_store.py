@@ -44,10 +44,20 @@ def rclone_config() -> dict:
             "access": "read_write",
         }
     )
+    executable = (
+        r"C:\MemoryVaultTest\rclone.exe"
+        if os.name == "nt"
+        else "/opt/rclone/rclone"
+    )
+    config_path = (
+        r"C:\MemoryVaultTest\rclone.conf"
+        if os.name == "nt"
+        else "/private/rclone.conf"
+    )
     config["adapter_configs"]["adapter-config:rclone-crypt-primary"] = {
-        "executable": "/opt/rclone/rclone",
+        "executable": executable,
         "executable_sha256": "1" * 64,
-        "config_path": "/private/rclone.conf",
+        "config_path": config_path,
         "remote_name": "vault_crypt",
         "remote_fingerprint": "2" * 64,
         "minimum_version": "1.70.0",
