@@ -15,8 +15,9 @@ Windows portability and release-CI maintenance patch.
   checks;
 - obtain fresh diagnostic file identity rather than cached zero-valued
   `DirEntry` identity fields on Windows;
-- use native absolute paths in rclone test fixtures and close SQLite test
-  connections deterministically so Windows can remove temporary files.
+- close incompatible SQLite indexes before recoverable quarantine, use native
+  absolute paths in rclone fixtures, and close test connections deterministically
+  so Windows can move or remove temporary files.
 
 ### Maintenance
 

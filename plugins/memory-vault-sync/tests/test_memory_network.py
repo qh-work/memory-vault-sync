@@ -118,6 +118,27 @@ class MemoryNetworkTests(unittest.TestCase):
         self.assertIn("w:sync", tokens)
         self.assertNotIn("w:the", memory_network.tokenize("the memory"))
 
+    def test_incompatible_schema_closes_connection_before_rebuild(self) -> None:
+        self.index.path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(str(self.index.path)) as connection:
+            connection.execute(
+                "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO metadata(key, value) VALUES('schema_version', '0')"
+            )
+            connection.commit()
+
+        with self.assertRaisesRegex(
+            memory_network.MemoryNetworkError,
+            "schema changed",
+        ):
+            self.index.remote_head()
+
+        quarantined = self.index.path.with_name("incompatible.sqlite3")
+        self.index.path.replace(quarantined)
+        self.assertTrue(quarantined.is_file())
+
     def test_fragmentation_is_bounded_and_overlapping(self) -> None:
         fragments = memory_network.fragment_text("记忆网络应当高效。" * 600)
         self.assertGreater(len(fragments), 2)
