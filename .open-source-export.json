@@ -31,7 +31,7 @@
     },
     {
       "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
-      "sha256": "e4313e22de5cccda8c5a485fbdf20d51f26336695690ffdbab5ca96bc2bb9793",
+      "sha256": "d67a72b3125e53b79ade2b5c49f83495ede43d46bbd5a613959110e6f7cdb479",
       "size": 1449
     },
     {
@@ -71,8 +71,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "aa83a24a441a650b8e2cacd0c5d70facde8ed160344a9f0c254cccad5c53c0dd",
-      "size": 1860
+      "sha256": "6b51fd9a6a5bbff38d8027bf96416965249c5d3f425273ee2c23419baf64a37f",
+      "size": 2705
     },
     {
       "path": "CHUNK_PROTOCOL.md",
@@ -161,8 +161,8 @@
     },
     {
       "path": "STATUS.md",
-      "sha256": "333584b7919af899d136424b8cebdbc93040c58d40b3796dcb7908e131ec24f7",
-      "size": 3622
+      "sha256": "d0652c5d07dcf929be15398052ef4f95672f5a1bee7f45fbca23ec89d8750a34",
+      "size": 3856
     },
     {
       "path": "SUPPORT.md",
@@ -181,7 +181,7 @@
     },
     {
       "path": "plugins/memory-vault-sync/.codex-plugin/plugin.json",
-      "sha256": "61bd207d83fe415c919f9785626fee04e3adeb1f6eca2252b39d2f52c79331e1",
+      "sha256": "020a0fe2da8335a5ec9f24fb4c588317aa8906381d2ec5136faa5961aa3c9f8e",
       "size": 4401
     },
     {
@@ -226,8 +226,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/core.py",
-      "sha256": "96cbce1fe55834063a50d143344603f6775ad810707ef44b543a70cbfde514be",
-      "size": 1598514
+      "sha256": "124ab2f99b1e044b0a31bb1ba714b18c0d2559a17cbd2224d1c714ec6d24ac75",
+      "size": 1603609
     },
     {
       "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/crypto_adapter.py",
@@ -241,8 +241,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/diagnostics.py",
-      "sha256": "f0f352beba93ce006d31e04423829049bb6cd427d8f2dd3c031aaeeff24a73fd",
-      "size": 17207
+      "sha256": "7256519b981626151833310f9347c4ead49fb168e81be2982320d1be195cebeb",
+      "size": 17606
     },
     {
       "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/encrypted_replication.py",
@@ -261,8 +261,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/memory_network.py",
-      "sha256": "fc064cfe6bc959a4087243e0036356474884f2b13d4c72680530efd090aff3c0",
-      "size": 68555
+      "sha256": "c3c32af48a04d391da771272929f5a58dd67750f98a931569c559777328182ca",
+      "size": 68892
     },
     {
       "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/packs.py",
@@ -291,8 +291,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/signed_updates.py",
-      "sha256": "8f3e9504c8574d249c5e0483ea72241626b283851aeed1f171fd1ed6ebceb781",
-      "size": 46562
+      "sha256": "53157bf10a2879df3e0c1506fb4e15f1a1682e1602e70b11b055c9bc332748af",
+      "size": 46987
     },
     {
       "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/transport.py",
@@ -301,7 +301,7 @@
     },
     {
       "path": "plugins/memory-vault-sync/scripts/vault_sync.py",
-      "sha256": "ba3ea3fccbb12140d78a2b0260742bd90bc231a03bd3f6bc768f9ac6e99c451b",
+      "sha256": "d21d79818293823828634c1526f42a96611634faff105f0e219b8da9b31ff468",
       "size": 1334
     },
     {
@@ -356,8 +356,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/tests/test_memory_network.py",
-      "sha256": "29203ce72e2eeccfdbd774d5739f009b7e77222aad1e7ca49562fc38397e4863",
-      "size": 28615
+      "sha256": "7be3c1a4245f51ebd73523e516f4f4b0e5bc4cf6a208699c45f98499bc9e860c",
+      "size": 29522
     },
     {
       "path": "plugins/memory-vault-sync/tests/test_packs.py",
@@ -376,8 +376,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/tests/test_rclone_object_store.py",
-      "sha256": "14cd883e89f0c960bf7d6b2bff033ea9d3be08e57dd12e9accd1df391e2075fe",
-      "size": 81119
+      "sha256": "62e3095aff1be0691df848905675a115877cc9f4d00926058e8f4865111c5b06",
+      "size": 81356
     },
     {
       "path": "plugins/memory-vault-sync/tests/test_redirect_policy.py",
@@ -406,8 +406,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/tests/test_vault_sync.py",
-      "sha256": "c2222811c8dd5c3a5f5c8896cdd2d84742769ccc98f12db98cbb30f6e1525fd4",
-      "size": 550480
+      "sha256": "230c8911e2d051672cd3a1e172efe99185c3f0986eece625ae4a609c19d7ab9a",
+      "size": 550520
     },
     {
       "path": "schemas/binding.schema.json",
@@ -521,5 +521,5 @@
   "repository_id": "qh-work/memory-vault-sync",
   "repository_url": "https://github.com/qh-work/memory-vault-sync.git",
   "schema_version": "memory-vault-open-source-export/v1",
-  "total_bytes": 3750773
+  "total_bytes": 3759292
 }

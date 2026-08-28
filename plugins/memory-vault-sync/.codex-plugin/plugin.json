@@ -1,6 +1,6 @@
 {
   "name": "memory-vault-sync",
-  "version": "0.20.0+codex.20260816101500",
+  "version": "0.20.1+codex.20260827153312",
   "description": "Private taskless associative memory shared across conversations and devices",
   "author": {
     "name": "qh-work"

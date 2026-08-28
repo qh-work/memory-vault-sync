@@ -15,6 +15,7 @@ import threading
 import types
 import unittest
 import zipfile
+from contextlib import closing
 from unittest import mock
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -3552,7 +3553,7 @@ class MemoryVaultSyncTests(unittest.TestCase):
             )
         )
         index_path = vault_sync._memory_network_index_path(reader_data)
-        with sqlite3.connect(str(index_path)) as connection:
+        with closing(sqlite3.connect(str(index_path))) as connection:
             connection.execute(
                 "UPDATE metadata SET value = '1' WHERE key = 'schema_version'"
             )
