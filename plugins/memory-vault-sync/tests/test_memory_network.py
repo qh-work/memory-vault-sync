@@ -120,7 +120,7 @@ class MemoryNetworkTests(unittest.TestCase):
 
     def test_incompatible_schema_closes_connection_before_rebuild(self) -> None:
         self.index.path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(str(self.index.path)) as connection:
+        with closing(sqlite3.connect(str(self.index.path))) as connection:
             connection.execute(
                 "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
             )
