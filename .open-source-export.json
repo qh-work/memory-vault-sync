@@ -71,8 +71,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "1ce149c3bac855bc2ebe777b3d94f37468b24947295812103337af235e1f7a5c",
-      "size": 2641
+      "sha256": "6b51fd9a6a5bbff38d8027bf96416965249c5d3f425273ee2c23419baf64a37f",
+      "size": 2705
     },
     {
       "path": "CHUNK_PROTOCOL.md",
@@ -261,8 +261,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/memory_network.py",
-      "sha256": "fc064cfe6bc959a4087243e0036356474884f2b13d4c72680530efd090aff3c0",
-      "size": 68555
+      "sha256": "c3c32af48a04d391da771272929f5a58dd67750f98a931569c559777328182ca",
+      "size": 68892
     },
     {
       "path": "plugins/memory-vault-sync/scripts/memory_vault_runtime/packs.py",
@@ -356,8 +356,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/tests/test_memory_network.py",
-      "sha256": "2458880e2d8a952df1b0aae00a92648faa28c997dc75d4bef146eee586ffcff5",
-      "size": 28682
+      "sha256": "0098d49b337743e5bf351af647a67188d52904a112470f49570cf182860ff7cd",
+      "size": 29513
     },
     {
       "path": "plugins/memory-vault-sync/tests/test_packs.py",
@@ -521,5 +521,5 @@
   "repository_id": "qh-work/memory-vault-sync",
   "repository_url": "https://github.com/qh-work/memory-vault-sync.git",
   "schema_version": "memory-vault-open-source-export/v1",
-  "total_bytes": 3758011
+  "total_bytes": 3759243
 }
