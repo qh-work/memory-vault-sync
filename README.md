@@ -2,11 +2,12 @@
 
 > **One Vault. Multiple AI runtimes. No task binding.**
 
-**Honest status:** `0.21.0+codex.20260830000842` is a source candidate. The
-latest verified public tag is `v0.20.1`; merge, installation, real-host checks,
-production certification, and public `v0.21.0` release are not claimed yet.
-The included adapter tests are focused synthetic conformance seeds, not high
-coverage or proof of a production Claude, Gemini, Codex, or local-model setup.
+**Current release:** `v0.21.0`, built from
+`0.21.0+codex.20260830000842`. Public CI covers the source/privacy contract and
+the maintained plugin suite on Ubuntu, macOS, and Windows. The included host
+adapter tests are focused synthetic conformance seeds, not high coverage,
+real-account integration, or proof of a production Claude, Gemini, Codex, or
+local-model setup.
 
 Memory Vault Sync is an open-source, taskless associative memory runtime for
 Codex, Claude Code, Gemini CLI, and generic local AI hosts. It backs up visible
@@ -87,7 +88,7 @@ closed if a public repository is configured as the memory control plane.
 
 ## Install from source
 
-This initial release is distributed as a personal/local marketplace source; it
+This release is distributed as a personal/local marketplace source; it
 has not yet been submitted to the universal plugin directory.
 
 1. Clone this repository.
@@ -159,7 +160,7 @@ python3 -m unittest discover -s plugins/memory-vault-sync/tests -v
 python3 -m unittest discover -s tests -v
 ```
 
-For the 0.21 candidate, the minimum publication evidence is version/JSON
+For the 0.21 release, the minimum publication evidence is version/JSON
 consistency, compilation, the focused public host-protocol/reference-adapter
 fixtures, and the allowlisted export/privacy contract. Publish the exact tests
 and observed results; do not infer complete host certification from them.

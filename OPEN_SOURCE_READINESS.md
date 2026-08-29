@@ -82,15 +82,20 @@ license but must not imply that rebranding transfers update trust.
 - Initial source release: [v0.20.0](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.20.0).
   It is retained as immutable history and marked superseded for new installs by
   the Windows portability patch.
-- Current public release: [v0.20.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.20.1),
-  merged through public PR [#1](https://github.com/qh-work/memory-vault-sync/pull/1)
-  as `26b0b5ebcfc413eb83f1724b0e01a5f07ddfde02`.
-- Acceptance run:
+- Previous public release: [v0.20.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.20.1),
+  merged through public PR [#1](https://github.com/qh-work/memory-vault-sync/pull/1).
+- Current public release: [v0.21.0](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.21.0),
+  merged through public PR [#2](https://github.com/qh-work/memory-vault-sync/pull/2).
+- The earlier v0.20.1 acceptance run
   [33135361908](https://github.com/qh-work/memory-vault-sync/actions/runs/33135361908)
   passed the complete plugin suite on Ubuntu Python 3.10/3.12, macOS Python
   3.12 and Windows Python 3.12, together with the public-source contract.
   Windows executed 423 tests; the public source/schema suite executed 86.
-- The release manifest records 102 exact allow-listed hashes and
+- The v0.21 release workflow runs the same public source/privacy and maintained
+  plugin boundaries, including the published synthetic host-protocol and
+  reference-adapter fixtures. This is source- and fixture-level conformance,
+  not real-host or production certification.
+- The v0.21 release manifest records 124 exact allow-listed hashes and
   `private_state_included=false`. The public history was created independently
   rather than publishing or rewriting the private repository history.
 - `main` requires the five release checks, up-to-date branches, linear history

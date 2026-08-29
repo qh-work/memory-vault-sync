@@ -31,7 +31,7 @@
     },
     {
       "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
-      "sha256": "d67a72b3125e53b79ade2b5c49f83495ede43d46bbd5a613959110e6f7cdb479",
+      "sha256": "bb7dd787f27bb5c8206532267d44801bf9e58731529e16c51f209bff9d4b2f80",
       "size": 1449
     },
     {
@@ -76,8 +76,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "sha256": "96288822181d9486fca07be9c0547473d3e07abe5af5d9a3f52c63f41a99fec5",
-      "size": 4224
+      "sha256": "4397d528953e0159b846800ba2af2c815ff03b74a9a615d29686c50eab2e5a10",
+      "size": 4493
     },
     {
       "path": "CHUNK_PROTOCOL.md",
@@ -111,8 +111,8 @@
     },
     {
       "path": "DEVELOPMENT.md",
-      "sha256": "3de0ac7af6ed9bcb08c316a163b8ef06d5e5b96cd1aa3393ab69b698b5e55ae1",
-      "size": 8784
+      "sha256": "da2aaad07bf2cfbf9fb3109ec1fd106de0edca256fe05b366065e16210f09535",
+      "size": 8737
     },
     {
       "path": "GEMINI.md",
@@ -141,8 +141,8 @@
     },
     {
       "path": "OPEN_SOURCE_READINESS.md",
-      "sha256": "668bcd78c59ae287e6b43f6ca0d81db1683f60692ee21f01af8b2dff92192115",
-      "size": 7780
+      "sha256": "3fd85cdc3fbdb404e2886cbc0d818f31919595c8f111d47444b23c8aa26ed3c9",
+      "size": 8223
     },
     {
       "path": "PRIVATE_DIAGNOSTICS.md",
@@ -151,18 +151,18 @@
     },
     {
       "path": "README.md",
-      "sha256": "0608c82f3a1e9816772a8565d4ac774c8b83887df4a3e3e135e1c91e905f47a9",
-      "size": 8212
+      "sha256": "239d04fa4ea46840a7ccc00767183c0fb141b47626e615cd40800ab30e1b4467",
+      "size": 8184
     },
     {
       "path": "RELEASE.md",
-      "sha256": "1977d5d3886b1029ee963f4d9444cc29e78d64f2c6757499ce9aabde879fe3ff",
-      "size": 9595
+      "sha256": "a37d66f7c9ce7ddc8cc70ec836de6e9fa8c28512cddbbdbb3612fb65d212439d",
+      "size": 9537
     },
     {
       "path": "ROADMAP.md",
-      "sha256": "060c7213f31c8f46efe196395eab50f54c0af7df8c28f5c450dad7f0a6770d75",
-      "size": 3025
+      "sha256": "d34a1f97f72c2fe540fa974db1c5eeae47ef5cb68c8e85b1c8265a900571d231",
+      "size": 3114
     },
     {
       "path": "RUNTIME_MODULES.md",
@@ -181,8 +181,8 @@
     },
     {
       "path": "STATUS.md",
-      "sha256": "8d38f5478f48eca1b65bbf8957fa785159e3fed54c324219ba5b3c228a8b6fd9",
-      "size": 5544
+      "sha256": "04e68fd4d1cd4ea9bb8dde89925a603c68db128cb6f55a82992dc22fb0924a3e",
+      "size": 5605
     },
     {
       "path": "SUPPORT.md",
@@ -201,8 +201,8 @@
     },
     {
       "path": "llms.txt",
-      "sha256": "f99ac39846c87ee622eb7c69c9898f359f2f2736ab4565197ce1a3c94ce8a3b0",
-      "size": 1531
+      "sha256": "52e9a296d45cb99f7a220326740cb23b2929c96eff75dc6788476151e7791a74",
+      "size": 1617
     },
     {
       "path": "plugins/memory-vault-sync/.codex-plugin/plugin.json",
@@ -506,8 +506,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/tests/test_vault_sync.py",
-      "sha256": "1ae66d53c199e13a9c078c635fdc2642287025a35418261028e4645883829213",
-      "size": 572158
+      "sha256": "0f053bb1a383e9218ffce42a28c76a8804c47ed15de95ecc4910eb50a151fad9",
+      "size": 572289
     },
     {
       "path": "schemas/binding.schema.json",
@@ -631,5 +631,5 @@
   "repository_id": "qh-work/memory-vault-sync",
   "repository_url": "https://github.com/qh-work/memory-vault-sync.git",
   "schema_version": "memory-vault-open-source-export/v1",
-  "total_bytes": 4034667
+  "total_bytes": 4035613
 }

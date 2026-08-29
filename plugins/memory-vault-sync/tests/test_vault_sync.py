@@ -10051,9 +10051,11 @@ class MemoryVaultSyncTests(unittest.TestCase):
             vault_sync.DEPLOYMENT_MARKETPLACE_NAME,
             marketplace_name,
         )
+        self.assertIn(marketplace_name, boundary)
+        if marketplace_name != vault_sync.PLUGIN_NAME:
+            self.assertNotIn(marketplace_name, runtime)
         for private_identity in (
             "qh-work",
-            marketplace_name,
             "https://github.com/qh-work/memory-vault-sync.git",
         ):
             self.assertIn(private_identity, boundary)

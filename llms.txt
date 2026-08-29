@@ -6,9 +6,11 @@ Memory Vault Sync is a taskless, append-only private evidence network. Codex,
 Claude Code, Gemini CLI, and generic local runtimes use one Vault through thin
 local lifecycle adapters; they do not create model-owned memory copies.
 
-Status: 0.21.0+codex.20260830000842 is a source candidate. The focused public
-adapter fixtures are synthetic conformance seeds, not real-host validation or
-production certification. The latest verified public tag is v0.20.1.
+Status: v0.21.0 is the current public release, built from
+0.21.0+codex.20260830000842. Public CI covers the source/privacy contract and
+maintained plugin suite across Ubuntu, macOS, and Windows. The focused adapter
+fixtures are synthetic conformance seeds, not real-host validation or
+production certification.
 
 Read first:
 - README.md

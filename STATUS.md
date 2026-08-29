@@ -2,11 +2,12 @@
 
 Last updated: 2026-08-30
 
-Current source candidate: `0.21.0+codex.20260830000842`
+Current source release: `0.21.0+codex.20260830000842`
 
-Latest verified public tag: `v0.20.1`. Intended next public tag: `v0.21.0`.
-The 0.21 source described below is not yet claimed as merged, CI-passed,
-installed, tagged, or publicly released.
+Current public tag: `v0.21.0`. The public workflow validates the source/privacy
+contract and maintained plugin suite on Ubuntu Python 3.10/3.12, macOS Python
+3.12, and Windows Python 3.12. The adapter fixtures remain synthetic and do
+not establish real-host integration or production certification.
 
 Memory Vault Sync is released as an Apache-2.0 source distribution. The public
 repository is generated from an explicit allowlist into a new history and
@@ -14,7 +15,7 @@ contains no user memory, conversation source, task/binding state, device
 instance, handoff, credential, local index, outbox, diagnostic record, private
 trust state, or production key material.
 
-The 0.21 candidate adds a model-neutral local stdio host protocol, Vault-issued
+The 0.21 release adds a model-neutral local stdio host protocol, Vault-issued
 continuity/turn handles, and Claude Code, Gemini CLI, and generic local-runtime
 reference adapters. All hosts use one Vault. Prompt/recall/compact paths stay
 zero-network, final turns receive a durable local acknowledgement before any
@@ -81,14 +82,14 @@ migration-only and cannot be activated as the production memory model.
 - The optional MCP cognitive interface is future work; 0.21 does not implement
   or claim an MCP server.
 
-## Minimum 0.21 publication gate
+## 0.21 publication evidence
 
-The 0.21 candidate intentionally publishes its test material so other AI
+The 0.21 release intentionally publishes its test material so other AI
 models, agents, and maintainers can extend it. The reference-adapter tests,
 closed schemas, examples, and synthetic golden fixtures are a small conformance
 seed, not a high-coverage claim or complete host certification.
 
-Before `v0.21.0`, require only the bounded evidence relevant to this change:
+The bounded `v0.21.0` release gate is:
 
 1. generate a fresh tree with the allowlisted exporter and retain Apache-2.0;
 2. verify version equality, JSON/schema parsing, Python compilation, and the

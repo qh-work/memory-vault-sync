@@ -110,12 +110,12 @@ synthetic cases for new lifecycle shapes, platforms, interruption points, and
 host releases without access to a private Vault, account, transcript, or
 credential.
 
-For the 0.21 candidate, the minimum publication gate is limited to version/JSON
-consistency, Python compilation, focused host-protocol and reference-adapter
-fixtures, and the allowlisted public-export/privacy contract. Record exactly
-what ran and publish those fixtures/results. Do not describe that minimum as a
-complete regression suite or high-coverage host acceptance. Broader suites may
-be run when cheap or risk-relevant, but are not evidence unless observed.
+For v0.21.x host-adapter changes, public CI runs the source/privacy contract
+and maintained plugin suite, including the focused host-protocol and
+reference-adapter fixtures. Record exactly what ran and publish those
+fixtures/results. This is source- and fixture-level conformance evidence only;
+it is not real-host integration, production certification, or permission to
+infer a deployment state that was not observed.
 
 Before release run all tests under `plugins/memory-vault-sync/tests`, then the
 repository validator and public-source export suites documented by the current

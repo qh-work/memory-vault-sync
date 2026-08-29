@@ -77,8 +77,7 @@ Broad runtime, storage, crypto, or migration changes normally require:
 - package manifest/runtime version consistency;
 - diff and JSON parsing checks.
 
-The 0.21 model-neutral host protocol uses a deliberately small, public minimum
-gate because it does not change the durable episode/event schema. Require:
+For each v0.21.x model-neutral host-protocol release, require:
 
 - entrypoint, core and manifest version
   `0.21.0+codex.20260830000842`, with public tag semantics `v0.21.0`;
@@ -92,14 +91,14 @@ gate because it does not change the durable episode/event schema. Require:
 - unchanged durable `memory-episode/v1` and `memory-event/v2` compatibility plus
   a retained Codex hook smoke check;
 - a fresh allowlisted Apache-2.0 public export/privacy contract before creating
-  the `v0.21.0` public release.
+  the corresponding public release.
 
 Publish those schemas, examples, focused adapter tests and synthetic golden
-fixtures so other AI models and maintainers can extend them. This minimum is
-not high coverage, real-account integration, or complete cross-platform host
-certification. Do not describe the candidate as merged, installed, CI-passed or
-released until each corresponding artifact is observed; record only tests that
-actually ran.
+fixtures so other AI models and maintainers can extend them. Public CI is
+source- and fixture-level conformance evidence only, not high coverage,
+real-account integration, production certification, or proof of local
+installation. Describe a release as merged, installed, CI-passed, or published
+only when each corresponding artifact was actually observed.
 
 When `rclone-crypt` changes, also run the credential-free live local-crypt
 acceptance with a checksum-verified supported rclone release. Record the exact

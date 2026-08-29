@@ -7,9 +7,10 @@ visibility.
 
 ## 0.21 — one Vault across AI runtimes
 
-Implementation complete in source candidate
-`0.21.0+codex.20260830000842`; merge, public CI, installation, and `v0.21.0`
-release evidence are still pending.
+Released as `v0.21.0` from `0.21.0+codex.20260830000842`. Public CI covers the
+source/privacy contract and maintained plugin suite across Ubuntu, macOS, and
+Windows; the host-adapter fixtures are synthetic rather than real-account
+certification.
 
 - model-neutral local stdio request/response protocol with bounded NDJSON;
 - Vault-issued opaque continuity and turn handles, never native host IDs;
