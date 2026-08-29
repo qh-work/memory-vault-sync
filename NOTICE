@@ -1,9 +1,7 @@
-Memory Vault Sync
+Universal Agent Memory
 Copyright 2026 qh-work
 
-This product is licensed under the Apache License, Version 2.0.
+Licensed under the Apache License, Version 2.0.
 
-The repository contains compatibility code and schemas for importing verified
-visible records from earlier task-oriented vaults. Those legacy components are
-migration-only and do not make tasks, projects, chats, or agents owners of
-memory in the active runtime.
+The protocol and single-file reference implementation are independent of any
+AI vendor, model, agent runtime, plugin system, task manager, or Git service.

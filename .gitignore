@@ -14,3 +14,9 @@ credentials*.json
 token*.json
 cookies*.json
 
+# Vaults and transfer bundles contain private memory and must never be committed.
+*.sqlite
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.ndjson
