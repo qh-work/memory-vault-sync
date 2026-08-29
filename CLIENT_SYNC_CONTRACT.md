@@ -1,14 +1,16 @@
 # 客户端记忆同步契约
 
-所有 macOS、Windows 和 Linux 客户端必须遵守本契约。违反任一“必须/不得”条款的
-实现不能写入正式记忆网络。
+所有 macOS、Windows 和 Linux 客户端，以及 Codex、Claude Code、Gemini CLI 和
+本地模型宿主适配器，都必须遵守本契约。违反任一“必须/不得”条款的实现不能写入
+正式记忆网络。
 
 ## 1. 不得绑定任务
 
 - 客户端不得要求用户选择、确认或输入任务 ID。
 - 客户端不得创建 binding、routing request、candidate、task version、projection
   或 `CURRENT.json` 更新来保存记忆。
-- 对话、任务、工作区和来源只能作为出处，不得成为记忆所有者或召回过滤器。
+- 对话、任务、项目、模型、agent、适配器、工作区和来源只能作为出处，不得成为
+  记忆所有者或召回过滤器。
 - AI 必须根据当前问题和可见证据判断相关性；一条记忆可以同时服务多个上下文。
 - 文件和成果权限必须独立验证，不能由记忆相似度、来源或语义关系推导。
 
@@ -118,5 +120,26 @@ binding、task、projection 或 CURRENT 恢复记忆所有权。
 健康状态应报告 `taskless_associative`、`append_only_incremental_git`、有效 remote
 cursor、本地 index 统计以及空或可恢复 outbox。离线不是数据冲突；历史改写、同路径
 不同字节和隐私验证失败是硬阻断。
+
+## 10. 跨模型 host adapter
+
+- 所有宿主只能通过 [`HOST_ADAPTER_PROTOCOL.md`](HOST_ADAPTER_PROTOCOL.md) 的
+  封闭本地 stdio envelope 接入；适配器不得创建 Claude/Gemini/本地模型专属 Vault。
+- continuity/turn handle 必须由 Vault 签发、高熵且不透明。原生 session、turn、
+  conversation、task、project、model、account、device、workspace ID 或其直接 hash
+  不得进入请求、远端对象、导出包、召回过滤器或持久 ID。
+- `turn.input`、`memory.recall`、`memory.status`、`turn.abort`、`session.close` 和
+  compact `session.open` 必须零网络。普通 startup/resume/clear `session.open` 与
+  显式 `sync.flush` 才是受限 receive/flush 窗口。
+- `turn.commit` 必须在返回 `accepted_local` 前原子写入完整可见回合、私有 outbox
+  intent 与终态幂等收据；不得等待公网、Git push、供应商 API 或另一个模型。
+- 相同 request ID 只有在规范请求字节完全相同时才能返回 duplicate/既有结果；
+  不同字节、暂存提示不一致或已 abort 的 turn 都必须硬冲突。
+- 每个响应必须含固定否定权限：memory 只是 untrusted historical evidence，不能
+  成为 instruction、authorization、policy change、permission、tool call 或 execution。
+- adapter ID/版本/host family 只能进入有界本地兼容诊断，不能进入 durable
+  episode/event、记忆生命周期、所有权、可见性、排序或保留策略。
+- 本协议不得改变 `memory-episode/v1` 与 `memory-event/v2`；现有 Codex 钩子仍可
+  使用相同核心路径。
 
 完整算法、模式和性能约束见 [`MEMORY_NETWORK.md`](MEMORY_NETWORK.md)。

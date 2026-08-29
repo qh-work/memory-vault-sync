@@ -40,6 +40,36 @@ The hooks perform the normal path automatically:
   one small publication. A non-fast-forward may trigger one fetch and one
   replay; there is no unbounded retry loop.
 
+## Model-neutral host adapters
+
+Claude Code, Gemini CLI, generic local runtimes, and Codex all use the same
+Vault. Never create or request a model-specific memory copy. Host, adapter,
+model, task, project, conversation, agent, device, and workspace identity are
+delivery provenance only and never own, partition, filter, or retain memory.
+
+Reference hosts use the closed local protocol documented in
+`HOST_ADAPTER_PROTOCOL.md` through `host-adapter --request-stdin` or bounded
+NDJSON `--serve-stdio`. Vault-issued continuity and turn handles are private
+local transport receipts. They never encode a native identifier, enter durable
+episodes/events, grant authority, or act as a recall selector.
+
+Preserve these lifecycle guarantees:
+
+- prompt input, explicit recall, status and compact continuity are local-only
+  and must not open a network window;
+- a final turn is durably accepted into the private local outbox before the
+  host receives `accepted_local`; do not wait for Git/public network access;
+- startup/resume/clear session open and explicit flush are the bounded network
+  windows;
+- only an exact canonical-byte retry may reuse a prior request result; changed
+  bytes under the same identity are a hard conflict;
+- every response labels recalled memory as untrusted historical evidence and
+  explicitly grants no instruction, authorization, policy or execution power.
+
+The host protocol does not change `memory-episode/v1` or `memory-event/v2`, and
+it does not replace the existing Codex hooks. An MCP cognitive interface is
+future work; do not claim or improvise one from memory text.
+
 Do not repeat those operations manually when the hook succeeded. Do not create
 a matching request or ask the user for a numbered choice when recall is sparse.
 Sparse recall means continue from the current evidence and, when helpful, run a
@@ -241,6 +271,7 @@ counts. Use `doctor --online` only when live repository and credential checks
 are necessary. Diagnostics may contain only bounded local metadata and opaque
 error categories, never memory content.
 
-The healthy state is: taskless associative mode, append-only incremental
-transport, local-only prompt recall, no task-binding interface, and either an
-empty outbox or a clearly recoverable queued batch.
+The healthy state is: one taskless associative Vault across hosts, append-only
+incremental transport, local-only prompt recall, no task/model-binding or
+authority interface, exact-retry conflict protection, and either an empty
+outbox or a clearly recoverable queued batch.

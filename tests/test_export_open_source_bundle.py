@@ -149,10 +149,29 @@ class OpenSourceExportTests(unittest.TestCase):
             self.assertTrue((destination / "ROADMAP.md").is_file())
             self.assertTrue((destination / "CHANGELOG.md").is_file())
             self.assertTrue((destination / "CONTRIBUTING.md").is_file())
+            self.assertTrue((destination / "AGENTS.md").is_file())
+            self.assertTrue((destination / "CLAUDE.md").is_file())
+            self.assertTrue((destination / "GEMINI.md").is_file())
+            self.assertTrue((destination / "llms.txt").is_file())
             self.assertTrue((destination / "CODE_OF_CONDUCT.md").is_file())
             self.assertTrue((destination / "NOTICE").is_file())
             self.assertTrue((destination / "SUPPORT.md").is_file())
             self.assertTrue((destination / "CHUNK_PROTOCOL.md").is_file())
+            self.assertTrue(
+                (destination / "HOST_ADAPTER_PROTOCOL.md").is_file()
+            )
+            self.assertTrue(
+                (destination / "schemas/memory_host_request.schema.json").is_file()
+            )
+            self.assertTrue(
+                (destination / "schemas/memory_host_response.schema.json").is_file()
+            )
+            self.assertTrue(
+                (
+                    destination
+                    / "plugins/memory-vault-sync/adapters/tests/test_reference_adapters.py"
+                ).is_file()
+            )
             self.assertTrue(
                 (destination / "PRIVATE_DIAGNOSTICS.md").is_file()
             )

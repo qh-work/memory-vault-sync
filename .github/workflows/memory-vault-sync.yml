@@ -36,9 +36,11 @@ jobs:
           git config --global user.name "Memory Vault CI"
           git config --global user.email "memory-vault-ci@localhost"
       - name: Compile runtime
-        run: python -m compileall -q plugins/memory-vault-sync/scripts
+        run: python -m compileall -q plugins/memory-vault-sync/scripts plugins/memory-vault-sync/adapters
       - name: Run plugin tests
         run: python -m unittest discover -s plugins/memory-vault-sync/tests -v
+      - name: Run public host-adapter conformance seed
+        run: python -m unittest discover -s plugins/memory-vault-sync/adapters/tests -p "test_*.py" -v
 
   source-contract:
     name: Public source contract

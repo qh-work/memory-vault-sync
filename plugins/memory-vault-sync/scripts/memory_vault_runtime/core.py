@@ -65,6 +65,7 @@ from memory_vault_runtime.errors import (  # noqa: E402
     BusyError,
     ConfigurationError,
     ConflictError,
+    HostProtocolError,
     IdentityError,
     OfflineError,
     PrivacyError,
@@ -137,7 +138,7 @@ from memory_vault_runtime.privacy import (  # noqa: E402
     scan_text_content as _scan_text_content,
     scan_visible_text,
 )
-from memory_vault_runtime import memory_network  # noqa: E402
+from memory_vault_runtime import host_adapter, memory_network  # noqa: E402
 from memory_vault_runtime import (  # noqa: E402
     checkpoint,
     crypto_adapter,
@@ -153,7 +154,7 @@ from memory_vault_runtime import (  # noqa: E402
 # storage, and synchronization code must not depend on a private repository
 # name elsewhere.
 DEPLOYMENT_PLUGIN_AUTHOR = "qh-work"
-DEPLOYMENT_MARKETPLACE_NAME = "memory-vault-public"
+DEPLOYMENT_MARKETPLACE_NAME = "memory-vault-sync"
 DEPLOYMENT_MARKETPLACE_REPOSITORY = "qh-work/memory-vault-sync"
 DEPLOYMENT_DEFAULT_REPO_URL = (
     "https://github.com/qh-work/memory-vault-sync.git"
@@ -161,7 +162,7 @@ DEPLOYMENT_DEFAULT_REPO_URL = (
 DEPLOYMENT_CONTROL_PRIVACY_VERIFIER = "github-private-v1"
 DEPLOYMENT_CONTROL_CREDENTIAL_HOST = "github.com"
 
-VERSION = "0.20.1+codex.20260827153312"
+VERSION = "0.21.0+codex.20260830000842"
 LEGACY_CONFIG_SCHEMA = "memory-vault-sync-config/v1"
 CONFIG_SCHEMA = "memory-vault-sync-config/v2"
 PROVIDER_CONFIG_SCHEMA = "provider-config/v2"
@@ -172,7 +173,8 @@ OUTBOX_SCHEMA = "memory-vault-sync-outbox/v2"
 OUTBOX_RECOVERY_SCHEMA = "memory-vault-sync-outbox-recovery/v1"
 LEGACY_MEMORY_NETWORK_OUTBOX_SCHEMA = "memory-network-outbox/v1"
 MEMORY_NETWORK_OUTBOX_SCHEMA = "memory-network-outbox/v2"
-MEMORY_NETWORK_RECEIPT_SCHEMA = "memory-network-receipt/v1"
+LEGACY_MEMORY_NETWORK_RECEIPT_SCHEMA = "memory-network-receipt/v1"
+MEMORY_NETWORK_RECEIPT_SCHEMA = "memory-network-receipt/v2"
 MEMORY_NETWORK_RECOVERY_RECEIPT_SCHEMA = (
     "memory-network-outbox-recovery-receipt/v1"
 )
@@ -10235,6 +10237,38 @@ def _transaction_id(device: Mapping[str, Any], session_id: str, turn_id: str) ->
     )
 
 
+def _host_source_key(device: Mapping[str, Any], continuity_handle: str) -> str:
+    """Derive a provider-neutral source key without retaining a host ID."""
+
+    host_adapter.validate_continuity_handle(continuity_handle)
+    return _opaque_key(
+        str(device["device_secret"]),
+        "host-source-v1",
+        continuity_handle,
+        length=64,
+    )
+
+
+def _host_issued_handle(
+    device: Mapping[str, Any],
+    *,
+    kind: str,
+    request_id: str,
+) -> str:
+    if kind not in {"continuity", "turn"}:
+        raise HostProtocolError("host handle kind is invalid")
+    digest = hmac.new(
+        str(device["device_secret"]).encode("ascii"),
+        f"host-{kind}-handle-v1\0{request_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    encoded = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    handle = ("mvc1_" if kind == "continuity" else "mvt1_") + encoded
+    if kind == "continuity":
+        return host_adapter.validate_continuity_handle(handle)
+    return host_adapter.validate_turn_handle(handle)
+
+
 def _workspace_instance(
     data_dir: Path, device: Mapping[str, Any], workspace_root: Path
 ) -> str:
@@ -10331,6 +10365,30 @@ def _memory_network_session_path(data_dir: Path, session_key: str) -> Path:
     if not re.fullmatch(r"[0-9a-f]{32}", session_key):
         raise PrivacyError("memory network session key is invalid")
     return data_dir / "state" / "memory-network" / "sessions" / f"{session_key}.json"
+
+
+def _host_request_receipt_path(
+    data_dir: Path,
+    device: Mapping[str, Any],
+    request_id: str,
+) -> Path:
+    request_key = _opaque_key(
+        str(device["device_secret"]),
+        "host-request-v1",
+        request_id,
+        length=40,
+    )
+    return data_dir / "state" / "host-adapter" / "receipts" / f"{request_key}.json"
+
+
+def _host_turn_abort_path(
+    data_dir: Path,
+    device: Mapping[str, Any],
+    continuity_handle: str,
+    turn_handle: str,
+) -> Path:
+    turn_key = _turn_key(device, continuity_handle, turn_handle)
+    return data_dir / "state" / "host-adapter" / "aborted" / f"{turn_key}.json"
 
 
 def _memory_network_prompt_path(
@@ -20240,13 +20298,18 @@ class SyncEngine:
         session_id: str,
         *,
         persist: bool = True,
+        source_key_sha256: str | None = None,
     ) -> tuple[Path, dict[str, Any]]:
         if not isinstance(session_id, str) or not session_id:
             raise IdentityError("hook session_id is missing")
         device = _device_state(self.data_dir)
         session_key = _session_key(device, session_id)
         path = _memory_network_session_path(self.data_dir, session_key)
-        source_key = _codex_source_key(session_id)
+        source_key = (
+            validate_sha256(source_key_sha256, "memory source key")
+            if source_key_sha256 is not None
+            else _codex_source_key(session_id)
+        )
         try:
             source_id = memory_network.source_id_for_key(source_key)
         except memory_network.MemoryNetworkError as exc:
@@ -20571,28 +20634,288 @@ class SyncEngine:
         session_id: str,
         turn_id: str,
         prompt: str,
+        source_key_sha256: str | None = None,
     ) -> None:
         device = _device_state(self.data_dir)
         session_key = _session_key(device, session_id)
         turn_key = _turn_key(device, session_id, turn_id)
-        self._memory_session(session_id)
-        staged = {
-            "schema_version": MEMORY_NETWORK_PROMPT_SCHEMA,
-            "session_key": session_key,
-            "turn_key": turn_key,
-            "prompt": scan_visible_text(prompt, "visible user prompt"),
-            "created_at": utc_now(),
-        }
-        atomic_write_json(
-            _memory_network_prompt_path(
-                self.data_dir, session_key, turn_key
-            ),
-            staged,
+        visible_prompt = scan_visible_text(prompt, "visible user prompt")
+        prompt_path = _memory_network_prompt_path(
+            self.data_dir, session_key, turn_key
         )
+        queue_lock = self.data_dir / "locks" / f"memory-queue-{session_key}.lock"
+        with FileLock(queue_lock):
+            self._memory_session(
+                session_id,
+                source_key_sha256=source_key_sha256,
+            )
+            if prompt_path.exists():
+                existing = load_json(prompt_path)
+                if (
+                    not isinstance(existing, Mapping)
+                    or set(existing)
+                    != {
+                        "schema_version",
+                        "session_key",
+                        "turn_key",
+                        "prompt",
+                        "created_at",
+                    }
+                    or existing.get("schema_version")
+                    != MEMORY_NETWORK_PROMPT_SCHEMA
+                    or existing.get("session_key") != session_key
+                    or existing.get("turn_key") != turn_key
+                ):
+                    raise VerificationError(
+                        "staged memory network prompt is invalid"
+                    )
+                persisted_prompt = scan_visible_text(
+                    existing.get("prompt"), "staged visible prompt"
+                )
+                if persisted_prompt != visible_prompt:
+                    raise ConflictError(
+                        "the same memory turn contains different visible input"
+                    )
+                return
+            staged = {
+                "schema_version": MEMORY_NETWORK_PROMPT_SCHEMA,
+                "session_key": session_key,
+                "turn_key": turn_key,
+                "prompt": visible_prompt,
+                "created_at": utc_now(),
+            }
+            atomic_write_json(prompt_path, staged)
+
+    @staticmethod
+    def _visible_turn_sha256(
+        prompt: str | None,
+        assistant: str | None,
+    ) -> str:
+        return sha256_jcs(
+            {
+                "visible_user_text": prompt,
+                "visible_assistant_text": assistant,
+            }
+        )
+
+    def _verify_existing_memory_network_turn(
+        self,
+        *,
+        transaction_id: str,
+        prompt: str | None,
+        assistant: str | None,
+    ) -> Mapping[str, Any] | None:
+        """Accept only a byte-equivalent retry of an existing turn intent."""
+
+        state = _find_memory_network_outbox_state(self.data_dir, transaction_id)
+        if state is None:
+            return None
+        observed_prompt: str | None = None
+        observed_assistant: str | None = None
+        existing_turn: dict[str, Any] | None = None
+        name = f"{transaction_id}.json"
+        with _MemoryNetworkOutbox(self.data_dir) as outbox:
+            if state == "pending":
+                loaded = self._load_pending_memory_network_intent(outbox, name)
+                if loaded is None:
+                    raise ConflictError(
+                        "an unverified legacy turn occupies this memory identity"
+                    )
+                _raw, intent = loaded
+                observed_prompt = intent.get("prompt")
+                observed_assistant = intent.get("last_assistant")
+                observed_sha256 = self._visible_turn_sha256(
+                    observed_prompt,
+                    observed_assistant,
+                )
+                try:
+                    episode_id = memory_network.episode_id_for_turn(
+                        str(intent["source_key_sha256"]),
+                        str(intent["turn_key"]),
+                    )
+                except memory_network.MemoryNetworkError as exc:
+                    raise VerificationError(
+                        "memory episode identity is invalid"
+                    ) from exc
+                existing_turn = {
+                    "state": state,
+                    "source_key_sha256": intent["source_key_sha256"],
+                    "source_id": intent["source_id"],
+                    "source_sequence": intent["source_sequence"],
+                    "parent_episode_ids": list(intent["parent_episode_ids"]),
+                    "episode_id": episode_id,
+                }
+            elif state == "done":
+                raw = outbox.read("done", name)
+                value = self._decode_memory_network_intent_document(raw)
+                schema = value.get("schema_version")
+                if schema == MEMORY_NETWORK_RECEIPT_SCHEMA:
+                    required = {
+                        "schema_version",
+                        "transaction_id",
+                        "episode_id",
+                        "memory_event_id",
+                        "remote_commit_sha",
+                        "visible_content_sha256",
+                        "result",
+                        "finished_at",
+                    }
+                    if set(value) != required:
+                        raise VerificationError(
+                            "memory network receipt is invalid"
+                        )
+                    receipt_sha256 = validate_sha256(
+                        value.get("visible_content_sha256"),
+                        "visible turn receipt digest",
+                    )
+                elif schema == LEGACY_MEMORY_NETWORK_RECEIPT_SCHEMA:
+                    required = {
+                        "schema_version",
+                        "transaction_id",
+                        "episode_id",
+                        "memory_event_id",
+                        "remote_commit_sha",
+                        "result",
+                        "finished_at",
+                    }
+                    if set(value) != required:
+                        raise VerificationError(
+                            "legacy memory network receipt is invalid"
+                        )
+                else:
+                    raise VerificationError(
+                        "memory network receipt schema is invalid"
+                    )
+                if value.get("transaction_id") != transaction_id:
+                    raise VerificationError(
+                        "memory network receipt transaction is invalid"
+                    )
+                episode_id = validate_identifier(
+                    value.get("episode_id"), "memory episode_id"
+                )
+                if not re.fullmatch(r"ep-[0-9a-f]{40}", episode_id):
+                    raise VerificationError("memory receipt episode is invalid")
+                episode_path = (
+                    f"memory/episodes/{episode_id[3:5]}/{episode_id}.json"
+                )
+                if not self.git.has_cache() or not self.git.file_exists(
+                    episode_path
+                ):
+                    raise ConflictError(
+                        "a completed memory turn cannot be compared locally"
+                    )
+                episode = self.git.show_json(episode_path)
+                _validate_memory_episode(episode)
+                existing_turn = {
+                    "state": state,
+                    "source_key_sha256": episode["source_key_sha256"],
+                    "source_id": episode["source_id"],
+                    "source_sequence": episode["source_sequence"],
+                    "parent_episode_ids": list(
+                        episode["parent_episode_ids"]
+                    ),
+                    "episode_id": episode_id,
+                }
+                for message in episode["messages"]:
+                    if message.get("role") == "user":
+                        observed_prompt = scan_visible_text(
+                            message.get("text"), "completed visible prompt"
+                        )
+                    elif message.get("role") == "assistant":
+                        observed_assistant = scan_visible_text(
+                            message.get("text"),
+                            "completed visible assistant message",
+                        )
+                observed_sha256 = self._visible_turn_sha256(
+                    observed_prompt,
+                    observed_assistant,
+                )
+                if schema == MEMORY_NETWORK_RECEIPT_SCHEMA and not (
+                    hmac.compare_digest(receipt_sha256, observed_sha256)
+                ):
+                    raise VerificationError(
+                        "memory receipt content digest is inconsistent"
+                    )
+            else:
+                # Quarantine and unauthenticated recovery deliberately retain
+                # no content-derived secret hashes. They cannot prove an exact
+                # retry, so fail closed instead of replacing the old intent.
+                raise ConflictError(
+                    "an unverified memory turn occupies this identity"
+                )
+        desired_sha256 = self._visible_turn_sha256(
+            observed_prompt if prompt is None else prompt,
+            assistant,
+        )
+        if not hmac.compare_digest(observed_sha256, desired_sha256):
+            raise ConflictError(
+                "the same memory turn contains different visible content"
+            )
+        if existing_turn is None:
+            raise VerificationError("existing memory turn is incomplete")
+        return existing_turn
+
+    def _reconcile_existing_memory_network_turn(
+        self,
+        *,
+        session_path: Path,
+        session: MutableMapping[str, Any],
+        prompt_path: Path,
+        existing: Mapping[str, Any],
+    ) -> None:
+        """Finish the local session transition after a crash-lost ACK."""
+
+        if (
+            existing.get("source_key_sha256")
+            != session.get("source_key_sha256")
+            or existing.get("source_id") != session.get("source_id")
+        ):
+            raise ConflictError(
+                "an existing memory turn belongs to another local source"
+            )
+        sequence = existing.get("source_sequence")
+        if isinstance(sequence, bool) or not isinstance(sequence, int):
+            raise VerificationError("existing memory sequence is invalid")
+        current = session.get("next_source_sequence")
+        if isinstance(current, bool) or not isinstance(current, int):
+            raise VerificationError("memory session sequence is invalid")
+        episode_id = validate_identifier(
+            existing.get("episode_id"), "existing memory episode_id"
+        )
+        parents = existing.get("parent_episode_ids")
+        if not isinstance(parents, list) or any(
+            not isinstance(parent, str) for parent in parents
+        ):
+            raise VerificationError("existing memory parents are invalid")
+        if current < sequence:
+            raise VerificationError("memory session sequence moved backwards")
+        if current == sequence:
+            parent = session.get("last_episode_id")
+            expected_parents = [parent] if isinstance(parent, str) else []
+            if parents != expected_parents:
+                raise ConflictError(
+                    "existing memory turn has a different parent chain"
+                )
+            session["next_source_sequence"] = sequence + 1
+            session["last_episode_id"] = episode_id
+            session["updated_at"] = utc_now()
+            atomic_write_json(session_path, session)
+        elif current == sequence + 1 and (
+            session.get("last_episode_id") != episode_id
+        ):
+            raise ConflictError(
+                "memory session advanced to a different episode"
+            )
+        with contextlib.suppress(FileNotFoundError):
+            prompt_path.unlink()
 
     def _queue_memory_network_stop(
         self,
         hook_input: Mapping[str, Any],
+        *,
+        source_key_sha256: str | None = None,
+        visible_user_text: str | None = None,
+        abort_marker: Path | None = None,
     ) -> tuple[str, str]:
         session_id = hook_input.get("session_id")
         turn_id = hook_input.get("turn_id")
@@ -20602,19 +20925,14 @@ class SyncEngine:
         session_key = _session_key(device, session_id)
         turn_key = _turn_key(device, session_id, turn_id)
         transaction = _transaction_id(device, session_id, turn_id)
-        existing = _find_memory_network_outbox_state(
-            self.data_dir, transaction
-        )
-        if existing is not None:
-            return transaction, existing
         queue_lock = self.data_dir / "locks" / f"memory-queue-{session_key}.lock"
         with FileLock(queue_lock):
-            existing = _find_memory_network_outbox_state(
-                self.data_dir, transaction
+            if abort_marker is not None and abort_marker.exists():
+                raise ConflictError("the memory turn was already aborted")
+            session_path, session = self._memory_session(
+                session_id,
+                source_key_sha256=source_key_sha256,
             )
-            if existing is not None:
-                return transaction, existing
-            session_path, session = self._memory_session(session_id)
             prompt: str | None = None
             prompt_path = _memory_network_prompt_path(
                 self.data_dir, session_key, turn_key
@@ -20634,6 +20952,18 @@ class SyncEngine:
                 prompt = scan_visible_text(
                     staged.get("prompt"), "staged visible prompt"
                 )
+            supplied_prompt = (
+                scan_visible_text(visible_user_text, "visible user prompt")
+                if visible_user_text is not None
+                else None
+            )
+            if prompt is not None and supplied_prompt is not None:
+                if prompt != supplied_prompt:
+                    raise ConflictError(
+                        "staged and committed visible input differ"
+                    )
+            elif supplied_prompt is not None:
+                prompt = supplied_prompt
             assistant_raw = hook_input.get("last_assistant_message")
             assistant = (
                 scan_visible_text(assistant_raw, "visible assistant message")
@@ -20642,6 +20972,19 @@ class SyncEngine:
             )
             if prompt is None and assistant is None:
                 raise PrivacyError("Stop hook has no visible content to back up")
+            existing = self._verify_existing_memory_network_turn(
+                transaction_id=transaction,
+                prompt=prompt,
+                assistant=assistant,
+            )
+            if existing is not None:
+                self._reconcile_existing_memory_network_turn(
+                    session_path=session_path,
+                    session=session,
+                    prompt_path=prompt_path,
+                    existing=existing,
+                )
+                return transaction, str(existing["state"])
             sequence = int(session["next_source_sequence"])
             parent = session.get("last_episode_id")
             parents = [str(parent)] if isinstance(parent, str) else []
@@ -20774,6 +21117,10 @@ class SyncEngine:
             "memory_event_id": event_id,
             "remote_commit_sha": validate_git_sha(
                 remote_commit, "memory network remote commit"
+            ),
+            "visible_content_sha256": self._visible_turn_sha256(
+                intent.get("prompt"),
+                intent.get("last_assistant"),
             ),
             "result": "published",
             "finished_at": utc_now(),
@@ -21180,6 +21527,610 @@ class SyncEngine:
             "skipped_legacy_revisions": skipped_legacy_revisions,
         }
 
+    def _host_request_digest(
+        self,
+        request: host_adapter.HostRequest,
+    ) -> str:
+        return sha256_jcs(host_adapter.request_document(request))
+
+    def _host_receipt_signature(
+        self,
+        value: Mapping[str, Any],
+    ) -> str:
+        unsigned = dict(value)
+        unsigned.pop("integrity_hmac_sha256", None)
+        device = _device_state(self.data_dir)
+        return hmac.new(
+            str(device["device_secret"]).encode("ascii"),
+            b"memory-vault-host-request-receipt-v1\0"
+            + jcs_json_bytes(unsigned),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def _load_host_request_receipt(
+        self,
+        request: host_adapter.HostRequest,
+    ) -> Mapping[str, Any] | None:
+        device = _device_state(self.data_dir)
+        path = _host_request_receipt_path(
+            self.data_dir,
+            device,
+            request.request_id,
+        )
+        if not path.exists():
+            return None
+        assert_plain_path(path, require_file=True)
+        value = load_json(path)
+        required = {
+            "schema_version",
+            "request_key",
+            "request_sha256",
+            "operation",
+            "result",
+            "created_at",
+            "integrity_hmac_sha256",
+        }
+        if (
+            not isinstance(value, Mapping)
+            or set(value) != required
+            or value.get("schema_version")
+            != host_adapter.REQUEST_RECEIPT_SCHEMA
+            or value.get("request_key") != path.stem
+            or value.get("operation") != request.operation
+            or not isinstance(value.get("result"), Mapping)
+        ):
+            raise VerificationError("local host request receipt is invalid")
+        expected_request_sha256 = self._host_request_digest(request)
+        observed_request_sha256 = validate_sha256(
+            value.get("request_sha256"), "host request digest"
+        )
+        if not hmac.compare_digest(
+            expected_request_sha256,
+            observed_request_sha256,
+        ):
+            raise ConflictError(
+                "the same host request id contains different bytes"
+            )
+        validate_rfc3339(value.get("created_at"), "host receipt timestamp")
+        signature = validate_sha256(
+            value.get("integrity_hmac_sha256"),
+            "host receipt integrity signature",
+        )
+        if not hmac.compare_digest(
+            signature,
+            self._host_receipt_signature(value),
+        ):
+            raise VerificationError(
+                "local host request receipt integrity check failed"
+            )
+        return dict(value["result"])
+
+    def _store_host_request_receipt(
+        self,
+        request: host_adapter.HostRequest,
+        result: Mapping[str, Any],
+    ) -> None:
+        device = _device_state(self.data_dir)
+        path = _host_request_receipt_path(
+            self.data_dir,
+            device,
+            request.request_id,
+        )
+        if path.exists():
+            existing = self._load_host_request_receipt(request)
+            if dict(existing or {}) != dict(result):
+                raise ConflictError("host request receipt result changed")
+            return
+        receipt = {
+            "schema_version": host_adapter.REQUEST_RECEIPT_SCHEMA,
+            "request_key": path.stem,
+            "request_sha256": self._host_request_digest(request),
+            "operation": request.operation,
+            "result": dict(result),
+            "created_at": utc_now(),
+        }
+        receipt["integrity_hmac_sha256"] = self._host_receipt_signature(
+            receipt
+        )
+        atomic_write_json(path, receipt)
+        persisted = self._load_host_request_receipt(request)
+        if dict(persisted or {}) != dict(result):
+            raise VerificationError("host request receipt was not durable")
+
+    def _host_evidence_context(
+        self,
+        *,
+        query: str,
+        limit: int,
+        maximum_context_bytes: int,
+    ) -> Mapping[str, Any] | None:
+        recalled = self.recall_memory(
+            query,
+            limit=limit,
+            maximum_context_bytes=maximum_context_bytes,
+        )
+        context = recalled.get("context")
+        if not isinstance(context, str) or not context:
+            return None
+        included = context.count("\n- [")
+        result_count = int(recalled["result_count"])
+        omitted = max(0, result_count - included)
+        return {
+            "kind": "evidence_context",
+            "content_type": "text/plain",
+            "authority": "none",
+            "instruction_eligible": False,
+            "authorization_eligible": False,
+            "execution_eligible": False,
+            "current_user_input_precedence": True,
+            "truncated": omitted > 0,
+            "omitted_count": omitted,
+            "text": context,
+        }
+
+    def _host_session_open(
+        self,
+        request: host_adapter.HostRequest,
+    ) -> tuple[str, Mapping[str, Any]]:
+        payload = request.payload
+        device = _device_state(self.data_dir)
+        supplied = payload.get("continuity_handle")
+        continuity_handle = (
+            host_adapter.validate_continuity_handle(supplied)
+            if supplied is not None
+            else _host_issued_handle(
+                device,
+                kind="continuity",
+                request_id=request.request_id,
+            )
+        )
+        source_key = _host_source_key(device, continuity_handle)
+        self._memory_session(
+            continuity_handle,
+            source_key_sha256=source_key,
+        )
+        reason = str(payload["reason"])
+        status = "accepted_local"
+        sync_state = "local_only"
+        network_accessed = False
+        if reason != "compact" and self.config["sync"].get(
+            "startup_pull", True
+        ):
+            network_accessed = True
+            try:
+                with FileLock(self.lock_path):
+                    self.git.ensure()
+                    if self.config["sync"].get("stop_publish", True):
+                        publication = self._publish_memory_network_batch(
+                            remote_ready=True
+                        )
+                        if publication.get("state") == "idle":
+                            receive = self._receive_memory_network()
+                        else:
+                            receive = publication.get("receive")
+                        sync_state = str(publication.get("state", "updated"))
+                        if publication.get("state") == "published":
+                            status = "published"
+                    else:
+                        receive = self._receive_memory_network()
+                        sync_state = str(receive.get("state", "updated"))
+            except OfflineError:
+                status = "degraded"
+                sync_state = "offline_local_index_retained"
+            except ConflictError:
+                status = "degraded"
+                sync_state = "remote_history_conflict_local_index_retained"
+        return status, {
+            "continuity_handle": continuity_handle,
+            "sync_state": sync_state,
+            "network_accessed": network_accessed,
+        }
+
+    def _host_turn_input(
+        self,
+        request: host_adapter.HostRequest,
+    ) -> tuple[str, Mapping[str, Any]]:
+        payload = request.payload
+        device = _device_state(self.data_dir)
+        continuity_handle = host_adapter.validate_continuity_handle(
+            payload.get("continuity_handle")
+        )
+        supplied_turn = payload.get("turn_handle")
+        turn_handle = (
+            host_adapter.validate_turn_handle(supplied_turn)
+            if supplied_turn is not None
+            else _host_issued_handle(
+                device,
+                kind="turn",
+                request_id=request.request_id,
+            )
+        )
+        prompt = scan_visible_text(
+            payload.get("visible_user_text"), "visible user prompt"
+        )
+        source_key = _host_source_key(device, continuity_handle)
+        if self.config["sync"].get("conversation_backup", True):
+            self._stage_memory_network_prompt(
+                session_id=continuity_handle,
+                turn_id=turn_handle,
+                prompt=prompt,
+                source_key_sha256=source_key,
+            )
+        else:
+            self._memory_session(
+                continuity_handle,
+                source_key_sha256=source_key,
+            )
+        evidence: Mapping[str, Any] | None = None
+        if self.config["sync"].get("associative_recall_enabled", True):
+            evidence = self._host_evidence_context(
+                query=prompt,
+                limit=int(payload["limit"]),
+                maximum_context_bytes=int(
+                    self.config["sync"].get(
+                        "memory_recall_context_bytes",
+                        DEFAULT_MEMORY_RECALL_CONTEXT_BYTES,
+                    )
+                ),
+            )
+        return "accepted_local", {
+            "continuity_handle": continuity_handle,
+            "turn_handle": turn_handle,
+            "evidence_context": evidence,
+            "network_accessed": False,
+        }
+
+    def _host_turn_commit(
+        self,
+        request: host_adapter.HostRequest,
+    ) -> tuple[str, Mapping[str, Any]]:
+        if not self.config["sync"].get("conversation_backup", True):
+            raise ConfigurationError("visible memory backup is disabled")
+        payload = request.payload
+        device = _device_state(self.data_dir)
+        continuity_handle = host_adapter.validate_continuity_handle(
+            payload.get("continuity_handle")
+        )
+        supplied_turn = payload.get("turn_handle")
+        turn_handle = (
+            host_adapter.validate_turn_handle(supplied_turn)
+            if supplied_turn is not None
+            else _host_issued_handle(
+                device,
+                kind="turn",
+                request_id=request.request_id,
+            )
+        )
+        visible_user = payload.get("visible_user_text")
+        if visible_user is not None:
+            visible_user = scan_visible_text(
+                visible_user, "visible user prompt"
+            )
+        visible_assistant = payload.get("visible_assistant_text")
+        if visible_assistant is not None:
+            visible_assistant = scan_visible_text(
+                visible_assistant, "visible assistant message"
+            )
+        if visible_user is None:
+            session_key = _session_key(device, continuity_handle)
+            turn_key = _turn_key(device, continuity_handle, turn_handle)
+            prompt_path = _memory_network_prompt_path(
+                self.data_dir,
+                session_key,
+                turn_key,
+            )
+            if not prompt_path.exists():
+                raise ConflictError(
+                    "turn commit has no staged or atomic visible user input"
+                )
+        abort_marker = _host_turn_abort_path(
+            self.data_dir,
+            device,
+            continuity_handle,
+            turn_handle,
+        )
+        transaction, state = self._queue_memory_network_stop(
+            {
+                "session_id": continuity_handle,
+                "turn_id": turn_handle,
+                "last_assistant_message": visible_assistant,
+            },
+            source_key_sha256=_host_source_key(
+                device,
+                continuity_handle,
+            ),
+            visible_user_text=visible_user,
+            abort_marker=abort_marker,
+        )
+        return "accepted_local", {
+            "continuity_handle": continuity_handle,
+            "turn_handle": turn_handle,
+            "outcome": str(payload["outcome"]),
+            "receipt_id": transaction,
+            "queue_state": state,
+            "network_accessed": False,
+        }
+
+    def _host_turn_abort(
+        self,
+        request: host_adapter.HostRequest,
+    ) -> tuple[str, Mapping[str, Any]]:
+        payload = request.payload
+        device = _device_state(self.data_dir)
+        continuity_handle = host_adapter.validate_continuity_handle(
+            payload.get("continuity_handle")
+        )
+        turn_handle = host_adapter.validate_turn_handle(
+            payload.get("turn_handle")
+        )
+        session_key = _session_key(device, continuity_handle)
+        turn_key = _turn_key(device, continuity_handle, turn_handle)
+        marker = _host_turn_abort_path(
+            self.data_dir,
+            device,
+            continuity_handle,
+            turn_handle,
+        )
+        reason = str(payload["reason"])
+        queue_lock = self.data_dir / "locks" / f"memory-queue-{session_key}.lock"
+        transaction = _transaction_id(
+            device,
+            continuity_handle,
+            turn_handle,
+        )
+        with FileLock(queue_lock):
+            existing_state = _find_memory_network_outbox_state(
+                self.data_dir,
+                transaction,
+            )
+            if existing_state is not None:
+                if existing_state not in {"pending", "done"}:
+                    raise ConflictError(
+                        "an unverified memory turn cannot be aborted"
+                    )
+                prompt_path = _memory_network_prompt_path(
+                    self.data_dir,
+                    session_key,
+                    turn_key,
+                )
+                with contextlib.suppress(FileNotFoundError):
+                    prompt_path.unlink()
+                return "accepted_local", {
+                    "continuity_handle": continuity_handle,
+                    "turn_handle": turn_handle,
+                    "aborted": False,
+                    "terminal_state": "committed",
+                    "queue_state": existing_state,
+                    "network_accessed": False,
+                }
+            if marker.exists():
+                existing = load_json(marker)
+                if (
+                    not isinstance(existing, Mapping)
+                    or set(existing)
+                    != {
+                        "schema_version",
+                        "session_key",
+                        "turn_key",
+                        "reason",
+                        "created_at",
+                    }
+                    or existing.get("schema_version")
+                    != "memory-vault-host-turn-abort/v1"
+                    or existing.get("session_key") != session_key
+                    or existing.get("turn_key") != turn_key
+                    or existing.get("reason") != reason
+                ):
+                    raise ConflictError(
+                        "the same memory turn has a different abort record"
+                    )
+            else:
+                atomic_write_json(
+                    marker,
+                    {
+                        "schema_version": "memory-vault-host-turn-abort/v1",
+                        "session_key": session_key,
+                        "turn_key": turn_key,
+                        "reason": reason,
+                        "created_at": utc_now(),
+                    },
+                )
+            prompt_path = _memory_network_prompt_path(
+                self.data_dir,
+                session_key,
+                turn_key,
+            )
+            with contextlib.suppress(FileNotFoundError):
+                prompt_path.unlink()
+        return "accepted_local", {
+            "continuity_handle": continuity_handle,
+            "turn_handle": turn_handle,
+            "aborted": True,
+            "terminal_state": "aborted",
+            "network_accessed": False,
+        }
+
+    def _host_memory_status(self) -> Mapping[str, Any]:
+        counts: dict[str, int] = {}
+        for state in ("pending", "done", "quarantine", "recovery-v1"):
+            root = self.data_dir / "memory-network" / "outbox" / state
+            counts[state] = (
+                sum(1 for path in root.glob("*.json") if path.is_file())
+                if root.exists()
+                else 0
+            )
+        index: Mapping[str, Any] = {
+            "available": False,
+            "documents": 0,
+            "fragments": 0,
+            "edges": 0,
+        }
+        if _memory_network_index_path(self.data_dir).exists():
+            try:
+                stats = self._memory_index().stats()
+                index = {
+                    "available": True,
+                    "documents": int(stats["documents"]),
+                    "fragments": int(stats["fragments"]),
+                    "edges": int(stats["edges"]),
+                }
+            except memory_network.MemoryNetworkError:
+                index = {**index, "state": "rebuild_required"}
+        return {
+            "plugin_version": VERSION,
+            "enabled": bool(self.config.get("enabled")),
+            "memory_model": "taskless_associative_append_only",
+            "outbox": counts,
+            "index": dict(index),
+            "network_accessed": False,
+        }
+
+    def flush_memory_network(self) -> Mapping[str, Any]:
+        with FileLock(self.lock_path):
+            self.git.ensure()
+            publication = self._publish_memory_network_batch(
+                remote_ready=True
+            )
+            if publication.get("state") == "idle":
+                receive = self._receive_memory_network()
+            else:
+                receive = publication.get("receive")
+        return {
+            "schema_version": "memory-network-flush/v1",
+            "publication": publication,
+            "receive": receive,
+        }
+
+    def _execute_host_request(
+        self,
+        request: host_adapter.HostRequest,
+    ) -> tuple[str, Mapping[str, Any]]:
+        operation = request.operation
+        if operation == "capabilities":
+            return "accepted_local", host_adapter.capability_result()
+        if operation == "session.open":
+            return self._host_session_open(request)
+        if operation == "turn.input":
+            return self._host_turn_input(request)
+        if operation == "turn.commit":
+            return self._host_turn_commit(request)
+        if operation == "turn.abort":
+            return self._host_turn_abort(request)
+        if operation == "session.close":
+            continuity_handle = host_adapter.validate_continuity_handle(
+                request.payload.get("continuity_handle")
+            )
+            return "accepted_local", {
+                "continuity_handle": continuity_handle,
+                "closed": True,
+                "network_accessed": False,
+            }
+        if operation == "memory.recall":
+            evidence = self._host_evidence_context(
+                query=scan_visible_text(
+                    request.payload.get("query"), "associative memory query"
+                ),
+                limit=int(request.payload["limit"]),
+                maximum_context_bytes=int(
+                    request.payload["maximum_context_bytes"]
+                ),
+            )
+            return "accepted_local", {
+                "evidence_context": evidence,
+                "network_accessed": False,
+            }
+        if operation == "memory.remember":
+            result = self.record_semantic_memory(
+                request.payload["proposal"]
+            )
+            state = str(result.get("state"))
+            return (
+                "duplicate" if state == "already_recorded" else "published",
+                dict(result),
+            )
+        if operation == "memory.status":
+            return "accepted_local", self._host_memory_status()
+        if operation == "sync.flush":
+            result = self.flush_memory_network()
+            publication = result.get("publication")
+            published = (
+                int(publication.get("published", 0))
+                if isinstance(publication, Mapping)
+                else 0
+            )
+            return (
+                "published" if published else "accepted_local",
+                dict(result),
+            )
+        raise HostProtocolError("host operation is unsupported")
+
+    def host_adapter_request(
+        self,
+        request: host_adapter.HostRequest,
+    ) -> Mapping[str, Any]:
+        if request.operation != "capabilities" and not self.config.get(
+            "enabled"
+        ):
+            raise ConfigurationError("Memory Vault is disabled")
+        if request.operation not in host_adapter.MUTATING_RECEIPT_OPERATIONS:
+            status, result = self._execute_host_request(request)
+            return host_adapter.success_response(
+                request,
+                status=status,
+                result=result,
+            )
+        device = _device_state(self.data_dir)
+        receipt_path = _host_request_receipt_path(
+            self.data_dir,
+            device,
+            request.request_id,
+        )
+        request_lock = (
+            self.data_dir
+            / "locks"
+            / f"host-request-{receipt_path.stem}.lock"
+        )
+        with FileLock(request_lock):
+            existing = self._load_host_request_receipt(request)
+            if existing is not None:
+                replayed = dict(existing)
+                if request.operation == "turn.input":
+                    prompt = scan_visible_text(
+                        request.payload.get("visible_user_text"),
+                        "visible user prompt",
+                    )
+                    replayed["evidence_context"] = (
+                        self._host_evidence_context(
+                            query=prompt,
+                            limit=int(request.payload["limit"]),
+                            maximum_context_bytes=int(
+                                self.config["sync"].get(
+                                    "memory_recall_context_bytes",
+                                    DEFAULT_MEMORY_RECALL_CONTEXT_BYTES,
+                                )
+                            ),
+                        )
+                        if self.config["sync"].get(
+                            "associative_recall_enabled", True
+                        )
+                        else None
+                    )
+                return host_adapter.success_response(
+                    request,
+                    status="duplicate",
+                    result=replayed,
+                )
+            status, result = self._execute_host_request(request)
+            stable_result = dict(result)
+            if request.operation == "turn.input":
+                stable_result["evidence_context"] = None
+            self._store_host_request_receipt(request, stable_result)
+            return host_adapter.success_response(
+                request,
+                status=status,
+                result=result,
+            )
+
     def memory_network_session_start(
         self,
         hook_input: Mapping[str, Any],
@@ -21367,6 +22318,7 @@ class SyncEngine:
         query: str,
         *,
         limit: int = DEFAULT_MEMORY_RECALL_LIMIT,
+        maximum_context_bytes: int | None = None,
     ) -> Mapping[str, Any]:
         if not self._memory_network_enabled():
             raise ConfigurationError("taskless memory network is not enabled")
@@ -21380,10 +22332,14 @@ class SyncEngine:
                 raise VerificationError("local memory index is invalid") from exc
         context = memory_network.format_recall_context(
             hits,
-            maximum_bytes=int(
-                self.config["sync"].get(
-                    "memory_recall_context_bytes",
-                    DEFAULT_MEMORY_RECALL_CONTEXT_BYTES,
+            maximum_bytes=(
+                int(maximum_context_bytes)
+                if maximum_context_bytes is not None
+                else int(
+                    self.config["sync"].get(
+                        "memory_recall_context_bytes",
+                        DEFAULT_MEMORY_RECALL_CONTEXT_BYTES,
+                    )
                 )
             ),
         )
@@ -41182,6 +42138,24 @@ def build_parser() -> argparse.ArgumentParser:
         "flush",
         help="publish queued memory episodes and receive remote additions",
     )
+    host_protocol = subparsers.add_parser(
+        "host-adapter",
+        help=(
+            "serve the strict model-neutral local Memory Vault protocol over "
+            "standard input and output"
+        ),
+    )
+    host_mode = host_protocol.add_mutually_exclusive_group(required=True)
+    host_mode.add_argument(
+        "--request-stdin",
+        action="store_true",
+        help="read exactly one bounded JSON request from standard input",
+    )
+    host_mode.add_argument(
+        "--serve-stdio",
+        action="store_true",
+        help="serve bounded newline-delimited JSON requests until EOF",
+    )
     recall = subparsers.add_parser(
         "recall",
         help="query the private local associative index without network access",
@@ -41341,6 +42315,129 @@ def _print_json(value: Any) -> None:
     ).encode("utf-8")
     sys.stdout.buffer.write(payload)
     sys.stdout.buffer.flush()
+
+
+def _decode_host_adapter_request(
+    raw: bytes,
+) -> tuple[host_adapter.HostRequest, str | None, str | None]:
+    if not raw or len(raw) > host_adapter.MAX_REQUEST_BYTES:
+        raise HostProtocolError("host request size is invalid")
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raise HostProtocolError("host request UTF-8 BOM is forbidden")
+    try:
+        value = strict_json_loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        raise HostProtocolError("host request is not strict UTF-8 JSON") from exc
+    request_id = value.get("request_id") if isinstance(value, Mapping) else None
+    operation = value.get("operation") if isinstance(value, Mapping) else None
+    return (
+        host_adapter.validate_request(value),
+        request_id if isinstance(request_id, str) else None,
+        operation if isinstance(operation, str) else None,
+    )
+
+
+def _host_adapter_response_for_raw(
+    raw: bytes,
+    *,
+    config: Mapping[str, Any] | None,
+    data_dir: Path | None,
+) -> Mapping[str, Any]:
+    request_id: str | None = None
+    operation: str | None = None
+    try:
+        if raw and len(raw) <= host_adapter.MAX_REQUEST_BYTES and not raw.startswith(
+            b"\xef\xbb\xbf"
+        ):
+            with contextlib.suppress(
+                UnicodeDecodeError,
+                ValueError,
+                json.JSONDecodeError,
+            ):
+                peek = strict_json_loads(raw.decode("utf-8"))
+                if isinstance(peek, Mapping):
+                    raw_request_id = peek.get("request_id")
+                    raw_operation = peek.get("operation")
+                    request_id = (
+                        raw_request_id
+                        if isinstance(raw_request_id, str)
+                        else None
+                    )
+                    operation = (
+                        raw_operation
+                        if isinstance(raw_operation, str)
+                        else None
+                    )
+        request, request_id, operation = _decode_host_adapter_request(raw)
+        if request.operation == "capabilities":
+            return host_adapter.success_response(
+                request,
+                status="accepted_local",
+                result=host_adapter.capability_result(),
+            )
+        if config is None or data_dir is None:
+            raise ConfigurationError("run configure first")
+        return SyncEngine(config, data_dir).host_adapter_request(request)
+    except VaultSyncError as exc:
+        return host_adapter.error_response(
+            request_id=request_id,
+            operation=operation,
+            code=exc.code,
+            retryable=exc.retryable,
+        )
+    except Exception:
+        if data_dir is not None:
+            _record_unexpected_diagnostic(
+                data_dir,
+                operation="host-adapter.request",
+            )
+        return host_adapter.error_response(
+            request_id=request_id,
+            operation=operation,
+            code="internal_error",
+            retryable=True,
+        )
+
+
+def _host_adapter_stdio_dispatch(
+    *,
+    config: Mapping[str, Any] | None,
+    data_dir: Path | None,
+    serve: bool,
+) -> int:
+    if not serve:
+        raw = sys.stdin.buffer.read(host_adapter.MAX_REQUEST_BYTES + 1)
+        _print_json(
+            _host_adapter_response_for_raw(
+                raw,
+                config=config,
+                data_dir=data_dir,
+            )
+        )
+        return 0
+    while True:
+        raw = sys.stdin.buffer.readline(host_adapter.MAX_REQUEST_BYTES + 2)
+        if not raw:
+            return 0
+        if len(raw) > host_adapter.MAX_REQUEST_BYTES:
+            _print_json(
+                host_adapter.error_response(
+                    request_id=None,
+                    operation=None,
+                    code="host_protocol",
+                    retryable=False,
+                )
+            )
+            return 2
+        if not raw.strip():
+            continue
+        _print_json(
+            _host_adapter_response_for_raw(
+                raw,
+                config=config,
+                data_dir=data_dir,
+            )
+        )
 
 
 def _diagnostic_lock_path(data_dir: Path) -> Path:
@@ -41508,6 +42605,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             )
             return 0
+        if args.command == "host-adapter":
+            return _host_adapter_stdio_dispatch(
+                config=None,
+                data_dir=data_dir,
+                serve=bool(args.serve_stdio),
+            )
         _print_json(
             {
                 "schema_version": "memory-vault-sync-error/v1",
@@ -41519,6 +42622,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
     except Exception:
+        if args.command == "host-adapter":
+            return _host_adapter_stdio_dispatch(
+                config=None,
+                data_dir=data_dir,
+                serve=bool(args.serve_stdio),
+            )
         if args.command != "hook":
             raise
         with contextlib.suppress(Exception):
@@ -41556,6 +42665,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if data_dir is None:
         raise ConfigurationError("local plugin data directory is unavailable")
+    if args.command == "host-adapter":
+        return _host_adapter_stdio_dispatch(
+            config=config,
+            data_dir=data_dir,
+            serve=bool(args.serve_stdio),
+        )
     if args.command == "hook":
         return _hook_dispatch(args.event, config, data_dir)
     try:
@@ -41587,20 +42702,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif args.command == "configure-chunking":
                 result = configure_chunking_command(args, engine)
             elif args.command == "flush":
-                with FileLock(engine.lock_path):
-                    engine.git.ensure()
-                    publication = engine._publish_memory_network_batch(
-                        remote_ready=True
-                    )
-                    if publication.get("state") == "idle":
-                        receive = engine._receive_memory_network()
-                    else:
-                        receive = publication.get("receive")
-                result = {
-                    "schema_version": "memory-network-flush/v1",
-                    "publication": publication,
-                    "receive": receive,
-                }
+                result = engine.flush_memory_network()
             elif args.command == "recall":
                 result = engine.recall_memory(
                     read_private_memory_query(),

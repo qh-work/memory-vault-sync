@@ -74,6 +74,33 @@ Every export still requires an explicit license file. The maintained Apache-2.0
 text is `open_source/LICENSE`; forks may deliberately supply another reviewed
 license but must not imply that rebranding transfers update trust.
 
+## Publication evidence
+
+- Public repository: [qh-work/memory-vault-sync](https://github.com/qh-work/memory-vault-sync),
+  visible as a public Apache-2.0 repository with issues, discussions, secret
+  scanning, push protection and Dependabot security updates enabled.
+- Initial source release: [v0.20.0](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.20.0).
+  It is retained as immutable history and marked superseded for new installs by
+  the Windows portability patch.
+- Current public release: [v0.20.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.20.1),
+  merged through public PR [#1](https://github.com/qh-work/memory-vault-sync/pull/1)
+  as `26b0b5ebcfc413eb83f1724b0e01a5f07ddfde02`.
+- Acceptance run:
+  [33135361908](https://github.com/qh-work/memory-vault-sync/actions/runs/33135361908)
+  passed the complete plugin suite on Ubuntu Python 3.10/3.12, macOS Python
+  3.12 and Windows Python 3.12, together with the public-source contract.
+  Windows executed 423 tests; the public source/schema suite executed 86.
+- The release manifest records 102 exact allow-listed hashes and
+  `private_state_included=false`. The public history was created independently
+  rather than publishing or rewriting the private repository history.
+- `main` requires the five release checks, up-to-date branches, linear history
+  and resolved review conversations; force pushes and branch deletion are
+  disabled. Only squash merging is enabled and merged branches are deleted.
+
+These facts establish the public source and CI boundary. They do not provision
+production keys, authorize recalled text, publish private memory data or make a
+runtime/model/task an owner of memory.
+
 ## Release gate
 
 Before publishing the exported tree:

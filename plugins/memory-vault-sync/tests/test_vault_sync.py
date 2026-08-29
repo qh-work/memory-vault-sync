@@ -97,6 +97,9 @@ def stub_runtime_bundle(version: str) -> dict[str, bytes]:
         "scripts/memory_vault_runtime/graph_views.py": (
             b"# graph views fixture\n"
         ),
+        "scripts/memory_vault_runtime/host_adapter.py": (
+            b"# host adapter fixture\n"
+        ),
         "scripts/memory_vault_runtime/privacy.py": b"# privacy fixture\n",
         "scripts/memory_vault_runtime/protocol.py": b"# protocol fixture\n",
     }
@@ -2036,6 +2039,30 @@ class MemoryVaultSyncTests(unittest.TestCase):
             write_json(selected_data / "config.json", config)
         return vault_sync.SyncEngine(config, selected_data)
 
+    def host_request(
+        self,
+        operation: str,
+        payload: Mapping[str, Any],
+        *,
+        request_id: str,
+        adapter_id: str = "generic-stdio",
+        host_family: str = "local-model",
+    ):
+        return vault_sync.host_adapter.validate_request(
+            {
+                "schema_version": "memory-vault-host-request/v1",
+                "protocol_version": "1.0",
+                "request_id": request_id,
+                "operation": operation,
+                "adapter": {
+                    "id": adapter_id,
+                    "version": "0.21.0",
+                    "host_family": host_family,
+                },
+                "payload": dict(payload),
+            }
+        )
+
     def test_taskless_memory_network_is_the_production_default(self) -> None:
         config = vault_sync.default_config()
         self.assertNotIn("memory_network_enabled", config["sync"])
@@ -2047,6 +2074,405 @@ class MemoryVaultSyncTests(unittest.TestCase):
         self.assertNotIn("projection", validated)
         engine = vault_sync.SyncEngine(validated, self.fixture.data)
         self.assertTrue(engine._memory_network_enabled())
+
+    def test_cross_model_host_protocol_shares_one_taskless_vault(self) -> None:
+        engine = self.network_engine()
+        engine.config["sync"]["startup_pull"] = False
+        claude_open = engine.host_adapter_request(
+            self.host_request(
+                "session.open",
+                {"continuity_handle": None, "reason": "compact"},
+                request_id="claude-open-001",
+                adapter_id="claude-code",
+                host_family="claude-code",
+            )
+        )
+        claude_handle = claude_open["result"]["continuity_handle"]
+        prompt = "跨模型共享规则：只传输新增的可见记忆。"
+        claude_input = engine.host_adapter_request(
+            self.host_request(
+                "turn.input",
+                {
+                    "continuity_handle": claude_handle,
+                    "turn_handle": None,
+                    "visible_user_text": prompt,
+                    "limit": 8,
+                },
+                request_id="claude-input-001",
+                adapter_id="claude-code",
+                host_family="claude-code",
+            )
+        )
+        claude_turn = claude_input["result"]["turn_handle"]
+        committed = engine.host_adapter_request(
+            self.host_request(
+                "turn.commit",
+                {
+                    "continuity_handle": claude_handle,
+                    "turn_handle": claude_turn,
+                    "outcome": "final",
+                    "visible_user_text": prompt,
+                    "visible_assistant_text": "这条共享规则已经可靠排队。",
+                },
+                request_id="claude-commit-001",
+                adapter_id="claude-code",
+                host_family="claude-code",
+            )
+        )
+        self.assertEqual(committed["status"], "accepted_local")
+        self.assertFalse(committed["result"]["network_accessed"])
+        engine.flush_memory_network()
+
+        gemini_open = engine.host_adapter_request(
+            self.host_request(
+                "session.open",
+                {"continuity_handle": None, "reason": "compact"},
+                request_id="gemini-open-001",
+                adapter_id="gemini-cli",
+                host_family="gemini-cli",
+            )
+        )
+        gemini_input = engine.host_adapter_request(
+            self.host_request(
+                "turn.input",
+                {
+                    "continuity_handle": gemini_open["result"][
+                        "continuity_handle"
+                    ],
+                    "turn_handle": None,
+                    "visible_user_text": "跨模型共享规则是什么？",
+                    "limit": 8,
+                },
+                request_id="gemini-input-001",
+                adapter_id="gemini-cli",
+                host_family="gemini-cli",
+            )
+        )
+        context = gemini_input["result"]["evidence_context"]
+        self.assertIn("只传输新增", context["text"])
+        self.assertEqual(context["authority"], "none")
+        self.assertFalse(context["instruction_eligible"])
+
+        local_recall = engine.host_adapter_request(
+            self.host_request(
+                "memory.recall",
+                {
+                    "query": "新增可见记忆",
+                    "limit": 8,
+                    "maximum_context_bytes": 8192,
+                },
+                request_id="local-recall-001",
+            )
+        )
+        self.assertIn(
+            "只传输新增",
+            local_recall["result"]["evidence_context"]["text"],
+        )
+        clone = self.fixture.clone_remote("inspect-cross-model-host-protocol")
+        episode_bytes = b"\n".join(
+            path.read_bytes()
+            for path in (clone / "memory" / "episodes").glob("*/*.json")
+        )
+        for forbidden in (
+            b"claude-code",
+            b"gemini-cli",
+            b"continuity_handle",
+            b"turn_handle",
+            b"task_id",
+            b"project_id",
+            b"model_id",
+        ):
+            self.assertNotIn(forbidden, episode_bytes)
+
+    def test_host_request_and_turn_retries_are_exactly_idempotent(self) -> None:
+        engine = self.network_engine()
+        engine.config["sync"]["startup_pull"] = False
+        opened_request = self.host_request(
+            "session.open",
+            {"continuity_handle": None, "reason": "compact"},
+            request_id="retry-open-001",
+        )
+        opened = engine.host_adapter_request(opened_request)
+        repeated_open = engine.host_adapter_request(opened_request)
+        self.assertEqual(repeated_open["status"], "duplicate")
+        self.assertEqual(
+            repeated_open["result"]["continuity_handle"],
+            opened["result"]["continuity_handle"],
+        )
+        with self.assertRaises(vault_sync.ConflictError):
+            engine.host_adapter_request(
+                self.host_request(
+                    "session.open",
+                    {
+                        "continuity_handle": opened["result"][
+                            "continuity_handle"
+                        ],
+                        "reason": "resume",
+                    },
+                    request_id="retry-open-001",
+                )
+            )
+
+        prompt_request = self.host_request(
+            "turn.input",
+            {
+                "continuity_handle": opened["result"]["continuity_handle"],
+                "turn_handle": None,
+                "visible_user_text": "精确幂等只接受相同内容。",
+                "limit": 8,
+            },
+            request_id="retry-input-001",
+        )
+        prompted = engine.host_adapter_request(prompt_request)
+        repeated_prompt = engine.host_adapter_request(prompt_request)
+        self.assertEqual(repeated_prompt["status"], "duplicate")
+        turn_handle = prompted["result"]["turn_handle"]
+        with self.assertRaises(vault_sync.ConflictError):
+            engine.host_adapter_request(
+                self.host_request(
+                    "turn.input",
+                    {
+                        "continuity_handle": opened["result"][
+                            "continuity_handle"
+                        ],
+                        "turn_handle": turn_handle,
+                        "visible_user_text": "同一回合的不同内容必须拒绝。",
+                        "limit": 8,
+                    },
+                    request_id="retry-input-conflict-001",
+                )
+            )
+
+        commit_request = self.host_request(
+            "turn.commit",
+            {
+                "continuity_handle": opened["result"]["continuity_handle"],
+                "turn_handle": turn_handle,
+                "outcome": "final",
+                "visible_user_text": "精确幂等只接受相同内容。",
+                "visible_assistant_text": "已按相同字节排队。",
+            },
+            request_id="retry-commit-001",
+        )
+        engine.host_adapter_request(commit_request)
+        self.assertEqual(
+            engine.host_adapter_request(commit_request)["status"],
+            "duplicate",
+        )
+        with self.assertRaises(vault_sync.ConflictError):
+            engine.host_adapter_request(
+                self.host_request(
+                    "turn.commit",
+                    {
+                        "continuity_handle": opened["result"][
+                            "continuity_handle"
+                        ],
+                        "turn_handle": turn_handle,
+                        "outcome": "final",
+                        "visible_user_text": "精确幂等只接受相同内容。",
+                        "visible_assistant_text": "不同的最终内容。",
+                    },
+                    request_id="retry-commit-conflict-001",
+                )
+            )
+        pending = list(
+            (self.fixture.data / "memory-network" / "outbox" / "pending").glob(
+                "*.json"
+            )
+        )
+        self.assertEqual(len(pending), 1)
+        receipt_bytes = b"".join(
+            path.read_bytes()
+            for path in (
+                self.fixture.data / "state" / "host-adapter" / "receipts"
+            ).glob("*.json")
+        )
+        self.assertNotIn(b"retry-input-001", receipt_bytes)
+        self.assertNotIn("精确幂等".encode("utf-8"), receipt_bytes)
+
+    def test_host_prompt_and_recall_are_strictly_network_free(self) -> None:
+        engine = self.network_engine()
+        opened = engine.host_adapter_request(
+            self.host_request(
+                "session.open",
+                {"continuity_handle": None, "reason": "compact"},
+                request_id="offline-open-001",
+            )
+        )
+        network_error = AssertionError("prompt-time host protocol used network")
+        with (
+            mock.patch.object(engine.git, "ensure", side_effect=network_error),
+            mock.patch.object(engine.git, "fetch", side_effect=network_error),
+            mock.patch.object(
+                vault_sync.PluginUpdater,
+                "check",
+                side_effect=network_error,
+            ),
+        ):
+            prompted = engine.host_adapter_request(
+                self.host_request(
+                    "turn.input",
+                    {
+                        "continuity_handle": opened["result"][
+                            "continuity_handle"
+                        ],
+                        "turn_handle": None,
+                        "visible_user_text": "本地召回不得等待网络。",
+                        "limit": 8,
+                    },
+                    request_id="offline-input-001",
+                )
+            )
+            recalled = engine.host_adapter_request(
+                self.host_request(
+                    "memory.recall",
+                    {
+                        "query": "本地召回",
+                        "limit": 8,
+                        "maximum_context_bytes": 8192,
+                    },
+                    request_id="offline-recall-001",
+                )
+            )
+        self.assertFalse(prompted["result"]["network_accessed"])
+        self.assertFalse(recalled["result"]["network_accessed"])
+        self.assertEqual(
+            prompted["authority"],
+            {
+                "memory": "untrusted_historical_evidence",
+                "instruction_eligible": False,
+                "authorization_eligible": False,
+                "execution_eligible": False,
+                "policy_change_eligible": False,
+                "current_user_input_precedence": True,
+            },
+        )
+
+    def test_host_atomic_commit_and_abort_fail_closed(self) -> None:
+        engine = self.network_engine()
+        engine.config["sync"]["startup_pull"] = False
+        opened = engine.host_adapter_request(
+            self.host_request(
+                "session.open",
+                {"continuity_handle": None, "reason": "compact"},
+                request_id="atomic-open-001",
+            )
+        )
+        continuity = opened["result"]["continuity_handle"]
+        atomic = engine.host_adapter_request(
+            self.host_request(
+                "turn.commit",
+                {
+                    "continuity_handle": continuity,
+                    "turn_handle": None,
+                    "outcome": "final",
+                    "visible_user_text": "只有回合结束事件也能原子备份。",
+                    "visible_assistant_text": "原子回合已进入本地队列。",
+                },
+                request_id="atomic-commit-001",
+            )
+        )
+        self.assertRegex(atomic["result"]["turn_handle"], r"^mvt1_")
+        recovered_abort = engine.host_adapter_request(
+            self.host_request(
+                "turn.abort",
+                {
+                    "continuity_handle": continuity,
+                    "turn_handle": atomic["result"]["turn_handle"],
+                    "reason": "unknown",
+                },
+                request_id="atomic-post-commit-abort-001",
+            )
+        )
+        self.assertFalse(recovered_abort["result"]["aborted"])
+        self.assertEqual(
+            recovered_abort["result"]["terminal_state"], "committed"
+        )
+        staged = engine.host_adapter_request(
+            self.host_request(
+                "turn.input",
+                {
+                    "continuity_handle": continuity,
+                    "turn_handle": None,
+                    "visible_user_text": "这个回合随后被用户取消。",
+                    "limit": 8,
+                },
+                request_id="abort-input-001",
+            )
+        )
+        aborted_turn = staged["result"]["turn_handle"]
+        engine.host_adapter_request(
+            self.host_request(
+                "turn.abort",
+                {
+                    "continuity_handle": continuity,
+                    "turn_handle": aborted_turn,
+                    "reason": "user_interrupt",
+                },
+                request_id="abort-turn-001",
+            )
+        )
+        with self.assertRaises(vault_sync.ConflictError):
+            engine.host_adapter_request(
+                self.host_request(
+                    "turn.commit",
+                    {
+                        "continuity_handle": continuity,
+                        "turn_handle": aborted_turn,
+                        "outcome": "final",
+                        "visible_user_text": "这个回合随后被用户取消。",
+                        "visible_assistant_text": "不应被保存。",
+                    },
+                    request_id="abort-commit-001",
+                )
+            )
+
+    def test_host_protocol_rejects_ownership_authority_and_float_fields(
+        self,
+    ) -> None:
+        base = {
+            "schema_version": "memory-vault-host-request/v1",
+            "protocol_version": "1.0",
+            "request_id": "invalid-host-001",
+            "operation": "memory.remember",
+            "adapter": {
+                "id": "generic-stdio",
+                "version": "0.21.0",
+                "host_family": "local-model",
+            },
+            "payload": {
+                "proposal": {
+                    "schema_version": "memory-network-semantic-proposal/v1",
+                    "task_id": "forbidden",
+                }
+            },
+        }
+        with self.assertRaises(vault_sync.HostProtocolError):
+            vault_sync.host_adapter.validate_request(base)
+        floated = json.loads(json.dumps(base))
+        floated["payload"] = {"proposal": {"weight": 0.5}}
+        with self.assertRaises(vault_sync.HostProtocolError):
+            vault_sync.host_adapter.validate_request(floated)
+        native = json.loads(json.dumps(base))
+        native["payload"] = {"proposal": {"conversation_id": "native"}}
+        with self.assertRaises(vault_sync.HostProtocolError):
+            vault_sync.host_adapter.validate_request(native)
+        cancelled_commit = {
+            "schema_version": "memory-vault-host-request/v1",
+            "protocol_version": "1.0",
+            "request_id": "invalid-cancelled-commit-001",
+            "operation": "turn.commit",
+            "adapter": base["adapter"],
+            "payload": {
+                "continuity_handle": "mvc1_" + "a" * 43,
+                "turn_handle": "mvt1_" + "b" * 43,
+                "outcome": "cancelled",
+                "visible_user_text": "取消的回合不得形成长期记忆。",
+                "visible_assistant_text": None,
+            },
+        }
+        with self.assertRaises(vault_sync.HostProtocolError):
+            vault_sync.host_adapter.validate_request(cancelled_commit)
 
     def test_device_trust_bootstrap_is_local_opaque_and_fail_closed(self) -> None:
         engine = self.network_engine()
@@ -2368,6 +2794,122 @@ class MemoryVaultSyncTests(unittest.TestCase):
             len(list((clone / "memory" / "episodes").glob("*/*.json"))),
             3,
         )
+
+    def test_memory_stop_retry_requires_identical_visible_content(self) -> None:
+        engine = self.network_engine()
+        engine.config["sync"]["stop_publish"] = False
+        session_id = "exact-stop-source"
+        turn_id = "exact-stop-turn"
+        prompt = "相同回合标识只能接受完全相同的可见内容。"
+        assistant = "这条可见记忆已经可靠排队。"
+        engine.user_prompt_submit(
+            self.fixture.prompt_input(
+                session=session_id,
+                turn=turn_id,
+                prompt=prompt,
+                workspace=self.fixture.projectless,
+            )
+        )
+        engine.stop(
+            self.fixture.stop_input(
+                session=session_id,
+                turn=turn_id,
+                assistant=assistant,
+                workspace=self.fixture.projectless,
+            )
+        )
+        transaction, state = engine._queue_memory_network_stop(
+            self.fixture.stop_input(
+                session=session_id,
+                turn=turn_id,
+                assistant=assistant,
+                workspace=self.fixture.projectless,
+            )
+        )
+        self.assertEqual(state, "pending")
+        self.assertRegex(transaction, r"^tx-[0-9a-f]{32}$")
+        with self.assertRaisesRegex(
+            vault_sync.ConflictError,
+            "different visible content",
+        ):
+            engine._queue_memory_network_stop(
+                self.fixture.stop_input(
+                    session=session_id,
+                    turn=turn_id,
+                    assistant="同一标识下被替换成了另一段内容。",
+                    workspace=self.fixture.projectless,
+                )
+            )
+        pending = list(
+            (self.fixture.data / "memory-network" / "outbox" / "pending").glob(
+                "*.json"
+            )
+        )
+        self.assertEqual(len(pending), 1)
+
+    def test_memory_stop_retry_repairs_crash_after_durable_intent(self) -> None:
+        engine = self.network_engine()
+        engine.config["sync"]["stop_publish"] = False
+        session_id = "crash-repair-source"
+        turn_id = "crash-repair-turn"
+        prompt = "持久意图写入后崩溃，重试必须修复会话游标。"
+        assistant = "这条回合已经进入本地持久意图。"
+        engine.user_prompt_submit(
+            self.fixture.prompt_input(
+                session=session_id,
+                turn=turn_id,
+                prompt=prompt,
+                workspace=self.fixture.projectless,
+            )
+        )
+        session_path, before_session = engine._memory_session(session_id)
+        original_write = vault_sync.atomic_write_json
+
+        def crash_on_session_advance(path, value):
+            if Path(path) == session_path:
+                raise OSError("simulated crash after durable intent")
+            return original_write(path, value)
+
+        stop_input = self.fixture.stop_input(
+            session=session_id,
+            turn=turn_id,
+            assistant=assistant,
+            workspace=self.fixture.projectless,
+        )
+        with mock.patch.object(
+            vault_sync,
+            "atomic_write_json",
+            side_effect=crash_on_session_advance,
+        ):
+            with self.assertRaisesRegex(OSError, "simulated crash"):
+                engine._queue_memory_network_stop(stop_input)
+        transaction, state = engine._queue_memory_network_stop(stop_input)
+        self.assertEqual(state, "pending")
+        repaired = json.loads(session_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            repaired["next_source_sequence"],
+            before_session["next_source_sequence"] + 1,
+        )
+        self.assertRegex(repaired["last_episode_id"], r"^ep-[0-9a-f]{40}$")
+        self.assertFalse(
+            vault_sync._memory_network_prompt_path(
+                self.fixture.data,
+                vault_sync._session_key(
+                    vault_sync._device_state(self.fixture.data), session_id
+                ),
+                vault_sync._turn_key(
+                    vault_sync._device_state(self.fixture.data),
+                    session_id,
+                    turn_id,
+                ),
+            ).exists()
+        )
+        pending = list(
+            (self.fixture.data / "memory-network" / "outbox" / "pending").glob(
+                "*.json"
+            )
+        )
+        self.assertEqual([path.stem for path in pending], [transaction])
 
     def test_memory_network_outbox_rejects_local_tampering(self) -> None:
         engine = self.network_engine()
@@ -9453,7 +9995,15 @@ class MemoryVaultSyncTests(unittest.TestCase):
                 handlers[0]["command"],
             )
             self.assertIn(
+                "memory_vault_runtime/host_adapter.py",
+                handlers[0]["command"],
+            )
+            self.assertIn(
                 "memory_vault_runtime\\privacy.py",
+                handlers[0]["commandWindows"],
+            )
+            self.assertIn(
+                "memory_vault_runtime\\host_adapter.py",
                 handlers[0]["commandWindows"],
             )
             self.assertNotIn("py -", handlers[0]["commandWindows"].lower())
@@ -9494,7 +10044,7 @@ class MemoryVaultSyncTests(unittest.TestCase):
         boundary, runtime = source.split('\nVERSION = "', 1)
         for private_identity in (
             "qh-work",
-            "memory-vault-public",
+            "memory-vault-sync",
             "https://github.com/qh-work/memory-vault-sync.git",
         ):
             self.assertIn(private_identity, boundary)

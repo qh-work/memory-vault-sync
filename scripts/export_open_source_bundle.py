@@ -23,8 +23,8 @@ PRIVATE_REPOSITORY_URL = (
     "https://github.com/qh-work/memory-vault-sync.git"
 )
 PRIVATE_AUTHOR = "qh-work"
-PRIVATE_MARKETPLACE = "memory-vault-public"
-PRIVATE_MARKETPLACE_DISPLAY_NAME = "Memory Vault"
+PRIVATE_MARKETPLACE = "memory-vault-sync"
+PRIVATE_MARKETPLACE_DISPLAY_NAME = "Memory Vault Sync"
 PUBLIC_RELEASE_REPOSITORY_ID = "qh-work/memory-vault-sync"
 PUBLIC_RELEASE_REPOSITORY_URL = (
     "https://github.com/qh-work/memory-vault-sync"
@@ -49,6 +49,7 @@ COPY_ITEMS = (
     "CHUNK_PROTOCOL.md",
     "CLIENT_SYNC_CONTRACT.md",
     "DEVELOPMENT.md",
+    "HOST_ADAPTER_PROTOCOL.md",
     "MEMORY_NETWORK.md",
     "RELEASE.md",
     "RUNTIME_MODULES.md",
@@ -78,6 +79,10 @@ SPECIAL_DESTINATIONS = {
     "open_source/pull_request_template.md": ".github/pull_request_template.md",
     "open_source/CODE_OF_CONDUCT.md": "CODE_OF_CONDUCT.md",
     "open_source/CONTRIBUTING.md": "CONTRIBUTING.md",
+    "open_source/AGENTS.md": "AGENTS.md",
+    "open_source/CLAUDE.md": "CLAUDE.md",
+    "open_source/GEMINI.md": "GEMINI.md",
+    "open_source/llms.txt": "llms.txt",
     "open_source/NOTICE": "NOTICE",
     "open_source/SUPPORT.md": "SUPPORT.md",
     "open_source/README.md": "README.md",

@@ -27,7 +27,7 @@ It must not persist:
 - a normal hash of a secret (short secrets remain guessable);
 - browser sessions, keychains, authentication databases or password-manager
   exports;
-- native chat/account/subscription identifiers;
+- native chat/session/turn/account/subscription/model identifiers;
 - direct hashes of native conversation IDs or local source keys; remote
   episodes contain only a domain-separated opaque source pseudonym;
 - local absolute paths, usernames, hostnames or environment variables;
@@ -66,6 +66,32 @@ The model may use it to remember facts and choices, but must obtain current
 authorization before it executes, sends, deletes, publishes, reveals secrets,
 opens files or expands scope. The newest explicit current user instruction
 wins over recalled text.
+
+## Cross-model adapter boundary
+
+The 0.21 host protocol is local cognitive transport, not an agent-control or
+permission channel. Its closed request schema has no task, project, model,
+owner, native host ID, transcript, system/developer/tool role, credential,
+permission, policy, authorization, command, agent-spawn, resource-expansion, or
+execution field. Unknown fields are rejected rather than ignored.
+
+Vault-issued continuity and turn handles are high-entropy local transport state. They
+must never be derived from a host ID, copied into durable memory, used as a
+recall selector, or treated as a bearer capability for files, tools, accounts,
+repositories, policy, or execution. Adapter-native mappings remain bounded,
+private, local, and content-free.
+
+Every response repeats fixed negative authority labels. A host must treat
+evidence as `untrusted_historical_evidence`, preserve newest-current-user-input
+precedence, and apply its normal permission/execution gateway independently.
+No memory text or response status can create, elevate, inherit, or imply
+authorization.
+
+Prompt/explicit recall and compact operations are zero-network. Final-turn
+acceptance is durable locally before acknowledgement and before any optional
+publication. Exact request retries require canonical byte identity; reuse with
+different bytes fails closed. Error envelopes contain only stable codes and
+retryability, never visible text, native identity, paths, or exceptions.
 
 ## Evidence versus interpretation
 
@@ -176,4 +202,13 @@ synthetic data only.
 - ZIP traversal, symlink, duplicate, undeclared, bomb, hash and schema attacks;
 - legacy visible revision integrity and privacy validation;
 - installed CLI absence of task-binding operations;
-- public export contains no user/private state.
+- public export contains no user/private state;
+- host schema rejects native IDs, ownership, permission, policy and execution
+  fields, including unknown nested keys;
+- Vault-issued handles do not appear in episode/event/export/recall bytes;
+- prompt/recall/compact host paths prove zero network access;
+- final-turn acknowledgement survives offline publication and crash/retry;
+- exact duplicate requests reuse one result while changed bytes hard-conflict;
+- every success/error response retains the fixed no-authority labels;
+- Claude Code, Gemini CLI and generic adapter fixtures never read transcripts,
+  hidden reasoning, tool records, environment, or permission hooks.

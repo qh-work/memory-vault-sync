@@ -26,6 +26,8 @@ A release is identified by all of the following evidence:
 - `CHUNK_PROTOCOL.md` and `benchmarks/chunk-protocol-v1.json` when chunk behavior changes
 - `PRIVATE_DIAGNOSTICS.md` when diagnostic fields, bounds, persistence, or hook behavior changes
 - `SIGNED_UPDATES.md` when trust bootstrap, metadata, bundle identity, root rotation, or release provenance changes
+- `HOST_ADAPTER_PROTOCOL.md`, request/response schemas, reference adapters and
+  their fixtures when host lifecycle behavior changes
 - configuration, failure-recovery, setup, protocol, architecture, schema, and validator documents affected by the change
 
 Search the repository for the previous exact version and capability names before declaring the version consistent.
@@ -61,7 +63,9 @@ Open the release as a draft first. The body must state:
 
 Do not merge while any required job is absent, skipped unexpectedly, or running against a different commit.
 
-## Required automated evidence
+## Automated evidence
+
+Broad runtime, storage, crypto, or migration changes normally require:
 
 - plugin unit suite;
 - repository validator unit suite;
@@ -72,6 +76,30 @@ Do not merge while any required job is absent, skipped unexpectedly, or running 
 - Python minimum-version job once that roadmap item is implemented;
 - package manifest/runtime version consistency;
 - diff and JSON parsing checks.
+
+The 0.21 model-neutral host protocol uses a deliberately small, public minimum
+gate because it does not change the durable episode/event schema. Require:
+
+- entrypoint, core and manifest version
+  `0.21.0+codex.20260830000842`, with public tag semantics `v0.21.0`;
+- JSON/schema/runtime agreement, Python compilation, and one-shot/NDJSON CLI
+  smoke checks;
+- focused synthetic checks for prompt/recall/compact zero-network behavior,
+  durable-local final-turn acknowledgement, exact retry versus hard conflict,
+  negative authority labels, and native-ID exclusion;
+- reference-adapter fixtures for Claude Code, Gemini CLI and generic local
+  stdio hosts, without live transcripts, accounts or permissions;
+- unchanged durable `memory-episode/v1` and `memory-event/v2` compatibility plus
+  a retained Codex hook smoke check;
+- a fresh allowlisted Apache-2.0 public export/privacy contract before creating
+  the `v0.21.0` public release.
+
+Publish those schemas, examples, focused adapter tests and synthetic golden
+fixtures so other AI models and maintainers can extend them. This minimum is
+not high coverage, real-account integration, or complete cross-platform host
+certification. Do not describe the candidate as merged, installed, CI-passed or
+released until each corresponding artifact is observed; record only tests that
+actually ran.
 
 When `rclone-crypt` changes, also run the credential-free live local-crypt
 acceptance with a checksum-verified supported rclone release. Record the exact

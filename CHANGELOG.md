@@ -2,6 +2,36 @@
 
 All notable public changes are documented here.
 
+## 0.21.0 — 2026-08-30 (release candidate)
+
+Model-neutral host protocol candidate. This entry does not claim merge, CI,
+installation, tag, or public-release completion.
+
+### Added
+
+- closed local stdio request/response schemas and bounded NDJSON framing;
+- Vault-issued opaque continuity and turn handles with no native host IDs;
+- zero-network prompt input, explicit recall, compact, abort, close, and status;
+- durable local final-turn acknowledgement before optional receive/publication;
+- exact canonical-byte retry reuse and hard conflict for changed bytes;
+- fixed negative instruction/authorization/policy/execution authority labels;
+- Claude Code, Gemini CLI, and generic local-runtime reference adapters;
+- public protocol/schema examples and focused reference-adapter fixtures so
+  other AI models and maintainers can extend interoperability cases without
+  access to private memory or host accounts.
+
+### Compatibility and scope
+
+- existing Codex hooks remain compatible and use the same Vault;
+- `memory-episode/v1` and `memory-event/v2` are unchanged;
+- tasks, projects, conversations, adapters, devices, agents, and models remain
+  provenance only and never own memory;
+- the focused public fixtures establish a minimum conformance boundary, not
+  high coverage or complete host certification;
+- an MCP cognitive interface is planned for 0.22 and is not implemented here;
+- public tag semantics are `v0.21.0` only after the candidate passes the stated
+  minimum release gate and is actually published.
+
 ## 0.20.1 — 2026-08-27
 
 Windows portability and release-CI maintenance patch.
