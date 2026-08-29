@@ -23,7 +23,7 @@ memory_vault_runtime.core             memory_vault_validator.core
                                      |
                                      v
                                   retrieval
-             protocol
+                      host_adapter   protocol
 ```
 
 Lower modules must not import `core`. This prevents circular policy ownership
@@ -42,6 +42,7 @@ and keeps import-time work free of network and filesystem mutation.
 | `memory_vault_runtime.chunks` | Fixed encrypted-chunk policy and manifest schemas, bounds, domain-separated content identities, and deterministic paths | Provider calls, credentials, receipts, or publication |
 | `memory_vault_runtime.diagnostics` | Exact content-free diagnostic schema, private bounded persistence, rotation, corruption accounting, and path-free summaries | Exception text, traces, task/provider content, network calls, or runtime orchestration |
 | `memory_vault_runtime.memory_network` | Stable taskless IDs, immutable episode/event construction, text fragmentation, CJK/Latin tokens, private SQLite inverted index, graph state, bounded ranking and recall rendering | Network/provider calls, credentials, durable authority, task ownership, external model calls |
+| `memory_vault_runtime.host_adapter` | Closed model-neutral request/response validation, protocol bounds, Vault-handle syntax, capability negotiation, network-free operation classification, and fixed negative authority envelopes | Filesystem/network/model calls, durable persistence, native host identity, task/project/model ownership, permission or execution authority |
 | `memory_vault_runtime.graph_views` | Rebuildable claim timelines, bounded relation traversal, current/superseded/conflicted/resolved explanations, and proposal-only consolidation hints | Durable writes, visible text authority, task/conversation/device ownership, model inference, network calls |
 | `memory_vault_runtime.checkpoint` | Canonical taskless hash checkpoints, monotonic chain validation, and explicit test-anchor verification | Production signing keys, key distribution, network calls, durable memory mutation, or automatic trust decisions |
 | `memory_vault_runtime.packs` | Independently compressed object records, path/hash/offset index, bounded pack verification and ZIP restoration | Canonical authority, provider calls, credentials, plaintext encryption claims, or unbounded memory buffering |
@@ -52,6 +53,13 @@ and keeps import-time work free of network and filesystem mutation.
 | `memory_vault_runtime.device_trust` | Versioned opaque-device enrollment, key epochs, future-only revocation, monotonic transitions, and recovery descriptors | Private keys, signatures, threshold ceremony, automatic trust, or memory ownership |
 | `memory_vault_runtime.encrypted_replication` | Ciphertext-only append-only catalog, external signer boundary, replay/rollback checks, and atomic envelope copies | Plaintext memory parsing, cryptography, signer keys, remote transport, or silent recovery |
 | `memory_vault_runtime.signed_updates` | Narrow four-role signed-metadata profile, RSA-PSS public verification, canonical envelopes, root rotation, expiry/clock/rollback/mix-and-match state, target binding, and safe bounded metadata reads | Signing, private keys, network/Git/install calls, provider/task data, general TUF compatibility, or runtime orchestration |
+
+`plugins/memory-vault-sync/adapters/` contains thin host-specific executables,
+not runtime authority. They translate official Claude Code, Gemini CLI, or
+generic local lifecycle events into `host_adapter` frames and may keep only a
+bounded private mapping from native lifecycle state to Vault-issued handles.
+They must never copy native identifiers, visible text, permissions, policy, or
+model settings into durable Vault state.
 
 `core` remains the compatibility home for mature orchestration APIs. Future
 extractions move one characterized responsibility at a time and keep the

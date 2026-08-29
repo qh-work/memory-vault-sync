@@ -82,6 +82,7 @@ class RuntimeModuleContractTests(unittest.TestCase):
             "import-network",
             "remember",
             "flush",
+            "host-adapter",
             "status",
             "update",
             "doctor",
@@ -157,6 +158,86 @@ class RuntimeModuleContractTests(unittest.TestCase):
                 ),
             },
         )
+
+    def test_unconfigured_host_capabilities_are_strict_and_network_free(
+        self,
+    ) -> None:
+        request = {
+            "schema_version": "memory-vault-host-request/v1",
+            "protocol_version": "1.0",
+            "request_id": "module-capabilities-001",
+            "operation": "capabilities",
+            "adapter": {
+                "id": "generic-stdio",
+                "version": "0.21.0",
+                "host_family": "local-model",
+            },
+            "payload": {},
+        }
+        with tempfile.TemporaryDirectory(
+            prefix="memory-vault-host-contract-"
+        ) as temporary:
+            environment = os.environ.copy()
+            environment["PLUGIN_DATA"] = str(Path(temporary) / "plugin data")
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(ENTRYPOINT),
+                    "host-adapter",
+                    "--request-stdin",
+                ],
+                input=json.dumps(request).encode("utf-8"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=environment,
+                check=False,
+            )
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(process.stderr, b"")
+        response = json.loads(process.stdout.decode("utf-8", "strict"))
+        self.assertEqual(response["status"], "accepted_local")
+        self.assertIn(
+            "turn.input", response["result"]["network_free_operations"]
+        )
+        self.assertIn(
+            "turn.commit", response["result"]["network_free_operations"]
+        )
+        self.assertFalse(response["authority"]["instruction_eligible"])
+        self.assertFalse(response["authority"]["authorization_eligible"])
+        self.assertFalse(response["authority"]["execution_eligible"])
+
+    def test_host_stdio_rejects_duplicate_json_keys_without_traceback(self) -> None:
+        duplicate = (
+            '{"schema_version":"memory-vault-host-request/v1",'
+            '"protocol_version":"1.0","request_id":"duplicate-001",'
+            '"request_id":"duplicate-002","operation":"capabilities",'
+            '"adapter":{"id":"generic-stdio","version":"0.21.0",'
+            '"host_family":"local-model"},"payload":{}}'
+        ).encode("utf-8")
+        with tempfile.TemporaryDirectory(
+            prefix="memory-vault-host-invalid-"
+        ) as temporary:
+            environment = os.environ.copy()
+            environment["PLUGIN_DATA"] = str(Path(temporary) / "plugin data")
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(ENTRYPOINT),
+                    "host-adapter",
+                    "--request-stdin",
+                ],
+                input=duplicate,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=environment,
+                check=False,
+            )
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(process.stderr, b"")
+        response = json.loads(process.stdout.decode("utf-8", "strict"))
+        self.assertEqual(response["status"], "rejected")
+        self.assertEqual(response["error"]["code"], "host_protocol")
+        self.assertNotIn("message", response["error"])
 
 
 if __name__ == "__main__":

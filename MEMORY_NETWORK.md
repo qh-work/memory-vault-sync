@@ -357,6 +357,8 @@ candidate, adoption, task projection, and task reconciliation commands.
 | `share-network --selector-stdin` | select a taskless closed subgraph and require an external encryption provider |
 | `verify-share-envelope --envelope PATH` | validate opaque envelope metadata without decrypting |
 | `remember --proposal-stdin` | append one evidence-anchored semantic event |
+| `host-adapter --request-stdin` | process one bounded model-neutral local request |
+| `host-adapter --serve-stdio` | process bounded NDJSON requests until local EOF |
 | `flush` | send queued episodes and receive additions |
 | `export-network` | create a verified complete bundle |
 | `import-network` | add missing verified objects |
@@ -390,7 +392,35 @@ installed parser neither accepts nor advertises retired commands.
 - `0.20` implements the device-trust state machine and ciphertext-only
   replication catalog around those envelopes. Production encrypted replication,
   signed checkpoints, and recovery remain external ceremony/provider gates.
+- `0.21` adds a model-neutral local host lifecycle protocol and reference
+  adapters. It changes only local delivery/receipt state; `memory-episode/v1`
+  and `memory-event/v2` remain byte-compatible and model-independent.
 
-All five releases remain taskless and local-first. Production key ceremonies
+All six releases remain taskless and local-first. Production key ceremonies
 for first-device trust/encryption and clean Windows CI/provider acceptance have
 not been completed and cannot be inferred from source or macOS-only tests.
+
+## 15. Model-neutral host lifecycle protocol
+
+[`HOST_ADAPTER_PROTOCOL.md`](HOST_ADAPTER_PROTOCOL.md) defines the local stdio
+boundary for Claude Code, Gemini CLI, generic local runtimes, and future hosts.
+It is not another durable memory schema. Every host reads and writes the same
+episode/event graph and private local associative index.
+
+The Vault issues opaque `mvc1_` continuity and `mvt1_` turn handles. Handles
+are local transport addresses only: they do not encode native IDs, never enter
+episode/event hash domains or remote objects, and grant no authority. Host,
+adapter, task, project, model, agent, account, device, and conversation identity
+cannot own memory or filter its visibility.
+
+Latency-sensitive operations (`turn.input`, explicit recall, compact, abort,
+close, and status) are zero-network. A final `turn.commit` is atomically durable
+in the private local outbox before `accepted_local` is returned; publication is
+later and bounded to `session.open` or explicit `sync.flush`. Therefore remote
+latency or outage cannot stretch the host's final-response acknowledgement.
+
+Idempotency is byte identity, not semantic similarity: an exact canonical
+request retry may reuse the terminal result, while the same request identity
+with different bytes is a hard conflict. Responses repeat closed negative
+authority labels so evidence cannot become an instruction, authorization,
+policy mutation, permission, tool call, or execution request.

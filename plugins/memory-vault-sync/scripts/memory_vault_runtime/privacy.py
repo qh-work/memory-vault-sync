@@ -118,6 +118,8 @@ REMOTE_FORBIDDEN_KEYS = {
     "cwd",
     "session_id",
     "turn_id",
+    "continuity_handle",
+    "turn_handle",
     "workspace_instance_id",
     "hostname",
     "username",

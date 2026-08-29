@@ -132,6 +132,12 @@ RUNTIME_FILE_SPECS = (
         "rebuildable taskless current graph views",
     ),
     RuntimeFileSpec(
+        "scripts/memory_vault_runtime/host_adapter.py",
+        256 * 1024,
+        0o600,
+        "model-neutral local host adapter protocol",
+    ),
+    RuntimeFileSpec(
         "scripts/memory_vault_runtime/protocol.py",
         256 * 1024,
         0o600,
