@@ -18,6 +18,7 @@ __all__ = [
     "encrypted_replication",
     "errors",
     "graph_views",
+    "host_adapter",
     "privacy",
     "packs",
     "protocol",

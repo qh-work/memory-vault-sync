@@ -1,0 +1,9 @@
+{
+  "schema_version": "memory-vault-local-host-event/v1",
+  "event": "turn.input",
+  "payload": {
+    "native_session_id": "local-runtime-session",
+    "visible_user_text": "Continue from the relevant long-term evidence.",
+    "limit": 8
+  }
+}

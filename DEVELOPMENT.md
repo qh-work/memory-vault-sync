@@ -1,12 +1,15 @@
 # Development guide
 
 Read [`MEMORY_NETWORK.md`](MEMORY_NETWORK.md),
+[`HOST_ADAPTER_PROTOCOL.md`](HOST_ADAPTER_PROTOCOL.md),
 [`CLIENT_SYNC_CONTRACT.md`](CLIENT_SYNC_CONTRACT.md), and
 [`SECURITY.md`](SECURITY.md) before changing the runtime.
 
 ## Supported production model
 
 Production has exactly one memory model: the taskless associative network.
+Host and model adapters are delivery boundaries over that one model, not new
+memory modes or owners.
 Historical task/binding code in `core.py` is a migration-characterization seam
 for `_test_mode`; it is not an alternative product mode. Do not add a new CLI,
 config switch, hook branch, or skill instruction that reactivates it.
@@ -19,6 +22,7 @@ config switch, hook branch, or skill instruction that reactivates it.
 | `plugins/memory-vault-sync/scripts/vault_sync.py` | stable self-contained entrypoint/version boundary |
 | `memory_vault_runtime/core.py` | Git/private remote, lifecycle, outbox, schema validation, import/export, semantic writes |
 | `memory_vault_runtime/memory_network.py` | IDs, episodes, fragments, SQLite index, graph edges and recall |
+| `memory_vault_runtime/host_adapter.py` | closed model-neutral request/response validation, opaque handle syntax, capabilities and negative authority envelopes; no I/O |
 | `memory_vault_runtime/retrieval.py` | versioned deterministic local retrieval adapters; no I/O or durable authority |
 | `memory_vault_runtime/privacy.py` | credential/path/remote publication guards |
 | `memory_vault_runtime/protocol.py` | JCS/SHA-256 deterministic primitives |
@@ -27,6 +31,7 @@ config switch, hook branch, or skill instruction that reactivates it.
 | `tests/test_memory_network.py` | pure index/object/performance tests |
 | `tests/test_vault_sync.py` | Git, lifecycle, concurrency, migration and bundle integration |
 | `tests/test_runtime_module_contract.py` | installable CLI and version contract |
+| `adapters/` | thin Claude Code, Gemini CLI and generic stdio lifecycle translators plus isolated conformance fixtures |
 
 ## Core invariants
 
@@ -45,6 +50,14 @@ Every change must preserve:
     traces never enter durable network objects;
 11. portable export includes no task/binding/pointer document;
 12. derived local indexes are rebuildable and never become sole truth.
+13. host/task/project/model/native identifiers never enter the adapter protocol,
+    durable identity, recall filters, or ownership;
+14. prompt/explicit recall and compact adapter paths are zero-network;
+15. host turn completion is durable locally before acknowledgement and does not
+    wait for optional publication;
+16. request identity reuse is accepted only for exact canonical-byte retries;
+17. adapter responses can never grant instruction, authorization, policy, tool,
+    file, resource, or execution authority.
 
 ## Change impact matrix
 
@@ -56,6 +69,7 @@ Every change must preserve:
 | Publish/outbox | crash order, batching, retry bound, concurrency tests, Stop latency |
 | Semantic proposal | relation validation, idempotency, confidence, skill examples |
 | CLI command | manifest/default prompt, skill, runtime contract, public export |
+| Host adapter operation/schema | zero-network set, handle/receipt state, authority labels, reference adapters, conformance fixtures, `HOST_ADAPTER_PROTOCOL.md` |
 | Runtime file | hooks Unix/Windows inventories, `bundle.py`, `RUNTIME_MODULES.md` |
 | Version | entrypoint, core, manifest, marketplace, hooks, changelog, status |
 | Public docs/assets | open-source exporter allowlist and exported-tree tests |
@@ -67,6 +81,7 @@ Run focused checks while editing:
 ```text
 python3 -m py_compile \
   plugins/memory-vault-sync/scripts/memory_vault_runtime/core.py \
+  plugins/memory-vault-sync/scripts/memory_vault_runtime/host_adapter.py \
   plugins/memory-vault-sync/scripts/memory_vault_runtime/memory_network.py
 
 python3 -m unittest -v \
@@ -77,6 +92,30 @@ python3 -m unittest -v \
 Then run the taskless integration cases for publication, second-client recall,
 incremental receive, batching, concurrency, export/import, semantic
 supersession, privacy and immutable-history rejection.
+
+For a host-adapter change, also run the protocol/schema cases and the isolated
+reference-adapter suite. Cover exact retry versus hard conflict, crash-safe
+local acknowledgement, staged-prompt equality, offline operation, compact and
+prompt zero-network behavior, malformed/oversized frames, native-ID exclusion,
+negative authority labels, and Claude/Gemini final-turn mapping. Never use a
+live user transcript or account identifier as a fixture.
+
+### Public conformance seeds
+
+The reference-adapter tests, protocol schemas, example frames, and synthetic
+golden fixtures are part of the Apache-2.0 public export. They are deliberately
+small interoperability seeds, not a claim of high coverage or certification of
+every host version. Other AI models, agents, and maintainers may add focused
+synthetic cases for new lifecycle shapes, platforms, interruption points, and
+host releases without access to a private Vault, account, transcript, or
+credential.
+
+For v0.21.x host-adapter changes, public CI runs the source/privacy contract
+and maintained plugin suite, including the focused host-protocol and
+reference-adapter fixtures. Record exactly what ran and publish those
+fixtures/results. This is source- and fixture-level conformance evidence only;
+it is not real-host integration, production certification, or permission to
+infer a deployment state that was not observed.
 
 Before release run all tests under `plugins/memory-vault-sync/tests`, then the
 repository validator and public-source export suites documented by the current
@@ -92,6 +131,8 @@ Measure separately:
 - one-commit incremental receive;
 - local query and context rendering;
 - ordinary Stop publication;
+- host `turn.input` local recall and host `turn.commit` durable-local ACK;
+- bounded `session.open`/`sync.flush` receive-publication windows;
 - 32-item queued batch;
 - one concurrent replay;
 - export/import throughput.

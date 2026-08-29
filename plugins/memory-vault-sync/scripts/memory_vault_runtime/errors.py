@@ -50,3 +50,9 @@ class StructuralRouteCorrectionRequired(ConflictError):
 class BusyError(VaultSyncError):
     code = "busy"
     retryable = True
+
+
+class HostProtocolError(VaultSyncError):
+    """A cross-model host adapter request violates the public protocol."""
+
+    code = "host_protocol"

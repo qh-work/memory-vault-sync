@@ -2,6 +2,43 @@
 
 All notable public changes are documented here.
 
+## 0.21.0 — 2026-08-30
+
+Released the model-neutral host protocol and public reference adapters for one
+taskless Vault shared across AI runtimes.
+
+### Added
+
+- closed local stdio request/response schemas and bounded NDJSON framing;
+- Vault-issued opaque continuity and turn handles with no native host IDs;
+- zero-network prompt input, explicit recall, compact, abort, close, and status;
+- durable local final-turn acknowledgement before optional receive/publication;
+- exact canonical-byte retry reuse and hard conflict for changed bytes;
+- fixed negative instruction/authorization/policy/execution authority labels;
+- Claude Code, Gemini CLI, and generic local-runtime reference adapters;
+- public protocol/schema examples and focused reference-adapter fixtures so
+  other AI models and maintainers can extend interoperability cases without
+  access to private memory or host accounts.
+
+### Compatibility and scope
+
+- existing Codex hooks remain compatible and use the same Vault;
+- `memory-episode/v1` and `memory-event/v2` are unchanged;
+- tasks, projects, conversations, adapters, devices, agents, and models remain
+  provenance only and never own memory;
+- the focused public fixtures establish a minimum conformance boundary, not
+  high coverage or complete host certification;
+- an MCP cognitive interface is planned for 0.22 and is not implemented here.
+
+### Verification
+
+- the allowlisted Apache-2.0 export contains 124 files and declares
+  `private_state_included=false`;
+- public CI runs the source/privacy contract and maintained plugin suite on
+  Ubuntu Python 3.10/3.12, macOS Python 3.12, and Windows Python 3.12;
+- public schemas, adapters, and synthetic fixtures are release evidence for
+  the documented protocol boundary, not real-host or production certification.
+
 ## 0.20.1 — 2026-08-27
 
 Windows portability and release-CI maintenance patch.

@@ -7,8 +7,8 @@
 
 ```mermaid
 flowchart TB
-    subgraph ClientA["客户端 A"]
-      HA["生命周期钩子"]
+    subgraph ClientA["客户端 A / 任意 AI 运行时"]
+      HA["Codex 钩子或本地 host adapter"]
       OA["私有 outbox"]
       IA["派生 SQLite 索引"]
     end
@@ -17,8 +17,8 @@ flowchart TB
       EV["不可变 events / edges"]
       LR["旧可见 revisions（只读迁移）"]
     end
-    subgraph ClientB["客户端 B"]
-      HB["生命周期钩子"]
+    subgraph ClientB["客户端 B / 任意 AI 运行时"]
+      HB["Codex 钩子或本地 host adapter"]
       OB["私有 outbox"]
       IB["派生 SQLite 索引"]
     end
@@ -40,6 +40,30 @@ flowchart TB
 
 `hooks/hooks.json` 只负责定位并校验完整运行时文件，然后将三个事件交给
 `scripts/vault_sync.py`。它不解析对话、不决定记忆归属、不运行任务匹配。
+
+### 模型无关 host adapter
+
+`memory_vault_runtime/host_adapter.py` 定义严格、封闭的本地 stdio NDJSON 协议。
+Claude Code、Gemini CLI 和通用本地运行时参考适配器只负责把各自生命周期翻译成
+统一的 `session.open`、`turn.input`、`turn.commit`、`turn.abort` 与
+`session.close`。现有 Codex 三钩子继续直接进入同一个核心编排，因此不需要迁移
+持久对象，也不会形成每模型一套数据库。
+
+宿主的原生 session/turn/task/project/model ID 停在适配器的私有本地映射边界；
+Vault 只签发高熵不透明的 continuity/turn handle。这些 handle 仅定位本地、有限期的
+传输收据，不进入 episode、event、Git、导出包或召回结果，也不具备权限能力。
+
+协议把延迟敏感路径和网络窗口明确拆开：
+
+- `turn.input`、显式 recall 与 compact 只读本地状态，禁止网络；
+- `turn.commit` 先原子持久化完整可见回合和幂等收据，再返回 `accepted_local`；
+- `session.open` 和显式 `sync.flush` 才允许执行有界 receive/flush；
+- 同一请求的规范字节完全相同才可复用既有结果，不同字节是硬冲突；
+- 响应只提供认知证据和耐久状态，并固定声明没有 instruction、authorization、policy
+  或 execution authority。
+
+协议细节见 [`HOST_ADAPTER_PROTOCOL.md`](HOST_ADAPTER_PROTOCOL.md)。它没有改变
+`memory-episode/v1` 或 `memory-event/v2`。
 
 ### 核心编排
 
@@ -138,6 +162,9 @@ sequenceDiagram
     H-->>M: max 8 KiB untrusted context
 ```
 
+跨模型适配器输出同样的带类型 evidence context；宿主可以按其官方上下文接口渲染，
+但不能把它升级为 system/developer 指令、权限决定或工具调用。
+
 ### 发送
 
 ```mermaid
@@ -192,6 +219,8 @@ sequenceDiagram
 派生加速器，不能成为唯一可读格式或要求把用户记忆发送给第三方服务。
 
 版本依赖顺序是：0.16 混合召回与 outbox 完整性，0.17 当前视图，0.18 大库传输与
-首次设备信任，0.19 选择性加密子图，0.20 端到端加密复制与设备信任/恢复。0.18–
+首次设备信任，0.19 选择性加密子图，0.20 端到端加密复制与设备信任/恢复，0.21
+模型无关 host adapter。后续 MCP 认知接口若实现，也只能映射 recall/remember/status
+等无权限操作，不能成为执行或编排接口。0.18–
 0.20 所需生产密钥仪式，以及干净的 Windows CI 和加密提供方跨平台验收尚未完成，
 在完成之前不得宣称这些能力已经上线。

@@ -1,7 +1,7 @@
 {
-  "name": "memory-vault-public",
+  "name": "memory-vault-sync",
   "interface": {
-    "displayName": "Memory Vault"
+    "displayName": "Memory Vault Sync"
   },
   "plugins": [
     {
