@@ -12,14 +12,14 @@ python3 scripts/export_open_source_bundle.py \
   --repository-id qh-work/memory-vault-sync \
   --repository-url https://github.com/qh-work/memory-vault-sync.git \
   --author qh-work \
-  --marketplace-name memory-vault-public \
-  --marketplace-display-name "Memory Vault" \
+  --marketplace-name memory-vault-sync \
+  --marketplace-display-name "Memory Vault Sync" \
   --license-file open_source/LICENSE
 ```
 
 The destination must not exist. The exporter copies only the plugin,
 protocol/schema material, provider and chunk contracts, reproducible synthetic
-benchmark/code, relevant tests, and one public README. It never copies
+benchmark/code, relevant tests, and public documentation. It never copies
 `tasks/`, `sources/`, `bindings/`, `memory/`, `instances/`, `handoffs/`, or
 `migration/`. It replaces the private deployment identity and writes
 `.open-source-export.json` with exact file hashes.
@@ -63,8 +63,8 @@ generated public fork that later changes ownership or marketplace branding.
 - license: Apache License 2.0;
 - copyright holder and public maintainer identity: `qh-work`;
 - public repository: `qh-work/memory-vault-sync`;
-- marketplace name: `memory-vault-public`;
-- display name: `Memory Vault`;
+- marketplace name: `memory-vault-sync`;
+- display name: `Memory Vault Sync`;
 - vulnerability reporting: private GitHub security advisories;
 - update policy: exact public repository, commit, version, and bundle identity
   checks remain active; production signed-update trust is not provisioned and

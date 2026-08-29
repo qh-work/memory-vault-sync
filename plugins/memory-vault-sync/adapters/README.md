@@ -116,5 +116,6 @@ python -m unittest discover -s adapters/tests -p "test_*.py" -v
 ```
 
 The tests and deterministic fake Vault are intentionally public reference
-material. See [CONTRIBUTING.md](CONTRIBUTING.md) for the small conformance
-surface that another runtime or AI contributor should preserve.
+material. They establish synthetic protocol conformance only, not real-host or
+production certification. See [CONTRIBUTING.md](CONTRIBUTING.md) for the small
+conformance surface that another runtime or AI contributor should preserve.

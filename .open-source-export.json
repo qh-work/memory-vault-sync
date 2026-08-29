@@ -141,8 +141,8 @@
     },
     {
       "path": "OPEN_SOURCE_READINESS.md",
-      "sha256": "3fd85cdc3fbdb404e2886cbc0d818f31919595c8f111d47444b23c8aa26ed3c9",
-      "size": 8223
+      "sha256": "35b41be4377c5b1a7fa3bfd182388e55489e82c4f6b646552d73346d4286eac8",
+      "size": 8232
     },
     {
       "path": "PRIVATE_DIAGNOSTICS.md",
@@ -156,8 +156,8 @@
     },
     {
       "path": "RELEASE.md",
-      "sha256": "a37d66f7c9ce7ddc8cc70ec836de6e9fa8c28512cddbbdbb3612fb65d212439d",
-      "size": 9537
+      "sha256": "05e5a2f724aec5a8176cbc8159d138097c906f0be45c6b4549f1422d920b68a2",
+      "size": 9536
     },
     {
       "path": "ROADMAP.md",
@@ -181,8 +181,8 @@
     },
     {
       "path": "STATUS.md",
-      "sha256": "04e68fd4d1cd4ea9bb8dde89925a603c68db128cb6f55a82992dc22fb0924a3e",
-      "size": 5605
+      "sha256": "9da89b92ba0307d9249d1f3561ab437fcacdd6ca2a12a4dbbd36ee95d564114c",
+      "size": 5607
     },
     {
       "path": "SUPPORT.md",
@@ -216,8 +216,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/adapters/README.md",
-      "sha256": "0d9538e0aba360f6c262cb4482e9f5125db32d4b39047f46740556476c6d48b4",
-      "size": 4960
+      "sha256": "905e624b1ca7279ccba23e551e50b6b2318b53e852e772e7365f42c4ed0ed6d6",
+      "size": 5055
     },
     {
       "path": "plugins/memory-vault-sync/adapters/adapter_common.py",
@@ -226,8 +226,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/adapters/claude-code/README.md",
-      "sha256": "35171a350583eb936defdcd83d2c2131f8de9327ec2d9daa31c2a2545d7c83e4",
-      "size": 2319
+      "sha256": "abc52d05db50d64ca99d04b24be6cb08cceab8cff6b87fbbbde788d5289d5235",
+      "size": 2440
     },
     {
       "path": "plugins/memory-vault-sync/adapters/claude-code/hook.py",
@@ -241,8 +241,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/adapters/gemini-cli/README.md",
-      "sha256": "297ac26c6017180034791a8fdccd15bd60c6f52f0a7898f49eff9cda9a036281",
-      "size": 2266
+      "sha256": "dd6c997ef0dd825036fd0b917de928b389b52278aec3720e1253fc1cf2db4e47",
+      "size": 2386
     },
     {
       "path": "plugins/memory-vault-sync/adapters/gemini-cli/hook.py",
@@ -631,5 +631,5 @@
   "repository_id": "qh-work/memory-vault-sync",
   "repository_url": "https://github.com/qh-work/memory-vault-sync.git",
   "schema_version": "memory-vault-open-source-export/v1",
-  "total_bytes": 4035613
+  "total_bytes": 4035959
 }

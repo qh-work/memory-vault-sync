@@ -77,7 +77,7 @@ Broad runtime, storage, crypto, or migration changes normally require:
 - package manifest/runtime version consistency;
 - diff and JSON parsing checks.
 
-For each v0.21.x model-neutral host-protocol release, require:
+For the v0.21.0 model-neutral host-protocol release, require:
 
 - entrypoint, core and manifest version
   `0.21.0+codex.20260830000842`, with public tag semantics `v0.21.0`;

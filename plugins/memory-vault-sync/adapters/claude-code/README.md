@@ -6,10 +6,13 @@ Vault protocol. It does not create a Claude-specific store. Claude's native
 file; the raw identifier, transcript path, working directory, model name,
 permission mode, tool data, and system content are never sent to the Vault.
 
-## Verified hook surface
+## Documented hook surface
 
 Checked against the official [Claude Code hooks
 reference](https://code.claude.com/docs/en/hooks) on 2026-08-30:
+
+This mapping has synthetic fixture coverage only. It is not a real Claude Code
+host test or production certification.
 
 - `SessionStart` supplies `session_id`, `hook_event_name`, and `source`; current
   sources are `startup`, `resume`, `clear`, `compact`, and `fork`. The adapter

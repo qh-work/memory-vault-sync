@@ -77,7 +77,7 @@ migration-only and cannot be activated as the production memory model.
   future work.
 - Internet startup and Stop latency still includes private-repository identity
   verification and Git transport.
-- The initial public release is a personal/local marketplace distribution and
+- The public distribution remains a personal/local marketplace distribution and
   has not yet been submitted to the universal plugin directory.
 - The optional MCP cognitive interface is future work; 0.21 does not implement
   or claim an MCP server.

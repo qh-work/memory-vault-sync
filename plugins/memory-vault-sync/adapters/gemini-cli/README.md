@@ -6,11 +6,14 @@ an HMAC-keyed local lookup. The raw identifier and the host's transcript path,
 working directory, timestamp, model traffic, tool data, notification data, and
 permission fields never enter a Vault request.
 
-## Verified hook surface
+## Documented hook surface
 
 Checked against the official [Gemini CLI hooks
 reference](https://geminicli.com/docs/hooks/reference/) and [hook authoring
 guide](https://geminicli.com/docs/hooks/writing-hooks/) on 2026-08-30:
+
+This mapping has synthetic fixture coverage only. It is not a real Gemini CLI
+host test or production certification.
 
 - Every hook receives `session_id`, `transcript_path`, `cwd`,
   `hook_event_name`, and `timestamp`. This adapter reads only the event and the
