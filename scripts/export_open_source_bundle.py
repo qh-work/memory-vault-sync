@@ -226,8 +226,6 @@ def _transform_text(raw: bytes, replacements: tuple[tuple[str, str], ...]) -> by
             PRIVATE_REPOSITORY_ID,
             PRIVATE_REPOSITORY_URL,
             PRIVATE_AUTHOR,
-            PRIVATE_MARKETPLACE,
-            PRIVATE_MARKETPLACE_DISPLAY_NAME,
         )
     ):
         raise ExportError("private deployment identity remains after rebranding")
@@ -237,6 +235,79 @@ def _transform_text(raw: bytes, replacements: tuple[tuple[str, str], ...]) -> by
         raise ExportError("rebranding placeholders were not fully resolved")
     if SECRET_VALUE_RE.search(text):
         raise ExportError("a credential-shaped value remains in the source bundle")
+    return text.encode("utf-8")
+
+
+def _transform_marketplace_identity(
+    raw: bytes,
+    relative: PurePosixPath,
+    source_name: str,
+    target_name: str,
+    source_display_name: str,
+    target_display_name: str,
+) -> bytes:
+    """Rebrand marketplace metadata, never product text or the plugin slug."""
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ExportError("the marketplace identity source is not UTF-8") from exc
+
+    if relative == PurePosixPath(".agents/plugins/marketplace.json"):
+        try:
+            document = json.loads(text)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise ExportError("the marketplace manifest is invalid JSON") from exc
+        plugins = document.get("plugins") if isinstance(document, dict) else None
+        interface = (
+            document.get("interface") if isinstance(document, dict) else None
+        )
+        if (
+            not isinstance(document, dict)
+            or document.get("name") != source_name
+            or not isinstance(interface, dict)
+            or interface.get("displayName") != source_display_name
+            or not isinstance(plugins, list)
+            or len(plugins) != 1
+            or not isinstance(plugins[0], dict)
+            or plugins[0].get("name") != "memory-vault-sync"
+        ):
+            raise ExportError("the marketplace manifest identity boundary is invalid")
+        document["name"] = target_name
+        interface["displayName"] = target_display_name
+        return (
+            json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+        ).encode("utf-8")
+
+    patterns = {
+        PurePosixPath(
+            "plugins/memory-vault-sync/scripts/memory_vault_runtime/core.py"
+        ): (
+            (
+                f'DEPLOYMENT_MARKETPLACE_NAME = "{source_name}"',
+                f'DEPLOYMENT_MARKETPLACE_NAME = "{target_name}"',
+            ),
+        ),
+        PurePosixPath("scripts/export_open_source_bundle.py"): (
+            (
+                f'PRIVATE_MARKETPLACE = "{source_name}"',
+                f'PRIVATE_MARKETPLACE = "{target_name}"',
+            ),
+            (
+                f'PRIVATE_MARKETPLACE_DISPLAY_NAME = "{source_display_name}"',
+                f'PRIVATE_MARKETPLACE_DISPLAY_NAME = "{target_display_name}"',
+            ),
+        ),
+    }
+    scoped_replacements = patterns.get(relative)
+    if scoped_replacements is None:
+        return raw
+    for before, after in scoped_replacements:
+        if text.count(before) != 1:
+            raise ExportError(
+                f"marketplace identity boundary is invalid: {relative.as_posix()}"
+            )
+        text = text.replace(before, after, 1)
     return text.encode("utf-8")
 
 
@@ -288,8 +359,6 @@ def export_bundle(args: argparse.Namespace) -> dict[str, object]:
         (PUBLIC_RELEASE_REPOSITORY_ID, repository_id),
         (PRIVATE_REPOSITORY_URL, repository_url),
         (PRIVATE_REPOSITORY_ID, repository_id),
-        (PRIVATE_MARKETPLACE_DISPLAY_NAME, marketplace_display_name),
-        (PRIVATE_MARKETPLACE, marketplace),
         (PRIVATE_AUTHOR, author),
     )
     prepared: list[tuple[PurePosixPath, bytes, int]] = []
@@ -299,6 +368,14 @@ def export_bundle(args: argparse.Namespace) -> dict[str, object]:
         if relative.parts and relative.parts[0] in FORBIDDEN_TOP_LEVEL:
             raise ExportError(f"private state path entered the allow-list: {relative}")
         raw = _transform_text(source.read_bytes(), replacements)
+        raw = _transform_marketplace_identity(
+            raw,
+            relative,
+            PRIVATE_MARKETPLACE,
+            marketplace,
+            PRIVATE_MARKETPLACE_DISPLAY_NAME,
+            marketplace_display_name,
+        )
         prepared.append((relative, raw, source.stat().st_mode & 0o777))
         total_bytes += len(raw)
         exported.append(

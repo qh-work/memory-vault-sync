@@ -506,8 +506,8 @@
     },
     {
       "path": "plugins/memory-vault-sync/tests/test_vault_sync.py",
-      "sha256": "6b681203db832ae7bd5f72051521e19dc9443524e3f7e49f312a390d3363e758",
-      "size": 571861
+      "sha256": "1ae66d53c199e13a9c078c635fdc2642287025a35418261028e4645883829213",
+      "size": 572158
     },
     {
       "path": "schemas/binding.schema.json",
@@ -596,8 +596,8 @@
     },
     {
       "path": "scripts/export_open_source_bundle.py",
-      "sha256": "b21d9b31fc9de9d34c909b48fb594489ad5e71dc8fb4c5d62d085f0693d9d703",
-      "size": 14640
+      "sha256": "1ad90cba2906c23bd0d894ae17f6ac9dadaab2d5cbe69225ca9cf975379625d7",
+      "size": 17408
     },
     {
       "path": "scripts/memory_vault_validator/__init__.py",
@@ -616,8 +616,8 @@
     },
     {
       "path": "tests/test_export_open_source_bundle.py",
-      "sha256": "1ed4d0b9e2868579975ded934bdd0ca4f904e2a6766811fbf54c7dd026dabdbb",
-      "size": 17859
+      "sha256": "27a5b3c1e32c9f1def80d9f4839a6ffcc1e4f944ee9c7d8bef1c20ecedb430ec",
+      "size": 22147
     },
     {
       "path": "tests/test_validate_layout_v1.py",
@@ -631,5 +631,5 @@
   "repository_id": "qh-work/memory-vault-sync",
   "repository_url": "https://github.com/qh-work/memory-vault-sync.git",
   "schema_version": "memory-vault-open-source-export/v1",
-  "total_bytes": 4027314
+  "total_bytes": 4034667
 }

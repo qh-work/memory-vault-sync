@@ -10042,9 +10042,18 @@ class MemoryVaultSyncTests(unittest.TestCase):
     def test_private_deployment_identity_stays_in_fork_boundary(self) -> None:
         source = MODULE_PATH.read_text(encoding="utf-8")
         boundary, runtime = source.split('\nVERSION = "', 1)
+        marketplace_name = json.loads(
+            (
+                REPOSITORY_ROOT / ".agents/plugins/marketplace.json"
+            ).read_text(encoding="utf-8")
+        )["name"]
+        self.assertEqual(
+            vault_sync.DEPLOYMENT_MARKETPLACE_NAME,
+            marketplace_name,
+        )
         for private_identity in (
             "qh-work",
-            "memory-vault-sync",
+            marketplace_name,
             "https://github.com/qh-work/memory-vault-sync.git",
         ):
             self.assertIn(private_identity, boundary)

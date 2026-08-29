@@ -89,11 +89,17 @@ class OpenSourceExportTests(unittest.TestCase):
             target_author = "fixture-public-org"
             if target_author == source_exporter.PRIVATE_AUTHOR:
                 target_author = "fixture-public-alt"
-            target_repository_id = f"{target_author}/team/memory-vault-sync"
+            # Keep every target identity disjoint from the source identities so
+            # the final leak assertion remains meaningful after a public tree
+            # is exported again under a different name.
+            target_repository_id = f"{target_author}/team/fixture-sync-package"
             target_repository_url = (
                 f"https://gitlab.com/{target_repository_id}.git"
             )
-            target_marketplace = f"{target_author}-memory"
+            # Match the stable plugin slug on the first export. A second export
+            # below proves that this intentional collision cannot rename plugin
+            # paths, schema identifiers, or workflow commands.
+            target_marketplace = "memory-vault-sync"
             # Keep the end-to-end leak assertion unambiguous: a separate unit
             # test above covers targets that intentionally contain the source
             # display label.
@@ -203,6 +209,10 @@ class OpenSourceExportTests(unittest.TestCase):
                 "Validate complete vault layout",
                 public_workflow.read_text(encoding="utf-8"),
             )
+            self.assertIn(
+                "plugins/memory-vault-sync/scripts",
+                public_workflow.read_text(encoding="utf-8"),
+            )
             self.assertTrue(
                 (destination / "plugins/memory-vault-sync/scripts/vault_sync.py").is_file()
             )
@@ -227,8 +237,6 @@ class OpenSourceExportTests(unittest.TestCase):
                 source_exporter.PRIVATE_REPOSITORY_ID,
                 source_exporter.PRIVATE_REPOSITORY_URL,
                 source_exporter.PRIVATE_AUTHOR,
-                source_exporter.PRIVATE_MARKETPLACE,
-                source_exporter.PRIVATE_MARKETPLACE_DISPLAY_NAME,
             ):
                 self.assertNotIn(source_identity, combined)
             self.assertIn(target_repository_id, combined)
@@ -249,9 +257,104 @@ class OpenSourceExportTests(unittest.TestCase):
                     destination / ".agents/plugins/marketplace.json"
                 ).read_text(encoding="utf-8")
             )
+            self.assertEqual(marketplace_document["name"], target_marketplace)
+            self.assertEqual(
+                marketplace_document["plugins"][0]["name"],
+                "memory-vault-sync",
+            )
+            self.assertEqual(manifest["marketplace_name"], target_marketplace)
+            runtime_text = (
+                destination
+                / "plugins/memory-vault-sync/scripts/memory_vault_runtime/core.py"
+            ).read_text(encoding="utf-8")
+            self.assertIn(
+                f'DEPLOYMENT_MARKETPLACE_NAME = "{target_marketplace}"',
+                runtime_text,
+            )
+            exporter_text = (
+                destination / "scripts/export_open_source_bundle.py"
+            ).read_text(encoding="utf-8")
+            self.assertIn(
+                f'PRIVATE_MARKETPLACE = "{target_marketplace}"',
+                exporter_text,
+            )
+            self.assertIn(
+                "PRIVATE_MARKETPLACE_DISPLAY_NAME = "
+                f'"{target_marketplace_display}"',
+                exporter_text,
+            )
             self.assertEqual(
                 marketplace_document["interface"]["displayName"],
                 target_marketplace_display,
+            )
+
+            second_destination = temporary / "second-public-source"
+            second_repository_id = (
+                "fixture-second-org/team/second-sync-package"
+            )
+            second_marketplace = "fixture-second-marketplace"
+            second_result = subprocess.run(
+                [
+                    sys.executable,
+                    str(destination / "scripts/export_open_source_bundle.py"),
+                    "--destination",
+                    str(second_destination),
+                    "--repository-id",
+                    second_repository_id,
+                    "--repository-url",
+                    f"https://gitlab.com/{second_repository_id}.git",
+                    "--author",
+                    "fixture-second-org",
+                    "--marketplace-name",
+                    second_marketplace,
+                    "--marketplace-display-name",
+                    "Second Fixture Memory",
+                    "--license-file",
+                    str(license_file),
+                ],
+                cwd=str(destination),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                second_result.returncode,
+                0,
+                second_result.stderr or second_result.stdout,
+            )
+            self.assertTrue(
+                (
+                    second_destination
+                    / "plugins/memory-vault-sync/scripts/vault_sync.py"
+                ).is_file()
+            )
+            second_workflow = (
+                second_destination / ".github/workflows/memory-vault-sync.yml"
+            ).read_text(encoding="utf-8")
+            self.assertIn("plugins/memory-vault-sync/scripts", second_workflow)
+            self.assertIn("name: Memory Vault Sync", second_workflow)
+            self.assertTrue(
+                (second_destination / "README.md")
+                .read_text(encoding="utf-8")
+                .startswith("# Memory Vault Sync\n")
+            )
+            second_marketplace_document = json.loads(
+                (
+                    second_destination / ".agents/plugins/marketplace.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                second_marketplace_document["name"],
+                second_marketplace,
+            )
+            self.assertEqual(
+                second_marketplace_document["plugins"][0]["name"],
+                "memory-vault-sync",
+            )
+            self.assertEqual(
+                second_marketplace_document["interface"]["displayName"],
+                "Second Fixture Memory",
             )
             runtime = (
                 destination
