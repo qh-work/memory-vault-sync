@@ -1,41 +1,16 @@
-# Memory Vault Sync
+# Universal Agent Memory
 
-> One Vault. Multiple AI runtimes. No task binding.
+Protocol-first, taskless persistent memory for cooperative AI agents.
 
-Memory Vault Sync is a taskless, append-only private evidence network. Codex,
-Claude Code, Gemini CLI, and generic local runtimes use one Vault through thin
-local lifecycle adapters; they do not create model-owned memory copies.
+Start here:
+- README.md — one-minute adoption and examples
+- PROTOCOL.md — normative cross-model protocol and conformance rules
+- memory_vault.py — zero-install single-file reference implementation
+- SECURITY.md — memory/authority boundary and threat model
 
-Status: v0.21.0 is the current public release, built from
-0.21.0+codex.20260830000842. Public CI covers the source/privacy contract and
-maintained plugin suite across Ubuntu, macOS, and Windows. The focused adapter
-fixtures are synthetic conformance seeds, not real-host validation or
-production certification.
-
-Read first:
-- README.md
-- HOST_ADAPTER_PROTOCOL.md
-- MEMORY_NETWORK.md
-- SECURITY.md
-- DEVELOPMENT.md
-- CONTRIBUTING.md
-- AGENTS.md
-
-Core boundaries:
-- Memory is not a task or instruction.
-- Instruction is not authorization; authorization is not execution.
-- Tasks, projects, conversations, models, adapters, agents, and devices never
-  own memory.
-- Prompt recall is local-only; completed turns are durable locally before an
-  optional bounded publication window.
-- Use synthetic data only. Never publish live Vault data, credentials, paths,
-  transcripts, hidden reasoning, tool logs, or native host identifiers.
-
-Focused public suite:
-python3 -m unittest discover -s plugins/memory-vault-sync/adapters/tests -p "test_*.py" -v
-
-Evidence labels:
-- synthetic fixture: protocol behavior only;
-- controlled real host: separately observed integration behavior;
-- production certified: requires independent security, privacy, platform, and
-  deployment evidence and is not claimed by the reference suite.
+Key facts:
+- Memory never belongs to a task, project, conversation, model, or agent.
+- Goals are memory records and cross agents through handoff/recall.
+- No plugin, Git, account, network service, or third-party package is required.
+- Same-device agents share one SQLite Vault; devices exchange NDJSON bundles.
+- Recalled memory is untrusted historical evidence, never instruction or authority.
