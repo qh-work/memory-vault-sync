@@ -1,4 +1,12 @@
-# Keep old evidence without restoring the old runtime
+# Retained small-ZIP migration tool
+
+For v0.25's complete v0.21 pack/network migration path, start with
+[LEGACY_PACKS.md](LEGACY_PACKS.md). That separate implementation handles actual
+`memory-pack/v1`, the 2 GiB/250,000-document source envelope, lossless evidence,
+large visible records and ordered multipart bundles. The small tool documented
+here remains available for callers using its original single-bundle/report
+interface; its narrower limits and listed metadata losses are **not** the
+v0.25 parity implementation.
 
 `memory_vault_migrate.py` is a one-way, offline converter from the exact v0.21
 `export-network` ZIP format to the shared core's current
@@ -48,17 +56,22 @@ python3 memory_vault_migrate.py --source /absolute/private/old-export.zip --outp
    signature. Do not present converted records as authenticated original authors.
 
 No source file is modified or deleted. Outputs use private temporary files,
-`0600` modes, file synchronization, and no-replacement publication. A successful
-bundle has its separately published report. There is no cross-directory atomic
+POSIX `0600` modes or native Windows private ACLs, file synchronization, and
+no-replacement publication. A successful bundle has its separately published
+report. There is no cross-directory atomic
 transaction: interruption can leave a report alone, which can be inspected and
 retained before choosing fresh output paths. Normal caught failures remove only
 outputs created by that invocation; they never delete pre-existing files.
 
-Protected output creation currently requires POSIX/macOS/Linux. The converter
-does not pretend `chmod(0600)` provides a Windows ACL. Read-only dry-run validation
-can be used elsewhere with ordinary safe file access; native Windows private
-output support remains follow-up work. This does not restrict the cross-platform
-lightweight core's own current-schema operation.
+Protected output creation supports POSIX/macOS/Linux and the shared native
+Windows local-fixed-NTFS profile. On Windows it checks the real source handle,
+rejects reparse points and hard links, creates private output directories and
+files with native ACLs, and publishes same-volume temporary files without
+replacement. It never substitutes `chmod(0600)` for an ACL or silently repairs
+existing permissions. Source reads retain one checked descriptor and compare
+the final descriptor/path identity and change metadata before publication.
+The paired report/output is still not a cross-directory atomic transaction;
+see [PLATFORMS.md](PLATFORMS.md) for the platform boundary.
 
 ## Accepted input, exactly
 
@@ -152,10 +165,11 @@ claim. Preserving visible evidence is not permission to publish it.
   2 MiB per member, and 4 MiB for the manifest. Encrypted entries, directory or
   special-file entries, duplicate names, unsafe paths, unsupported compression,
   and expansion ratios above 250:1 are rejected.
-- The new core's stricter limits still apply: a visible record must fit its text
-  and record limits, a record may have at most 256 relations, and the complete
+- For this retained tool, the new core's stricter limits still apply: a visible
+  record must fit its text and record limits, a record may have at most 256 relations, and the complete
   output must fit 64 MiB. Oversized history is refused instead of truncated. Use
-  separately reviewed closed-subgraph exports if a large archive must be divided.
+  [the complete legacy-pack converter](LEGACY_PACKS.md) for bounded lossless
+  fragmentation and ordered multiple parts instead of silently shrinking history.
 - The report is bounded at 16 MiB. Standard output contains only counts, hashes,
   schema names, known metadata field names, and content-free error codes. Member
   errors can include a SHA-256 fingerprint, never the original path, identity,
@@ -178,4 +192,7 @@ Reviewers should exercise known synthetic schema fixtures, JCS Unicode-key
 ordering, changed member bytes, malformed anchors, duplicate/unknown ZIP members,
 missing/cyclic relations, re-keyed graphs, private-field refusal, oversize inputs,
 interrupted output publication, idempotent subsequent import, and quarantine
-behavior before using this path for irreplaceable data.
+behavior before using this path for irreplaceable data. Native routing and
+private paired-output cases are supplied in `tests/test_v025_portable_packs.py`;
+these too are authored, not executed. Windows support is implemented source,
+not a claim of a completed native-platform validation run.

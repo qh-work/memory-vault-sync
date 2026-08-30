@@ -1,83 +1,71 @@
-# v0.24.1 release scope
+# v0.25 distribution scope and publication gate
 
-## One protocol, two equal usage paths
+## One protocol, two complete usage paths
 
-The protocol is independent of the implementation language and storage engine.
-The optional user-authorized plugin automates that same memory contract. A
-direct protocol implementation is not required to install the plugin or import
-our Python module. Shared record bytes, relations and exchange rules connect
-the two paths; a task, model, session or client never becomes a memory owner.
+The protocol is independent of language, storage, model, session, device and
+task. The authorized full client automates the same canonical record contract;
+an independent implementation is not required to install it or import Python.
 
-Published assets:
+This branch's source target is **0.25.0**. It is not evidence that a v0.25 tag,
+GitHub release or installed client already exists. Previously published
+v0.24.1 remains a separate immutable release.
 
-- `memory-vault-protocol-v0.24.1.zip`: specification, JSON Schemas, synthetic
-  interchange examples and an independent implementation guide; no executable.
-- `memory-vault-client-v0.24.1.zip`: complete source-built plugin runtime,
-  explicit setup instructions and a local marketplace catalog.
+The release builder produces:
+
+- `memory-vault-protocol-v0.25.0.zip`: specification, schemas, synthetic
+  interchange examples and implementer guides, **no executable files**.
+- `memory-vault-client-v0.25.0.zip`: complete source-built runtime, plugin,
+  local marketplace catalog and explicit setup instructions.
+- `memory-vault-review-v0.25.0.zip`: public synthetic tests and source/build
+  material for reviewers to run only with their user's authorization.
 - `memory_vault.py`: optional standard-library single-file reference.
-- `PROTOCOL.md`: the standalone readable agreement.
-- `release-manifest.json` and `SHA256SUMS`: source commit, build scope and asset
-  integrity inventory. Checksums do not authenticate the publisher.
+- `PROTOCOL.md`: standalone readable agreement.
+- `release-manifest.json` and `SHA256SUMS`: source commit, exact byte
+  inventories and the checks actually performed. Checksums are not publisher
+  signatures.
 
-The full plugin includes MCP tools, opt-in visible-turn hooks, a configured
-protocol bridge, the lifecycle profile and Codex/Claude Code/Gemini CLI/generic
-host adapters. Independent sync opt-in adds queued signed transfer using a
-finite worker and directory/rclone backends. Diagnostic, backup/restore, chunk
-pack and controlled update-staging commands are included as separate modules.
-Signing, remote transport and staged old-export conversion remain optional
-features, not lightweight-protocol prerequisites. See [PARITY.md](PARITY.md).
+The full client includes retrieval/graph tools, lifecycle/host adapters,
+v0.21-compatible host operations, signed resumable synchronization, privacy
+review, current-trust recovery, old packs/checkpoints, selected sharing and
+controlled signed updates. [PARITY.md](PARITY.md) and the
+[complete ledger](V0_25_PARITY_PLAN.md) define the scope and intentional Task/Git
+exclusions.
 
-The lifecycle entry keeps recognizable `session.open`, `turn.input`,
-`turn.commit`, `turn.abort` and `session.close` operation names in **new explicit
-v1 envelopes**. It does not accept every old v0.21 Host Adapter envelope, record
-schema or error code. The old runtime and Git synchronization are not restored.
+The new lifecycle v1 and the v0.21 `compat` wire entry are **different profiles**.
+Recognizable operation names alone do not make envelopes interchangeable.
+Default encryption/device/update providers are not provisioned production
+services; the source exposes explicit fail-closed boundaries.
 
-## Publication is not runtime certification
+## Publication is not certification
 
-At the owner's request, no unit, integration, conformance, host, performance or
-cross-device tests were run for this release. Source inspection, static syntax
-and JSON validation, packaging and archive/inventory verification are separate
-activities, not a substitute for those tests. See the included manifest and
-[review handoff](REVIEW_HANDOFF.md) for reproducible independent review scope.
+The owner requested no test execution. Source/AST/JSON, package structure and
+archive-byte inspection are permitted and are not application tests. No real
+Vault, installed private plugin, key, host setting or remote account is used.
 
-The repository's protected main branch still requires three platform
-conformance checks. Those protections are not weakened or bypassed. The
-release is published from its exact version tag on the integration branch;
-the prior main checkout may still be v0.23. Use `v0.24.1`, not an unqualified
-main checkout, when reviewing or installing this release. No CI run is triggered
-just to manufacture a passing result, and missing results are not successes.
+Runtime, host, crash/concurrency, native-platform, throughput and cross-device
+evidence remain pending. Do not publish an unqualified stable/completed claim
+without auditing all requirements. Review material may be shared as explicitly
+unverified development work; it does not replace a completion audit.
 
-## Explicit non-goals and remaining limitations
+Protected main and existing tags must not be rewritten or bypassed to obtain
+a green indicator. Tests are not silently triggered merely to manufacture a
+result. The public release state must be checked independently at publication
+time; this file does not assert current GitHub status.
 
-- No installation into the maintainer's existing private client and no live
-  private-data migration were performed while preparing this release.
-- No OpenAI universal-directory submission or vendor certification is claimed.
-- Native Work automatic lifecycle capture is not established. MCP availability
-  depends on the actual host; a model alone cannot create file/process tools.
-- No always-on network daemon or new network privilege is added. Full-mode
-  synchronization can start a finite worker only after an independent operator
-  opt-in, and uses the host's existing authorized transport. Local prompt/save
-  paths never wait for network; receipts do not prove remote consumption.
-- Ed25519 signatures identify an enrolled signing key, not the original human,
-  model, truth of a statement or authority to execute a remembered action.
-- Bare-core reads without a trust registry report ingestion-time verification;
-  use a configured trusted client for current key-revocation checks.
-- NDJSON exports intentionally omit signatures. Use the signed transfer
-  profile for preserving the accepted record attestations; unsigned imports
-  are quarantined unless explicitly accepted, never silently upgraded into
-  trusted evidence.
-- Native Windows protected key storage, multiple-proof recovery, production
-  security audit and independently observed interoperability remain open.
+## Build without running the application
 
-## Build without running application tests
-
-From a reviewed source checkout, use a new absolute output directory:
+From a reviewed source checkout, select a new absolute output directory:
 
 ```bash
-python3 scripts/build_release.py --output /absolute/new/release-directory --source-commit FULL_COMMIT_SHA
+python3 -B scripts/build_release.py --output /absolute/new/release-directory --source-commit FULL_COMMIT_SHA
 ```
 
-The builder reads only public source allowlists, parses source/JSON, assembles
-the two packages and computes checksums. It does not import the application,
-initialize a Vault, install a plugin, generate keys or run tests. Existing output
-paths are never overwritten.
+The builder copies only public allowlists, parses source/JSON, builds both
+usage packages and the separate review kit, then verifies archive member bytes.
+It does not import the application, initialize memory, generate keys, connect
+a host, run tests or install anything. Existing output paths are not overwritten.
+The caller-supplied commit must actually identify the reviewed source; the
+manifest explicitly states that the builder does not validate Git ancestry.
+
+For review evidence, report the exact commit, OS/runtime/provider versions,
+synthetic input and observed result. See [REVIEW_HANDOFF.md](REVIEW_HANDOFF.md).

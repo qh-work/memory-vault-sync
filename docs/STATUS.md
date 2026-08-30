@@ -1,68 +1,68 @@
-# v0.24.1 release status
+# v0.25 development status
 
-Version: **0.24.1**, full-client + independent-protocol source/package release. The protocol-only archive
-and the complete optional plugin archive are distributed together. The protected
-main branch and the maintainer's installed private client are unchanged.
-Implementation and packaging are not claims of runtime or production validation.
+Source version: **0.25.0** on `feat/v0.25-parity`.
+This is development source, not a completed/public v0.25 release or a runtime
+certification. Previously published v0.24.1 does not contain the additions below.
+Existing private installations, real Vaults, keys, remote accounts and protected
+main have not been changed by this development work.
 
-| Capability | Implementation present | Not established |
-| --- | --- | --- |
-| Independent protocol | Language/storage-neutral specification, JSON Schemas, synthetic NDJSON and canonical hash material | An independent implementation's successful conformance run |
-| Lightweight core | Single standard-library file, taskless records, recall/handoff, append-only SQLite | Runtime regression/performance results for v0.24 |
-| Shared client entry | Eight stdio MCP tools; same Vault/core; explicit configuration | Every vendor/model host can install/use it unchanged |
-| Direct client protocol | Uses the configured Vault and trust settings; single requests, stdio and portable export/import | A live cross-implementation round trip |
-| Lifecycle profile | New explicit session/turn profile, durable commit, exact retries and cancellation boundary | Old v0.21 wire compatibility or an executed crash/cancel suite |
-| Optional automatic save | Codex hooks, Claude Code/Gemini CLI/generic visible-event adapters, private retry state | Live host capture, all vendor versions or native Work automatic lifecycle |
-| Signing and admission | Ed25519 provider, explicit independent trust, quarantine, revocation-aware views | Security audit, multi-signature history, hostile same-user isolation |
-| Automatic incremental sharing | Bounded signed batches, coalesced queue, finite opted-in worker, closure, retry and content-free receipts | Always-on delivery, remote consumption acknowledgment, throughput benchmark |
-| Remote backends | Explicit directory or pinned rclone/config/peer streams; Drive/S3/WebDAV/SFTP/crypt through rclone | Every backend/provider's live behavior; native direct Drive API parity |
-| Diagnosis and recovery | Read-only doctor, bounded replay, consistent snapshot and restore-to-new-path with current trust | A complete old-client settings/queue migration or executed crash-recovery suite |
-| Large exports/snapshots | Bounded compressed chunk packs, cached resumable copy, full verification on unpack | Old pack wire compatibility, object-store byte-range resume, benchmark |
-| Controlled updates | Explicit stable-release check, bounded verified stage to new path, no downloaded-code execution | Publisher signature, auto-install, marketplace certification or host activation |
-| Old data conversion | One-way supported v0.21 export ZIP conversion, mapping/loss report, dry-run | Arbitrary legacy formats or a real private-data migration |
-| Portability | Standard-library core and unsigned client paths | Native Windows protected signing/ACL adapter |
-| Packaging | Complete source-built plugin, local catalog, protocol-only ZIP, source/JSON parsing and byte inventories | Desktop installation, marketplace activation or host hook trust |
+The target is the full useful v0.21 taskless feature set plus an independent
+lightweight protocol. See [the complete requirement ledger](V0_25_PARITY_PLAN.md)
+and [old/new capability mapping](PARITY.md), not a smaller renamed subset.
 
-## What this change deliberately does not do
+## Implemented source
 
-- Reintroduce Task, Project, conversation or model ownership of memory.
-- Restore the old monolithic runtime or Git authentication/synchronization.
-- Install, replace or remove the user's existing plugin or private data.
-- Enable capture, generate keys, enroll a sender or activate hooks automatically.
-- Hide persistence, erase logs, acquire permissions, spawn agents or run goals
-  merely because memory contains a proposed next action.
-- Claim signatures prove truth or that a remote agent read a delivered batch.
-- Publish a production-ready release without integration evidence.
+- Shared immutable records, existing IDs/attestations and SQLite v2 remain the
+  common foundation. The single-file core still imports no optional client.
+- Full local retrieval adds fragments, bounded BM25, bilingual concepts,
+  polarity/explanations and explicit paginated reindex. Graph/claim views expose
+  timelines, conflicts, supersession and non-executing proposals.
+- Eleven MCP tools, direct protocol, visible-event adapters, the new lifecycle
+  profile and a separate ten-operation v0.21 wire adapter share one Vault/trust.
+- Signed chained synchronization includes receive-only/flush, reviewed
+  exclusions, requeue, complete resumable fragment groups and directory/rclone
+  backends. Prompt/save/recall paths do not perform remote delivery.
+- Memory snapshots and separately selected full-client recovery preserve
+  evidence. Reactivation is explicit, uses a new configuration and does not
+  restore keys, remote publication permission or host trust.
+- Real v0.21 packs/ZIPs and checkpoint chains can be inspected/repacked and
+  converted through a disk index into complete split canonical parts with
+  original-byte evidence and validated old-ID mappings.
+- Content-selected sharing preserves complete dependency closure and optional
+  proofs. Imports default to quarantine; verified import uses independent
+  current trust. Encryption/device/catalog contracts remain external-provider
+  APIs whose unconfigured defaults refuse work.
+- Publisher verification, isolated managed installation, journaled activation,
+  retained rollback and separately opted-in finite automatic updates are
+  present. A production publisher root/channel is not provisioned.
+- Native Windows local-fixed-NTFS protection is implemented alongside POSIX
+  protection. It does not isolate a hostile process running as the same user.
 
-## Review performed and remaining work
+## Evidence actually available
 
-Implementation work included source inspection, official host/protocol/provider
-documentation checks and independent static cross-reviews of the client,
-signing, storage and transfer interfaces. Those reviews identified and corrected
-several concrete retry/trust/queue issues. They are not substitutes for execution.
-Public Python files are parsed as syntax without importing the application or
-executing tests; public JSON and synthetic NDJSON are structurally parsed.
-The release builder verifies stored archive bytes against the build inputs and
-emits file counts, asset hashes and limitations in `release-manifest.json`.
-Independent static review also covered commit/cancel state and read-only receipt
-replay after capture is disabled. These are not runtime test results.
+Source review and independent static cross-reviews identified concrete
+integration, trust, alias, closure, recovery and packaging issues and led to
+source fixes. Python AST and JSON parsing were performed without importing the
+application. These checks prove only the parsed source/format properties.
 
-At the owner's request, **tests were not run**. No live capture, dependency
-installation, runtime migration, key generation, benchmark, plugin installation,
-or cross-device trial was performed. Follow [REVIEW_HANDOFF.md](REVIEW_HANDOFF.md)
-for independent synthetic checks before treating this as a stable release.
+Synthetic cases are included in `tests/test_v025_*.py` and the existing core
+suite. They are material for authorized independent reviewers, **not executed
+test results**. Build/inventory checks, when performed, are recorded separately
+in the generated release manifest; a source document alone is not their result.
 
-Full mode restores these product capabilities as separate modules, not by
-reintroducing the old monolith. [PARITY.md](PARITY.md) records deliberate
-replacements and remaining differences. The lightweight core does not import
-the optional runtime or acquire its dependencies.
+## Still unverified / release gate
 
-Next release priorities are evidence from a real consenting local client,
-signed two-device interoperability and crash-recovery checks, Windows protected
-key storage, more complete key-rotation/multiple-proof recovery, and safe
-operator UX for blocked batches. The light core remains independently usable
-throughout; no migration back to Task-centric ownership is planned.
+At the owner's request, **no application tests or runtime trials were run**.
+There is no evidence here of live capture, installed-host compatibility,
+crash/concurrency recovery, cryptographic interoperability, Windows native
+behavior, 2 GiB operation, throughput, two-device delivery or a cross-language
+round trip. Do not infer those outcomes from synthetic cases or static checks.
 
-See [release scope](RELEASE.md) for the tag-versus-main distinction and
-[independent implementation](IMPLEMENTERS.md) for a route that does not require
-our Python implementation, SQLite or a plugin.
+The work also does not establish native Work automatic events, production
+encryption/recovery ceremonies, a security audit, vendor certification or
+independent adoption. A matching host must actually expose the integration.
+
+Stable publication and the full completion claim remain gated on the
+requirement-by-requirement audit and adequate evidence. Existing branch
+protection is not weakened or bypassed. A review snapshot must be labeled
+unverified; see [release scope](RELEASE.md) and [review handoff](REVIEW_HANDOFF.md).

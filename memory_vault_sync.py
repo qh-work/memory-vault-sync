@@ -25,8 +25,9 @@ if _SOURCE_DIRECTORY not in sys.path:
 
 from memory_vault import MemoryError, canonical_bytes, failure, sha256, strict_json_loads, success, write_response
 from memory_vault_remote import Budget, RcloneBackend, executable_sha256, peer_value, remote_path
-from memory_vault_transfer import DirectoryTransfer, MAX_CAPSULE_BYTES, _path, _private_directory, _read, _write
+from memory_vault_transfer import DirectoryTransfer, MAX_CAPSULE_BYTES, MAX_REVIEW_DOCUMENT, _fragment_name, _path, _private_directory, _read, _read_fragment, _write
 from memory_vault_trust import TrustError
+import memory_vault_storage as protected_storage
 
 CONFIG_SCHEMA = "universal-memory-sync-config/v1"
 STATE_SCHEMA = "universal-memory-sync-state/v1"
@@ -66,9 +67,12 @@ def _read_control(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     # No mkdir, trust loading, database access or network on this path.
-    info = path.parent.lstat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise MemoryError("unprotected_sync_control")
+    if os.name == "nt":
+        protected_storage.check_private_directory(path.parent)
+    else:
+        info = path.parent.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise MemoryError("unprotected_sync_control")
     return dict(_read(path, maximum=MAX_CONTROL_BYTES, private=True))
 
 
@@ -82,6 +86,13 @@ def _write_control(path: Path, value: Mapping[str, Any], *, replace: bool = True
 @contextlib.contextmanager
 def _lock(path: Path) -> Iterator[None]:
     _private_directory(path.parent)
+    if os.name == "nt":
+        try:
+            with protected_storage.file_lock(path, busy_code="sync_busy"):
+                yield
+            return
+        except protected_storage.StorageError as exc:
+            raise MemoryError(exc.code, retryable=exc.retryable) from None
     import fcntl
 
     fd = os.open(_path(path), os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
@@ -120,8 +131,9 @@ class SyncConfig:
 
     @classmethod
     def load(cls, path: Path) -> SyncConfig:
-        if os.name != "posix":
+        if os.name not in {"posix", "nt"}:
             raise MemoryError("unsupported_private_sync_storage")
+        protected_storage.require_supported_storage()
         selected = _absolute(path)
         raw = _read_control(selected)
         if raw is None:
@@ -130,8 +142,9 @@ class SyncConfig:
 
     @classmethod
     def from_document(cls, path: Path, value: Mapping[str, Any]) -> SyncConfig:
-        if os.name != "posix":
+        if os.name not in {"posix", "nt"}:
             raise MemoryError("unsupported_private_sync_storage")
+        protected_storage.require_supported_storage()
         raw = _object(value, {"schema_version", "vault", "identity", "trust_store", "state_directory",
                               "enabled", "automatic", "background", "backend", "limits"})
         if raw["schema_version"] != CONFIG_SCHEMA:
@@ -179,7 +192,7 @@ class SyncConfig:
         for key, low, high in (("maximum_batches", 1, 16), ("maximum_files", 2, 64),
                                ("maximum_bytes", 8 * 1024 * 1024, 128 * 1024 * 1024),
                                ("maximum_seconds", 5, 60), ("record_limit", 1, 256),
-                               ("batch_bytes", 4096, 1024 * 1024)):
+                               ("batch_bytes", 4096, 3 * 1024 * 1024)):
             _bounded_int(limits[key], low, high)
         return cls(selected, vault, identity, trust, state, raw["enabled"], raw["automatic"], raw["background"], backend, limits)
 
@@ -289,18 +302,21 @@ def _spawn(config: SyncConfig) -> str:
                 return "coalesced"
         _write_control(reservation_path, {"expires_at": int(time.time()) + 5})
         log_path = _path(config.state_directory / "worker-events.ndjson")
-        fd = os.open(log_path, os.O_CREAT | os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
-                     | getattr(os, "O_NONBLOCK", 0), 0o600)
+        fd = (protected_storage.open_file(log_path, os.O_CREAT | os.O_WRONLY | os.O_APPEND, private=True) if os.name == "nt" else
+              os.open(log_path, os.O_CREAT | os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+                      | getattr(os, "O_NONBLOCK", 0), 0o600))
         try:
             info = os.fstat(fd)
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                    or info.st_mode & 0o077 or info.st_nlink != 1):
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or (os.name != "nt" and (info.st_uid != os.getuid() or info.st_mode & 0o077))):
                 raise MemoryError("unprotected_sync_event_log")
             if info.st_size >= MAX_EVENT_LOG_BYTES:
                 raise MemoryError("sync_event_log_review_required")
-            command = [sys.executable, "-I", str(Path(__file__).resolve()), "--config", str(config.path), "run", "--background-worker"]
+            # Managed runtimes have an exact source inventory. A finite worker
+            # must not introduce unlisted bytecode into that immutable tree.
+            command = [sys.executable, "-I", "-B", str(Path(__file__).resolve()), "--config", str(config.path), "run", "--background-worker"]
             subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=fd, stderr=fd,
-                             close_fds=True, start_new_session=True, shell=False)
+                             close_fds=True, start_new_session=os.name != "nt", shell=False)
         finally:
             os.close(fd)
         return "worker_started"
@@ -332,12 +348,16 @@ def _error_code(exc: BaseException) -> str:
     return code if isinstance(code, str) and _CODE.fullmatch(code) else "sync_unavailable"
 
 
-def _publication_guard(records: Sequence[Mapping[str, Any]]) -> None:
+def _publication_guard(
+    records: Sequence[Mapping[str, Any]], *, endpoint: DirectoryTransfer | None = None,
+    payload: Mapping[str, Any] | None = None,
+) -> None:
     try:
         from memory_vault_privacy import assert_publishable
     except ImportError:
         raise MemoryError("publication_policy_unavailable") from None
-    assert_publishable(records)
+    approved = endpoint.local_path_approvals(payload) if endpoint is not None and payload is not None else set()
+    assert_publishable(records, approved_local_path_ids=approved)
 
 
 def _remote_receipt(config: SyncConfig) -> dict[str, Any]:
@@ -376,7 +396,7 @@ def _push_pending(config: SyncConfig, endpoint: DirectoryTransfer, remote: Rclon
             or payload["sender_key_id"] != key or payload["source_store_id"] != store
             or digest != state["last_published"]):
         raise MemoryError("remote_pending_source_changed")
-    _publication_guard(payload["records"])
+    _publication_guard(endpoint.records_for_payload(payload)[0], endpoint=endpoint, payload=payload)
     # Refuse to create a new authenticated fork after control-state loss or a
     # second publisher configuration. This is a bounded preflight, not a remote
     # compare-and-swap: operators must still use one publisher state per stream.
@@ -397,6 +417,28 @@ def _push_pending(config: SyncConfig, endpoint: DirectoryTransfer, remote: Rclon
             continue  # Unauthenticated text cannot choose a sending cursor.
         if conflict:
             raise MemoryError("authenticated_stream_fork")
+    if payload.get("group") is not None:
+        group = payload["group"]
+        receipts = config.state_directory / "remote-group-receipts" / group["group_id"]
+        _private_directory(receipts.parent)
+        _private_directory(receipts)
+        transferred = 0
+        for fragment in group["fragments"]:
+            receipt_path = receipts / (str(fragment["index"]) + ".json")
+            expected_receipt = {"binding": config.binding, "group_id": group["group_id"],
+                                "index": fragment["index"], "sha256": fragment["sha256"], "bytes": fragment["bytes"]}
+            if receipt_path.exists():
+                if _read(receipt_path, private=True) != expected_receipt:
+                    raise MemoryError("remote_group_receipt_conflict")
+                continue
+            if transferred >= 8:
+                raise MemoryError("remote_group_pending", retryable=True)
+            fragment_path = endpoint.exchange / key / store / "groups" / group["group_id"] / _fragment_name(fragment)
+            expected_fragment = _read_fragment(fragment_path, maximum=fragment["bytes"])
+            remote.upload_fragment(fragment_path, key_id=key, store_id=store, group=group,
+                                   fragment=fragment, expected=expected_fragment)
+            _write(receipt_path, expected_receipt, replace=False)
+            transferred += 1
     remote.upload(source, key_id=key, store_id=store, after=payload["after"], name=name,
                   expected=canonical_bytes(capsule) + b"\n")
     receipt.update(key_id=key, store_id=store, sent_cursor=payload["cursor"])
@@ -407,7 +449,25 @@ def _push_pending(config: SyncConfig, endpoint: DirectoryTransfer, remote: Rclon
 def _pull_peer(endpoint: DirectoryTransfer, remote: RcloneBackend, peer: Mapping[str, str]) -> Mapping[str, Any] | None:
     key, store = peer["key_id"], peer["store_id"]
     endpoint.trust.require_trusted(key)  # Before even listing the remote prefix.
-    after = int(endpoint._state()["received"].get(key + "/" + store, 0))
+    state = endpoint._state()
+    after = int(state["received"].get(key + "/" + store, 0))
+    head = state["received_heads"].get(key + "/" + store)
+    if head is not None:
+        observed: set[str] = set()
+        for name, size in remote.candidates(key, store, head["after"]):
+            raw = remote.download(key, store, head["after"], name, size)
+            try:
+                historical = strict_json_loads(raw)
+                if not isinstance(historical, dict):
+                    continue
+                old, old_digest = endpoint._verify_capsule(historical, verify_records=False)
+                expected_name = f"{head['after']:020d}-{old['cursor']:020d}-{old_digest}.json"
+                if old["sender_key_id"] == key and old["source_store_id"] == store and old["after"] == head["after"] and name == expected_name:
+                    observed.add(old_digest)
+            except (MemoryError, TrustError):
+                continue
+        if observed != {head["batch_sha256"]}:
+            raise MemoryError("authenticated_stream_fork" if len(observed) > 1 else "remote_history_missing_or_changed")
     candidates = remote.candidates(key, store, after)
     authenticated: dict[str, Mapping[str, Any]] = {}
     rejected = 0
@@ -433,13 +493,18 @@ def _pull_peer(endpoint: DirectoryTransfer, remote: RcloneBackend, peer: Mapping
             raise MemoryError("remote_prefix_not_verified")
         return None
     result = dict(endpoint.receive_capsule(next(iter(authenticated.values())), sender_key_id=key,
-                                           source_store_id=store, after=after))
+                                           source_store_id=store, after=after,
+                                           fragment_loader=lambda group, fragment: remote.download_fragment(key, store, group, fragment)))
     result["rejected_candidates"] = rejected
     return result
 
 
-def _window(config: SyncConfig, *, background_worker: bool, counts: dict[str, int]) -> bool:
-    budget = Budget(seconds=config.limits["maximum_seconds"], maximum_bytes=config.limits["maximum_bytes"],
+def _window(
+    config: SyncConfig, *, background_worker: bool, counts: dict[str, int],
+    direction: str = "both", maximum_seconds: int | None = None,
+) -> bool:
+    seconds = config.limits["maximum_seconds"] if maximum_seconds is None else min(maximum_seconds, config.limits["maximum_seconds"])
+    budget = Budget(seconds=seconds, maximum_bytes=config.limits["maximum_bytes"],
                     maximum_files=config.limits["maximum_files"])
 
     def active() -> None:
@@ -455,7 +520,7 @@ def _window(config: SyncConfig, *, background_worker: bool, counts: dict[str, in
     exchange = Path(config.backend["exchange"]) if config.backend["kind"] == "directory" else config.state_directory / "exchange"
     _private_directory(config.state_directory / "transfer")
     endpoint = DirectoryTransfer(vault=config.vault, exchange=exchange, state_directory=config.state_directory / "transfer",
-                                 trust_store=config.trust_store, identity=config.identity)
+                                 trust_store=config.trust_store, identity=None if direction == "receive" else config.identity)
     maximum = config.limits["maximum_batches"]
     remote: RcloneBackend | None = None
     if config.backend["kind"] == "rclone":
@@ -466,9 +531,9 @@ def _window(config: SyncConfig, *, background_worker: bool, counts: dict[str, in
         _private_directory(work / "tmp")
         remote = RcloneBackend(config.backend, work_directory=work, budget=budget, active_check=active)
 
-    def publication_guard(records: Sequence[Mapping[str, Any]]) -> None:
+    def publication_guard(payload: Mapping[str, Any]) -> None:
         active()
-        _publication_guard(records)
+        _publication_guard(endpoint.records_for_payload(payload)[0], endpoint=endpoint, payload=payload)
         if remote is None:
             # Reserve the full supported capsule ceiling, including signature
             # and closure overhead; never guess a smaller size from record text.
@@ -478,23 +543,36 @@ def _window(config: SyncConfig, *, background_worker: bool, counts: dict[str, in
     # A malformed/offline peer cannot monopolize every attempt to send local
     # memory. An empty receiving Vault is permitted to bootstrap below.
     more = False
-    for index in range(maximum):
+    for index in range(maximum if direction != "receive" else 0):
         active()
         try:
             if remote is not None and _push_pending(config, endpoint, remote):
                 counts["uploaded_batches"] += 1
             result = endpoint.publish(limit=config.limits["record_limit"], maximum_bytes=config.limits["batch_bytes"],
-                                      publication_guard=publication_guard)
+                                      capsule_guard=publication_guard, before_fragment_write=lambda size: budget.transfer(size))
         except MemoryError as exc:
             if exc.code == "not_initialized" and endpoint._state()["vault_store_id"] is None:
                 break
+            if exc.code == "remote_group_pending":
+                more = True
+                break
             raise
+        if result["state"] == "group_publication_pending":
+            more = True
+            break
         if result["state"] == "up_to_date":
             break
         counts["published_batches"] += 1
         counts["blocked_records"] += len(result.get("blocked", []))
-        if remote is not None and _push_pending(config, endpoint, remote):
-            counts["uploaded_batches"] += 1
+        if remote is not None:
+            try:
+                if _push_pending(config, endpoint, remote):
+                    counts["uploaded_batches"] += 1
+            except MemoryError as exc:
+                if exc.code != "remote_group_pending":
+                    raise
+                more = True
+                break
         more = index == maximum - 1
 
     peer_error: str | None = None
@@ -514,6 +592,9 @@ def _window(config: SyncConfig, *, background_worker: bool, counts: dict[str, in
                     break  # Other explicitly configured peers remain eligible.
                 if result is None:
                     break
+                if result["state"] == "group_receiving_pending":
+                    more = True
+                    break
                 received += 1
                 counts["received_batches"] += 1
                 counts["records_added"] += result["records_added"]
@@ -524,7 +605,8 @@ def _window(config: SyncConfig, *, background_worker: bool, counts: dict[str, in
                 break
     elif exchange.is_dir():
         result = endpoint.receive(maximum_batches=maximum, active_check=active,
-                                  before_read=lambda: budget.transfer(MAX_CAPSULE_BYTES), skip_local_stream=True)
+                                  before_read=lambda: budget.transfer(MAX_CAPSULE_BYTES),
+                                  before_fragment_read=lambda size: budget.transfer(size), skip_local_stream=True)
         counts["received_batches"] += int(result["batches"])
         counts["records_added"] += int(result["records_added"])
         counts["blocked_records"] += int(result["sender_blocked_records"])
@@ -540,7 +622,14 @@ def _window(config: SyncConfig, *, background_worker: bool, counts: dict[str, in
     return more or counts["received_batches"] > 0
 
 
-def run(config_path: Path, *, background_worker: bool = False) -> Mapping[str, Any]:
+def run(
+    config_path: Path, *, background_worker: bool = False, direction: str = "both",
+    maximum_seconds: int | None = None,
+) -> Mapping[str, Any]:
+    if direction not in {"both", "receive"} or (background_worker and direction != "both"):
+        raise MemoryError("invalid_sync_direction")
+    if maximum_seconds is not None:
+        _bounded_int(maximum_seconds, 1, 60)
     config = SyncConfig.load(config_path)
     if not config.enabled or (background_worker and (not config.automatic or not config.background)):
         return {"state": "disabled", "network_accessed": False}
@@ -559,10 +648,11 @@ def run(config_path: Path, *, background_worker: bool = False) -> Mapping[str, A
         _write_control(config.state_directory / "sync-state.json", state)
         more = False
         try:
-            more = _window(config, background_worker=background_worker, counts=state["counts"])
+            more = _window(config, background_worker=background_worker, counts=state["counts"],
+                           direction=direction, maximum_seconds=maximum_seconds)
             state.update(state="attention_required" if state["counts"]["blocked_records"] or state["counts"]["rejected_batches"] else "idle",
                          failures=0, next_retry_at=0, last_success_at=int(time.time()))
-            if not more:
+            if not more and direction != "receive":
                 state["completed_generation"] = trigger["generation"]
         except (MemoryError, TrustError, OSError, ValueError, TypeError) as exc:
             code = _error_code(exc)
@@ -576,12 +666,76 @@ def run(config_path: Path, *, background_worker: bool = False) -> Mapping[str, A
         pending = latest is not None and latest["generation"] != state["completed_generation"]
         return {"state": state["state"], "last_error": state["last_error"], "counts": dict(state["counts"]),
                 "more_work_possible": more, "pending": pending, "remote_ai_read_verified": False,
-                "memory_content_included": False, "network_backend": config.backend["kind"] == "rclone"}
+                "memory_content_included": False, "network_backend": config.backend["kind"] == "rclone",
+                "direction": direction, "remote_latest_proven": False,
+                "outbound_attempted": direction != "receive"}
+
+
+def receive(config_path: Path, *, maximum_seconds: int | None = None) -> Mapping[str, Any]:
+    """One explicit receive-only freshness attempt; never piggyback an upload."""
+    return run(config_path, direction="receive", maximum_seconds=maximum_seconds)
+
+
+def flush(config_path: Path, *, maximum_seconds: int | None = None) -> Mapping[str, Any]:
+    """One explicit bounded bidirectional window, not an eventual-delivery claim."""
+    return run(config_path, maximum_seconds=maximum_seconds)
+
+
+def _endpoint(config: SyncConfig, *, writing: bool) -> DirectoryTransfer:
+    exchange = Path(config.backend["exchange"]) if config.backend["kind"] == "directory" else config.state_directory / "exchange"
+    return DirectoryTransfer(vault=config.vault, exchange=exchange, state_directory=config.state_directory / "transfer",
+                             trust_store=config.trust_store, identity=config.identity if writing else None)
+
+
+def review(config_path: Path, *, offset: int = 0, limit: int = 100) -> Mapping[str, Any]:
+    config = SyncConfig.load(config_path)
+    result = dict(_endpoint(config, writing=False).review_pending(offset=offset, limit=limit))
+    result["operator_action_required"] = result["state"] == "pending_review"
+    return result
+
+
+def resolve(
+    config_path: Path, *, batch_sha256: str, request_id: str, exclude: Sequence[str],
+    keep: Sequence[str], allow_local_paths: bool = False,
+) -> Mapping[str, Any]:
+    config = SyncConfig.load(config_path)
+    with _lock(config.state_directory / "worker.lock"):
+        _state(config)
+        endpoint = _endpoint(config, writing=True)
+        if config.backend["kind"] == "rclone" and endpoint.pending_path.exists():
+            pending, _ = endpoint._verify_capsule(_read(endpoint.pending_path, private=True), verify_records=False)
+            if _remote_receipt(config)["sent_cursor"] > pending["after"]:
+                raise MemoryError("review_remote_publication_already_recorded")
+        result = endpoint.resolve_pending(batch_sha256=batch_sha256, request_id=request_id,
+                                          exclude=exclude, keep=keep, allow_local_paths=allow_local_paths)
+        _enqueue(config, "explicit")
+        return {**result, "worker_started": False, "next_action": "explicit_flush_or_next_enabled_event"}
+
+
+def requeue(config_path: Path, *, identifiers: Sequence[str], request_id: str) -> Mapping[str, Any]:
+    """Idempotently add delivery events; neither redact nor trust any record."""
+    config = SyncConfig.load(config_path)
+    with _lock(config.state_directory / "worker.lock"):
+        _state(config)
+        endpoint = _endpoint(config, writing=False)
+        endpoint._bind_vault(endpoint._state(), missing_ok=False)
+        result = endpoint.vault.requeue_records(identifiers, request_id=request_id)
+        _enqueue(config, "explicit")
+        return {**result, "worker_started": False, "publication_review_reused": False,
+                "next_action": "explicit_flush_or_next_enabled_event"}
+
+
+def anchor(config_path: Path, *, capsule: Path) -> Mapping[str, Any]:
+    config = SyncConfig.load(config_path)
+    with _lock(config.state_directory / "worker.lock"):
+        _state(config)
+        return _endpoint(config, writing=False).anchor_received(_read(_absolute(capsule)))
 
 
 def _configure(args: argparse.Namespace) -> Mapping[str, Any]:
-    if os.name != "posix":
+    if os.name not in {"posix", "nt"}:
         raise MemoryError("unsupported_private_sync_storage")
+    protected_storage.require_supported_storage()
     selected = _absolute(args.config)
     if args.backend == "directory":
         if args.exchange is None or any((args.rclone_executable, args.rclone_config, args.remote, args.peer)):
@@ -637,15 +791,52 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure.add_argument("--maximum-seconds", type=int, default=DEFAULT_LIMITS["maximum_seconds"])
     worker = commands.add_parser("run", help="one explicitly requested bounded synchronization window")
     worker.add_argument("--background-worker", action="store_true", help=argparse.SUPPRESS)
+    worker.add_argument("--maximum-seconds", type=int)
+    for name in ("receive", "flush"):
+        explicit = commands.add_parser(name, help="one bounded explicit " + ("receive-only freshness attempt" if name == "receive" else "bidirectional synchronization attempt"))
+        explicit.add_argument("--maximum-seconds", type=int)
     commands.add_parser("status", help="read-only content-free state; never start synchronization")
+    inspection = commands.add_parser("review", help="read-only per-record findings; no private-key read, content output or network")
+    inspection.add_argument("--offset", type=int, default=0)
+    inspection.add_argument("--limit", type=int, default=100)
+    decision = commands.add_parser("resolve", help="operator-only complete keep/exclude decision for an unexposed pending batch")
+    decision.add_argument("--batch-sha256")
+    decision.add_argument("--request-id")
+    decision.add_argument("--decision-file", type=Path, help="explicit private JSON selection for a large reviewed group")
+    decision.add_argument("--exclude", nargs="*", default=[])
+    decision.add_argument("--keep", nargs="*", default=[])
+    decision.add_argument("--allow-local-paths", action="store_true")
+    retry = commands.add_parser("requeue", help="operator-only idempotent retry of exact canonical IDs; never edits memory")
+    retry.add_argument("--memory-id", dest="identifiers", nargs="+", required=True)
+    retry.add_argument("--request-id", required=True)
+    historical = commands.add_parser("anchor", help="bind an existing legacy receipt to its exact signed capsule")
+    historical.add_argument("--capsule", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "configure":
             result = _configure(args)
         elif args.command == "status":
             result = status(args.config)
+        elif args.command == "review":
+            result = review(args.config, offset=args.offset, limit=args.limit)
+        elif args.command == "resolve":
+            if args.decision_file is not None:
+                if any((args.batch_sha256, args.request_id, args.exclude, args.keep, args.allow_local_paths)):
+                    raise MemoryError("conflicting_review_arguments")
+                selection = _object(dict(_read(_absolute(args.decision_file), maximum=MAX_REVIEW_DOCUMENT, private=True)),
+                                    {"batch_sha256", "request_id", "exclude", "keep", "allow_local_paths"}, "invalid_review_decision")
+            else:
+                selection = {"batch_sha256": args.batch_sha256, "request_id": args.request_id,
+                             "exclude": args.exclude, "keep": args.keep, "allow_local_paths": args.allow_local_paths}
+            result = resolve(args.config, **selection)
+        elif args.command == "requeue":
+            result = requeue(args.config, identifiers=args.identifiers, request_id=args.request_id)
+        elif args.command == "anchor":
+            result = anchor(args.config, capsule=args.capsule)
+        elif args.command in {"receive", "flush"}:
+            result = (receive if args.command == "receive" else flush)(args.config, maximum_seconds=args.maximum_seconds)
         else:
-            result = run(args.config, background_worker=args.background_worker)
+            result = run(args.config, background_worker=args.background_worker, maximum_seconds=args.maximum_seconds)
         write_response(success(result))
         return 0 if result.get("state") not in {"retry_pending", "cancelled"} else 1
     except (MemoryError, TrustError, OSError, ValueError, TypeError) as exc:

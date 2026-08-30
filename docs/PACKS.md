@@ -4,6 +4,9 @@ The full client can pack one explicitly selected portable export or consistent
 backup snapshot into bounded compressed chunks. This is a new optional file
 transport profile, **not** the old v0.21 pack format or a Task artifact store.
 It leaves canonical memory records and the lightweight protocol unchanged.
+To verify/convert actual v0.21 `memory-pack/v1` or large network ZIP evidence,
+use [LEGACY_PACKS.md](LEGACY_PACKS.md); this file-byte profile does not reinterpret
+those old semantic formats.
 
 From the packaged plugin root:
 
@@ -19,6 +22,11 @@ uncompressed hashes, chunk order, total bytes and a whole-file digest. The
 manifest contains no source filename or private local path. Source mutation
 during packing aborts completion. A new directory may remain for inspection;
 existing files are never replaced.
+
+Reads retain the checked file descriptor through each operation and verify its
+identity, size and change metadata afterward. Symlinks/reparse points and files
+with multiple hard links are refused; choosing a hard-linked source requires
+making an ordinary separate copy first.
 
 `copy` operates between selected local/mounted directories. It processes at most
 32 uncached chunks by default; repeat the exact command for the next bounded
@@ -37,9 +45,20 @@ flow; for a backup, follow [BACKUP.md](BACKUP.md).
 `pack inspect --source /absolute/pack` reads only manifest metadata and reports
 that file bytes have not been verified. It does not create state.
 
+On Windows, the same create/copy/unpack operations use the shared native storage
+profile: local fixed NTFS, checked process-user private ACLs on new output/state
+directories, no reparse paths, and same-volume no-replacement publication. The
+CRT receives ownership of a checked native handle; no `chmod`, POSIX hard-link
+publication or silent permission repair is substituted. Existing directories
+with incompatible ACLs are refused. POSIX keeps private temporary files and its
+existing no-clobber publication path. See [PLATFORMS.md](PLATFORMS.md).
+
 Packs have no network client; the selected mount may perform network I/O under
 the OS. [SYNC.md](SYNC.md) instead uses small signed incremental memory batches
 and optional rclone transport; it does not repack the entire history per turn.
 Compression is not encryption and a hash is not an author's signature. Use a
 private destination or a separately configured encrypted transport for private
-memory. No performance benchmark or interruption test was run for this release.
+memory. Public synthetic cases in `tests/test_v025_portable_packs.py` cover the
+native routing, unchanged bounds, resumable copies and unsafe-file refusals;
+they were authored but **not run**. No native Windows, performance benchmark or
+interruption test was run for this release.

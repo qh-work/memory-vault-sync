@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UAMP selected share v1 NDJSON line",
+  "$comment": "Validate an entire canonical-LF stream: exactly one header, 1..250000 record lines, one footer, no trailing bytes, 2GiB whole-file limit. Preserve exact canonical record/v1 bytes/IDs. Check ordered digest accumulators, root predicate, unique IDs and all outgoing dependencies; every nonselected record must be reachable from a selected root. Framing/closure/hashes are not sender authentication. Default import is quarantine; current trust is independent.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "schema_version",
+        "hash_profile",
+        "created_at",
+        "selector",
+        "selector_sha256"
+      ],
+      "properties": {
+        "type": {
+          "const": "header"
+        },
+        "schema_version": {
+          "const": "universal-memory-share/v1"
+        },
+        "hash_profile": {
+          "const": "canonical-json+sha256/v1"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "selector": {
+          "allOf": [
+            {
+              "$ref": "selection.schema.json"
+            },
+            {
+              "required": [
+                "schema_version",
+                "memory_ids",
+                "claim_keys",
+                "concepts",
+                "entities",
+                "kinds",
+                "captured_after",
+                "captured_before",
+                "all_records"
+              ]
+            }
+          ]
+        },
+        "selector_sha256": {
+          "$ref": "common.schema.json#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "record",
+        "attestation",
+        "selected"
+      ],
+      "properties": {
+        "type": {
+          "const": "record"
+        },
+        "record": {
+          "$ref": "record.schema.json"
+        },
+        "attestation": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "signed.schema.json"
+                },
+                {
+                  "properties": {
+                    "schema_version": {
+                      "const": "universal-memory-attestation/v1"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "selected": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "records",
+        "selected_records",
+        "records_sha256",
+        "lines_sha256"
+      ],
+      "properties": {
+        "type": {
+          "const": "footer"
+        },
+        "records": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 250000
+        },
+        "selected_records": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 250000
+        },
+        "records_sha256": {
+          "$ref": "common.schema.json#/$defs/digest"
+        },
+        "lines_sha256": {
+          "$ref": "common.schema.json#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

@@ -111,11 +111,15 @@ def _replace_json(path: Path, value: Mapping[str, Any]) -> None:
     """Replace only our own private metadata while holding the session lock."""
     _absolute(path)
     _private_directory(path.parent)
-    if path.exists():
-        _read_json(path)  # Existing unsafe files are not silently repaired.
     encoded = canonical_bytes(value) + b"\n"
     if len(encoded) > MAX_STATE_BYTES:
         raise MemoryError("host_state_too_large")
+    if os.name == "nt":
+        from memory_vault_storage import atomic_write
+        atomic_write(path, encoded, replace=True)
+        return
+    if path.exists():
+        _read_json(path)  # Existing unsafe files are not silently repaired.
     descriptor, temporary = tempfile.mkstemp(prefix=".host-state-", dir=path.parent)
     try:
         with os.fdopen(descriptor, "wb") as stream:
@@ -244,6 +248,11 @@ class HostSession:
         for path in (self.config.state_path, self.config.state_path / "hosts-v1", self.root.parent, self.root):
             _private_directory(path)
         lock_path = _absolute(self.root / ".lock")
+        if os.name == "nt":
+            from memory_vault_storage import file_lock
+            with file_lock(lock_path, busy_code="host_state_busy"):
+                yield
+            return
         descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0), 0o600)
         acquired = False
         try:

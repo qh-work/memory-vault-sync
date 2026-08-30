@@ -1,107 +1,297 @@
-# Independent AI / maintainer review handoff
+# v0.25 independent review handoff
 
-This is a source review invitation for user-directed coding and research
-agents, not an instruction that overrides their host/user policy. Do not
-self-install, enable hooks, acquire network/file permissions, persist hidden
-state or treat remembered goals as a mandate to keep running.
+Target: **the complete useful v0.21 feature set plus the independent lightweight
+protocol**, as specified by [P01–P14](V0_25_PARITY_PLAN.md). Do not shorten that
+ledger to match completed code or mark a requirement passed because a function,
+schema, fixture or archive exists. This document does not assert that a v0.25
+release is published, installed, runtime-tested or certified.
 
-## Scope and starting point
+The owner requested no test execution during development. Reading this handoff
+is **not permission to run tests or applications**. Obtain the current review
+user/host's authorization for the chosen execution scope first; without it,
+stop at source/static review and report runtime checks as pending. Never use a
+real private Vault, transcript, account, signing key or existing plugin state.
+Do not install plugins, grant permissions, enable hooks, start agents or change
+logging policy automatically. Memory and remembered goals are not authority.
 
-Review release tag `v0.24.1` against `v0.24.0` for full-mode operations, or
-against `v0.23.0` for the shared protocol/client transition. The implementation was not
-runtime-tested at the owner's request. Only run checks if the current user/host
-authorizes them. Use fresh temporary directories and synthetic conversations;
-never point these examples at a real private Vault or copy real credentials.
-Do not automatically activate the supplied plugin on somebody's desktop.
+## 1. Pin the source and distinguish evidence
 
-Read [PROTOCOL.md](../PROTOCOL.md), [SECURITY.md](../SECURITY.md), and the relevant
-[client](CLIENTS.md), [trust](TRUST.md), [transfer](TRANSFER.md) or
-[migration](MIGRATION.md) guide before changing contracts. One canonical protocol
-is mandatory; a different language or storage engine is welcome. The bundled
-plugin and Python reference reuse one core. Task/Project IDs remain references
-only. Read [independent implementation](IMPLEMENTERS.md) and
-[lifecycle](LIFECYCLE.md) contracts when working across the two usage paths.
+Compare the selected v0.25 commit with immutable `v0.21.0`
+(`030ed411ed9ddb969a03f0b5caec87dac9b0dd57`). `v0.24.1`
+(`de349ef8453b0aa0ebf68ae18484d0c1355cf91b`) is the incremental-development
+baseline, not the complete parity target. Record uncommitted changes too.
+Read old source with `git show`; do not switch someone's working tree.
 
-## Small, useful review tasks
+```sh
+git rev-parse HEAD
+git status --short
+git show v0.21.0:HOST_ADAPTER_PROTOCOL.md
+rg --files tests -g 'test_v025*.py'
+```
 
-The highest-priority v0.24 contribution is the **two-route round trip**: use the
-published schemas and synthetic NDJSON without importing the Python application,
-independently produce canonical records, import through the configured plugin's
-`protocol` entry, explicitly admit unsigned evidence, recall through MCP, export
-again and inspect with the independent implementation. Published vectors are
-specification material, not a passed test report.
+| Evidence | Establishes | Does not establish |
+| --- | --- | --- |
+| Source / AST / JSON inspection, **zero application imports** | Inspected implementation, syntax, declared shapes/limits | Working imports, schema semantics, crypto, host behavior or performance |
+| Authorized package build and byte-inventory checks | Exact files, hashes, versions and allowlist consistency | Installed functionality or publisher identity |
+| Authorized synthetic test execution | Only the recorded cases/environment that ran | Real integrations skipped or mocked by those cases |
+| Authorized native/host/provider/scale trials | The observed integration and workload | Universal compatibility or comprehensive security |
 
-Also review the new [lifecycle profile](LIFECYCLE.md): capabilities → open →
-input → commit → close, exact retries, changed-request conflicts, abort before
-commit, crash recovery and cancel/commit races. Closing transport state must not
-delete or partition memory. A completed receipt remains readable after capture
-is disabled without restoring permission to create new memory. The old v0.21
-Host Adapter envelope is not this profile; do not run the old adapter unchanged
-and report that as v0.24 conformance.
+Optional syntax-only recipe, from the reviewed source root. It imports only
+standard-library parsers; JSON parsing is **not JSON Schema validation**.
+This is a POSIX-shell example; Windows reviewers can run the same code using
+their approved Python invocation.
 
-1. **Storage and unsigned import.** With synthetic data, confirm read-only
-   operations do not create or migrate files. A known v1 upgrade must preserve
-   every canonical byte and request receipt. Default import is quarantined;
-   explicit admission adds no duplicate record. Export/import and changes keep
-   local ingest ordering rather than sorting progress randomly by content hash.
-2. **Identity and trust.** Register two fresh public keys explicitly. Check
-   record/message domain separation, tampered bytes, unregistered/revoked keys,
-   missing crypto provider and invalid signer return values. An old retry must
-   not display stale current-trust eligibility. The same-OS-user boundary must
-   remain documented honestly; do not label it a sandbox.
-3. **Incremental delivery.** Use two local synthetic Vaults and one temporary
-   exchange folder. Check signed delivery, duplicates, dependency closure,
-   blocked roots followed by valid roots, and requeue after repair. Crash at
-   pending-write / publish / cursor-commit and record-commit / receive-cursor
-   boundaries. Retry counts must not invent new records. Confirm a forged file
-   before a valid signed candidate does not freeze the stream; real signed forks
-   and missing prefix gaps must remain explicit failures.
-4. **Client interoperability.** Exercise MCP initialize → initialized → tools
-   discovery → save → recall with stable mutation request IDs. Keep large
-   `memory_changes` responses within both structured and text envelope limits.
-   Only on a consenting test host, verify documented event fields, opt-in off
-   behavior, local save/retry receipts and uninstall independence. Do not read
-   raw transcripts or claim untested Work hook support.
-5. **Migration.** Build synthetic v0.21 export-network ZIPs using the documented
-   schemas. Confirm manifest/member hashes, bad ZIP members, unsupported schemas,
-   missing/cyclic relations and unknown profiles fail closed. Compare preserved
-   visible text/UTC times/relations and content-free losses. Dry-run must write
-   nothing; import should be quarantine, never inherited task ownership.
-6. **Full sync and remote backends.** Use isolated local Vaults, fresh explicit
-   keys/trust, and an operator-owned exchange; substitute a deliberately failing
-   synthetic rclone executable only in a controlled fixture. Check save/queue
-   separation, one finite worker, durable offline retries, stream bounds,
-   configuration rebinding refusal, publication privacy guard and signature
-   verification before admission. Do not use real remote credentials. Pin the
-   executable digest explicitly. Confirm disabled automatic sync creates no
-   network activity and receipts never claim another agent consumed a batch.
-7. **Operations and packs.** Verify backup consistency and restore-to-new-path;
-   original data/keys/client queues must remain untouched. Restore without a
-   current independent trust store must quarantine evidence; a copied admission
-   label or hash cannot grant trust. Check pack partial-copy resume, cache
-   invalidation, malformed/truncated chunks and bounded decompression. Final
-   unpack must reverify every hash even if the copy receipt reports a cache hit.
-8. **Host adapters and updates.** Verify actual host field/version coverage and
-   missing-pair/final behavior, including Claude prompt_id and Gemini timestamp
-   constraints. Do not substitute hidden transcripts. Review updater URL/path,
-   expansion and manifest bounds; staging must never execute downloaded code,
-   overwrite an installed package or activate hooks. See [HOSTS.md](HOSTS.md),
-   [UPDATES.md](UPDATES.md) and [PARITY.md](PARITY.md).
+```sh
+python3 -I -B - <<'PY'
+import ast, json
+from pathlib import Path
+root = Path.cwd().resolve()
+python_files = list(root.glob("memory_vault*.py"))
+for folder in ("tests", "scripts", "plugins"):
+    python_files.extend((root / folder).rglob("*.py"))
+json_files = []
+for folder in ("schemas", "examples/protocol", "plugins", "marketplace"):
+    json_files.extend((root / folder).rglob("*.json"))
+for path in python_files + json_files:
+    if path.is_symlink() or not path.resolve().is_relative_to(root):
+        raise SystemExit("source path outside reviewed checkout")
+    content = path.read_text(encoding="utf-8")
+    if path.suffix == ".py":
+        ast.parse(content, filename=str(path.relative_to(root)))
+    else:
+        json.loads(content)
+print("Syntax only; no project imports, tests, keys, Vaults or host calls")
+PY
+```
 
-The existing small synthetic core suite is in `tests/test_memory_vault.py` and
-has been adjusted for the changed import policy. Its presence is not a passed
-test report. New integrations need purpose-built checks; running only the old
-suite cannot certify them. Keep network, key enrollment and host activation
-separate from ordinary unit checks.
+Do not substitute application `--help`, module import, unittest discovery or
+pytest collection for this tier: these can execute project code. For authorized
+packaging, follow [RELEASE.md](RELEASE.md) using a new output directory and the
+actual source SHA. Check that the protocol archive has no executables, the full
+client has its complete runtime, and the separate review archive has the tests
+below. `SHA256SUMS` is not a publisher signature. Verify claimed public assets
+independently; local files are not proof of upload or adoption.
 
-## Report evidence, not confidence slogans
+## 2. Full coverage map
 
-Include commit SHA, OS/Python/provider versions, exact synthetic reproduction,
-expected versus observed result, and whether the check was source-only, executed
-locally or tried in a real host. State skipped cases explicitly. Do not include
-memory bodies, secrets, private paths or native account identifiers in a public
-report. Use the repository's private security advisory flow for vulnerabilities.
+Read [PROTOCOL.md](../PROTOCOL.md), [SECURITY.md](../SECURITY.md),
+[TWO_MODES.md](TWO_MODES.md), [PARITY.md](PARITY.md) and the complete ledger.
+Use these slices for focused review without dropping any requirement.
 
-Contribute focused PRs with protocol/docs updates. Repository review invitations
-are not permission to message third parties, run unsolicited agents, fabricate
-adoption statistics or post from private social accounts.
+| Requirements | Contract / implementation | Required outcome |
+| --- | --- | --- |
+| P01, P14 | Core, configured protocol, [implementer material](IMPLEMENTERS.md), [release inventory](RELEASE.md) | Identical canonical IDs/bytes across modes; complete distributions; no Task/Project owner or imported execution authority |
+| P02, P05 | Client/lifecycle/hosts/compat; [CLIENTS.md](CLIENTS.md), [HOSTS.md](HOSTS.md), [COMPATIBILITY.md](COMPATIBILITY.md) | Durable visible-pair capture, exact retry/cancel/recovery and all ten old operations through one Vault/trust |
+| P03, P04 | Core index/retrieval/views; [RETRIEVAL.md](RETRIEVAL.md), [GRAPH_VIEWS.md](GRAPH_VIEWS.md) | Bilingual/fragment recall, explained ranking, complete claim timelines, trust-aware graph state and non-executing proposals |
+| P06, P07, P08 | Sync/transfer/privacy/remote/pack; [SYNC.md](SYNC.md), [REMOTE_BACKENDS.md](REMOTE_BACKENDS.md) | Bounded signed delivery, offline retention, privacy resolution, replay/fork handling, resumable groups and scoped cloud transport |
+| P09 | Legacy pack converter; [LEGACY_PACKS.md](LEGACY_PACKS.md) | Actual old packs/ZIPs/checkpoints; complete visible evidence, claims, typed relations, multipart order and truthful ID mapping |
+| P10 | Manage/backup/recovery; [OPERATIONS.md](OPERATIONS.md), [BACKUP.md](BACKUP.md) | Read-only doctor, explicit index/queue recovery, consistent snapshots, inert restore and separately authorized resume |
+| P11 | Update trust/updater/managed installation; [UPDATES.md](UPDATES.md) | Independent publisher pins, expiry/rollback/threshold checks, verified stage, explicit activation and recoverable rollback |
+| P12 | Sharing/trust/crypto/device/catalog APIs; [SHARING.md](SHARING.md), [TRUST.md](TRUST.md), [ENCRYPTION.md](ENCRYPTION.md) | Complete selected subgraphs, current trust, real signatures and honest fail-closed external-provider boundaries |
+| P13 | Native storage and every consumer; [PLATFORMS.md](PLATFORMS.md), [PACKS.md](PACKS.md) | macOS/Linux and native Windows protected read/write/lock/publication, without insecure fallback or lost workflows |
+
+Mandatory Git control, Task directories and the old monolith stay removed.
+These exclusions do not justify omitting useful v0.21 features. Old ordinary
+records were hash-addressed, **not individually author-signed**; update
+signatures and Git commit identities are different evidence.
+
+### Current v0.25 synthetic source inventory
+
+These are **authored cases, not passed results**. Re-list the selected commit
+before reporting coverage; retain `tests/test_memory_vault.py` for shared
+core/client regressions too. Asserting a size constant is not a scale trial.
+
+| File under `tests/` | Main slice |
+| --- | --- |
+| `test_v025_compat.py` | Closed old envelopes, opaque handles, receipts, semantic/large-turn projection |
+| `test_v025_retrieval_views.py` | Bilingual/BM25/fragments, claim timelines, trust-aware edges, graph bounds, reindex/requeue |
+| `test_v025_index_state.py` | One index-completeness check per views request; no stale cross-request cache |
+| `test_v025_mcp_bounds.py` | Transport-specific graph/view bounds, schema agreement and complete bounded MCP responses |
+| `test_v025_sync_review.py` | Privacy review, explicit dispositions, chained streams, groups and interruption |
+| `test_v025_legacy_pack.py` | Old wire fixtures, checkpoints, exact evidence, ordered parts and aliases |
+| `test_v025_legacy_pack_edges.py` | Escaped secrets, same-kind alias misdirection, cycles/missing targets, cross-part replay |
+| `test_v025_client_recovery.py` | Quiesced snapshots, inert restore, activation, queues and current-trust signed recovery |
+| `test_v025_install.py` | Isolated install, pinned inventory, activation journal, rollback, automation gates |
+| `test_v025_update_trust.py` | RSA-PSS, independent verifier comparison, thresholds/rotation/expiry/rollback |
+| `test_v025_update_edges.py` | Activation expiry, complete runtime inventory, external bytecode paths and physical-key quorum uniqueness |
+| `test_v025_sharing.py` | Selection closure, atomic import, original proofs, current trust, large-share bounds |
+| `test_v025_device_trust.py` | Externally authorized enrollment/revocation/epochs/recovery transitions |
+| `test_v025_encryption.py` | Provider framing, authenticated-data bindings, ciphertext catalogs |
+| `test_v025_storage.py` | Pure ACL/path policy and separately gated native file/lock/publication |
+| `test_v025_portable_packs.py` | Resumable packs, small-ZIP interface and native protected publication |
+
+After execution is authorized, inspect the selected file's imports, fixtures,
+subprocess/provider needs and platform skips first. For example:
+
+```sh
+python3 -B -m unittest discover -s tests -p 'test_v025_retrieval_views.py'
+```
+
+That command **executes application code**. It grants no permission to run every
+file, install dependencies, generate real keys or invoke OpenSSL/rclone/hosts.
+Record skips and missing dependencies rather than silently counting them as
+passes. No execution result is supplied by this handoff.
+
+## 3. Review campaigns — scoped authorization required
+
+Use a fresh reviewer-owned temporary workspace with explicit Vault/config/
+trust/exchange paths. Never rely on defaults or environment variables pointing
+to a real installation. Fresh test keys remain in that workspace. Kill/restart
+only fixture processes created for the authorized case.
+
+### A. Two-route round trip and separate protocols — P01/P02/P05/P14
+
+1. Use [known-answer material](../examples/protocol/README.md) in an independent
+   implementation that does not import `memory_vault.py`. Compare exact UTF-8,
+   hashes, record IDs and bundle accumulators. Round-trip through the configured
+   client's `protocol` entry and MCP initialize → initialized → discovery →
+   save → recall. Default quarantine must remain; explicit unsigned acceptance
+   must not fabricate authorship or duplicate records.
+2. Keep these routes distinct, and exercise wrong-envelope rejection:
+
+   | Route | Wire |
+   | --- | --- |
+   | Core / configured `protocol` | UAMP core requests and `universal-memory-record/v1` |
+   | `lifecycle` | New `universal-memory-lifecycle-request/v1`, `op`, `ses_…` / `turn_…` handles |
+   | `compat` | Old `memory-vault-host-request/v1`, protocol `1.0`, `operation`, `adapter`, `payload` |
+   | `mcp` | MCP JSON-RPC, not either lifecycle NDJSON envelope |
+
+3. Exercise all ten old operations in [COMPATIBILITY.md](COMPATIBILITY.md),
+   exact retries and changed-request conflicts. New reversible aliases are not
+   original `ep-…`/`evt-…` identities; real old IDs need checked migration.
+4. Interrupt intent/canonical-write/receipt boundaries; race commit with
+   abort/close; disable capture before retry. Completed receipts may be read,
+   but partial saves cannot resume with capture off. Closing correlation cannot
+   hide/delete memory. Test documented event fields only on an approved host;
+   missing pairs must not cause transcript discovery. Work automatic capture
+   needs actual supported-host evidence, not inference from an MCP listing.
+
+### B. Retrieval and cognitive state — P03/P04
+
+Build unrelated claims sharing an episode/task reference, bilingual synonyms,
+negation, a match near a long record's tail, supersession, conflict and explicit
+resolution. Check exact fragments, ranking explanations, complete paged
+timelines and bounded graph frontiers/cycle reports. General relations must not
+merge unrelated claims. Revoke a signer and repeat recall/views: ineligible
+edges cannot retire verified history. Corrupt only fixture derived indexes,
+rebuild bounded pages while adding later records, and confirm canonical
+bytes/signatures stay unchanged and a later pass handles the new range.
+
+### C. Delivery, privacy and provider I/O — P06/P07/P08
+
+1. Start two isolated Vaults with explicitly registered fresh test keys and a
+   local exchange. Send dependent graphs; test duplicate replay, missing
+   prefixes, forged-before-valid candidates, signed forks and revocation.
+   Crash at pending/publish/cursor and record/receipt/cursor boundaries. Complete
+   groups admit atomically; cursor movement cannot conceal partial data.
+2. Put synthetic secrets/local paths in dependencies, not only roots. Review
+   must be content-free/read-only. Resolve exact keep/exclude sets; secrets have
+   no override, path decisions stay local/record-specific, and begun publication
+   cannot be rewritten. Retry/requeue without deleting evidence, duplicating
+   memories or reinstating an old approval.
+3. Exceed budgets and interrupt fragments; resume missing work. Corrupt cached
+   chunks and require final unpack/reception verification. Receive-only must
+   not publish. Disable/rebind config during a worker/provider call; inspect
+   exit/pending state, launch suppression and retained data. Local save/recall
+   must not wait for remote I/O. SQLite/OS calls are not hard-real-time deadlines.
+4. Only with backend authorization, use a pinned reviewed executable and a
+   disposable provider namespace for advertised rclone backends. Check real
+   list/read/write integrity, pipe/output/time limits and transient failures.
+   A fixture executable does not validate a cloud backend. Distinguish local
+   saved, exchange published, receiver committed and independently witnessed
+   agent-read results; transport receipts do not prove another AI read memory.
+
+### D. Genuine old formats and scale — P09
+
+Independently construct frames/catalogs from the inspected v0.21 grammar; do not
+use private exports or load the old runtime. Exercise near the declared
+**2 GiB / 250,000-document** limits and separate just-over-limit cases. Use a
+streaming fixture generator, not the small tests' read-all helpers. Record peak
+memory/disk/time, object counts and failures. The retained 64 MiB small migrator
+is not a substitute for this gate.
+
+Include long visible bodies, claim groups, all four 256-edge lists, Unicode,
+source/anchor metadata and escaped secret metadata. Compare original bytes and
+every mapped visible/typed relation. Import NDJSON parts in order: skipping
+required predecessors must fail without partial admission; replay adds nothing.
+Try a rehashed mapping that substitutes a same-kind relation fragment for its
+anchor; registration must reject it. Check checkpoint pins/generation links as
+**hash-only evidence**, not signatures. `verify`/`repack` check closure/anchors;
+`convert`, including dry run, additionally rejects cycles before publication.
+Follow [LEGACY_PACKS.md](LEGACY_PACKS.md), not a generic ZIP-only exercise.
+
+### E. Recover memory, then separately resume state — P10
+
+Create pending, committed, aborted and conflicting hook/lifecycle/host/compat
+jobs, including a canonical write interrupted before its final receipt.
+For `backup-client`, stop those fixture writers and assert `--quiesced`; also
+try a held lock or changing inventory and require refusal. Memory-only backup
+must not claim to include control queues.
+
+Restore to a **new** directory/Vault. Verify a new `store_id`, exact canonical
+records/proofs/receipt evidence and capture-off config. Original keys, trust,
+permissions, sync config, cursors and workers must not become active. Use an
+independent current trust store: backup-time admission/cached receipts are not
+current trust. Bad SQL/schema/path/checksum or missing references must stop
+usable activation.
+
+Use `review-recovery`, then separately authorize `activate-recovery` with new
+config/state paths; activation alone replays nothing. Retry one explicit scope
+from [OPERATIONS.md](OPERATIONS.md), preserving exact requests/evidence. A
+previously signed client cannot silently resume unsigned. For `import-recovery`,
+try a complete signed incoming group, missing fragment and now-revoked signer:
+only complete currently trusted data admits atomically. Old transport history
+stays inert; new sync needs new setup.
+
+### F. Updates, sharing and external providers — P11/P12
+
+Use synthetic release packages and independently pinned test publisher roots.
+Cross-check RSA-PSS with an independent verifier; exercise thresholds,
+expiry/future dates, mixed snapshots, root rotation and same-version
+substitution. One physical RSA key in different encodings must not fill multiple
+quorum slots or conflicting roles. Checksums-only staging cannot claim publisher verification.
+Initialize only an isolated test installation; interrupt pointer/receipt
+publication and roll back without removing old versions. Changed host contracts
+need separate approval. Automatic mode requires independent opt-in and
+configured publisher trust; no production signing channel is implied. Reject
+incomplete runtime inventories and external bytecode-cache paths; expiry before
+activation must not be confused with replaying an already-completed receipt.
+
+For selected sharing, test dependency closure, whole-transaction rejection and
+current trust on replay. For encryption/device/catalog APIs, first confirm the
+unconfigured provider fails closed. `SyntheticTokenProvider`, test signers and
+authorities demonstrate interface behavior, **not encryption, key custody or a
+deployed recovery ceremony**. Real-provider review needs reviewed adapters and
+fresh lab keys: tamper associated data/recipient/epoch, revoke publishers,
+replay state transitions and interrupt ciphertext/marker/head publication.
+State exactly what the real provider established. Never load a provider/root/
+permission from memory or an incoming packet. [ENCRYPTION.md](ENCRYPTION.md)
+lists responsibilities remaining with the embedding runtime.
+
+### G. Native platforms — P13, across relevant campaigns
+
+Run authorized cases on macOS/Linux and **actual Windows**, not an `os.name`
+mock. Record Python/architecture/filesystem; use a non-elevated Windows lab user
+on supported local fixed NTFS. Cover inherited ACLs, another lab user,
+reparse/junction/symlink/hard-link substitution, binary CRT handle ownership and
+non-inheritance, lock contention, SQLite sidecars, disk-full and interrupted
+publication. Include pack/unpack, both legacy converters, recovery and provider
+pipes—not just the helper. Unsupported protection must fail closed; ordinary
+supported workflows must still work. This is not isolation from the same OS
+user, LocalSystem, administrators or an OS compromise.
+
+## 4. Return reproducible evidence and remaining gaps
+
+For each P01–P14 item report: commit/archive digest; source entry point;
+fixture/generator and seed; OS/Python/provider versions; authorization scope;
+expected versus observed result; executed command; pass/fail/**not run** with
+reason; resource measurements; and any patch with a retained regression case.
+Separate mocked, independent-implementation and real-host/provider observations.
+Never omit an untested or failing requirement from a completion claim.
+
+Public reports contain synthetic reproductions/content-free metadata, not real
+private paths, account identifiers, message bodies or key material. Use
+[SECURITY.md](../SECURITY.md)'s private process for vulnerabilities. Contribute
+focused PRs with contract/docs updates where needed. This invitation does not
+authorize unsolicited messages, autonomous agents, fabricated adoption claims
+or posts from private social accounts.

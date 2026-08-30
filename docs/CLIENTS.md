@@ -4,7 +4,7 @@ The lightweight file and the optional client use the same canonical records,
 SQLite database, provenance rules and transfer format. There is no separate
 "plugin memory" and no Task or Project parent container.
 
-The v0.24 integration code is **not a validated promise of automatic saving in
+The v0.25 integration code is **not a validated promise of automatic saving in
 every desktop client**. Publication does not establish host compatibility.
 Automated tests, live host
 installation and functional capture checks were not run for this change. No
@@ -19,10 +19,13 @@ changed by adding these source files.
 | `memory_vault_client.py protocol` | An explicitly launched configured client | The same core wire protocol, with the client's exact path and current trust checks |
 | `memory_vault_client.py mcp` | A host that supports local stdio MCP | Discoverable read/write memory tools |
 | `memory_vault_client.py lifecycle` | An explicitly launched runtime adapter | Stage, commit or abort visible turns using the new optional lifecycle v1 profile |
+| `memory_vault_client.py compat` | An explicitly configured old host integration | The ten production v0.21 host operations, translated into the same taskless Vault |
 | `memory_vault_client.py host` | Approved Claude Code/Gemini CLI/generic events | Correlate documented visible events with the same lifecycle and Vault |
 | `memory_vault_client.py sync` | Explicit operator run or separately opted-in finite worker | Signed incremental directory/rclone transfer; pending work and content-free receipts |
 | `memory_vault_client.py manage` | Explicit operator command | Read-only diagnosis, bounded replay, snapshot and restore-to-new-path |
-| `memory_vault_client.py pack` / `update` | Explicit operator command | Compressed resumable file packs / release staging without activation |
+| `memory_vault_client.py pack` / `legacy-pack` | Explicit operator command | Compressed file packs / real old pack, ZIP and checkpoint compatibility |
+| `memory_vault_client.py share` | Explicit operator command | Review and exchange a selected complete subgraph, with optional original proofs |
+| `memory_vault_client.py update` / `install` | Explicit operator command | Independent publisher verification, staging / isolated activation, rollback and separately opted-in updates |
 | Optional Codex hooks | Reviewed/trusted host lifecycle events, plus capture opt-in | Stage the visible prompt, recall locally, save the visible final pair |
 | Work MCP entry point | Work installations that support the packaged local MCP server | Explicit tool calls; automatic Work lifecycle capture is **not established** |
 
@@ -189,6 +192,12 @@ Available tools:
 - `memory_capabilities`, `memory_status`: capabilities or content-free counts.
 - `memory_recall`, `memory_handoff`, `memory_get`: read evidence and its
   verification labels; past goals do not authorize future action.
+- `memory_views`, `memory_graph`: bounded claim timelines, graph traversal,
+  conflict/supersession state and non-executing consolidation proposals. MCP
+  uses at most **64 nodes per response** by default and as its maximum;
+  `memory_graph` also defaults to and caps its page at **512 edges**.
+- `memory_reindex`: explicit paginated disposable-index repair, with stable
+  request receipts; no new memory, key load or automatic sync notification.
 - `memory_changes`: bounded incremental records and attestations; no transport
   or remote-delivery acknowledgment is implied. The MCP page budget is at most
   1 MiB (256 KiB by default), leaving room for both structured and escaped text
@@ -196,6 +205,53 @@ Available tools:
 - `memory_remember`: append a fact, decision, goal or other independent record.
 - `memory_observe`: save an explicitly supplied visible user/final-assistant pair,
   then append a continuity excerpt linked to that episode.
+
+### Page and frame boundaries
+
+`memory_views` accepts at most one of `entity`, `memory_id` or `query`. The
+`after_memory_id` cursor requires the same exact `entity`; a nonzero
+`after_sequence` is only for unselected whole-Vault enumeration. Keep `through`
+fixed when following pages. Both the advertised MCP schema and the argument
+validator enforce these rules. The 64-node limit covers all returned views
+together, not 64 nodes for each view.
+
+Use each view's `next_request` for more of that entity's timeline, and the
+top-level `next_request` for later enumeration seeds. These are core requests:
+for an MCP call, remove `op` and pass the remaining fields to `memory_views`.
+Page-local state and omitted earlier pages are explicitly labeled; no bounded
+page is presented as the complete history. A graph's `frontier_memory_ids` are
+exploration seeds, **not an exhaustive edge-pagination cursor**. Re-rooting at
+a frontier ID may revisit nodes/edges, so deduplicate by IDs and retain the
+truncation flags. A very high-degree neighborhood can remain incomplete.
+
+The configured direct `protocol` entry retains the full core bounds of
+512 nodes and 4,096 graph edges when a larger local view is appropriate. Neither
+interface silently rebuilds missing retrieval indexes: use the explicitly
+authorized, paginated `memory_reindex` / `memory.reindex` operation when asked
+to repair them. Index maintenance does not load a signing key, create a memory,
+notify sync or confer trust.
+
+Every MCP response, including embedded `MCPServer.handle` calls, is limited to
+4 MiB of encoded UTF-8 **including the final newline**. Ordinarily a tool result
+contains both its complete `structuredContent` and the same JSON as text. If
+duplicating the text would exceed the limit but the complete structured result
+fits, the adapter keeps that entire `structuredContent` and replaces only the
+duplicate text rendering with an explicit notice. Canonical text, IDs, hashes,
+relations, proofs, errors and continuation fields are never shortened to fit.
+Text-only hosts must use the configured direct protocol for these large results;
+the notice is not a substitute for the memory record. If the complete structured
+result still cannot fit, an explicit JSON-RPC error retains the original valid
+request ID and requests a smaller page or direct protocol. It does not report
+a successful partial record.
+
+The [shared response schema](../schemas/result.schema.json) describes the core
+envelope inside `structuredContent`, including optional top-level `client`
+capability/health metadata. A failed `memory_observe` may also have
+`partial_result`: it identifies an already-saved episode while continuity
+remains unsaved, with `retry_same_request: true`. It is still an error, not a
+full-save acknowledgement. The enclosing JSON-RPC/MCP fields are a separate
+transport envelope. `memory_capabilities` reports the MCP-specific bounds
+without selecting a default Vault, opening a configuration or loading keys.
 
 The advertised [MCP tool annotations](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
 distinguish read-only tools from writes. They are hints for the host, not
@@ -245,10 +301,11 @@ must not be mistaken for a current revocation check. A signature proves which
 key signed bytes, not whether a human or model is who it claims to be, whether
 the text is true, or whether execution is authorized.
 
-Protected signing-key storage currently requires the trust module's supported
-POSIX protections; the Windows signing path fails closed until explicit ACL
-support is implemented. The unsigned local core and client tool protocol do not
-depend on that signing path. See [the security boundary](../SECURITY.md) and
+Protected full-client storage uses POSIX ownership/modes or native Windows
+local-fixed-NTFS ACL/handle checks. Unsupported filesystems and unprovable
+permissions fail closed; Windows source implementation is not evidence of a
+successful real-host run. The independent core remains standard-library-only.
+See [platform limits](PLATFORMS.md), [the security boundary](../SECURITY.md) and
 [the trust module's explicit administrative interface](TRUST.md).
 
 ## 4. Optional Codex visible-turn hooks
@@ -393,3 +450,8 @@ client acceptance check establish that the new path is working.
   Work/MCP save, a second model's read/write, signed transfer and revocation, and
   the original client's read-back. That acceptance work is still outstanding;
   the source implementation and this checklist are provided for review.
+
+`tests/test_v025_mcp_bounds.py` supplies synthetic selector, response-size,
+single-structured-content and schema cases for independent contributors. These
+cases were written but **not executed** for this change; AST/JSON parsing alone
+does not verify the runtime, a real MCP host or a production trust configuration.

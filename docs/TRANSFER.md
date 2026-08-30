@@ -1,36 +1,44 @@
-# Incremental signed directory transfer
+# Signed incremental transfer: v2 and v1 read compatibility
 
-`memory_vault_transfer.py` publishes and receives bounded signed batches through
-an explicitly selected directory. It does not open sockets, log into accounts,
-start a sync service, schedule itself or install anything. If another approved
-service carries that directory between devices, it provides the remote delivery.
+`memory_vault_transfer.py` exchanges signed logical memory batches through an
+explicitly selected directory. It opens no sockets, starts no service, schedules
+no future run and installs nothing. A separately authorized folder service can
+carry that exchange; the optional [bounded sync client](SYNC.md) can also use an
+explicit [rclone backend](REMOTE_BACKENDS.md).
 
-Local save/recall never waits for this adapter. The canonical SQLite records and
-delivery log are the local durable source; pending batches and small cursor
-receipts are retry state, not another memory database or Task system. The code
-has not undergone runtime testing; no performance or end-to-end delivery result
-is claimed.
+Local save/recall does not wait for transfer. Canonical records and the delivery
+log remain the durable memory source. Transfer cursors, review journals and
+fragment receipts are transport/recovery state, not Task or Project containers.
+Source store IDs and signer IDs do not own a memory or grant execution authority.
 
-## Setup
+The v0.25 changes and synthetic cases have been statically inspected/parsed.
+**No runtime tests, Windows validation, benchmark or end-to-end deployment was
+performed in this development pass.** Byte/count bounds are not latency claims.
 
-Use the [trust setup](TRUST.md) to create an identity explicitly and register the
-public descriptors of the publisher and each record signer on the recipient.
-Do not auto-enroll a key contained in a packet. The publisher registers its own
-key locally too. Private keys never go into the Vault, capsule or exchange folder.
+## Explicit setup and basic commands
 
-Select four separate paths: a local Vault file, private trust/control files,
-a private transfer-state directory, and the exchange directory. Trust/identity/
-Vault files must not live inside the exchange or transfer-state directory.
-Do not use a multi-device synced SQLite file; synchronize logical batches.
-This adapter and protected signing storage currently require POSIX; native
-Windows signing/ACL support is not implemented.
+Use [trust setup](TRUST.md) to create an identity and independently register the
+public descriptors of the envelope publisher and every record signer on the
+recipient. The publisher registers its own key locally too. Never auto-enroll a
+key from an incoming packet. Private keys are not part of memory or transfer.
 
-Commands below are examples for an authorized operator, not commands run while
-preparing this release. All paths must be absolute, without symlink components.
+Keep the local Vault, trust/identity files, private transfer-state directory and
+exchange distinct. Vault/trust/identity files cannot be inside transfer state or
+the exchange; transfer state and exchange cannot contain each other. Do not
+synchronize a live SQLite file between devices. Synchronize canonical batches.
 
-Publisher:
+POSIX retains ownership/mode/plain-file checks. Windows now has an explicit
+native profile using real DACLs, checked handles and nonblocking locks on local
+**fixed NTFS**. UNC/network drives, unsupported filesystems, reparse points and
+unsafe or unsupported ACLs fail closed; existing permissions are not repaired.
+This is source support, not a tested Windows deployment. Read
+[platform boundaries and official API references](PLATFORMS.md) before choosing
+paths; a Windows cloud placeholder or junction is not accepted private storage.
 
-```bash
+These are examples for an authorized operator, not commands executed for this
+release. Paths must be absolute and free of symlink/reparse components. Publisher:
+
+```sh
 python3 /absolute/source/memory_vault_transfer.py publish \
   --vault /absolute/private/memory/vault.sqlite3 \
   --exchange /absolute/shared/memory-exchange \
@@ -39,9 +47,9 @@ python3 /absolute/source/memory_vault_transfer.py publish \
   --identity /absolute/private/control/identity.json
 ```
 
-Recipient:
+Recipient; no private signing key is required:
 
-```bash
+```sh
 python3 /absolute/source/memory_vault_transfer.py receive \
   --vault /absolute/private/memory/receiving.sqlite3 \
   --exchange /absolute/shared/memory-exchange \
@@ -49,115 +57,255 @@ python3 /absolute/source/memory_vault_transfer.py receive \
   --trust-store /absolute/private/control/trust.json
 ```
 
-The exchange is plaintext, including signed content. Signatures are not
-encryption. Decide its ACLs, encryption and audience through the external
-transport; the adapter does not widen them. Public key descriptors can be
-shared, but keep trust policy and private signing files local and protected.
+This low-level CLI is a signed transport. The full-client sync path additionally
+supplies the best-effort publication privacy guard and operator review flow
+described below. Do not assume a direct `publish` call performs DLP: library
+callers choose `capsule_guard`/`publication_guard` explicitly.
 
-## What is sent
+The exchange contains plaintext memory, including signed content. Signatures
+are not encryption. Audience, folder ACLs and encryption belong to the selected
+transport and its operator; this adapter does not widen them.
 
-Each file is `{ "payload": ..., "proof": ... }`. The exact payload has:
+## Signed envelope and stream history
 
-- `schema_version`: `universal-memory-delta/v1`;
-- `source_store_id`: persistent random identity of the source Vault;
-- `sender_key_id`: the registered envelope signer, which may relay other signers;
-- `after`, `cursor`: a contiguous source delivery-log interval;
-- `records`: canonical v1 records, including their dependency closure;
-- `attestations`: one record proof per included memory ID;
-- `blocked`: explicit `{memory_id, sequence, reason}` dispositions for selected
-  roots that cannot currently be delivered.
+Every capsule is exactly `{ "payload": ..., "proof": ... }`. Newly constructed
+batches use [universal-memory-delta/v2](../schemas/delta-v2.schema.json). Its
+payload has these exact top-level fields:
 
-The message signature covers the entire payload under a separate domain from
-record signatures. Each included record's proof is also independently checked.
-The recipient trusts neither filenames, source labels, claimed models nor an
-unregistered public key. Transport source/store IDs track replication only;
-they never own, hide or delete the memories.
+| Field | Meaning |
+| --- | --- |
+| `schema_version` | `universal-memory-delta/v2` |
+| `source_store_id`, `sender_key_id` | Source delivery stream and registered envelope signer; not memory ownership |
+| `after`, `cursor` | Contiguous delivery-log interval `(after, cursor]` |
+| `records`, `attestations` | Inline canonical records and their individual record proofs, or empty when `group` is present |
+| `blocked` | Explicit `{memory_id, sequence, reason}` delivery dispositions; not successful copies |
+| `previous_batch_sha256` | Prior signed payload hash; null only for a stream beginning at `after=0` |
+| `publication_review` | Null, or a compact signed commitment to a local operator's selection; not recipient authorization |
+| `group` | Null for an inline capsule, otherwise a signed fragment-group descriptor |
 
-Default publication requires verified records and dependencies. A local
-unsigned record is reported blocked rather than blocking all other records.
-An operator can explicitly use `--attest-unsigned` to attest the exact bytes of
-unsigned records. That makes this key an attester, **not the original author**,
-and does not change historical provenance or grant authority. Previously
-blocked records must be requeued first if the source cursor has passed them.
+The message signature covers the complete payload in a different domain from
+record signatures. Relaying a registered signer does not replace record-level
+verification. Filenames, model labels and public keys embedded in data are not
+trusted. Inline capsules contain at most 1,024 records and the complete signed
+file is bounded to 4 MiB.
 
-## Bounded work and blocked records
+Legacy `universal-memory-delta/v1` capsules remain readable with their original
+eight payload fields and no history link/review/group. An existing immutable v1
+pending batch may finish unchanged; fresh batches are v2. Once a recipient has
+accepted a v2 head, a v1 continuation is rejected as a history downgrade.
 
-Publication defaults to 100 delivery events and a 256 KiB core response budget;
-`--limit` allows 1–256 and `--maximum-bytes` allows 4 KiB–3 MiB. Dependency closure
-can add records but never more than 1,024 total. The final signed file is bounded
-to 4 MiB. The MCP changes tool uses a smaller 1 MiB ceiling to fit its envelope.
+Directory layout is independent of tasks:
 
-A missing/revoked dependency, unsigned dependency or closure too large for one
-batch produces a `blocked` disposition. The cursor advances over that explicit
-disposition so unrelated records can proceed. It does **not** mean the blocked
-record was copied. Its canonical bytes remain in the local Vault. Re-admitting
-an existing dependency requeues admitted dependent records in one transaction.
-After increasing the batch budget or repairing independent trust policy, an
-operator can explicitly requeue an identified record:
-
-```bash
-python3 /absolute/source/memory_vault.py \
-  --vault /absolute/private/memory/vault.sqlite3 \
-  --requeue mem_0123456789abcdef0123456789abcdef01234567
+```text
+exchange/<sender-key-id>/<source-store-id>/
+  <after-20-digits>-<cursor-20-digits>-<payload-sha256>.json
+  groups/<group-id>/<fragment-index-6-digits>-<fragment-sha256>.ndjson
 ```
 
-The ID is an example; use the actual blocked ID. This changes delivery metadata,
-not memory contents. It does not trust a key or admit quarantined memory. Repeat
-publication with the appropriate budget after repair. Deep/large relation
-graphs may need explicit larger-bundle review; this release does not fragment a
-single oversized dependency closure across independently admitted packets.
+Each receiver retains its last accepted head hash and cursor. Before progressing
+an observed stream, the directory/rclone adapter checks that this head is still
+present and uniquely authenticated. A missing/changed head, competing signed
+payloads or a prefix gap stops that peer. No gap is silently skipped.
+This detects observed rollback/forks; it does not prove global freshness,
+discover a hidden alternate history or inspect every historical file each run.
+Do not prune old exchange files or reset cursor state as an error workaround.
 
-Reception defaults to 16 batches per invocation (`--maximum-batches` up to 256),
-and bounds discovery to 256 peers/20,000 directory entries and 256 candidate
-checks. Old committed ranges are skipped without rehashing all history. These
-are operational bounds, not a guarantee against denial of service on a hostile
-filesystem. No benchmark result is asserted.
+### Upgrade an old cursor without inventing a history anchor
 
-## Crash recovery and trust changes
+A pre-v2 state file may contain a receive cursor but no saved head hash. For a
+v2 continuation it needs an explicit `anchor` operation, using the exact capsule
+previously received:
 
-The publisher saves exact signed pending bytes locally before publication, then
-atomically publishes a no-overwrite file, then commits its cursor. A retry uses
-those bytes rather than signing a different payload for the same interval.
-While the publisher key remains trusted, already committed pending bytes can
-be cleaned up even if a different, inner record signer has since been revoked;
-the stored receipt is checked before current record-key verification.
+```sh
+python3 /absolute/source/memory_vault_transfer.py anchor \
+  --vault /absolute/private/memory/receiving.sqlite3 \
+  --exchange /absolute/shared/memory-exchange \
+  --state-directory /absolute/private/receive-state \
+  --trust-store /absolute/private/control/trust.json \
+  --capsule /absolute/private/recovery/previously-received.json
+```
 
-The receiver verifies all signatures before an atomic record/receipt commit.
-Its small cursor file is updated after the database commit. If interrupted
-between those steps, replay finds the database receipt: records are not added
-twice and `receipt_replays` increases instead of falsely counting new records.
-Unknown senders and invalid candidates are rejected; within the candidate
-budget, invalid filenames do not block a later valid candidate at the same prefix. Two different, valid signed
-payloads at one prefix are a fork and require operator resolution. No prefix
-gap is silently skipped.
+Anchoring verifies the current envelope trust, saved cursor and the existing
+atomic Vault transfer receipt for the exact payload hash. It adds no memories,
+does not reset a cursor, grants no trust and performs no network access. An
+arbitrary old file or filename is insufficient evidence.
 
-If an inner record's trust changes for an **uncommitted** pending batch while
-the publisher remains trusted, publication pauses with `pending_trust_changed`.
-Never rewrite its bytes or blindly delete its state:
-the old batch might already have reached the exchange. If the identical file
-is present, `acknowledge-published` with the same path arguments explicitly
-records that observed publication without sending it again or trusting its
-records. Otherwise restore the correct transport/state evidence or start an
-explicitly provisioned new publisher identity and fresh state directory;
-retain the old pending evidence for reconciliation. This release does not automate
-cross-recipient key rotation or cancellation of an uncertain prior publication.
-If the publisher key itself is revoked (including when it also signed a record),
-publication and acknowledgment fail closed; retain the old evidence and use the
-explicit new-identity/new-state recovery path rather than re-trusting it implicitly.
+## Complete dependency groups
 
-Revocation changes future admission and current trust-aware views, not every
-offline recipient's policy. A recipient cannot admit a batch containing an
-unregistered/revoked record key merely because its relay is registered; the
-missing trust decision is explicit and may block that authenticated stream.
-Other independent senders can continue. Do not bypass this by auto-registering
-keys from a packet. Source/database identity changes and missing publisher
-state likewise require reconciliation, not an automatic cursor reset.
+The ordinary publication target is 100 delivery entries and a 256 KiB core
+response budget. `--limit` accepts 1–256; `--maximum-bytes` accepts 4 KiB–3 MiB.
+These are small-page targets, **not an exclusion policy for large memories**.
+If an ordinary page reports a size-only blocked closure, transfer requests the
+complete read-only `Vault.transfer_changes` closure and freezes it into a group
+when it cannot fit the inline envelope.
+
+One atomic group supports up to **100,000 records and 64 MiB of canonical record
+bytes**, matching the core transfer/import bounds. Each fragment is at most
+4 MiB. The separate encoded group cap is 476,708,864 bytes, with at most 115
+fragments; these ceilings also bound proof/envelope overhead. They are maxima,
+not a claim that every group consumes that much space. A closure beyond the
+core limit raises `dependency_budget_exceeded` without advancing past that
+root; it is not shortened or signed away as completed synchronization.
+
+The [fragment-group schema](../schemas/fragment-group.schema.json) binds:
+
+- `schema_version`, `group_id`, `record_count`, `record_bytes`, `encoded_bytes`,
+  `records_sha256`, and the ordered `fragments` list;
+- each fragment's exact `index`, `sha256`, `bytes` and `records` count;
+- whole canonical NDJSON lines of `{"record": RECORD, "attestation": PROOF}`.
+
+`group_id` hashes the canonical descriptor without `group_id`.
+`records_sha256` hashes the raw fragment bytes concatenated in index order,
+including line-ending newlines. No record line is split across fragments.
+Grouped capsules have `records=[]` and `attestations={}`; mixing inline and
+grouped records is rejected.
+
+The sender freezes fragments privately and exposes the signed capsule
+**last**, after all fragments. Directory-copy receipts and exact rclone
+upload/read-back receipts support continuation after interruption. A call
+normally copies at most eight new fragments, subject to tighter sync-window
+budgets; subsequent explicit/event-triggered windows continue the same frozen
+group. `group_publication_pending` is not a cursor advance or a delivered batch.
+
+The recipient stages verified fragments privately. A partial group admits zero
+canonical records and advances no cursor. Once complete, it checks hashes,
+counts, unique IDs, dependency closure and every signature against current
+trust, then commits the complete group and its receipt in one Vault transaction.
+Corruption or a failed transaction admits none of that group. Cached copy
+receipts are tied to file identity/size/timestamps; final admission rechecks
+actual bytes and proofs. A remote receipt records earlier observed bytes, not a
+promise that the provider will retain them forever.
+
+This transports complete canonical memories, not arbitrary binary artifact
+directories or filesystem trees. Larger external artifacts require their own
+explicit transport and references.
+
+## Finite work and explicit freshness
+
+Direct reception defaults to 16 batches (`--maximum-batches` accepts 1–256).
+Discovery is bounded to 256 peers, 20,000 directory entries and 256 candidate
+checks per call. New fragment work is bounded separately. These limits are not
+fairness guarantees or protection against every hostile-filesystem delay.
+
+A host that needs a freshness attempt before using local context can explicitly
+choose a bounded receive-only window. It need not load a private signing key or
+publish pending local records. An explicit flush is bidirectional:
+
+```sh
+python3 /absolute/source/memory_vault_sync.py \
+  --config /absolute/private/control/sync.json receive --maximum-seconds 10
+python3 /absolute/source/memory_vault_sync.py \
+  --config /absolute/private/control/sync.json flush --maximum-seconds 30
+```
+
+The override accepts 1–60 seconds and only shortens the configured window.
+Byte/file/command limits and cooperative time checks still apply. SQLite work,
+whole-group verification and blocking OS calls are not forcibly preempted, so
+the number is not an exact wall-clock guarantee. Default local prompt/recall
+does not wait for this work. No perpetual daemon or scheduled retry is created.
+Even a completed receive window reports `remote_latest_proven=false`.
+
+## Explicit privacy review and requeue
+
+Full-client sync blocks an entire pending batch when the shared best-effort
+scanner finds recognized credentials or personal paths. It does not silently
+filter records, rewrite memories or promise comprehensive privacy detection.
+Review is content-free and read-only: no network, private-key read, lock-file
+creation or canonical memory mutation.
+
+```sh
+python3 /absolute/source/memory_vault_sync.py \
+  --config /absolute/private/control/sync.json review --offset 0 --limit 100
+```
+
+The result identifies immutable record IDs/hashes, sizes, reasons and dependency
+information, not matched secrets or text. A group page checks only its
+containing fragments; it does not certify the whole group. An operator must
+partition **all** pending record IDs into explicit `exclude` and `keep` lists.
+Retaining a record while excluding its dependency is rejected. Secrets have no
+override; retaining a local path requires a separately explicit, batch-bound
+operator allowance. See [the complete decision-file format](SYNC.md#explicit-per-record-publication-decisions).
+
+```sh
+python3 /absolute/source/memory_vault_sync.py \
+  --config /absolute/private/control/sync.json resolve \
+  --decision-file /absolute/private/control/selection.json
+```
+
+The private decision file is bounded to 16 MiB. Its request ID gives exact
+idempotency; changed arguments conflict. The local journal preserves original
+signed bytes, selection, replacement and completion evidence. Excluded roots
+receive signed `operator_excluded` dispositions, never a claim of delivery.
+An incoming signed review cannot grant local publication permission.
+
+Default publication requires verified records/dependencies. Missing or
+unadmitted dependencies and unsigned dependencies remain explicit dispositions;
+their canonical memories remain intact. `--attest-unsigned` on direct publish
+explicitly attests exact bytes as the current publisher, not as their historical
+author. Historical size-blocked v1 records and deliberately excluded records
+can be explicitly requeued after independent review/repair:
+
+```sh
+python3 /absolute/source/memory_vault_sync.py \
+  --config /absolute/private/control/sync.json requeue \
+  --memory-id mem_0123456789abcdef0123456789abcdef01234567 \
+  --request-id req_operator_retry_0001
+```
+
+Use actual IDs; the example ID is illustrative. One request supports 1–256 IDs.
+Requeue changes delivery metadata, not memory bytes, trust or admission. It does
+not reuse an older path approval or rewind a stream. Resolution and requeue
+enqueue work but start no worker; run an explicit flush when ready.
+
+## Crash recovery, evidence and current trust
+
+Before exposure, the publisher saves exact signed pending bytes. A durable
+`publish.started.json` marker is saved before any fragment/capsule can escape.
+Once exposure has started, review cannot rewrite that prefix, even if remote
+files later disappear. Frozen bytes and receipts, not a new signature over
+different content, determine retry behavior.
+
+The receiver first retains each uniquely authenticated inline/group capsule at
+`received-capsules/<payload-sha256>.json` beneath its private transfer state.
+For the sync client that is `S/transfer/received-capsules/`. These are immutable
+recovery evidence, not trust decisions or restored cursors. Together with
+`incoming-groups/` they preserve the authenticated envelope when admission
+fails or an external exchange is unavailable. They can contain sensitive
+content and belong only in an explicitly private backup, never a public export.
+
+The Vault's record/receipt transaction commits before the external receive
+cursor. A crash between them reuses that atomic receipt; replay adds no duplicate
+memories. A repeated already-committed last-head capsule needs no fragment
+download, but still requires current envelope verification and the saved core
+receipt. Older accepted records are not silently re-admitted under changed trust.
+
+Current trust applies before uncommitted publication and admission. A registered
+relay cannot override a revoked or unregistered record signer. Other independent
+streams may progress, but that authenticated prefix remains blocked. Revocation
+does not rewrite immutable history or every offline recipient's trust policy.
+
+For an uncommitted pending batch whose inner signer becomes untrusted, preserve
+its bytes and state. If the identical already-published capsule exists, the
+direct adapter's `acknowledge-published` action with the same path arguments can
+record that observation without republishing or trusting its records. This is
+historical publication acknowledgment, not proof of current fragment availability
+or recipient admission. Publisher-key revocation still fails closed.
+
+Missing state, a changed Vault/store identity, a fork or an uncertain prior
+publication requires explicit reconciliation. Do not delete state to "fix"
+it, auto-retrust old keys, or claim cancellation retracts exposed data. A
+separately provisioned new stream can retain old evidence without pretending
+that its predecessor was delivered. Cross-recipient policy/key rotation is
+not automatically resolved by this transport.
 
 ## Meaning of success
 
-`stored` / `saved_local` means local durable memory. `published` means an
-immutable exchange file exists. `received` reports this recipient's commits.
-`published_with_blocked`, nonempty `rejected`, gaps or candidate limits require
-inspection; they are not a complete synchronization claim. None of these
-states proves a remote AI has read the record, agrees with it or is authorized
-to execute a remembered next action.
+`stored` / `saved_local` means local durable memory. `published` means the local
+immutable exchange capsule was published after its fragments. `received`
+reports this recipient's commits; inspect counts and any `rejected`, gaps,
+blocked records, `groups_pending` or `more_possible` values. Size ceilings,
+partial groups and operator exclusions are not a complete-sync claim.
+
+None of these results proves that another AI read or agreed with a memory, or
+that it may execute a remembered next action. Memory remains evidence, not
+instruction, task ownership, authorization or execution.

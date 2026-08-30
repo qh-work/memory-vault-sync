@@ -20,7 +20,8 @@ import time
 from typing import Any, Callable, Mapping
 
 from memory_vault import MemoryError
-from memory_vault_transfer import MAX_CAPSULE_BYTES, _path
+from memory_vault_transfer import MAX_CAPSULE_BYTES, _fragment_name, _group, _path
+import memory_vault_storage as protected_storage
 
 MAX_CONFIG_BYTES = 1024 * 1024
 MAX_EXECUTABLE_BYTES = 256 * 1024 * 1024
@@ -58,6 +59,13 @@ def peer_value(value: Any) -> dict[str, str]:
 
 def _plain_file(path: Path, *, private: bool, maximum: int) -> tuple[int, os.stat_result]:
     _path(path)
+    if os.name == "nt":
+        fd = protected_storage.open_file(path, os.O_RDONLY, private=private, trusted=True)
+        info = os.fstat(fd)
+        if info.st_size > maximum:
+            os.close(fd)
+            raise MemoryError("unsafe_remote_configuration")
+        return fd, info
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     info = os.fstat(fd)
     if (not stat.S_ISREG(info.st_mode) or info.st_size > maximum
@@ -72,7 +80,7 @@ def executable_sha256(path: Path) -> str:
     """Only explicit configuration/worker startup reads the selected binary."""
     fd, info = _plain_file(path, private=False, maximum=MAX_EXECUTABLE_BYTES)
     with os.fdopen(fd, "rb") as stream:
-        if not info.st_mode & 0o111:
+        if (os.name == "nt" and path.suffix.lower() != ".exe") or (os.name != "nt" and not info.st_mode & 0o111):
             raise MemoryError("remote_executable_not_executable")
         digest = hashlib.sha256()
         count = 0
@@ -204,40 +212,97 @@ class RcloneBackend:
         # Deliberately exclude RCLONE_*, cloud credential variables, SSH agent
         # sockets and inherited Python settings. Existing proxy routing survives.
         environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
+        if os.name == "nt":
+            # Only the Windows runtime directory and private selected temporary
+            # paths are added; no ambient cloud/rclone/SSH credentials return.
+            import ctypes
+            from ctypes import wintypes
+            windows = ctypes.WinDLL("kernel32", use_last_error=True)
+            get_directory = windows.GetWindowsDirectoryW
+            get_directory.argtypes, get_directory.restype = [wintypes.LPWSTR, wintypes.UINT], wintypes.UINT
+            buffer = ctypes.create_unicode_buffer(32768)
+            length = get_directory(buffer, len(buffer))
+            if not 1 <= length < len(buffer):
+                raise MemoryError("remote_windows_runtime_unavailable")
+            system = _path(Path(buffer.value))
+            environment = {"SystemRoot": str(system), "WINDIR": str(system), "PATH": str(system / "System32"),
+                           "TEMP": str(self.work_directory / "tmp"), "TMP": str(self.work_directory / "tmp"), "LANG": "C.UTF-8"}
         for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"):
             if key in os.environ:
                 environment[key] = os.environ[key]
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, shell=False, env=environment,
-                                   start_new_session=True, close_fds=True)
+                                   start_new_session=os.name != "nt", close_fds=True)
         output = bytearray()
         error_bytes = 0
         finished = False
         deadline = min(self.budget.deadline, time.monotonic() + seconds + 1)
+
+        def consume(label: str, data: bytes) -> None:
+            nonlocal error_bytes
+            if label == "out":
+                output.extend(data)
+                if len(output) > output_limit:
+                    raise MemoryError("remote_output_limit")
+            else:
+                # Never persist arbitrary provider messages containing account
+                # names, paths, URLs, credentials or content.
+                error_bytes += len(data)
+                if error_bytes > 16384:
+                    raise MemoryError("remote_error_output_limit")
+
         try:
-            with selectors.DefaultSelector() as selector:
+            if os.name == "nt":
+                # Windows selectors cannot select anonymous subprocess pipes.
+                # Peek first, then read at most that available count; one reader
+                # owns each pipe and never performs a blind blocking read.
+                import ctypes
+                from ctypes import wintypes
+                import msvcrt
+                peek = ctypes.WinDLL("kernel32", use_last_error=True).PeekNamedPipe
+                peek.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                                 ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD)]
+                peek.restype = wintypes.BOOL
                 assert process.stdout is not None and process.stderr is not None
-                selector.register(process.stdout, selectors.EVENT_READ, "out")
-                selector.register(process.stderr, selectors.EVENT_READ, "error")
-                while selector.get_map():
+                streams = {"out": process.stdout, "error": process.stderr}
+                while streams:
                     self.active_check()
                     if time.monotonic() >= deadline:
                         raise MemoryError("remote_timeout", retryable=True)
-                    for key, _ in selector.select(timeout=min(0.2, max(0.001, deadline - time.monotonic()))):
-                        data = os.read(key.fileobj.fileno(), 65536)
-                        if not data:
-                            selector.unregister(key.fileobj)
+                    progressed = False
+                    for label, stream in list(streams.items()):
+                        available = wintypes.DWORD()
+                        if not peek(msvcrt.get_osfhandle(stream.fileno()), None, 0, None, ctypes.byref(available), None):
+                            if ctypes.get_last_error() not in {109, 232}:  # broken/disconnected pipe only
+                                raise MemoryError("remote_pipe_unavailable")
+                            del streams[label]
                             continue
-                        if key.data == "out":
-                            output.extend(data)
-                            if len(output) > output_limit:
-                                raise MemoryError("remote_output_limit")
-                        else:
-                            # Never persist arbitrary provider messages containing
-                            # account names, paths, URLs, credentials or content.
-                            error_bytes += len(data)
-                            if error_bytes > 16384:
-                                raise MemoryError("remote_error_output_limit")
+                        if available.value:
+                            data = os.read(stream.fileno(), min(65536, available.value))
+                            if not data:
+                                del streams[label]
+                            else:
+                                consume(label, data)
+                            progressed = True
+                        elif process.poll() is not None:
+                            del streams[label]
+                    if streams and not progressed:
+                        time.sleep(min(0.02, max(0.001, deadline - time.monotonic())))
+            else:
+                with selectors.DefaultSelector() as selector:
+                    assert process.stdout is not None and process.stderr is not None
+                    selector.register(process.stdout, selectors.EVENT_READ, "out")
+                    selector.register(process.stderr, selectors.EVENT_READ, "error")
+                    while selector.get_map():
+                        self.active_check()
+                        if time.monotonic() >= deadline:
+                            raise MemoryError("remote_timeout", retryable=True)
+                        for key, _ in selector.select(timeout=min(0.2, max(0.001, deadline - time.monotonic()))):
+                            data = os.read(key.fileobj.fileno(), 65536)
+                            if not data:
+                                selector.unregister(key.fileobj)
+                                continue
+                            consume(key.data, data)
             code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
             if code == 3 and missing_ok:
                 finished = True
@@ -251,7 +316,10 @@ class RcloneBackend:
         finally:
             if not finished or process.poll() is None:
                 try:
-                    os.killpg(process.pid, signal.SIGKILL)
+                    if os.name == "nt":
+                        process.kill()  # Only this explicitly launched rclone process.
+                    else:
+                        os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
                 # Bound cleanup as well; no caller waits indefinitely on a
@@ -328,3 +396,33 @@ class RcloneBackend:
         observed = self.download(key_id, store_id, after, name, len(expected))
         if observed != expected:
             raise MemoryError("remote_content_mismatch")
+
+    def _fragment_path(self, key_id: str, store_id: str, group: Mapping[str, Any], fragment: Mapping[str, Any]) -> str:
+        peer_value({"key_id": key_id, "store_id": store_id})
+        validated = _group(dict(group))
+        index = fragment.get("index")
+        if type(index) is not int or not 0 <= index < len(validated["fragments"]) or validated["fragments"][index] != fragment:
+            raise MemoryError("invalid_remote_group_fragment")
+        return f"{self.remote}/{key_id}/{store_id}/groups/{validated['group_id']}/{_fragment_name(fragment)}"
+
+    def download_fragment(self, key_id: str, store_id: str, group: Mapping[str, Any], fragment: Mapping[str, Any]) -> bytes:
+        path = self._fragment_path(key_id, store_id, group, fragment)
+        maximum = fragment["bytes"] + 1
+        self.budget.transfer(maximum)
+        raw = self._run(["cat", path, "--head", str(maximum), "--max-depth", "1"], output_limit=maximum)
+        if raw is None or len(raw) != fragment["bytes"] or hashlib.sha256(raw).hexdigest() != fragment["sha256"]:
+            raise MemoryError("remote_group_fragment_mismatch")
+        return raw
+
+    def upload_fragment(
+        self, source: Path, *, key_id: str, store_id: str,
+        group: Mapping[str, Any], fragment: Mapping[str, Any], expected: bytes,
+    ) -> None:
+        destination = self._fragment_path(key_id, store_id, group, fragment)
+        if len(expected) != fragment["bytes"] or hashlib.sha256(expected).hexdigest() != fragment["sha256"]:
+            raise MemoryError("local_group_fragment_mismatch")
+        self.budget.transfer(len(expected))
+        self._run(["copyto", str(_path(source)), destination, "--immutable", "--no-traverse", "--checksum",
+                   "--max-transfer", str(MAX_CAPSULE_BYTES + 64 * 1024), "--cutoff-mode", "HARD"], output_limit=4096)
+        if self.download_fragment(key_id, store_id, group, fragment) != expected:
+            raise MemoryError("remote_group_fragment_mismatch")

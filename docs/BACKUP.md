@@ -1,5 +1,9 @@
 # Memory snapshots and restore-to-new-copy recovery
 
+There are two separate operations: **memory-only snapshots** and, below,
+**explicit offline client-state snapshots**. Neither restores execution rights,
+host approvals, private keys, or a task/project ownership hierarchy.
+
 A portable NDJSON bundle preserves canonical records, not admission metadata,
 record attestations or exact local write receipts. It is an interchange format,
 **not a complete signed-memory recovery backup**.
@@ -153,9 +157,207 @@ a work-limit response rather than wait indefinitely. This is not a throughput
 guarantee. Use the old matching runtime/export converter for older layouts;
 backup does not silently migrate them.
 
-Snapshot/restore use protected POSIX files and no-clobber publication. Windows
-protected recovery storage is not implemented; it fails closed rather than
-claiming `chmod` provides Windows ACL protection. Files remain plaintext: use an
+Snapshot/restore use protected local files and no-clobber publication. The full
+client's Windows path uses native ACL/handle checks on local fixed NTFS storage,
+not `chmod` as a substitute for access control; unsupported storage fails
+closed. This platform path has not been exercised here. Files remain plaintext: use an
 independently authorized encrypted storage/transport for sensitive backups.
 The optional [pack format](PACKS.md) can carry bytes in bounded chunks, but
 compression and hashes are not encryption or publisher authentication.
+
+## Explicit offline client-state snapshots
+
+`memory_vault_recovery.py` adds `universal-memory-client-backup/v1`. A memory
+snapshot remains included, and the operator explicitly selects control
+components. This is an additional full-client workflow, not a change to the
+light record protocol or to the memory-only profile above.
+
+| Component | Preserved private evidence |
+| --- | --- |
+| `hooks` | Exact `prompts`, `outbox`, `done`, and `conflicts` JSON files |
+| `lifecycle` | Sessions, staged/frozen turns, exact request hashes and completed receipts |
+| `hosts` | Generic/Claude/Gemini correlations, pending exact requests, receipts, final-message aliases; requires `lifecycle` |
+| `compat` | Protocol 1.0 intents/receipts, semantic-job markers, and old-ID aliases |
+| `sync` | Worker/trigger metadata, cursors, pending/started publication capsules, review intents/decisions/original bytes, received signed capsules, incoming/outgoing fragments, copy/upload receipts, and documented private exchange staging |
+
+The selection is exact: no recursive catch-all copies of a home, account,
+configuration, provider cache, or exchange directory. Private signing-key files,
+trust registries, client/sync configuration files, rclone configuration/cache,
+host approval state, code, and lock files are excluded. An external directory
+backend's exchange is not included. The private sync staging tree has a closed
+filename/layout allow-list. Unexpected entries in selected control layouts
+stop the operation for review instead of being silently copied.
+
+These are **private, plaintext backups**, not release artifacts. Visible-text
+queues, original publication-review capsules, and rejected/pending memory can
+contain sensitive text. Excluding credential *files* does not sanitize secrets
+that were already written inside memory. Do not publish this backup.
+
+### Establish the offline boundary, then capture
+
+Stop or close **all writers to this chosen client and Vault** first: MCP
+processes, approved host hooks/adapters, compatibility clients, direct memory
+writers, and sync workers. Use the normal host/application controls; backup
+does not stop processes or revoke other clients' access for you.
+
+```bash
+python3 /absolute/source/memory_vault_manage.py \
+  --config /absolute/private/control/client.json backup-client \
+  --include hooks lifecycle hosts compat sync --quiesced \
+  --output /absolute/private/backups/client-001 --timeout 180
+```
+
+Omit `sync` when none is configured. `--quiesced` is a required **operator
+acknowledgment**, not proof that arbitrary writers have stopped. The capture
+also acquires existing known nonblocking host/sync locks, pins consistent
+SQLite read transactions, inventories selected paths and directory entries,
+and checks every selected source's fingerprint and bytes again before
+publishing the manifest. Newly appearing queues/databases or changed entries
+invalidate the capture. It never creates missing source lock files.
+
+This is **not a global atomic multi-file snapshot**. Advisory locks do not
+control an uncooperative process, and matching before/after checks are not a
+replacement for the offline boundary. An active writer, a changing journal,
+or a work limit can leave an incomplete new output, without a top-level
+manifest. Keep it for inspection and use a different new output for a retry.
+
+```text
+client-001/
+  manifest.json                 # overall commit marker; hashes every payload
+  memory/
+    manifest.json               # original memory-only profile
+    memory.sqlite3
+  control/
+    hooks/{prompts,outbox,done,conflicts}/...
+    lifecycle/lifecycle-v1.sqlite3
+    hosts/<host>/<session-key>/...
+    compat/host-protocol-v1.sqlite3
+    sync/...                    # evidence, never executable configuration
+```
+
+Absent selected components need no empty placeholder files. Pending capture
+before the first successful canonical write is supported: an empty snapshot
+database is constructed in memory, `source.memory_database_present` is `false`,
+and its store ID is a snapshot placeholder. The source Vault is not initialized.
+Nothing invents an assistant reply for a prompt that never received one.
+
+### Restore memory plus inert evidence
+
+```bash
+python3 /absolute/source/memory_vault_manage.py restore-client \
+  --backup /absolute/private/backups/client-001 \
+  --output /absolute/private/recovered-001 \
+  --trust-store /absolute/independent/current-trust.json --timeout 180
+```
+
+The trust registry is optional and must be outside the backup/recovered tree.
+The memory-only restore trust/quarantine rules still apply; unsigned acceptance
+requires the separate `--accept-unsigned` flag. A new `store_id` and delivery
+stream are created. Record identities and attestations remain unchanged.
+
+The new directory contains `memory.sqlite3`, a **capture-disabled** `client.json`,
+`recovery.json`, and `evidence/` containing the complete original backup,
+including its original database and control bytes. The generated config has
+no signing identity and no sync configuration. If the operator independently
+selected a current trust registry, only its external path is used for ongoing
+read-time revocation checks. No archived policy is adopted.
+
+Restored control files are **not placed in the live `client.state` path**.
+Opening the new client cannot drain an old queue, upload a capsule, install a
+hook, or grant host permission. Original receipts remain historical evidence,
+not confirmation of current trust, new network activity, or task completion.
+
+### Review, then independently opt in to local resumption
+
+```bash
+python3 /absolute/source/memory_vault_manage.py review-recovery \
+  --recovery /absolute/private/recovered-001 --limit 50
+
+python3 /absolute/source/memory_vault_manage.py activate-recovery \
+  --recovery /absolute/private/recovered-001 \
+  --output /absolute/private/recovered-001/resumed-client.json \
+  --include hooks lifecycle hosts compat --authorize-local-resume \
+  --identity /absolute/independent/current-identity.json \
+  --trust-store /absolute/independent/current-trust.json
+```
+
+Review is content-free, paginated by `next_offset`, and tied to the evidence
+manifest digest. It does not authenticate a backup's origin or approve its
+contents. Establish that origin through your own trusted backup receipt/storage.
+
+Activation requires a **new config and new sibling state directory**. It
+rebuilds only closed, known SQLite schemas; checks record references and
+request envelopes; copies only validated local queue formats; and rewrites
+Vault/store bindings to the new memory DB. It does not execute SQL programs or
+follow paths supplied by an archived control file. A malformed component stops
+activation before publishing a capture-enabled config. Partial staging remains
+in its new location for inspection.
+
+The explicit activation flag authorizes subsequent local capture/retry, not
+remote transfer or host installation. `sync` cannot be selected here. Signing
+identities are independently selected paths and are not read during activation.
+If the original client used signing, omitting a new identity requires the
+additional `--allow-unsigned-local` opt-in; there is no silent downgrade.
+A sibling `.recovery-receipt.json` records this local activation decision.
+
+Original control receipts remain byte-for-byte in evidence. In the *derived
+active compatibility cache*, an old session-open network result becomes
+`historical_restored_receipt` with `network_accessed: false`, so replay cannot
+misreport an old upload as work performed now. A new local retry is still a
+separate operation; see [OPERATIONS.md](OPERATIONS.md).
+
+### Recover downloaded-but-not-admitted signed memory
+
+Outgoing pending capsules were built from canonical records. Their memory
+survives in the restored DB, and the new delivery log makes admitted records
+available to a separately configured **new** sync stream. Old privacy decisions,
+exclusions, peer cursors, upload receipts, and publication approvals remain
+evidence only; review and authorize the new publication separately.
+
+For incoming memory that had not yet reached the DB, receivers preserve a
+verified envelope at `transfer/received-capsules/<payload-sha256>.json` **before**
+fragment staging/admission. Complete local fragments plus that envelope can be
+recovered without a remote connection:
+
+```bash
+python3 /absolute/source/memory_vault_manage.py review-recovery \
+  --recovery /absolute/private/recovered-001 --component sync
+
+python3 /absolute/source/memory_vault_manage.py import-recovery \
+  --recovery /absolute/private/recovered-001 --entry-id item_FROM_REVIEW \
+  --trust-store /absolute/independent/current-trust.json \
+  --authorize-memory-import
+```
+
+Only a selected signed capsule candidate is accepted. Its envelope and **every
+record attestation** are reverified against current independent trust; all
+manifest-listed fragment hashes, counts and whole-group digest must match.
+The core admits the complete group and an idempotency receipt in one transaction.
+Missing fragments or unresolved record dependencies do not produce partial
+admission. Evidence stays intact for another attempt. Incomplete downloads
+require independently authorized retrieval of missing data; the backup cannot
+recreate bytes that were never received.
+
+This is an explicit **memory import**, not proof of continuous transport history:
+old cursors/chain heads are not replayed, no publication permission is recovered,
+and no network worker runs. It does not sign a record or load a private key.
+New sync still requires its own fresh configuration, state directory and review.
+
+### Client-state limits and validation status
+
+The full snapshot bounds discovery to 20,000 files and 20,000 directories,
+8 GiB of payload bytes, a 16 MiB outer manifest, 16 MiB per ordinary control file,
+and at most 512 MiB per control database (the compatibility format retains its
+stricter 256 MiB bound and 250,000-alias limit). Canonical memory keeps the independent
+memory-only profile bounds. Control formats enforce their own row/field limits;
+transfer envelopes/fragments keep their 4 MiB and complete-group bounds.
+Read/copy/checksum and SQLite work use explicit deadlines; very large snapshots
+can require several independently quiesced attempts, not an implicit unbounded
+background backup. Restoring the original evidence **and** a new memory DB needs
+additional disk space; the evidence copy is intentionally not deleted afterward.
+
+The source and public synthetic cases in
+`tests/test_v025_client_recovery.py` were prepared, not executed during this
+work. Actual crash injection, large-state timing, supported Windows ACL/locking,
+and real multi-process offline-boundary behavior still require independent
+verification. Do not describe static review as tested disaster recovery.

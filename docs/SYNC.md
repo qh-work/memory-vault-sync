@@ -16,14 +16,19 @@ its public key (and any peer keys) using [TRUST.md](TRUST.md). Configuration doe
 not create keys, register trust, install rclone, log in, or discover credentials.
 An identity configured for signing never silently falls back to unsigned writes.
 
-The protected signing/configuration/worker implementation currently requires
-POSIX ownership and permissions. It fails closed on Windows; the portable light
-protocol/core does not imply that this full private-storage profile is portable.
+The protected signing/configuration/worker implementation uses POSIX ownership
+and permissions, or the explicit Windows native **local fixed NTFS** profile.
+Windows checks real owner/DACLs and file handles; `chmod` is not treated as ACL
+protection. Other Windows filesystems, UNC/network paths, junctions/reparse
+points and unsupported ACL forms fail closed. See [PLATFORMS.md](PLATFORMS.md)
+for the unexecuted native validation matrix and boundaries; portable light
+protocol/core operation is not itself a protected full-client claim.
 
 Example paths below are placeholders. The operator must choose their own
 absolute, non-symlink paths. Config files and identities are private files, and
 their containing control directory must be owned by the current user with mode
-0700. State directories must not contain the Vault, private key, trust store,
+0700 on POSIX, or an equivalent validated private native ACL on Windows. State
+directories must not contain the Vault, private key, trust store,
 client configuration or another client's state. The exchange must be outside
 all such private state.
 
@@ -48,13 +53,21 @@ trust paths and rejects conflicting explicit arguments.
 python3 /absolute/source/memory_vault_sync.py \
   --config /absolute/private/control/sync.json status
 python3 /absolute/source/memory_vault_sync.py \
-  --config /absolute/private/control/sync.json run
+  --config /absolute/private/control/sync.json receive --maximum-seconds 10
+python3 /absolute/source/memory_vault_sync.py \
+  --config /absolute/private/control/sync.json flush --maximum-seconds 30
 ```
 
 `status` reads configuration and small local control files only. It does not
 create directories, open the Vault, read an identity, start a worker, contact
-rclone, or fetch remote content. `run` requests one bounded window, including
-when automatic operation is off. `enabled=false` disables even explicit runs.
+rclone, or fetch remote content. `receive` performs one **receive-only** window:
+it does not load a private signing key, publish local records, or mark an
+outgoing trigger complete. A host can explicitly request this before reading
+fresh context. `flush` performs one bidirectional window; `run` is its existing
+alias. These commands work when automatic operation is off. `enabled=false`
+disables even explicit runs. An optional 1–60 second command limit can only
+shorten the configured maximum. A completed window is not proof of global
+freshness: results retain `remote_latest_proven=false`.
 The corresponding client entry point is `memory_vault_client.py --config
 /absolute/private/control/client.json sync status` or `sync run`.
 
@@ -84,7 +97,11 @@ state merely to bypass either check; consult [BACKUP.md](BACKUP.md) for restore.
    during that window coalesce; a newer generation stays pending.
 5. The worker exits. There is no launchd entry, cron job, resident daemon,
    self-relaunch loop, or hidden scheduled retry. Remaining work waits for a
-   later client event or explicit `run`.
+   later client event or explicit `flush`/`run`.
+
+The default session-start/prompt path remains local-first and does not wait for
+a remote pull. Opting into a bounded `receive` is separate host policy, not a
+permission encoded in a recalled memory, peer message, or handoff view.
 
 The trigger is not one file per turn and does not duplicate the conversation.
 A queue notification failure does not undo the local write. The client reports
@@ -98,9 +115,10 @@ so this is not a guarantee of eventual delivery without a later event.
 | --- | --- |
 | Local write success | The Vault accepted the local record; no remote claim. |
 | `published_batches` | Signed capsules were finalized in the selected directory or private rclone staging exchange, including a recovered completion. |
-| `uploaded_batches` | An exact rclone destination was copied and its returned plaintext bytes matched the signed capsule before the remote cursor advanced. |
+| `uploaded_batches` | The manifest/capsule read-back matched; every referenced fragment has an exact earlier upload/read-back receipt for this configured destination. This does not prove continuing remote availability. |
 | `received_batches` | A locally verified capsule was admitted with an atomic local transfer receipt, or its receipt was replayed. |
 | `pending=true` | A trigger generation is unfinished or a newer event arrived; another window may be required. |
+| `blocked_records` | Signed non-delivery dispositions, including operator exclusions; never a count of records received by a peer. |
 | `remote_ai_read_verified=false` | Neither upload nor local admission proves that any remote AI read, understood or used memory. |
 
 Before local publication the exact signed pending capsule is durable. A crash
@@ -115,6 +133,25 @@ imports trust settings or authorizes instructions found in memory. A local
 atomic transfer receipt handles a crash between Vault admission and saving the
 receiver cursor. Two authenticated candidates at one prefix are a fork requiring
 operator review; unsigned garbage is not allowed to choose the next record.
+
+New capsules use `universal-memory-delta/v2`. They bind the previous capsule's
+**payload SHA-256** to the next one, in addition to the existing source/key and
+cursor interval. The receiver retains the last accepted signed head and checks
+that exact remote prefix before progressing. A missing/changed head, competing
+authenticated candidates, or a mismatched predecessor stops that stream; local
+canonical memories remain intact. This detects observed tail rollback/forks,
+not deletion of every historical remote object or a fork hidden from this peer.
+Independent receivers still need out-of-band comparison to detect a provider
+showing different complete histories to different peers.
+
+Old delta/v1 capsules remain readable. Once v2 is accepted, that receiver
+refuses a v1 continuation. A pre-upgrade state that has a received cursor but no
+head hash cannot safely infer its anchor from a remote claim. Use the explicit
+`anchor --capsule /absolute/exact-previously-received.json` command: it verifies
+the capsule, its exact saved cursor and the existing atomic Vault receipt. It
+does not import memory, reset a cursor or contact a remote. If that evidence is
+missing, preserve the state and restore verified history rather than deleting
+state to invent a new clean stream.
 
 Network/verification errors preserve pending state and content-free error codes.
 Automatic launch backoff increases from 5 seconds up to 300 seconds; these are
@@ -147,34 +184,117 @@ operation returns. The foreground notifier still does not wait for that work.
 
 The strict `limits` object supports these ranges: `maximum_batches` 1–16,
 `maximum_files` 2–64, `maximum_bytes` 8–128 MiB, `maximum_seconds` 5–60,
-`record_limit` 1–256 and `batch_bytes` 4 KiB–1 MiB. The configure CLI directly
+`record_limit` 1–256 and `batch_bytes` 4 KiB–3 MiB. The configure CLI directly
 exposes `--maximum-seconds`; changing other limits requires an explicit private
 configuration edit while no worker is running. A running worker rejects a
 changed binding or limits.
 
-A large record or dependency closure can exceed the batch budget. The signed
-`blocked` dispositions make that omission visible; a cursor moving past it does
-**not** mean its contents were delivered. Raising the budget helps future batches
-but does not rewind an already acknowledged disposition. Inspect the canonical
-record and use an explicit reviewed export/import or a deliberately new transfer
-stream for recovery. Do not erase old state to invent a clean synchronization
-history. Large binary artifact transport is a separate explicit mechanism; this
-service exchanges bounded canonical memory records, not whole directories.
+### Complete dependency groups, not size-based skipping
+
+The small outgoing budget is a batching target, not a memory-size exclusion.
+When the ordinary `changes` page reports a size-only omission, the adapter asks
+the read-only `Vault.transfer_changes` API for the **complete** dependency
+closure, freezes it, and fragments it when necessary. One atomic group supports
+the core's 100,000 records and 64 MiB of canonical record bytes; proofs have a
+separate bounded allowance. A closure exceeding those core limits fails with
+`dependency_budget_exceeded` and **does not advance the cursor**. It is not
+silently shortened or signed as successfully synchronized.
+
+Each fragment is at most 4 MiB and contains whole canonical NDJSON lines of
+`{"record": RECORD, "attestation": PROOF}`. The signed group manifest binds
+fragment indices, hashes, byte counts, record counts, the ordered stream hash,
+and total canonical record bytes. The manifest is published **last**. Directory
+copy receipts and rclone upload/read-back receipts allow already completed
+fragments to be reused after an interruption. Default calls process at most
+eight new fragments, subject to tighter shared work budgets; large groups can
+span several explicit/event-triggered windows. The sender's publishing cursor
+and remote sending cursor do not move until their complete manifest stage.
+
+The receiver stages verified fragments privately; a partial group admits no
+canonical records and advances no receive cursor. After all fragments arrive,
+it rechecks ordered hashes, totals, unique IDs, every record signature and
+current trust, then calls the core's atomic importer once for the entire group.
+Invalid closure or an interrupted transaction admits none of that group. A
+crash after the database commit but before saving the cursor reuses the atomic
+transfer receipt, so replay never creates duplicate memories. Receiving the
+identical committed last-head capsule also returns a receipt without fetching
+its fragments again.
+
+Local cache reuse is tied to file identity/size/timestamps; final receive still
+checks actual bytes. Remote fragment receipts describe earlier verification,
+not a lease guaranteeing a provider keeps those bytes forever. A missing or
+changed remote fragment remains a visible receive failure. Files are not
+silently pruned. Large binary artifact directories remain a separate explicit
+mechanism: this protocol transports complete canonical memories, not arbitrary
+filesystem trees.
+
+### Explicit per-record publication decisions
 
 Both directory and rclone publication call `assert_publishable`. It rejects
 recognized secrets and personal filesystem paths before writing an exchange
 file; rclone checks a staged capsule again immediately before uploading. A
 blocked capsule remains pending and is not counted as uploaded. This is a
 best-effort guard, not comprehensive personal-data detection or encryption.
-It pauses the **whole outbound batch**; it does not automatically filter or
-redact individual records. The sync CLI has no local-path override and no
-automatic redaction/exclusion management. Canonical records are immutable and
-the exact signed pending bytes are deliberately retained, so editing text or
-writing a cleaner later record does not repair an already blocked capsule.
-Preserve the evidence, disable that automatic channel, and have its operator
-choose an explicitly authorized distribution/recovery strategy. Existing
-canonical memory is not deleted. Plan reviewed distributable records before
-enabling publication rather than treating all local backup as shareable data.
+It pauses the **whole outbound batch** until an operator decides; it never
+silently filters or edits canonical memory. Inspect it without network, private
+key loading, lock-file creation, or content output:
+
+```sh
+python3 /absolute/source/memory_vault_sync.py \
+  --config /absolute/private/control/sync.json review --offset 0 --limit 100
+```
+
+Pages contain immutable record IDs/digests, sizes, reason codes, dependency IDs,
+and current signature status, not the matched secret, path, or memory text.
+Dependent IDs are limited to 256 per record and explicitly scoped to the whole
+canonical Vault, so some may lie outside this pending batch. A group page hashes
+only its containing fragments and does not claim a full-group verification.
+`batch_sha256` is an optimistic concurrency token, **not authorization**.
+
+An explicit `resolve` must partition **all** current pending record IDs into
+`exclude` and `keep`. Keeping a record while excluding a referenced dependency
+fails visibly; dependencies are never dropped automatically. Secrets have no
+override. Keeping a personal local path requires the separate operator option
+`--allow-local-paths`, scoped only to those exact kept records in this batch.
+For a large group, supply a protected absolute `--decision-file` (up to 16 MiB)
+instead of command-line ID lists. It must contain exactly these fields:
+
+```json
+{
+  "batch_sha256": "<exact hash returned by review>",
+  "request_id": "req_operator_review_0001",
+  "exclude": ["<exact memory ID>"],
+  "keep": ["<every remaining memory ID>"],
+  "allow_local_paths": false
+}
+```
+
+The angle-bracket strings are placeholders, not valid hashes/IDs. Then run
+`resolve --decision-file /absolute/private/control/selection.json`. For a small
+batch, inline `--batch-sha256`, `--request-id`, `--exclude` and `--keep` are an
+alternative; do not combine them with `--decision-file`. Same request ID and
+identical normalized arguments replay the receipt; changed arguments conflict.
+
+Resolution preserves the original signed capsule, exact replacement, complete
+selection, and a crash-recoverable local intent/completion journal. No canonical
+memory is deleted, edited or retagged. Excluded delivery roots get signed
+`operator_excluded` dispositions; the public review holds selection counts and
+a digest commitment, not a potentially multi-megabyte list. **Excluded is not
+delivered.** Local-path approval requires this independent completed journal;
+receiving a signed review object never grants forwarding permission.
+
+Replacement is allowed only before publication has started. A durable started
+marker is written before any fragment/capsule can escape; its presence, a
+previously published prefix, or a recorded remote receipt forbids rewriting
+that prefix. Cancellation or review cannot retract already exposed data.
+
+`resolve` queues a later attempt but launches no worker. Use explicit `flush`
+when ready. Later, `requeue --memory-id ID... --request-id req_retry_0001` adds
+new delivery events for 1–256 selected canonical IDs, with atomic request
+idempotency. It does not rewind history, change trust, reuse an earlier path
+approval, or promise those records will pass review. An exclusion from an old
+batch or an old size-blocked v1 disposition therefore has an explicit retry
+path, without deleting state or creating a new Task/Git container.
 
 The worker checks disable/configuration changes between operations and while
 rclone is running. Cancellation cannot retract a file already published or undo
@@ -184,12 +304,21 @@ memory. Same-OS-user processes are not isolated by these permissions.
 
 ## Private state and integration API
 
-Control/receipt files store binding hashes, cursors, generations, times and
-counts, not memory text. `transfer/publish.pending.json` and the private rclone
-`exchange/` contain actual signed memory capsules and are sensitive. The
-`rclone/` cache and temp directory are private. Keep **all** sync state out of
-public source packages and exclude it from portable Vault restores. There is no
-automatic pruning of history or remote files.
+Ordinary control/receipt files store binding hashes, cursors, generations,
+times, counts and IDs, not memory text. `transfer/publish.pending.json`,
+`transfer/publication-reviews/` originals/replacements,
+`transfer/outgoing-groups/`, `transfer/incoming-groups/`, and the private rclone
+`exchange/` contain actual signed memory and are sensitive. The authenticated
+inline/group envelopes in `transfer/received-capsules/<payload-sha256>.json`
+are retained before staging/admission so private recovery does not require the
+external exchange; they remain evidence, not a restored cursor or trust grant.
+Group copy/remote
+receipts and `publish.started.json` are recovery evidence, not disposable flags.
+The `rclone/` cache and temp directory are private. Keep **all** sync state out
+of public source packages. A portable **memory-only** restore intentionally
+does not restore signing/configuration/stream state; do not mix it with an
+arbitrary old cursor directory. See [BACKUP.md](BACKUP.md) for explicit recovery.
+There is no automatic pruning of history or remote files.
 
 Finite worker JSON results are appended to protected `worker-events.ndjson`.
 Automatic launch stops for review when this file reaches 512 KiB rather than
@@ -201,6 +330,13 @@ receipts; content-free codes remain visible.
 SyncConfig.load(config_path)  # read-only; Path attributes:
 # .vault, .identity, .trust_store, .state_directory, .path
 status(config_path)           # read-only metadata, never starts synchronization
+receive(config_path, maximum_seconds=10)  # explicit receive-only window
+flush(config_path, maximum_seconds=30)    # explicit bidirectional window
+review(config_path, offset=0, limit=100)  # read-only, no signing key loaded
+resolve(config_path, batch_sha256=batch_hash, request_id=request_id,
+        exclude=excluded_ids, keep=retained_ids, allow_local_paths=False)
+requeue(config_path, identifiers=selected_ids, request_id=retry_request_id)
+anchor(config_path, capsule=exact_historical_capsule_path)
 request_sync(
     config_path,
     expected_vault=vault_path,
@@ -213,8 +349,18 @@ request_sync(
 Reasons are exactly `session-start`, `memory-write`, `turn-commit` and `explicit`.
 `request_sync` returns an advisory mapping, including a content-free
 `sync_unavailable` result on expected failures, without remote execution or a
-worker wait. `run(config_path)` is the explicit bounded operation. The CLI
-requires `--config ABSOLUTE_PATH` before `configure`, `run` or `status`.
+worker wait. `run(config_path)` remains the explicit bidirectional alias. The
+CLI requires `--config ABSOLUTE_PATH` before its subcommand. These are local
+operator/runtime APIs, not fields accepted inside core memory request JSON.
+
+The delta/v2 wire and fragment descriptors are specified structurally in
+[delta-v2.schema.json](../schemas/delta-v2.schema.json) and
+[fragment-group.schema.json](../schemas/fragment-group.schema.json).
+Schema validation alone does not verify signatures, cross-field sums, ordered
+hashes, dependency closure, operator decisions, or current trust. Synthetic
+fault/replay cases are supplied in
+`tests/test_v025_sync_review.py` in the separate source/review kit for independent
+execution; they were authored and statically parsed, **not run** in this pass.
 
 See [REMOTE_BACKENDS.md](REMOTE_BACKENDS.md) for destination configuration and
 the distinct directory and rclone wire layouts.

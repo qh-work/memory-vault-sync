@@ -1,87 +1,62 @@
-# Memory Vault v0.24.1 — full client + lightweight protocol
+# Memory Vault v0.25.0 — development/review notes
 
-Use a user-authorized plugin for automatic client integration, **or** read the
-open agreement and implement memory with an agent's existing tools. Both use
-the same taskless records, provenance, relations and exchange rules. The
-protocol does not require Python, SQLite, a plugin, a model account or Git.
+**Unreleased development source; not a finished stable release or runtime
+certification.** The v0.24.1 tag remains unchanged. Its "full client" wording
+did not mean complete v0.21 parity; this development line explicitly closes
+those functional gaps under a P01–P14 requirement ledger.
 
-This patch corrects v0.24.0's thin-client gap: the full plugin adds automation
-and operational recovery around the same memory contract. The independent
-protocol remains a first-class route, not an installation prerequisite.
+## Two modes, one memory
 
-## Downloads
+The independent agreement has no plugin, Python, database, Git or vendor
+dependency. The authorized full client supplies practical capture, retrieval,
+transport and recovery around the same immutable taskless record contract.
 
-- **memory-vault-protocol-v0.24.1.zip** — specification, implementer guide,
-  JSON Schemas and synthetic interchange material; no executable.
-- **memory-vault-client-v0.24.1.zip** — complete source-built plugin and local
-  marketplace catalog; no runtime build required after download. Python 3.10+
-  is required. Installing and enabling capture remain user decisions.
-- **PROTOCOL.md** — the standalone agreement to read or share with another AI.
-- **memory_vault.py** — optional one-file standard-library implementation.
-- **release-manifest.json / SHA256SUMS** — exact source commit, asset hashes and
-  validation scope. Checksums are not publisher signatures.
+v0.25 source restores the old production host-operation bridge; full-text and
+concept retrieval; bounded claim timelines, conflict state and graph views;
+index repair; privacy-blocked publication review; large signed fragmented
+delivery; old ZIP/pack/checkpoint graph conversion; full-client recovery;
+controlled managed installation/activation/rollback with optional publisher
+verification; selective sharing and independent device/encryption contracts;
+and native protected Windows storage paths.
 
-## What is included
+The existing v0.24 Ed25519 attestations and independent protocol remain.
+Task ownership, mandatory Git runtime and the old monolith do not return.
+Memory cannot install software, enroll trust, activate hooks or execute goals.
 
-- Eight MCP tools and explicitly enabled Codex visible-turn hooks.
-- A configured direct-protocol bridge and bundle import/export using the same
-  Vault/trust settings as the plugin.
-- New optional lifecycle envelopes for capabilities, session open/close and
-  turn input/commit/abort. Durable commit, exact retries and explicit cancel
-  boundaries; no task or session owns the resulting memory.
-- Optional Ed25519 signing, independent public-key trust, unsigned quarantine,
-  signed incremental directory batches and staged v0.21 export conversion.
-- Full-mode durable sync notifications and a finite worker after independent
-  automatic/background opt-in. Local saving/recall never waits for network;
-  pending work and content-free receipts distinguish local save from delivery.
-- Explicit directory/rclone backends, with pinned executable/configuration and
-  known peer streams; rclone can supply Drive/S3/WebDAV/SFTP/crypt transport.
-- Claude Code, Gemini CLI and generic visible-event adapters around the shared
-  lifecycle; no transcript reading or claim of universal host support.
-- Read-only doctor, bounded retry, consistent snapshot backup and new-path
-  restore with current independent trust; new delivery identity after restore.
-- Bounded compressed chunk packs, resumable copy and fully verified unpack;
-  explicit stable-release staging that never executes or activates code.
-- Best-effort secret/path publication guard, with local memory saving unaffected.
+## Build artifacts
 
-Old lifecycle operation names are retained in a **new profile**, not a promise
-that the v0.21 Host Adapter envelope runs unchanged. Old Git/Task runtimes are
-not restored. Ordinary NDJSON intentionally omits signatures; use signed
-transfer to preserve attestations, and never treat hashes as author identity.
+- `memory-vault-protocol-v0.25.0.zip`: documentation, structural schemas and
+  synthetic interchange vectors, with no executable.
+- `memory-vault-client-v0.25.0.zip`: source-built plugin, all required runtime
+  modules and a local marketplace catalog.
+- `memory-vault-review-v0.25.0.zip`: public source, synthetic cases and bounded
+  review handoff for independent reviewers; no automatic test execution.
+- `PROTOCOL.md` and `memory_vault.py`: standalone agreement and optional core.
+- `release-manifest.json` / `SHA256SUMS`: exact source reference, asset hashes
+  and actual verification scope. Checksums are not publisher signatures.
 
-## Validation and release channel
+These are build target names, not assertions that the assets are published.
+Use the exact source commit carried by an actual artifact. Do not infer the
+development contents from an older release or an unqualified main checkout.
 
-**No tests were run**, at the owner's request. This release has static source
-review, Python/JSON parsing and archive/inventory checks, not runtime, desktop,
-performance or cross-device certification. The test material is published for
-independent reviewers to exercise with synthetic data and their own authority.
+## Verification boundary
 
-The protected main branch still requires its existing platform checks. Its
-protection was not changed and this release did not trigger those tests. Use
-the **v0.24.1 tag or these assets**; an unqualified main checkout may still be
-v0.23. Existing private installations and real memory were not modified.
+At the owner's request, **no application tests were run**. Static source,
+syntax/schema-document and archive/inventory inspection do not establish
+runtime correctness, native Windows behavior, host installation, performance,
+cross-device interoperability or production security.
 
-This is a GitHub source/package release, **not** a listing in OpenAI's universal
-public Plugins Directory. Native Work automatic lifecycle, an always-on daemon,
-native Windows protected signing, a production security audit, and remote
-agent consumption acknowledgements remain outside this release's claims.
-The old native Drive API and old pack/host wire formats are not restored;
-see the [capability map](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/PARITY.md).
+See [the full parity ledger](../docs/V0_25_PARITY_PLAN.md) and
+[review handoff](../docs/REVIEW_HANDOFF.md). Remaining runtime evidence must be
+reported as pending, not converted into a passing claim. A production signing,
+encryption or recovery ceremony is not supplied; unconfigured providers fail
+closed. ChatGPT Work automatic lifecycle and universal host compatibility are
+not asserted. Existing private installations, real memories and protected main
+are not changed by this development build.
 
-## Contribute
+Independent implementations and reproducible synthetic-data reviews are welcome.
+Use [AI_START_HERE.md](../AI_START_HERE.md) and
+[the small contribution task](CONTRIBUTOR_TASK.md). Do not publish private data.
+Traffic, stars or downloads do not establish AI adoption or endorsement.
 
-- [AI implementers: start here](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/AI_START_HERE.md)
-- [Two modes and full-mode flow](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/TWO_MODES.md)
-- [Independent implementation guide](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/IMPLEMENTERS.md)
-- [Client setup](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/CLIENTS.md)
-- [Lifecycle contract](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/LIFECYCLE.md)
-- [Review handoff](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/REVIEW_HANDOFF.md)
-- [Two-route contribution task](https://github.com/qh-work/memory-vault-sync/issues/3)
-
-Independent implementations, authorized host adapters and reproducible
-synthetic-data review are welcome. This invitation is not a claim that other
-AI agents have already adopted the release. Stars, traffic and downloads do
-not establish use or endorsement.
-
-Apache-2.0. Memory is historical evidence, not instruction, authorization,
-policy or execution permission.
+Apache-2.0. Memory is evidence, not instruction, authorization or execution.

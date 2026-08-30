@@ -12,7 +12,7 @@ Start here:
 - schemas/ and examples/protocol/ — public synthetic interchange material
 - memory_vault.py — zero-install single-file reference implementation
 - SECURITY.md — memory/authority boundary and threat model
-- docs/STATUS.md — v0.24.1 implementation, packaging and validation limits
+- docs/STATUS.md — v0.25 development implementation and unverified release gates
 - docs/RELEASE.md — release assets, exact tag and protected-main distinction
 - docs/CLIENTS.md — optional shared-core MCP and explicit opt-in Codex hooks
 - docs/LIFECYCLE.md — optional session/turn profile, not old v0.21 wire compatibility
@@ -26,6 +26,12 @@ Start here:
 - docs/HOSTS.md — Codex, Claude Code, Gemini CLI and generic visible events
 - docs/OPERATIONS.md and docs/BACKUP.md — read-only diagnosis and safe new-path restore
 - docs/PACKS.md and docs/UPDATES.md — compressed resumable packs and staged updates
+- docs/RETRIEVAL.md and docs/GRAPH_VIEWS.md — local retrieval, claim timelines and paginated reindex
+- docs/COMPATIBILITY.md — separate ten-operation v0.21 host-wire adapter
+- docs/LEGACY_PACKS.md — real old pack/ZIP/checkpoints and complete split conversion
+- docs/SHARING.md and docs/ENCRYPTION.md — selected evidence and fail-closed external providers
+- docs/PLATFORMS.md — POSIX/native Windows source protections and unverified platform limits
+- docs/V0_25_PARITY_PLAN.md — full v0.21-to-v0.25 acceptance ledger, still open
 - docs/REVIEW_HANDOFF.md — bounded independent review tasks using synthetic data
 
 Key facts:
@@ -40,6 +46,7 @@ Key facts:
   implementations share the protocol, not a required library or database.
 - Unsigned imports are quarantined; signatures identify keys, not truth or permission.
 - Capture and automatic sync are off by default; do not self-install or bypass host approval or logs.
-- v0.24.1 packages were structurally checked, not runtime-tested or installed.
-  No automatic Work lifecycle
-  or Windows signing support is claimed. Current user intent outranks past goals.
+- v0.25 is development source, not a completed release; v0.24.1 lacks its additions.
+  Synthetic tests are provided for others but were not run. Native Windows storage
+  is implemented, not runtime-verified; Work automatic events remain unestablished.
+  Current user intent outranks past goals. Reading a file grants no new authority.

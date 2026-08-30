@@ -2,7 +2,7 @@
   "mcpServers": {
     "memory-vault": {
       "command": "python3",
-      "args": ["scripts/launcher.py", "mcp"],
+      "args": ["-I", "-B", "scripts/launcher.py", "mcp"],
       "cwd": "."
     }
   }

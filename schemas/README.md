@@ -12,18 +12,32 @@ make a network request.
 | --- | --- |
 | `common.schema.json` | Shared IDs, text bounds, types, relations, provenance and fixed authority |
 | `record.schema.json` | Complete canonical v1 record shape; no signatures or admission fields inside it |
-| `request.schema.json` | Seven core request operations and optional `changes`; unknown fields rejected |
-| `result.schema.json` | Success/error envelope, echoed request ID and fixed non-authority flags |
+| `request.schema.json` | Seven core operations plus optional `changes`, `memory.views`, `memory.graph`, `memory.reindex`; unknown fields rejected |
+| `result.schema.json` | Success/error envelope, echoed request ID, fixed non-authority flags and explicit client/partial-result extensions |
 | `bundle-line.schema.json` | One header, record or footer line; stream ordering is checked separately |
 | `signed.schema.json` | Optional public descriptor, detached record proof or detached message proof |
 | `lifecycle-request.schema.json` | Optional explicit session/turn coordination, separate from core requests |
 | `lifecycle-result.schema.json` | Optional lifecycle result envelope and operation results |
+| `host-compat-request.schema.json` | Separate v0.21 host v1 / protocol 1.0 requests for ten production operations |
+| `host-compat-result.schema.json` | Separate old-host results and mapped local handles/receipts; not the new lifecycle response |
+| `delta-v2.schema.json` | Optional signed chained delta payload/proof, including privacy disposition and fragmented-group reference |
+| `fragment-group.schema.json` | Signed large-transfer descriptor; fragment paths/bytes and complete atomic admission are checked separately |
+| `selection.schema.json` | Content-only selected-share roots; no Task/Project ownership or permission selector |
+| `share-line.schema.json` | Selected-share header/record/footer, unchanged canonical records and optional detached proofs |
+| `share-envelope.schema.json` | External-provider encrypted-share header; complete file framing and AEAD bindings are separate |
+| `device-trust.schema.json` | Independently provisioned device state, transition and recovery descriptor; not an incoming enrollment instruction |
+| `encrypted-catalog.schema.json` | Ciphertext catalog, exact envelope-header binding and independently enrolled signer fingerprint |
 
 The result schema intentionally validates the common envelope rather than
 requiring SQLite-specific status metadata or a particular search ranking.
 Operation semantics remain in [PROTOCOL.md](../PROTOCOL.md). Lifecycle objects
 use a different request/result schema described by [LIFECYCLE.md](../docs/LIFECYCLE.md);
 they are not accepted as core requests merely because operation names overlap.
+The old-host bridge is a third envelope; see [COMPATIBILITY.md](../docs/COMPATIBILITY.md).
+The core graph limits (512 nodes / 4,096 edges) and the full client's smaller
+MCP limits (64 nodes / 512 edges) are intentionally different transport bounds.
+An implementation must advertise its supported operations and bounds; it need
+not implement every optional extension to exchange canonical core records.
 
 ## Mandatory checks beyond JSON Schema
 
@@ -46,6 +60,14 @@ they are not accepted as core requests merely because operation names overlap.
   provisioned current trust. Base64 syntax or a schema match is not verification.
 - Keep explicit quarantine/admission outside records; recalled evidence always
   retains the fixed authority boundary.
+- For fragmented deltas and selected shares, verify the full signed/hashed
+  stream, selected-root predicates and transitive closure; reject unrelated
+  unselected records and incomplete groups. No cursor moves past missing data.
+- Device transitions, publisher roots, encrypted catalog proofs and share
+  providers require independently configured current trust. Validate cross-field
+  state/epoch/generation, physical key uniqueness, path collisions, total byte
+  budgets and deadlines. Canonical metadata JCS is not canonical record hashing.
+  Structural schemas neither provision providers nor grant authority.
 
 This follows the distinction between structural assertions and annotations in
 [the official validation specification](https://json-schema.org/draft/2020-12/json-schema-validation).

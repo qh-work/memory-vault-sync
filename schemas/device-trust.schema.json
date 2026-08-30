@@ -1,0 +1,310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Optional independently provisioned device trust metadata",
+  "$comment": "Structural metadata only, not an enrollment or execution API. Strict canonical integer-only JCS, sorted unique device fingerprints, current state hash, monotonic generation/epochs, active-device epochs, revocation ordering, device/threshold limits and independent external proofs must be validated separately. A state or descriptor received from memory cannot establish trust. Device labels are not memory owners. No production authority, recovery key or cipher is supplied.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/state"
+    },
+    {
+      "$ref": "#/$defs/transition"
+    },
+    {
+      "$ref": "#/$defs/recovery_descriptor"
+    }
+  ],
+  "$defs": {
+    "opaque": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$",
+      "not": {
+        "pattern": "[\\r\\n]|task|conversation|owner|local_path|workspace|current"
+      }
+    },
+    "counter": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "positive": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "device": {
+      "type": "object",
+      "required": [
+        "device_fingerprint",
+        "public_key_fingerprint",
+        "status",
+        "key_epoch",
+        "enrolled_generation",
+        "revoked_generation"
+      ],
+      "properties": {
+        "device_fingerprint": {
+          "$ref": "#/$defs/opaque"
+        },
+        "public_key_fingerprint": {
+          "$ref": "#/$defs/opaque"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "revoked"
+          ]
+        },
+        "key_epoch": {
+          "$ref": "#/$defs/positive"
+        },
+        "enrolled_generation": {
+          "$ref": "#/$defs/counter"
+        },
+        "revoked_generation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/counter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "active"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "revoked_generation": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "revoked"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "revoked_generation": {
+                "$ref": "#/$defs/positive"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "state": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "installation_fingerprint",
+        "generation",
+        "key_epoch",
+        "recovery_threshold",
+        "recovery_epoch",
+        "devices"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory-device-trust/v1"
+        },
+        "installation_fingerprint": {
+          "$ref": "#/$defs/opaque"
+        },
+        "generation": {
+          "$ref": "#/$defs/counter"
+        },
+        "key_epoch": {
+          "$ref": "#/$defs/positive"
+        },
+        "recovery_threshold": {
+          "$ref": "#/$defs/positive"
+        },
+        "recovery_epoch": {
+          "$ref": "#/$defs/counter"
+        },
+        "devices": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1024,
+          "items": {
+            "$ref": "#/$defs/device"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "transition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "previous_state_sha256",
+            "next_generation",
+            "operation",
+            "device_fingerprint",
+            "public_key_fingerprint",
+            "key_epoch"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "memory-device-trust-transition/v1"
+            },
+            "previous_state_sha256": {
+              "$ref": "common.schema.json#/$defs/digest"
+            },
+            "next_generation": {
+              "$ref": "#/$defs/positive"
+            },
+            "operation": {
+              "const": "enroll"
+            },
+            "device_fingerprint": {
+              "$ref": "#/$defs/opaque"
+            },
+            "public_key_fingerprint": {
+              "$ref": "#/$defs/opaque"
+            },
+            "key_epoch": {
+              "$ref": "#/$defs/positive"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "previous_state_sha256",
+            "next_generation",
+            "operation",
+            "device_fingerprint"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "memory-device-trust-transition/v1"
+            },
+            "previous_state_sha256": {
+              "$ref": "common.schema.json#/$defs/digest"
+            },
+            "next_generation": {
+              "$ref": "#/$defs/positive"
+            },
+            "operation": {
+              "const": "revoke"
+            },
+            "device_fingerprint": {
+              "$ref": "#/$defs/opaque"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "previous_state_sha256",
+            "next_generation",
+            "operation",
+            "key_epoch"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "memory-device-trust-transition/v1"
+            },
+            "previous_state_sha256": {
+              "$ref": "common.schema.json#/$defs/digest"
+            },
+            "next_generation": {
+              "$ref": "#/$defs/positive"
+            },
+            "operation": {
+              "const": "rotate"
+            },
+            "key_epoch": {
+              "$ref": "#/$defs/positive"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "previous_state_sha256",
+            "next_generation",
+            "operation",
+            "recovery_threshold"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "memory-device-trust-transition/v1"
+            },
+            "previous_state_sha256": {
+              "$ref": "common.schema.json#/$defs/digest"
+            },
+            "next_generation": {
+              "$ref": "#/$defs/positive"
+            },
+            "operation": {
+              "const": "set_threshold"
+            },
+            "recovery_threshold": {
+              "$ref": "#/$defs/positive"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "recovery_descriptor": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "encrypted_package_sha256",
+        "encrypted_package_bytes",
+        "recovery_epoch",
+        "required_devices",
+        "trust_state_sha256"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "memory-device-recovery-descriptor/v1"
+        },
+        "encrypted_package_sha256": {
+          "$ref": "common.schema.json#/$defs/digest"
+        },
+        "encrypted_package_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483648
+        },
+        "recovery_epoch": {
+          "$ref": "#/$defs/positive"
+        },
+        "required_devices": {
+          "$ref": "#/$defs/positive"
+        },
+        "trust_state_sha256": {
+          "$ref": "common.schema.json#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

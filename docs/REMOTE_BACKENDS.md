@@ -16,13 +16,16 @@ The operator chooses who can access the directory and whether a separately
 authorized folder-sharing service carries it elsewhere. Memory Vault starts no
 network connection for this backend and does not configure that external service.
 
-Only signed capsules are placed in this layout:
+Only signed capsules/manifests and their exact committed fragments use this layout:
 
 ```text
 exchange/
   ed25519_<public-key-sha256>/
     store_<source-store-id>/
       <after-20-digits>-<cursor-20-digits>-<payload-sha256>.json
+      groups/
+        <group-id-sha256>/
+          <index-6-digits>-<fragment-sha256>.ndjson
 ```
 
 Vaults, private keys, trust stores, configuration, turn journals and sync state
@@ -82,7 +85,8 @@ real absolute executable path, not a symlink such as a package-manager shim.
 This file hash is a pin selected by the operator, not publisher verification or
 a sandbox for arbitrary executables.
 
-The rclone config must be an ordinary current-user-owned 0600 file, no symlink or
+The rclone config must be an ordinary current-user-owned 0600 file on POSIX,
+or a file with a validated private native ACL on Windows; no symlink/reparse or
 hard-link alias, at most 1 MiB. The adapter rejects encrypted config containers
 that require a password helper; this is distinct from a supported `crypt`
 **remote**. Use a separate protected configuration file when necessary. It is
@@ -109,13 +113,19 @@ memoryremote:dedicated-memory-prefix/
     store_<source-store-id>/
       <after-20-digits>/
         <after-20-digits>-<cursor-20-digits>-<payload-sha256>.json
+      groups/
+        <group-id-sha256>/
+          <index-6-digits>-<fragment-sha256>.ndjson
 ```
 
 This bucket layer differs from the flat directory exchange. Pointing an rclone
 backend at a directory exchange does not convert its layout. Peers sharing one
 rclone stream must use this cursor-bucket transport contract. The capsules
-inside still use `universal-memory-delta/v1` and the standard record/message
-attestations; no task or database path is embedded in an address.
+inside use `universal-memory-delta/v2` and the standard record/message
+attestations; v1 remains receive-compatible during explicit chain upgrade.
+No task or database path is embedded in an address. `groups/` is a sibling of
+cursor buckets, not a remotely listed directory or an address selected by
+memory text.
 
 Remote names are restricted ASCII identifiers and the prefix must contain at
 least one dedicated relative path component. Inline backend specifications,
@@ -123,8 +133,9 @@ root destinations, empty prefixes, `.`/`..`, spaces and shell metacharacters
 are rejected. The adapter constructs child key/store/cursor/filename components
 from validated identifiers; memory text cannot select a remote path.
 
-For an explicitly trusted peer, a worker lists only its exact expected cursor
-bucket. It uses `lsf --files-only --max-depth 1 --disable ListR`, limits listing
+For an explicitly trusted peer, a worker lists its exact expected cursor bucket
+and, if present, the exact previously accepted head bucket for rollback/fork
+checks. It uses `lsf --files-only --max-depth 1 --disable ListR`, limits listing
 output to 16 KiB and accepts at most 8 candidate files. Each candidate is at most
 4 MiB. It reads exact names with `cat`, verifies all candidates at that prefix
 before accepting one, then records a local transactional receipt. It never
@@ -143,6 +154,34 @@ plaintext bytes before advancing the remote receipt. This also applies through
 promise made by signatures. See the [official copyto flags](https://rclone.org/commands/rclone_copyto/)
 and [crypt documentation](https://rclone.org/crypt/).
 
+For a fragmented v2 capsule, the signed manifest contains every fragment's
+index, hash, byte count and record count. The worker accepts only that exact
+validated membership when constructing a fragment path; it does not list or
+copy a remote `groups/` tree. Each fragment is at most 4 MiB. Uploads finish and
+read back those exact plaintext bytes before persisting a per-fragment private
+receipt. A retry reuses matching receipts bound to this destination; after all
+fragments have such receipts, the manifest is uploaded and checked **last**.
+Only then does the remote cursor advance. At most eight fresh fragments are
+uploaded by one call, and the shared file/time/byte budget can stop it earlier.
+Independent events or explicit `flush` calls continue pending work; there is
+no self-relaunch loop.
+
+The receiver similarly resumes verified private fragment staging. Partial,
+missing, corrupt or untrusted groups admit no canonical memory and advance no
+receive cursor. Complete ordered bytes, canonical record sizes/counts and all
+current signatures are checked before one atomic Vault import. The limits are
+the core's 100,000 records and 64 MiB of canonical record bodies, with bounded
+proof overhead; exceeding a small outgoing batch target is no longer treated
+as a reason to omit the memory. See [SYNC.md](SYNC.md) and the
+[group schema](../schemas/fragment-group.schema.json) for the exact contract.
+
+Cached upload receipts attest that a fragment was verified earlier; they are
+not a lease on storage or proof that the provider still has the fragment. A
+later provider deletion remains a visible receive failure, not successful
+delivery. Likewise, the last-head check detects observed rollback/forks but
+cannot prove that every older object is still present, or expose an unseen
+split history shown only to a different peer.
+
 Per-window limits cover attempted payload transfers and verification reads;
 they are not byte-accurate network billing limits. A 64 KiB allowance above the
 4 MiB capsule ceiling is used for the provider's hard transfer cap, allowing
@@ -156,8 +195,9 @@ Timeout and exit-code meanings follow [rclone's official documentation](https://
 
 All subprocesses use fixed argument arrays with `shell=False`; stderr/stdout are
 bounded and provider diagnostics are not persisted as unredacted account data.
-Capsule plaintext may exist in the private staging exchange and provider temp
-files, so protect the whole state directory. No cache, key, config or arbitrary
+Capsule/fragment plaintext may exist in the private staging exchange, review
+journal, transfer cache and provider temp files, so protect the whole state
+directory. No cache, key, config or arbitrary
 artifact directory is ever uploaded wholesale.
 
 Time and cancellation are checked between operations and while reading provider
@@ -167,6 +207,18 @@ remote garbage collection or pruning. A malicious destination can hide, delete,
 delay or flood expected candidates and deny availability, but cannot mint trusted
 signatures. Same-user filesystem replacement and a malicious configured rclone
 binary are outside the isolation guarantees.
+
+The Windows profile selects a real local `.exe` with a pinned hash and checked
+readable/non-other-writable ACL. It uses native pipe availability checks instead
+of attempting to select Windows subprocess pipes as sockets; byte/time limits
+and cancellation remain explicit. Its child environment contains the Windows
+runtime directory, selected private temporary paths and existing proxy routing,
+not ambient cloud/rclone/SSH credentials. Cancellation targets only the exact
+rclone process launched by this window; it is not a Windows Job Object sandbox
+for arbitrary child executables. Native/provider calls and SQLite transactions
+can still exceed a nominal deadline if the operating system stalls. See
+[PLATFORMS.md](PLATFORMS.md); none of this has been validated by running a native
+Windows deployment in this development pass.
 
 Provider connectivity, account permissions, backend-specific flags, interruption,
 OAuth refresh, replay and storage-full recovery still require independent runtime

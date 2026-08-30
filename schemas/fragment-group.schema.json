@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UAMP signed delta fragment-group descriptor v1",
+  "$comment": "Only a descriptor inside a verified delta/v2 envelope authorizes selecting these exact transport objects. Validate the digest of the canonical descriptor excluding group_id, sequential indices, summed bytes/counts, full ordered stream hash, UTF-8/canonical NDJSON, each current signature and complete dependency closure before one atomic admission. Schema validation alone establishes none of those. Groups carry memories, not executable authority.",
+  "type": "object",
+  "required": ["schema_version", "group_id", "record_count", "record_bytes", "encoded_bytes", "records_sha256", "fragments"],
+  "properties": {
+    "schema_version": {"const": "universal-memory-fragment-group/v1"},
+    "group_id": {"$ref": "common.schema.json#/$defs/digest"},
+    "record_count": {"type": "integer", "minimum": 1, "maximum": 100000},
+    "record_bytes": {"type": "integer", "minimum": 1, "maximum": 67108864, "description": "Sum of canonical record bytes only, excluding proofs, wrappers and LF."},
+    "encoded_bytes": {"type": "integer", "minimum": 1, "maximum": 476708864, "description": "Sum of exact fragment bytes, including proofs, wrappers and LF; separate conservative transport ceiling."},
+    "records_sha256": {"$ref": "common.schema.json#/$defs/digest", "description": "SHA-256 of all raw fragment bytes concatenated in ascending fragment index order."},
+    "fragments": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 115,
+      "items": {"$ref": "#/$defs/fragment"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "fragment": {
+      "type": "object",
+      "required": ["index", "sha256", "bytes", "records"],
+      "properties": {
+        "index": {"type": "integer", "minimum": 0, "maximum": 114},
+        "sha256": {"$ref": "common.schema.json#/$defs/digest"},
+        "bytes": {"type": "integer", "minimum": 1, "maximum": 4194304},
+        "records": {"type": "integer", "minimum": 1, "maximum": 100000}
+      },
+      "additionalProperties": false
+    },
+    "fragment_line": {
+      "type": "object",
+      "required": ["record", "attestation"],
+      "properties": {
+        "record": {"$ref": "record.schema.json"},
+        "attestation": {
+          "allOf": [
+            {"$ref": "signed.schema.json"},
+            {"properties": {"schema_version": {"const": "universal-memory-attestation/v1"}}}
+          ],
+          "x-maxUtf8Bytes": 4096
+        }
+      },
+      "additionalProperties": false,
+      "x-maxUtf8Bytes": 4194303,
+      "$comment": "Serialize canonically as UTF-8 followed by exactly one LF. Never split a line across fragments; reject empty lines, noncanonical JSON, duplicate IDs and missing/unexpected proofs. File bounds include LF."
+    }
+  }
+}

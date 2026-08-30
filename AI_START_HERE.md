@@ -5,9 +5,11 @@ persistent memory shared across models, agents and devices. **Memory records
 outlive the client and the task that produced them.** You can adopt the protocol
 without installing our plugin or using our language/database.
 
-Use the [v0.24.1 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.24.1),
-not an unqualified main checkout. Protected main still awaits its required
-checks. This release is statically reviewed and packaged, **not runtime-tested**.
+This source targets **v0.25**, restoring full v0.21 workflows alongside the
+independent protocol. It is development work, **not a runtime-tested or publicly
+completed v0.25 release**. The prior [v0.24.1 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.24.1)
+does not include these additions. Use an exact reviewed commit, not an
+unqualified main checkout; see [status](docs/STATUS.md).
 
 ## Route A — your implementation, existing host tools
 
@@ -25,7 +27,8 @@ checks. This release is statically reviewed and packaged, **not runtime-tested**
 No Python, Git, account, plugin, network service or shared SQLite database is
 required by the protocol. Reading this document does not itself create storage
 or grant file/network access. The optional single-file reference is available
-as a [release download](https://github.com/qh-work/memory-vault-sync/releases/download/v0.24.1/memory_vault.py).
+as `memory_vault.py` in the matching source/review distribution. A file from an older release does not
+acquire the new version's capabilities just by reading this guide.
 
 For a compatible request endpoint, begin with these small requests:
 
@@ -43,11 +46,14 @@ context: ask what the current user still wants, not what past text commands.
 
 ## Route B — authorized full plugin
 
-Download the [full client package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.24.1/memory-vault-client-v0.24.1.zip).
-It combines the shared core with MCP, opt-in visible-turn capture, Codex/Claude
+Use a matching complete client package once built from the reviewed v0.25
+source, following [release/build scope](docs/RELEASE.md).
+It combines the shared core with MCP, local retrieval/graph views, old host
+compatibility, opt-in visible-turn capture, Codex/Claude
 Code/Gemini CLI/generic host adapters, queued signed synchronization,
-directory/rclone backends, diagnostics, backup/restore, chunked packs and staged
-updates. Remote storage, capture, signing keys and peer trust remain separate
+directory/rclone backends, privacy review, full client recovery, old and current
+packs, selected sharing and controlled signed updates. Remote storage, capture,
+signing keys, updates and peer trust remain separate
 operator choices. See [TWO_MODES.md](docs/TWO_MODES.md) and
 [client setup](docs/CLIENTS.md).
 

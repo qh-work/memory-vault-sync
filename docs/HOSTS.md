@@ -5,6 +5,8 @@ not a task hierarchy. `memory_vault_hosts.py` restores visible-event integration
 for additional hosts through the existing client configuration and
 `universal-memory-lifecycle/v1`. It is a new adapter profile, **not** the complete
 old v0.21 wire protocol or an import of its runtime.
+The separate [compatibility entry](COMPATIBILITY.md) now maps the old production
+host envelope; do not send that envelope to this new lifecycle adapter.
 
 These source adapters and example configurations received static review only.
 No host was installed, launched, or integration-tested for this change. Host
@@ -95,8 +97,11 @@ Local control state lives under:
 
 `pending/` can temporarily contain the authorized visible input/final text. It
 is private local staging, not a second Vault. POSIX directories/files are
-created 0700/0600; Windows installations must restrict the configuration/state
-directory using an appropriate operator-managed ACL. No logs are hidden or
+created 0700/0600. The full client uses native private owner/DACL checks and
+creation on supported local fixed NTFS paths; unsupported paths or permissions
+fail closed. Existing user-managed ancestors must meet the documented
+[platform rules](PLATFORMS.md); real Windows behavior remains untested.
+No logs are hidden or
 disabled. Receipt files deliberately do not retain copied conversation text or
 cached signature-trust assertions.
 

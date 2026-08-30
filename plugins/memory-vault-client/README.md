@@ -1,37 +1,30 @@
-# Memory Vault client — v0.24.1
+# Memory Vault client — v0.25 development
 
-In the source checkout this directory is a **build template**. The v0.24.1
-release ZIP contains the complete plugin, including `runtime/MANIFEST.json`
-and the source modules. Download that package to avoid a local build. Developers
-can build a fresh directory with `scripts/build_client_plugin.py`.
-The package never installs itself, changes a host marketplace or trusts hooks.
+In a source checkout this directory is a **build template**, not an installed
+runtime. The release builder assembles the complete optional client from public
+source allowlists and writes its runtime inventory last.
 
-The MCP tools and Codex hooks use the **same explicitly configured Vault path**
-as the lightweight core. Client staging is not a second memory database.
+The full client and independent protocol share one canonical taskless memory
+model. There is no separate plugin Vault or Task/Project owner.
 
-- MCP: eight explicit local read/write tools; host permissions still apply.
-- Protocol: the configured `protocol` command reads/writes and exports/imports
-  the same canonical records for independent non-plugin implementations.
-- Lifecycle: optional session/turn staging and commit through a new documented
-  profile; old operation names are not a claim of old v0.21 wire compatibility.
-- Codex: optional SessionStart, UserPromptSubmit and Stop hooks, disabled unless
-  `capture_visible_turns=true` in an operator-created client configuration.
-- Hosts: Claude Code, Gemini CLI and generic visible-event adapters; correlation
-  stays local and incomplete/ambiguous pairs are not silently saved.
-- Sync: independently enabled, queued signed incremental transfer; finite
-  background worker, directory/rclone backends and content-free receipts.
-- Operations: doctor, bounded retry, backup/new-path restore, compressed
-  resumable packs and explicit release staging without activation.
-- Work: a candidate MCP tool entry point where the host supports local plugin
-  MCP servers. This is **not** a claim that Work exposes Codex lifecycle events
-  or that this package has been validated in a particular Work installation.
+- Eleven MCP memory tools, local retrieval/graph views and explicit writes.
+- Direct protocol, lifecycle and ten-operation v0.21 `compat` entry points.
+- Opt-in visible-turn capture, host adapters and durable local recovery.
+- Independently configured signed sync, privacy review and resumable groups.
+- Diagnosis, snapshots, full-client recovery, old packs and selected sharing.
+- Explicit stage/managed activation/rollback; automatic updates require a
+  separately opted-in managed installation and pinned publisher trust.
 
-No Git transport, always-on service, transcript reader, automatic
-permission grant, or audit-log suppression is included.
+The launcher checks exactly the listed source files and refuses extra runtime
+modules or bytecode caches. It suppresses new cache writes; inventory checks are
+not publisher signatures or isolation from a hostile same-user process.
+MCP/hook templates use isolated Python startup and retain separate host approval.
 
-See `docs/CLIENTS.md`, `docs/SYNC.md`, `docs/HOSTS.md` and `docs/PARITY.md` inside the built package, or
-[client setup](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/CLIENTS.md)
-in the source repository. Review the package before
-installing it, review host hook trust separately, and start a fresh session when
-the host requires it. Merely reading this directory does not enable capture.
-This release has structural/package checks, not runtime or host validation.
+No runtime tests, host installation, private-data migration or production
+signing/encryption provisioning were performed for this development version.
+Windows native protection is implemented but unverified on a real host; native
+Work automatic lifecycle delivery is not established.
+
+Read the packaged `docs/CLIENTS.md`, `docs/COMPATIBILITY.md`,
+`docs/PARITY.md` and `docs/REVIEW_HANDOFF.md`. In a checkout, those files live
+at the repository root rather than inside this unbuilt template directory.

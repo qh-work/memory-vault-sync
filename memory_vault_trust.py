@@ -35,6 +35,7 @@ if _SOURCE_DIRECTORY not in sys.path:
 
 from memory_vault import MemoryError as VaultError  # noqa: E402
 from memory_vault import canonical_bytes, sha256, validate_record  # noqa: E402
+import memory_vault_storage as protected_storage  # noqa: E402
 
 
 IDENTITY_SCHEMA = "universal-memory-identity/v1"
@@ -276,14 +277,27 @@ def _absolute_path(value: Path) -> Path:
 
 
 def _require_protected_storage() -> None:
-    # chmod(0600) does not establish a Windows ACL. Do not silently claim it
-    # does: that platform needs a separately reviewed native storage adapter.
+    if os.name == "nt":
+        try:
+            protected_storage.require_supported_storage()
+            return
+        except protected_storage.StorageError as exc:
+            raise TrustError(exc.code) from None
     if os.name != "posix" or not hasattr(os, "O_NOFOLLOW"):
         raise TrustError("protected_storage_unavailable")
 
 
 def _safe_parent(path: Path, *, create: bool) -> bool:
     _require_protected_storage()
+    if os.name == "nt":
+        try:
+            protected_storage.private_directory(path.parent, create=create)
+            protected_storage.validate_path(path)
+            return True
+        except FileNotFoundError:
+            return False
+        except protected_storage.StorageError as exc:
+            raise TrustError(exc.code) from None
     current = Path(path.anchor)
     uid = os.getuid()
     for part in path.parts[1:-1]:
@@ -337,6 +351,11 @@ def _check_file(info: os.stat_result) -> None:
 
 
 def _open_existing(path: Path, flags: int) -> int:
+    if os.name == "nt":
+        try:
+            return protected_storage.open_file(path, flags, private=True)
+        except protected_storage.StorageError as exc:
+            raise TrustError(exc.code) from None
     try:
         before = path.lstat()
         _check_file(before)
@@ -357,6 +376,13 @@ def _open_existing(path: Path, flags: int) -> int:
 
 
 def _open_new(path: Path, flags: int) -> int:
+    if os.name == "nt":
+        try:
+            return protected_storage.open_file(path, flags | os.O_CREAT | os.O_EXCL, private=True)
+        except FileExistsError:
+            raise TrustError("file_already_exists") from None
+        except protected_storage.StorageError as exc:
+            raise TrustError(exc.code) from None
     try:
         fd = os.open(
             path,
@@ -411,6 +437,14 @@ def _sync_parent(path: Path) -> None:
 
 
 def _write_new_private(path: Path, data: bytes) -> None:
+    if os.name == "nt":
+        try:
+            protected_storage.atomic_write(path, data, replace=False)
+            return
+        except FileExistsError:
+            raise TrustError("file_already_exists") from None
+        except protected_storage.StorageError as exc:
+            raise TrustError(exc.code) from None
     _safe_parent(path, create=True)
     fd = _open_new(path, os.O_WRONLY)
     created = os.fstat(fd)
@@ -433,6 +467,12 @@ def _write_new_private(path: Path, data: bytes) -> None:
 
 
 def _atomic_write_private(path: Path, data: bytes) -> None:
+    if os.name == "nt":
+        try:
+            protected_storage.atomic_write(path, data, replace=True)
+            return
+        except protected_storage.StorageError as exc:
+            raise TrustError(exc.code) from None
     _safe_parent(path, create=True)
     temporary: Path | None = None
     try:
@@ -467,6 +507,13 @@ def _atomic_write_private(path: Path, data: bytes) -> None:
 def _exclusive_store(path: Path) -> Iterator[None]:
     _safe_parent(path, create=True)
     lock_path = path.with_name(path.name + ".lock")
+    if os.name == "nt":
+        try:
+            with protected_storage.file_lock(lock_path, busy_code="trust_store_busy"):
+                yield
+            return
+        except protected_storage.StorageError as exc:
+            raise TrustError(exc.code) from None
     try:
         fd = _open_existing(lock_path, os.O_RDWR)
     except FileNotFoundError:
@@ -619,12 +666,21 @@ class TrustStore:
         if not _safe_parent(self.path, create=False):
             return None
         try:
-            info = self.path.lstat()
+            if os.name == "nt":
+                # Recheck the actual handle/ACL even on a metadata-cache hit;
+                # synthetic mode bits and getuid are not Windows protection.
+                fd = _open_existing(self.path, os.O_RDONLY)
+                try:
+                    info = os.fstat(fd)
+                finally:
+                    os.close(fd)
+            else:
+                info = self.path.lstat()
+                _check_file(info)
         except FileNotFoundError:
             return None
         except OSError:
             raise TrustError("storage_unavailable") from None
-        _check_file(info)
         return (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns, info.st_size)
 
     def _read(self) -> dict[str, Any]:
@@ -826,6 +882,20 @@ def _read_public_descriptor(path: Path) -> dict[str, str]:
     path = _absolute_path(path)
     if not _safe_parent(path, create=False):
         raise TrustError("public_key_file_not_found")
+    if os.name == "nt":
+        try:
+            fd = protected_storage.open_file(path, os.O_RDONLY, trusted=True)
+            with os.fdopen(fd, "rb") as stream:
+                if os.fstat(stream.fileno()).st_size > MAX_PUBLIC_KEY_BYTES:
+                    raise TrustError("public_key_file_too_large")
+                data = stream.read(MAX_PUBLIC_KEY_BYTES + 1)
+        except FileNotFoundError:
+            raise TrustError("public_key_file_not_found") from None
+        except protected_storage.StorageError as exc:
+            raise TrustError(exc.code) from None
+        if len(data) > MAX_PUBLIC_KEY_BYTES:
+            raise TrustError("public_key_file_too_large")
+        return _descriptor(_json_loads(data))
     try:
         before = path.lstat()
         if (

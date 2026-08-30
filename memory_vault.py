@@ -43,11 +43,12 @@ streaming, idempotent, current-schema-only, and hash verified.
 from __future__ import annotations
 
 import argparse
-from collections import Counter
+from collections import Counter, defaultdict, deque
 import contextlib
 import datetime as dt
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -59,7 +60,7 @@ import unicodedata
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 
-VERSION = "0.24.1"
+VERSION = "0.25.0"
 REQUEST_SCHEMA = "universal-agent-memory-request/v1"
 RESULT_SCHEMA = "universal-agent-memory-result/v1"
 RECORD_SCHEMA = "universal-memory-record/v1"
@@ -84,6 +85,32 @@ MAX_CONTEXT_BYTES = 64 * 1024
 MAX_HIT_TEXT_BYTES = 48 * 1024
 MAX_TREE_DEPTH = 12
 MAX_TREE_NODES = 16_384
+RETRIEVAL_PROFILE = "bounded-fragment-bm25+deterministic-concepts/v1"
+RETRIEVAL_INDEX_PROFILE = "full-record-terms+entities/v1"
+VIEW_SCHEMA = "universal-memory-views/v1"
+GRAPH_SCHEMA = "universal-memory-graph/v1"
+MAX_RETRIEVAL_CANDIDATES = 512
+MAX_RERANK_BYTES = 8 * 1024 * 1024
+MAX_RERANK_FRAGMENTS = 4096
+MAX_FRAGMENT_CHARACTERS = 1600
+MAX_GRAPH_NODES = 512
+MAX_GRAPH_EDGES = 4096
+MAX_GRAPH_DEPTH = 8
+MAX_GRAPH_TEXT_BYTES = 1024
+_CLAIM_RELATIONS = frozenset({"supersedes", "conflicts_with", "resolves"})
+_CONCEPT_GROUPS = (
+    frozenset({"备份", "保存", "存档", "backup", "archive", "save"}),
+    frozenset({"同步", "传输", "复制", "sync", "transfer", "replicate"}),
+    frozenset({"快速", "高效", "性能", "等待", "延迟", "fast", "efficient", "latency", "performance"}),
+    frozenset({"记忆", "回忆", "召回", "memory", "recall", "remember"}),
+    frozenset({"删除", "移除", "清理", "delete", "remove", "cleanup"}),
+    frozenset({"冲突", "矛盾", "不一致", "conflict", "contradiction"}),
+    frozenset({"偏好", "喜欢", "习惯", "preference", "prefer"}),
+    frozenset({"更正", "纠正", "修正", "correction", "correct", "fix"}),
+    frozenset({"本地", "离线", "设备", "local", "offline", "device"}),
+    frozenset({"加密", "隐私", "安全", "encrypt", "privacy", "secure"}),
+)
+_NEGATION_MARKERS = frozenset({"不", "不要", "无需", "无须", "没有", "不能", "禁止", "not", "never", "without", "no"})
 
 KINDS = frozenset(
     {
@@ -534,6 +561,125 @@ def tokenize(value: str, *, maximum: int = MAX_QUERY_TOKENS, maximum_input_bytes
     return result[:maximum]
 
 
+def semantic_features(value: str) -> frozenset[str]:
+    """Small, explainable bilingual hints; no model, network or authority."""
+    normalized = normalize_text(value)
+    words = set(_LATIN.findall(normalized))
+
+    def contains(term: str) -> bool:
+        return term in words if term.isascii() else term in normalized
+
+    features = {
+        f"concept:{index}"
+        for index, terms in enumerate(_CONCEPT_GROUPS)
+        if any(contains(term) for term in terms)
+    }
+    if any(contains(term) for term in _NEGATION_MARKERS):
+        features.add("polarity:negative")
+    return frozenset(features)
+
+
+def semantic_similarity(query: frozenset[str], candidate: frozenset[str]) -> float:
+    left = {value for value in query if value.startswith("concept:")}
+    right = {value for value in candidate if value.startswith("concept:")}
+    overlap = left & right
+    if not overlap:
+        return 0.0
+    score = len(overlap) / len(left | right)
+    if ("polarity:negative" in query) != ("polarity:negative" in candidate):
+        score *= 0.25
+    return score
+
+
+def _expanded_query_tokens(tokens: Sequence[str], features: frozenset[str]) -> list[str]:
+    result = set(tokens)
+    for index, terms in enumerate(_CONCEPT_GROUPS):
+        if f"concept:{index}" in features:
+            for term in sorted(terms):
+                result.update(tokenize(term))
+    return sorted(result)
+
+
+def memory_fragments(record: Mapping[str, Any]) -> Iterable[dict[str, Any]]:
+    """Yield overlapping original-text spans, never generated summaries.
+
+    A role parsed from the conventional episode text is a ranking hint only.
+    The flat record format cannot authenticate embedded role delimiters.
+    """
+    text = str(record["text"])
+    regions: list[tuple[int, int, str | None]] = [(0, len(text), None)]
+    delimiter = "\n\nAssistant:\n"
+    split = text.find(delimiter)
+    if record.get("kind") == "episode" and text.startswith("User:\n") and split >= 6:
+        regions = [(6, split, "user"), (split + len(delimiter), len(text), "assistant")]
+    ordinal = 0
+    for begin, end, role in regions:
+        offset = begin
+        while offset < end:
+            stop = min(end, offset + MAX_FRAGMENT_CHARACTERS)
+            if stop < end:
+                boundary = text.rfind("\n", offset + MAX_FRAGMENT_CHARACTERS // 2, stop)
+                if boundary > offset:
+                    stop = boundary + 1
+            excerpt = text[offset:stop]
+            if excerpt.strip():
+                yield {
+                    "fragment_id": f"{record['memory_id']}:{ordinal}",
+                    "start_character": offset,
+                    "end_character": stop,
+                    "text": excerpt,
+                    "role_hint": role,
+                    "role_hint_authenticated": False,
+                }
+                ordinal += 1
+            if stop == end:
+                break
+            offset = max(offset + 1, stop - 128)
+
+
+def _bounded_integer(value: Any, *, minimum: int, maximum: int, code: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise MemoryError(code)
+    return value
+
+
+def _timeline_key(value: str) -> str:
+    captured = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return (
+        f"{captured.year:04d}-{captured.month:02d}-{captured.day:02d}T"
+        f"{captured.hour:02d}:{captured.minute:02d}:{captured.second:02d}."
+        f"{captured.microsecond:06d}Z"
+    )
+
+
+def _directed_cycle(nodes: Iterable[str], edges: Sequence[Mapping[str, Any]]) -> bool:
+    adjacency: dict[str, list[str]] = defaultdict(list)
+    for edge in edges:
+        adjacency[str(edge["source_id"])].append(str(edge["target_id"]))
+    colors: dict[str, int] = {}
+    for root in sorted(nodes):
+        if colors.get(root):
+            continue
+        stack: list[tuple[str, bool]] = [(root, False)]
+        while stack:
+            node, closing = stack.pop()
+            if closing:
+                colors[node] = 2
+                continue
+            if colors.get(node) == 1:
+                return True
+            if colors.get(node) == 2:
+                continue
+            colors[node] = 1
+            stack.append((node, True))
+            for child in reversed(sorted(adjacency.get(node, ()))):
+                if colors.get(child) == 1:
+                    return True
+                if not colors.get(child):
+                    stack.append((child, False))
+    return False
+
+
 def default_vault_path() -> Path:
     configured = os.environ.get("MEMORY_VAULT_PATH")
     if configured:
@@ -595,6 +741,9 @@ def capability_result() -> dict[str, Any]:
             "handoff",
             "status",
             "changes",
+            "memory.views",
+            "memory.graph",
+            "memory.reindex",
         ],
         "database_schema": DATABASE_SCHEMA,
         "database_reader": DATABASE_READER,
@@ -610,6 +759,14 @@ def capability_result() -> dict[str, Any]:
         "unsigned_import_default": "quarantined",
         "optional_signing": "external_ed25519_provider",
         "signature_is_authorization": False,
+        "retrieval_profile": RETRIEVAL_PROFILE,
+        "retrieval_index_profile": RETRIEVAL_INDEX_PROFILE,
+        "semantic_adapter": "deterministic-concepts-v1",
+        "lexical_fallback": True,
+        "view_schema": VIEW_SCHEMA,
+        "graph_schema": GRAPH_SCHEMA,
+        "views_are_derived": True,
+        "reindex_changes_memory": False,
     }
 
 
@@ -763,6 +920,8 @@ class Vault:
             store = connection.execute("SELECT value FROM metadata WHERE key='store_id'").fetchone()
             if store is None or re.fullmatch(r"store_[0-9a-f]{32}", str(store[0])) is None:
                 raise MemoryError("unsupported_database_schema")
+            if allow_upgrade:
+                Vault.ensure_retrieval_tables(connection)
             return
         if not allow_upgrade:
             raise MemoryError("not_initialized")
@@ -820,6 +979,7 @@ class Vault:
         )
         connection.execute(f"PRAGMA user_version={DATABASE_WRITER}")
         Vault._initialize_admissions(connection)
+        Vault.ensure_retrieval_tables(connection)
         connection.commit()
         metadata = {
             str(row["key"]): str(row["value"])
@@ -961,6 +1121,115 @@ class Vault:
         }
 
     @staticmethod
+    def ensure_retrieval_tables(connection: sqlite3.Connection) -> None:
+        """Create disposable optional indexes inside the caller's transaction.
+
+        This never upgrades canonical records, receipts, attestations or their
+        database version. Old writers may ignore these tables. Read-only
+        connections must not call it; incomplete indexes stay explicit.
+        """
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS memory_entities ("
+            "entity TEXT NOT NULL,memory_id TEXT NOT NULL REFERENCES memories(memory_id),"
+            "PRIMARY KEY(entity,memory_id))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS memory_entities_memory ON memory_entities(memory_id)"
+        )
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS retrieval_index ("
+            "memory_id TEXT PRIMARY KEY REFERENCES memories(memory_id),"
+            "profile TEXT NOT NULL,token_count INTEGER NOT NULL CHECK(token_count>=0),"
+            "timeline_key TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS retrieval_index_timeline ON retrieval_index(timeline_key,memory_id)"
+        )
+
+    @staticmethod
+    def rebuild_record_index(connection: sqlite3.Connection, record: Mapping[str, Any]) -> None:
+        """Rebuild only terms/entities for one already-validated canonical row."""
+        memory_id = str(record["memory_id"])
+        indexed_text = " ".join([str(record["text"]), *record["entities"]])
+        counts = Counter(tokenize(
+            indexed_text, maximum=MAX_BUNDLE_LINE_BYTES * 2,
+            maximum_input_bytes=MAX_BUNDLE_LINE_BYTES,
+        ))
+        connection.execute("DELETE FROM terms WHERE memory_id=?", (memory_id,))
+        connection.executemany(
+            "INSERT INTO terms(token,memory_id,frequency) VALUES(?,?,?)",
+            ((token, memory_id, frequency) for token, frequency in sorted(counts.items())),
+        )
+        connection.execute("DELETE FROM memory_entities WHERE memory_id=?", (memory_id,))
+        connection.executemany(
+            "INSERT INTO memory_entities(entity,memory_id) VALUES(?,?)",
+            ((entity, memory_id) for entity in record["entities"]),
+        )
+        connection.execute(
+            "INSERT INTO retrieval_index(memory_id,profile,token_count,timeline_key) VALUES(?,?,?,?) "
+            "ON CONFLICT(memory_id) DO UPDATE SET profile=excluded.profile,token_count=excluded.token_count,timeline_key=excluded.timeline_key",
+            (memory_id, RETRIEVAL_INDEX_PROFILE, sum(counts.values()), _timeline_key(str(record["created_at"]))),
+        )
+
+    @staticmethod
+    def _retrieval_index_state(connection: sqlite3.Connection, *, through: int | None = None) -> dict[str, Any]:
+        objects = {str(row[0]) for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('retrieval_index','memory_entities')"
+        )}
+        first: int | None = None
+        if objects != {"retrieval_index", "memory_entities"}:
+            complete = False
+        else:
+            clause = "AND m.ingest_seq<=? " if through is not None else ""
+            parameters: tuple[Any, ...] = (RETRIEVAL_INDEX_PROFILE, through) if through is not None else (RETRIEVAL_INDEX_PROFILE,)
+            missing = connection.execute(
+                "SELECT m.ingest_seq FROM memories m LEFT JOIN retrieval_index i ON i.memory_id=m.memory_id "
+                "WHERE (i.memory_id IS NULL OR i.profile!=?) " + clause + "ORDER BY m.ingest_seq LIMIT 1",
+                parameters,
+            ).fetchone()
+            first = int(missing[0]) if missing is not None else None
+            complete = first is None
+        return {
+            "profile": RETRIEVAL_INDEX_PROFILE, "complete": complete,
+            "first_unindexed_sequence": first, "repair_operation": "memory.reindex",
+            "canonical_records_changed": False,
+        }
+
+    def _reindex(self, connection: sqlite3.Connection, request: Mapping[str, Any]) -> Mapping[str, Any]:
+        after = _bounded_integer(request.get("after", 0), minimum=0, maximum=2**63-1, code="invalid_cursor")
+        limit = _bounded_integer(request.get("limit", 32), minimum=1, maximum=256, code="invalid_limit")
+        latest = int(connection.execute("SELECT COALESCE(MAX(ingest_seq),0) FROM memories").fetchone()[0])
+        through = _bounded_integer(request.get("through", latest), minimum=0, maximum=latest, code="invalid_snapshot")
+        if after > through:
+            raise MemoryError("invalid_cursor")
+        rows = connection.execute(
+            "SELECT memory_id,ingest_seq,length(CAST(record_json AS BLOB)) AS bytes FROM memories "
+            "WHERE ingest_seq>? AND ingest_seq<=? ORDER BY ingest_seq LIMIT ?",
+            (after, through, limit + 1),
+        ).fetchall()
+        processed = 0
+        used = 0
+        cursor = after
+        for item in rows[:limit]:
+            if processed and used + int(item["bytes"]) > MAX_RERANK_BYTES:
+                break
+            row = connection.execute("SELECT * FROM memories WHERE memory_id=?", (item["memory_id"],)).fetchone()
+            self.rebuild_record_index(connection, self._record_from_row(row))
+            used += int(item["bytes"])
+            processed += 1
+            cursor = int(item["ingest_seq"])
+        more = connection.execute(
+            "SELECT 1 FROM memories WHERE ingest_seq>? AND ingest_seq<=? LIMIT 1", (cursor, through)
+        ).fetchone() is not None
+        index = self._retrieval_index_state(connection, through=through)
+        return {
+            "state": "index_page_rebuilt", "records": processed, "through": through,
+            "next_after": cursor if more else None, "complete": not more and index["complete"],
+            "range_complete": not more, "index": index,
+            "canonical_records_changed": False, "network_accessed": False,
+        }
+
+    @staticmethod
     def _insert_record(
         connection: sqlite3.Connection,
         value: Mapping[str, Any],
@@ -976,6 +1245,9 @@ class Vault:
         if existing is not None:
             if str(existing[0]) != encoded:
                 raise MemoryError("memory_identity_conflict")
+            indexed = connection.execute("SELECT profile FROM retrieval_index WHERE memory_id=?", (memory_id,)).fetchone()
+            if indexed is None or indexed[0] != RETRIEVAL_INDEX_PROFILE:
+                Vault.rebuild_record_index(connection, record)
             return memory_id, False
         if not allow_pending_relations:
             for relation in record["relations"]:
@@ -996,14 +1268,7 @@ class Vault:
                 encoded,
             ),
         )
-        indexed_text = " ".join(
-            [str(record["text"]), *(str(entity) for entity in record["entities"])]
-        )
-        counts = Counter(tokenize(indexed_text, maximum=4096, maximum_input_bytes=MAX_BUNDLE_LINE_BYTES))
-        connection.executemany(
-            "INSERT INTO terms(token,memory_id,frequency) VALUES(?,?,?)",
-            ((token, memory_id, frequency) for token, frequency in counts.items()),
-        )
+        Vault.rebuild_record_index(connection, record)
         connection.executemany(
             "INSERT INTO relations(source_id,relation,target_id) VALUES(?,?,?)",
             (
@@ -1072,6 +1337,13 @@ class Vault:
         if own is None or int(own[0]) == 0:
             return "quarantined"
         rank = int(own[0])
+        resolved = connection.execute(
+            "SELECT 1 FROM relations r JOIN record_admissions a ON a.memory_id=r.source_id "
+            "WHERE r.target_id=? AND r.relation='resolves' "
+            "AND vault_admitted(a.state,a.signer_key_id)>=? LIMIT 1", (memory_id, rank),
+        ).fetchone()
+        if resolved is not None:
+            return "resolved"
         superseded = connection.execute(
             "SELECT 1 FROM relations r JOIN record_admissions a ON a.memory_id=r.source_id "
             "WHERE r.target_id=? AND r.relation='supersedes' "
@@ -1089,13 +1361,7 @@ class Vault:
             (memory_id, memory_id, rank),
         ).fetchone()
         if unresolved is not None:
-            resolved = connection.execute(
-                "SELECT 1 FROM relations r JOIN record_admissions a ON a.memory_id=r.source_id "
-                "WHERE r.target_id=? AND r.relation='resolves' "
-                "AND vault_admitted(a.state,a.signer_key_id)>=? LIMIT 1",
-                (memory_id, rank),
-            ).fetchone()
-            return "resolved" if resolved is not None else "conflicted"
+            return "conflicted"
         return "current"
 
     def _recall_rows(
@@ -1104,128 +1370,568 @@ class Vault:
         *,
         query: str,
         limit: int,
+        semantic: bool = True,
+        metrics: dict[str, Any] | None = None,
+        through: int | None = None,
     ) -> list[dict[str, Any]]:
         tokens = list(dict.fromkeys(tokenize(query)))
-        rows: list[sqlite3.Row]
-        if tokens:
-            placeholders = ",".join("?" for _ in tokens)
-            rows = list(
-                connection.execute(
-                    "SELECT m.*,COUNT(DISTINCT t.token) AS matched,SUM(t.frequency) AS frequency "
-                    "FROM terms t JOIN memories m ON m.memory_id=t.memory_id "
-                    "JOIN record_admissions a ON a.memory_id=m.memory_id "
-                    f"WHERE t.token IN ({placeholders}) AND vault_admitted(a.state,a.signer_key_id)>0 "
-                    "GROUP BY m.memory_id "
-                    "ORDER BY matched DESC,frequency DESC,m.ingest_seq DESC LIMIT ?",
-                    (*tokens, min(512, max(limit * 12, limit))),
-                )
-            )
+        features = semantic_features(query) if semantic else frozenset()
+        expanded = _expanded_query_tokens(tokens, features)
+        candidate_limit = min(MAX_RETRIEVAL_CANDIDATES, max(128, limit * 16))
+        snapshot_filter = "AND m.ingest_seq<=? " if through is not None else ""
+        snapshot_arguments: tuple[Any, ...] = (through,) if through is not None else ()
+        if expanded:
+            placeholders = ",".join("?" for _ in expanded)
+            rows = connection.execute(
+                "SELECT m.memory_id,m.ingest_seq,length(CAST(m.record_json AS BLOB)) AS bytes,"
+                "COUNT(DISTINCT t.token) AS matched,SUM(t.frequency) AS frequency "
+                "FROM terms t JOIN memories m ON m.memory_id=t.memory_id "
+                "JOIN record_admissions a ON a.memory_id=m.memory_id "
+                f"WHERE t.token IN ({placeholders}) AND vault_admitted(a.state,a.signer_key_id)>0 "
+                + snapshot_filter + "GROUP BY m.memory_id ORDER BY matched DESC,frequency DESC,m.created_at DESC,m.memory_id "
+                "LIMIT ?", (*expanded, *snapshot_arguments, candidate_limit + 1),
+            ).fetchall()
         else:
             pattern = "%" + normalize_text(query).replace("%", "\\%").replace("_", "\\_") + "%"
-            rows = list(
-                connection.execute(
-                    "SELECT m.*,1 AS matched,1 AS frequency FROM memories m "
-                    "JOIN record_admissions a ON a.memory_id=m.memory_id "
-                    "WHERE normalized_text LIKE ? ESCAPE '\\' "
-                    "AND vault_admitted(a.state,a.signer_key_id)>0 ORDER BY ingest_seq DESC LIMIT ?",
-                    (pattern, min(512, max(limit * 12, limit))),
-                )
-            )
-        normalized_query = normalize_text(query)
-        kind_weight = {
-            "decision": 900,
-            "goal": 875,
-            "fact": 850,
-            "continuity": 800,
-            "summary": 700,
-            "observation": 600,
-            "episode": 400,
-        }
-        candidates: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            record = self._record_from_row(row)
-            matched = int(row["matched"])
-            frequency = int(row["frequency"])
-            coverage = (matched * 10_000) // max(1, len(tokens))
-            phrase_bonus = 2500 if normalized_query in str(row["normalized_text"]) else 0
-            score = coverage + min(frequency, 50) * 100 + phrase_bonus + kind_weight.get(
-                str(record["kind"]), 500
-            )
-            candidates[str(record["memory_id"])] = {
-                "record": record,
-                "score_milli": score,
-                "matched_tokens": matched,
-                "ingest_seq": int(row["ingest_seq"]),
-            }
-        if candidates:
-            identifiers = list(candidates)
-            placeholders = ",".join("?" for _ in identifiers)
-            related = list(
-                connection.execute(
-                    "SELECT source_id,target_id,relation FROM relations r "
-                    "JOIN record_admissions a ON a.memory_id=r.source_id "
-                    "JOIN record_admissions b ON b.memory_id=r.target_id "
-                    f"WHERE (source_id IN ({placeholders}) OR target_id IN ({placeholders})) "
-                    "AND vault_admitted(a.state,a.signer_key_id)>0 AND vault_admitted(b.state,b.signer_key_id)>0",
-                    (*identifiers, *identifiers),
-                )
-            )
-            related_ids = {
-                str(item)
-                for row in related
-                for item in (row["source_id"], row["target_id"])
-                if item not in candidates
-            }
+            rows = connection.execute(
+                "SELECT m.memory_id,m.ingest_seq,length(CAST(m.record_json AS BLOB)) AS bytes "
+                "FROM memories m JOIN record_admissions a ON a.memory_id=m.memory_id "
+                "WHERE normalized_text LIKE ? ESCAPE '\\' AND vault_admitted(a.state,a.signer_key_id)>0 "
+                + snapshot_filter + "ORDER BY m.created_at DESC,m.memory_id LIMIT ?", (pattern, *snapshot_arguments, candidate_limit + 1),
+            ).fetchall()
+        truncated = len(rows) > candidate_limit
+        selected = list(rows[:candidate_limit])
+        root_ids = {str(row["memory_id"]) for row in selected}
+        related_ids: set[str] = set()
+        if root_ids:
+            roots = [str(row["memory_id"]) for row in selected[: min(64, max(8, limit * 2))]]
+            placeholders = ",".join("?" for _ in roots)
+            related = connection.execute(
+                "SELECT r.source_id,r.target_id FROM relations r "
+                "JOIN record_admissions a ON a.memory_id=r.source_id "
+                "JOIN record_admissions b ON b.memory_id=r.target_id "
+                "JOIN memories s ON s.memory_id=r.source_id JOIN memories t ON t.memory_id=r.target_id "
+                f"WHERE (r.source_id IN ({placeholders}) OR r.target_id IN ({placeholders})) "
+                "AND vault_admitted(a.state,a.signer_key_id)>0 AND vault_admitted(b.state,b.signer_key_id)>0 "
+                + ("AND s.ingest_seq<=? AND t.ingest_seq<=? " if through is not None else "")
+                + "ORDER BY r.source_id,r.relation,r.target_id LIMIT 513",
+                (*roots, *roots, *((through, through) if through is not None else ())),
+            ).fetchall()
+            truncated = truncated or len(related) > 512
+            neighbors = sorted({str(row[key]) for row in related[:512] for key in ("source_id", "target_id")} - root_ids)
+            related_ids = set(neighbors[: min(128, limit * 4)])
             if related_ids:
-                selected = sorted(related_ids)[: min(128, limit * 4)]
-                placeholders = ",".join("?" for _ in selected)
-                for row in connection.execute(
-                    "SELECT m.*,0 AS matched,0 AS frequency FROM memories m "
-                    "JOIN record_admissions a ON a.memory_id=m.memory_id "
-                    f"WHERE m.memory_id IN ({placeholders}) AND vault_admitted(a.state,a.signer_key_id)>0",
-                    selected,
-                ):
-                    record = self._record_from_row(row)
-                    candidates[str(record["memory_id"])] = {
-                        "record": record,
-                        "score_milli": 500,
-                        "matched_tokens": 0,
-                        "ingest_seq": int(row["ingest_seq"]),
-                    }
+                placeholders = ",".join("?" for _ in related_ids)
+                selected.extend(connection.execute(
+                    "SELECT m.memory_id,m.ingest_seq,length(CAST(m.record_json AS BLOB)) AS bytes "
+                    f"FROM memories m WHERE m.memory_id IN ({placeholders}) " + snapshot_filter + "ORDER BY m.memory_id",
+                    (*sorted(related_ids), *snapshot_arguments),
+                ).fetchall())
+        normalized_query = normalize_text(query)
+        records: dict[str, dict[str, Any]] = {}
+        statuses: dict[str, str] = {}
+        entity_features: dict[str, frozenset[str]] = {}
+        pool: list[dict[str, Any]] = []
+        document_frequency: Counter[str] = Counter()
+        used = 0
+        for item in selected:
+            if used + int(item["bytes"]) > MAX_RERANK_BYTES or len(pool) >= MAX_RERANK_FRAGMENTS:
+                truncated = True
+                break
+            row = connection.execute(
+                "SELECT m.* FROM memories m JOIN record_admissions a ON a.memory_id=m.memory_id "
+                "WHERE m.memory_id=? AND vault_admitted(a.state,a.signer_key_id)>0 " + snapshot_filter,
+                (item["memory_id"], *snapshot_arguments),
+            ).fetchone()
+            if row is None:
+                continue
+            record = self._record_from_row(row)
+            memory_id = str(record["memory_id"])
+            records[memory_id] = record
+            statuses[memory_id] = self._memory_status(connection, memory_id)
+            entity_features[memory_id] = semantic_features(" ".join(record["entities"])) if semantic else frozenset()
+            used += int(item["bytes"])
+            for fragment in memory_fragments(record):
+                if len(pool) >= MAX_RERANK_FRAGMENTS:
+                    truncated = True
+                    break
+                terms = tokenize(str(fragment["text"]), maximum=4096)
+                counts = Counter(term for term in terms if term in tokens)
+                document_frequency.update(counts.keys())
+                pool.append({
+                    "memory_id": memory_id, "fragment": fragment, "counts": counts,
+                    "length": max(1, len(terms)),
+                    "features": semantic_features(str(fragment["text"])) if semantic else frozenset(),
+                })
+        average = sum(item["length"] for item in pool) / max(1, len(pool))
+        total = len(pool)
+        now = dt.datetime.now(dt.timezone.utc)
+        candidates: dict[str, dict[str, Any]] = {}
+        for item in pool:
+            memory_id = item["memory_id"]
+            record = records[memory_id]
+            fragment = item["fragment"]
+            lexical = 0.0
+            for token, frequency in item["counts"].items():
+                df = document_frequency[token]
+                inverse = math.log(1.0 + (total - df + 0.5) / (df + 0.5))
+                denominator = frequency + 1.35 * (1.0 - 0.72 + 0.72 * item["length"] / max(1.0, average))
+                lexical += inverse * frequency * 2.35 / denominator
+            concept = semantic_similarity(features, item["features"]) * 2.25
+            entity = semantic_similarity(features, entity_features[memory_id]) * 0.5
+            phrase = 1.35 if normalized_query and normalized_query in normalize_text(str(fragment["text"])) else 0.0
+            graph = 0.20 if memory_id in related_ids else 0.0
+            if not any((lexical, concept, entity, phrase, graph)):
+                continue
+            role_factor = 1.42 if fragment["role_hint"] == "user" else 1.0
+            kind_factor = 1.12 if record["kind"] != "episode" else 1.0
+            status = statuses[memory_id]
+            graph_factor = 0.72 if status in {"superseded", "resolved"} else 1.0
+            captured = dt.datetime.fromisoformat(str(record["created_at"]).replace("Z", "+00:00"))
+            age = max(0.0, (now - captured).total_seconds() / 86400.0)
+            time_factor = 0.82 + 0.18 * math.exp(-age / 365.0)
+            score = (lexical + concept + entity + phrase + graph) * role_factor * kind_factor * graph_factor * time_factor
+            explanation = ["bounded_fragment_bm25", f"graph_status:{status}", "recency_is_soft_not_authority"]
+            explanation.extend(sorted(features & item["features"] - {"polarity:negative"}))
+            if concept and (("polarity:negative" in features) != ("polarity:negative" in item["features"])):
+                explanation.append("concept_polarity_mismatch_penalty")
+            if fragment["role_hint"]:
+                explanation.append("role_hint_is_not_authenticated")
+            if graph:
+                explanation.append("bounded_related_evidence")
+            candidate = {
+                "record": record, "fragment": fragment, "status": status,
+                "score_milli": max(0, round(score * 1000)), "matched_tokens": len(item["counts"]),
+                "explanation": explanation,
+                "score_components": {
+                    "lexical_milli": round(lexical * 1000), "semantic_milli": round(concept * 1000),
+                    "entity_milli": round(entity * 1000), "phrase_milli": round(phrase * 1000),
+                    "graph_milli": round(graph * 1000), "role_factor_milli": round(role_factor * 1000),
+                    "kind_factor_milli": round(kind_factor * 1000), "graph_factor_milli": round(graph_factor * 1000),
+                    "recency_factor_milli": round(time_factor * 1000),
+                },
+            }
+            previous = candidates.get(memory_id)
+            if previous is None or candidate["score_milli"] > previous["score_milli"]:
+                candidates[memory_id] = candidate
         ordered = sorted(
             candidates.values(),
             key=lambda item: (
-                int(item["score_milli"]),
-                int(item["ingest_seq"]),
+                -int(item["score_milli"]),
                 str(item["record"]["memory_id"]),
             ),
-            reverse=True,
-        )[:limit]
+        )
         result: list[dict[str, Any]] = []
+        seen_excerpts: set[tuple[str, str, str]] = set()
         for item in ordered:
             record = item["record"]
-            text, text_truncated = _bounded_text(str(record["text"]))
+            fragment = item["fragment"]
+            text = str(fragment["text"])
+            diversity_key = (normalize_text(text), str(record["kind"]), item["status"])
+            if diversity_key in seen_excerpts:
+                continue
+            seen_excerpts.add(diversity_key)
             entities = list(record["entities"])
-            relations = list(record["relations"])
+            raw_relations = list(record["relations"])
+            targets = sorted({str(value["target"]) for value in raw_relations})
+            admitted_targets: set[str] = set()
+            if targets:
+                placeholders = ",".join("?" for _ in targets)
+                admitted_targets = {str(row[0]) for row in connection.execute(
+                    f"SELECT memory_id FROM record_admissions WHERE memory_id IN ({placeholders}) "
+                    "AND vault_admitted(state,signer_key_id)>0", targets,
+                )}
+            relations = [value for value in raw_relations if value["target"] in admitted_targets]
             result.append(
                 {
                     "memory_id": record["memory_id"],
                     "kind": record["kind"],
                     "text": text,
-                    "text_truncated": text_truncated,
+                    "text_truncated": text != record["text"],
+                    "fragment": dict(fragment),
                     "entities": entities[:32],
                     "entities_truncated": len(entities) > 32,
                     "relations": relations[:32],
-                    "relations_truncated": len(relations) > 32,
+                    "relations_truncated": len(raw_relations) > len(relations[:32]),
                     "provenance": record["provenance"],
                     "created_at": record["created_at"],
-                    "status": self._memory_status(connection, str(record["memory_id"])),
+                    "status": item["status"],
                     "verification": self._verification(connection, str(record["memory_id"])),
                     "score_milli": int(item["score_milli"]),
                     "matched_tokens": int(item["matched_tokens"]),
+                    "score_components": item["score_components"],
+                    "explanation": item["explanation"],
                 }
             )
+            if len(result) >= limit:
+                break
+        if metrics is not None:
+            metrics.update({
+                "profile": RETRIEVAL_PROFILE,
+                "semantic_adapter": "deterministic-concepts-v1" if semantic else "disabled",
+                "bm25_scope": "bounded_candidate_fragments", "index": self._retrieval_index_state(connection, through=through),
+                "candidate_limit": candidate_limit, "candidate_records": len(records),
+                "fragments_scanned": len(pool), "record_bytes_scanned": used,
+                "truncated": truncated, "ranking_is_authority": False,
+            })
         return result
+
+    def _admitted_row(self, connection: sqlite3.Connection, memory_id: str, *, through: int) -> sqlite3.Row | None:
+        return connection.execute(
+            "SELECT m.* FROM memories m JOIN record_admissions a ON a.memory_id=m.memory_id "
+            "WHERE m.memory_id=? AND m.ingest_seq<=? AND vault_admitted(a.state,a.signer_key_id)>0",
+            (memory_id, through),
+        ).fetchone()
+
+    def _node_summary(self, connection: sqlite3.Connection, record: Mapping[str, Any]) -> dict[str, Any]:
+        text, truncated = _bounded_text(str(record["text"]), MAX_GRAPH_TEXT_BYTES)
+        while len(canonical_bytes(text)) > MAX_GRAPH_TEXT_BYTES:
+            text, _ = _bounded_text(text, max(1, _utf8_length(text) // 2))
+            truncated = True
+        entities = [value for value in record["entities"] if len(canonical_bytes(value)) <= 256][:4]
+        return {
+            "memory_id": record["memory_id"], "kind": record["kind"], "created_at": record["created_at"],
+            "text": text, "text_truncated": truncated,
+            "entities": entities, "entities_truncated": len(record["entities"]) > len(entities),
+            "status": self._memory_status(connection, str(record["memory_id"])),
+            "verification": self._verification(connection, str(record["memory_id"])),
+        }
+
+    def _graph_rows(
+        self, connection: sqlite3.Connection, *, root: str, through: int,
+        maximum_nodes: int, maximum_edges: int, maximum_depth: int, claims_only: bool = False,
+    ) -> dict[str, Any]:
+        first = self._admitted_row(connection, root, through=through)
+        if first is None:
+            raise MemoryError("record_not_admitted")
+        record = self._record_from_row(first)
+        records = {root: record}
+        used = len(canonical_bytes(record))
+        queue: deque[tuple[str, int]] = deque([(root, 0)])
+        edges: dict[tuple[str, str, str], dict[str, Any]] = {}
+        frontier: set[str] = set()
+        reasons: set[str] = set()
+        depth_reached = 0
+        while queue:
+            if len(edges) >= maximum_edges:
+                frontier.update(value[0] for value in queue)
+                reasons.add("edge_limit")
+                break
+            current, depth = queue.popleft()
+            depth_reached = max(depth_reached, depth)
+            claim_filter = "AND r.relation IN ('supersedes','conflicts_with','resolves') " if claims_only else ""
+            rows = connection.execute(
+                "SELECT r.source_id,r.target_id,r.relation,"
+                "vault_admitted(a.state,a.signer_key_id) AS source_rank,"
+                "vault_admitted(b.state,b.signer_key_id) AS target_rank "
+                "FROM relations r JOIN record_admissions a ON a.memory_id=r.source_id "
+                "JOIN record_admissions b ON b.memory_id=r.target_id "
+                "JOIN memories s ON s.memory_id=r.source_id JOIN memories t ON t.memory_id=r.target_id "
+                "WHERE (r.source_id=? OR r.target_id=?) AND s.ingest_seq<=? AND t.ingest_seq<=? "
+                "AND vault_admitted(a.state,a.signer_key_id)>0 AND vault_admitted(b.state,b.signer_key_id)>0 "
+                + claim_filter + "ORDER BY r.source_id,r.relation,r.target_id LIMIT ?",
+                (current, current, through, through, maximum_edges + 1),
+            ).fetchall()
+            if len(rows) > maximum_edges:
+                frontier.add(current)
+                reasons.add("edge_limit")
+            for row in rows[:maximum_edges]:
+                source, target, relation = str(row["source_id"]), str(row["target_id"]), str(row["relation"])
+                effective = int(row["source_rank"]) >= int(row["target_rank"])
+                if claims_only and not effective:
+                    continue
+                key = (source, relation, target)
+                if key in edges:
+                    continue
+                if len(edges) >= maximum_edges:
+                    frontier.add(current)
+                    reasons.add("edge_limit")
+                    continue
+                neighbor = target if source == current else source
+                if neighbor not in records:
+                    if depth >= maximum_depth:
+                        frontier.add(neighbor)
+                        reasons.add("depth_limit")
+                        continue
+                    if len(records) >= maximum_nodes:
+                        frontier.add(neighbor)
+                        reasons.add("node_limit")
+                        continue
+                    metadata = connection.execute(
+                        "SELECT length(CAST(record_json AS BLOB)) FROM memories WHERE memory_id=?", (neighbor,)
+                    ).fetchone()
+                    if metadata is None or used + int(metadata[0]) > MAX_RERANK_BYTES:
+                        frontier.add(neighbor)
+                        reasons.add("record_byte_limit")
+                        continue
+                    other = self._admitted_row(connection, neighbor, through=through)
+                    if other is None:
+                        continue
+                    records[neighbor] = self._record_from_row(other)
+                    used += int(metadata[0])
+                    queue.append((neighbor, depth + 1))
+                edges[key] = {
+                    "source_id": source, "target_id": target, "type": relation,
+                    "state_effective": effective and relation in _CLAIM_RELATIONS,
+                }
+        ordered_edges = [edges[key] for key in sorted(edges)]
+        return {
+            "records": records, "edges": ordered_edges,
+            "truncated": bool(reasons), "truncation_reasons": sorted(reasons),
+            "frontier_memory_ids": sorted(frontier)[:MAX_GRAPH_NODES],
+            "frontier_truncated": len(frontier) > MAX_GRAPH_NODES,
+            "depth_reached": depth_reached, "record_bytes_scanned": used,
+            "cycle_detected": _directed_cycle(records, ordered_edges),
+        }
+
+    def _entity_timeline(
+        self, connection: sqlite3.Connection, *, entity: str, through: int,
+        maximum_nodes: int, after_memory_id: str | None,
+        index_state: Mapping[str, Any] | None = None,
+    ) -> tuple[dict[str, dict[str, Any]], bool, str | None]:
+        if index_state is None:
+            index_state = self._retrieval_index_state(connection, through=through)
+        if not index_state["complete"]:
+            raise MemoryError("retrieval_index_required")
+        after_clause = ""
+        arguments: list[Any] = [entity, through]
+        if after_memory_id is not None:
+            after = connection.execute(
+                "SELECT i.timeline_key FROM retrieval_index i JOIN memory_entities e ON e.memory_id=i.memory_id "
+                "JOIN memories m ON m.memory_id=i.memory_id WHERE e.entity=? AND i.memory_id=? AND m.ingest_seq<=?",
+                (entity, after_memory_id, through),
+            ).fetchone()
+            if after is None:
+                raise MemoryError("invalid_cursor")
+            # Cursor lookup is metadata only; it does not reinstate a signer
+            # whose trust changed since the preceding page.
+            after_clause = "AND (i.timeline_key>? OR (i.timeline_key=? AND m.memory_id>?)) "
+            arguments.extend((str(after[0]), str(after[0]), after_memory_id))
+        arguments.append(maximum_nodes + 1)
+        rows = connection.execute(
+            "SELECT m.memory_id,i.timeline_key,length(CAST(m.record_json AS BLOB)) AS bytes "
+            "FROM memory_entities e JOIN memories m ON m.memory_id=e.memory_id "
+            "JOIN retrieval_index i ON i.memory_id=m.memory_id "
+            "JOIN record_admissions a ON a.memory_id=m.memory_id "
+            "WHERE e.entity=? AND m.ingest_seq<=? AND vault_admitted(a.state,a.signer_key_id)>0 "
+            + after_clause + "ORDER BY i.timeline_key,m.memory_id LIMIT ?", arguments,
+        ).fetchall()
+        records: dict[str, dict[str, Any]] = {}
+        used = 0
+        for item in rows[:maximum_nodes]:
+            if used + int(item["bytes"]) > MAX_RERANK_BYTES:
+                break
+            row = self._admitted_row(connection, str(item["memory_id"]), through=through)
+            if row is None:
+                continue
+            record = self._record_from_row(row)
+            if entity not in record["entities"] or _timeline_key(str(record["created_at"])) != item["timeline_key"]:
+                raise MemoryError("retrieval_index_invalid")
+            records[str(record["memory_id"])] = record
+            used += int(item["bytes"])
+        more = len(rows) > len(records)
+        cursor = next(reversed(records)) if records else None
+        return records, more, cursor
+
+    def _view_document(
+        self, connection: sqlite3.Connection, records: Mapping[str, Mapping[str, Any]], *,
+        entity: str | None, root: str, truncated: bool, include_proposals: bool,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        ordered = sorted(records.values(), key=lambda item: (_timeline_key(str(item["created_at"])), str(item["memory_id"])))
+        timeline = [self._node_summary(connection, record) for record in ordered]
+        allowed_ids = set(records)
+        external_state_relations = False
+        for item in timeline:
+            memory_id = str(item["memory_id"])
+            effects = connection.execute(
+                "SELECT r.source_id,r.relation,r.target_id FROM relations r "
+                "JOIN record_admissions a ON a.memory_id=r.source_id "
+                "JOIN record_admissions b ON b.memory_id=r.target_id "
+                "WHERE (r.source_id=? OR r.target_id=?) "
+                "AND r.relation IN ('supersedes','conflicts_with','resolves') "
+                "AND vault_admitted(a.state,a.signer_key_id)>0 AND vault_admitted(b.state,b.signer_key_id)>0 "
+                "AND vault_admitted(a.state,a.signer_key_id)>=vault_admitted(b.state,b.signer_key_id) "
+                "ORDER BY r.source_id,r.relation,r.target_id LIMIT 9", (memory_id, memory_id),
+            ).fetchall()
+            item["state_relations"] = [
+                {"source_id": str(row["source_id"]), "type": str(row["relation"]), "target_id": str(row["target_id"])}
+                for row in effects[:8]
+            ]
+            item["state_relations_truncated"] = len(effects) > 8
+            external_state_relations = external_state_relations or any(
+                str(row["source_id"]) not in allowed_ids or str(row["target_id"]) not in allowed_ids for row in effects
+            ) or len(effects) > 8
+        strongest_rank = max((2 if item["verification"]["admission"] == "verified" else 1 for item in timeline), default=0)
+        strongest_states = {
+            str(item["status"]) for item in timeline
+            if (2 if item["verification"]["admission"] == "verified" else 1) == strongest_rank
+        }
+        state = (
+            "conflicted" if "conflicted" in strongest_states else
+            "current" if "current" in strongest_states else
+            "resolved" if "resolved" in strongest_states else "superseded"
+        )
+        current = [str(item["memory_id"]) for item in timeline if item["status"] == "current"]
+        history = [str(item["memory_id"]) for item in timeline if item["status"] in {"superseded", "resolved"}]
+        identity = {"entity": entity} if entity is not None else {"root_memory_id": min(records) if records else root}
+        view_id = "view_" + sha256(canonical_bytes(identity))[:40]
+        document = {
+            "view_id": view_id, "entity": entity, "root_memory_id": root,
+            "grouping": "exact_entity" if entity is not None else "effective_semantic_relations",
+            "state": state, "state_is_page_local": truncated or external_state_relations,
+            "current_memory_ids": current, "timeline": timeline,
+            "truncated": truncated, "external_state_relations": external_state_relations,
+            "timeline_order": "utc_instant_then_memory_id", "authority": "none",
+            "inferred_grouping_is_ownership": False,
+        }
+        proposals: list[dict[str, Any]] = []
+        if include_proposals and current and history and state != "conflicted" and not truncated and not external_state_relations:
+            evidence = [str(item["memory_id"]) for item in timeline]
+            proposal_identity = {"view_id": view_id, "action": "retain_current_with_historical_evidence", "evidence_memory_ids": evidence}
+            proposals.append({
+                "proposal_id": "proposal_" + sha256(canonical_bytes(proposal_identity))[:40],
+                **proposal_identity, "current_memory_ids": current, "historical_memory_ids": history,
+                "status": "proposal_only", "executable": False, "authority": "none",
+                "reason": "Any future summary must retain references to all listed evidence; no record was rewritten.",
+            })
+        return document, proposals
+
+    def _memory_views(self, connection: sqlite3.Connection, request: Mapping[str, Any]) -> Mapping[str, Any]:
+        latest = int(connection.execute("SELECT COALESCE(MAX(ingest_seq),0) FROM memories").fetchone()[0])
+        through = _bounded_integer(request.get("through", latest), minimum=0, maximum=latest, code="invalid_snapshot")
+        limit = _bounded_integer(request.get("limit", 8), minimum=1, maximum=32, code="invalid_limit")
+        maximum_nodes = _bounded_integer(request.get("maximum_nodes", 128), minimum=1, maximum=MAX_GRAPH_NODES, code="invalid_graph_bound")
+        maximum_depth = _bounded_integer(request.get("maximum_depth", MAX_GRAPH_DEPTH), minimum=0, maximum=MAX_GRAPH_DEPTH, code="invalid_graph_bound")
+        include_proposals = request.get("include_proposals", True)
+        if not isinstance(include_proposals, bool):
+            raise MemoryError("invalid_option")
+        selectors = [key for key in ("entity", "memory_id", "query") if key in request]
+        if len(selectors) > 1:
+            raise MemoryError("ambiguous_view_selector")
+        after_id = request.get("after_memory_id")
+        if after_id is not None and (not isinstance(after_id, str) or _MEMORY_ID.fullmatch(after_id) is None):
+            raise MemoryError("invalid_cursor")
+        if after_id is not None and selectors != ["entity"]:
+            raise MemoryError("entity_cursor_required")
+        after_sequence = _bounded_integer(request.get("after_sequence", 0), minimum=0, maximum=through, code="invalid_cursor")
+        if selectors and after_sequence:
+            raise MemoryError("ambiguous_cursor")
+        root_rows: list[Mapping[str, Any]] = []
+        root_more = False
+        if selectors == ["entity"]:
+            entity = request["entity"]
+            if not isinstance(entity, str) or not entity.strip() or "\x00" in entity or _utf8_length(entity) > 512:
+                raise MemoryError("invalid_entity")
+            root_rows = [{"entity": entity}]
+        elif selectors == ["memory_id"]:
+            memory_id = request["memory_id"]
+            if not isinstance(memory_id, str) or _MEMORY_ID.fullmatch(memory_id) is None:
+                raise MemoryError("invalid_memory_id")
+            root_rows = [{"memory_id": memory_id}]
+        elif selectors == ["query"]:
+            query = str(_visible_text(request["query"]))
+            root_rows = [{"memory_id": hit["memory_id"]} for hit in self._recall_rows(connection, query=query, limit=limit, through=through)]
+        else:
+            rows = connection.execute(
+                "SELECT m.memory_id,m.ingest_seq FROM memories m JOIN record_admissions a ON a.memory_id=m.memory_id "
+                "WHERE m.ingest_seq>? AND m.ingest_seq<=? AND m.kind!='episode' AND vault_admitted(a.state,a.signer_key_id)>0 "
+                "ORDER BY m.ingest_seq LIMIT ?", (after_sequence, through, limit * 4 + 1),
+            ).fetchall()
+            root_more = len(rows) > limit * 4
+            root_rows = [dict(row) for row in rows[:limit * 4]]
+        views: list[dict[str, Any]] = []
+        proposals: list[dict[str, Any]] = []
+        seen_groups: set[tuple[str, ...]] = set()
+        consumed: set[str] = set()
+        cursor = after_sequence
+        total_nodes = 0
+        frontier: set[str] = set()
+        bounds_hit = False
+        # Completeness can scan the whole snapshot. Reuse only within this
+        # read-only request/transaction and fixed `through`, never on the Vault
+        # or connection across requests. Admission/current trust is not cached.
+        index_state: Mapping[str, Any] | None = None
+        for position, seed in enumerate(root_rows):
+            if len(views) >= limit or total_nodes >= maximum_nodes:
+                root_more = root_more or not selectors
+                bounds_hit = True
+                break
+            if "ingest_seq" in seed:
+                cursor = int(seed["ingest_seq"])
+            entity = seed.get("entity")
+            root = str(seed.get("memory_id", ""))
+            if entity is None:
+                if root in consumed:
+                    continue
+                row = self._admitted_row(connection, root, through=through)
+                if row is None:
+                    if selectors == ["memory_id"]:
+                        raise MemoryError("record_not_admitted")
+                    continue
+                record = self._record_from_row(row)
+                claims = sorted(
+                    (value for value in record["entities"] if value.startswith("claim:")),
+                    key=lambda value: (value.startswith("claim:v021:projection:"), value),
+                )
+                entity = claims[0] if claims else None
+            group_key = ("entity", str(entity)) if entity is not None else ("root", root)
+            if group_key in seen_groups:
+                continue
+            seen_groups.add(group_key)
+            remaining = maximum_nodes - total_nodes
+            next_request: dict[str, Any] | None = None
+            if entity is not None:
+                if index_state is None:
+                    index_state = self._retrieval_index_state(connection, through=through)
+                records, truncated, next_id = self._entity_timeline(
+                    connection, entity=str(entity), through=through, maximum_nodes=remaining,
+                    after_memory_id=after_id, index_state=index_state,
+                )
+                if not records:
+                    continue
+                root = root or next(iter(records))
+                if truncated and next_id is not None:
+                    next_request = {
+                        "op": "memory.views", "entity": entity, "after_memory_id": next_id,
+                        "through": through, "maximum_nodes": maximum_nodes,
+                        "include_proposals": include_proposals,
+                    }
+            else:
+                graph = self._graph_rows(
+                    connection, root=root, through=through, maximum_nodes=remaining,
+                    maximum_edges=MAX_GRAPH_EDGES, maximum_depth=maximum_depth, claims_only=True,
+                )
+                records = graph["records"]
+                truncated = graph["truncated"]
+                frontier.update(graph["frontier_memory_ids"])
+            consumed.update(records)
+            total_nodes += len(records)
+            document, generated = self._view_document(
+                connection, records, entity=str(entity) if entity is not None else None,
+                root=root, truncated=truncated or after_id is not None, include_proposals=include_proposals,
+            )
+            document["next_request"] = next_request
+            document["has_more"] = truncated
+            document["earlier_pages_omitted"] = after_id is not None
+            views.append(document)
+            proposals.extend(generated)
+            bounds_hit = bounds_hit or truncated or after_id is not None
+            if position + 1 < len(root_rows) and (len(views) >= limit or total_nodes >= maximum_nodes):
+                root_more = root_more or not selectors
+                bounds_hit = True
+        return {
+            "schema_version": VIEW_SCHEMA, "views": views, "consolidation_proposals": proposals,
+            "through": through, "truncated": bounds_hit or root_more,
+            "next_request": {
+                "op": "memory.views", "after_sequence": cursor, "through": through,
+                "limit": limit, "maximum_nodes": maximum_nodes, "maximum_depth": maximum_depth,
+                "include_proposals": include_proposals,
+            } if root_more else None,
+            "frontier_memory_ids": sorted(frontier)[:MAX_GRAPH_NODES],
+            "bounds": {"maximum_nodes": maximum_nodes, "maximum_depth": maximum_depth, "maximum_views": limit},
+            "snapshot_scope": "record_set_only; current_trust_and_state_are_rechecked",
+            "network_accessed": False, "records_changed": False, "authority": "none",
+        }
 
     @staticmethod
     def _context(hits: Sequence[Mapping[str, Any]], *, maximum: int) -> Mapping[str, Any]:
@@ -1322,7 +2028,7 @@ class Vault:
             _exact_object(
                 request,
                 required={"op", "query"},
-                optional=common_optional | {"limit", "maximum_context_bytes"},
+                optional=common_optional | {"limit", "maximum_context_bytes", "semantic"},
             )
             query = str(_visible_text(request.get("query")))
             limit = request.get("limit", 8 if operation == "recall" else 12)
@@ -1331,7 +2037,11 @@ class Vault:
                 raise MemoryError("invalid_limit")
             if not isinstance(maximum, int) or isinstance(maximum, bool) or not 512 <= maximum <= MAX_CONTEXT_BYTES:
                 raise MemoryError("invalid_context_limit")
-            hits = self._recall_rows(connection, query=query, limit=limit)
+            semantic = request.get("semantic", True)
+            if not isinstance(semantic, bool):
+                raise MemoryError("invalid_option")
+            retrieval: dict[str, Any] = {}
+            hits = self._recall_rows(connection, query=query, limit=limit, semantic=semantic, metrics=retrieval)
             if operation == "handoff":
                 # Goal continuity is guaranteed a place even when semantic
                 # recall already filled the requested limit. This remains a
@@ -1401,8 +2111,44 @@ class Vault:
             return {
                 "hits": hits[:limit],
                 "evidence_context": self._context(hits[:limit], maximum=maximum),
+                "retrieval": retrieval,
                 "network_accessed": False,
             }
+
+        if operation == "memory.views":
+            _exact_object(request, required={"op"}, optional=common_optional | {
+                "query", "memory_id", "entity", "limit", "maximum_nodes", "maximum_depth",
+                "include_proposals", "through", "after_memory_id", "after_sequence",
+            })
+            return self._memory_views(connection, request)
+
+        if operation == "memory.graph":
+            _exact_object(request, required={"op", "memory_id"}, optional=common_optional | {
+                "maximum_depth", "maximum_nodes", "maximum_edges", "through",
+            })
+            memory_id = request["memory_id"]
+            if not isinstance(memory_id, str) or _MEMORY_ID.fullmatch(memory_id) is None:
+                raise MemoryError("invalid_memory_id")
+            maximum_nodes = _bounded_integer(request.get("maximum_nodes", 128), minimum=1, maximum=MAX_GRAPH_NODES, code="invalid_graph_bound")
+            maximum_edges = _bounded_integer(request.get("maximum_edges", 1024), minimum=1, maximum=MAX_GRAPH_EDGES, code="invalid_graph_bound")
+            maximum_depth = _bounded_integer(request.get("maximum_depth", 4), minimum=0, maximum=MAX_GRAPH_DEPTH, code="invalid_graph_bound")
+            latest = int(connection.execute("SELECT COALESCE(MAX(ingest_seq),0) FROM memories").fetchone()[0])
+            through = _bounded_integer(request.get("through", latest), minimum=0, maximum=latest, code="invalid_snapshot")
+            graph = self._graph_rows(
+                connection, root=memory_id, through=through, maximum_nodes=maximum_nodes,
+                maximum_edges=maximum_edges, maximum_depth=maximum_depth,
+            )
+            records = graph.pop("records")
+            return {
+                "schema_version": GRAPH_SCHEMA, "root_memory_id": memory_id, "through": through,
+                "nodes": [self._node_summary(connection, records[key]) for key in sorted(records)],
+                **graph, "bounds": {"maximum_depth": maximum_depth, "maximum_nodes": maximum_nodes, "maximum_edges": maximum_edges},
+                "network_accessed": False, "records_changed": False, "authority": "none",
+            }
+
+        if operation == "memory.reindex":
+            _exact_object(request, required={"op"}, optional=common_optional | {"after", "through", "limit"})
+            return self._reindex(connection, request)
 
         if operation == "get":
             _exact_object(
@@ -1476,13 +2222,16 @@ class Vault:
     def _changes(
         self, connection: sqlite3.Connection, *, after: int = 0, limit: int = 100,
         maximum_bytes: int = 256 * 1024, store_id: str | None = None, require_verified: bool = False,
+        _complete_closure: bool = False, _record_limit: int = 1024,
     ) -> Mapping[str, Any]:
         if not isinstance(after, int) or isinstance(after, bool) or after < 0:
             raise MemoryError("invalid_cursor")
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 256:
             raise MemoryError("invalid_limit")
-        if not isinstance(maximum_bytes, int) or isinstance(maximum_bytes, bool) or not 4096 <= maximum_bytes <= 3 * 1024 * 1024:
+        byte_ceiling = MAX_BUNDLE_BYTES if _complete_closure else 3 * 1024 * 1024
+        if not isinstance(maximum_bytes, int) or isinstance(maximum_bytes, bool) or not 4096 <= maximum_bytes <= byte_ceiling:
             raise MemoryError("invalid_transfer_limit")
+        record_limit = _bounded_integer(_record_limit, minimum=1, maximum=MAX_BUNDLE_RECORDS, code="invalid_transfer_limit") if _complete_closure else 1024
         if not isinstance(require_verified, bool):
             raise MemoryError("invalid_admission_filter")
         actual_store = str(connection.execute("SELECT value FROM metadata WHERE key='store_id'").fetchone()[0])
@@ -1501,7 +2250,10 @@ class Vault:
         proofs: dict[str, Mapping[str, Any]] = {}
         ingest_order: dict[str, int] = {}
         blocked: list[Mapping[str, Any]] = []
-        used = 1024  # Account for the cursor/envelope, not just memory text.
+        # The wire changes response counts its envelope. The trusted in-process
+        # grouping API counts canonical records; each attestation has a separate
+        # fixed bound and is never smuggled into a 4 MiB JSON response.
+        used = 0 if _complete_closure else 1024
         cursor = after
         more = len(rows) > limit
         for row in rows[:limit]:
@@ -1514,7 +2266,7 @@ class Vault:
                 memory_id = pending.pop()
                 if memory_id in records or memory_id in additions:
                     continue
-                if len(additions) >= 1024:
+                if len(additions) >= record_limit:
                     blocked_reason = "dependency_budget_exceeded"
                     break
                 dependency = connection.execute(
@@ -1531,18 +2283,28 @@ class Vault:
                 record = self._record_from_row(dependency)
                 ingest_order[memory_id] = int(dependency["ingest_seq"])
                 additions[memory_id] = record
-                added_bytes += len(canonical_bytes(record)) + 256
+                added_bytes += len(canonical_bytes(record)) + (0 if _complete_closure else 256)
                 if dependency["attestation_json"] is not None:
                     proof = strict_json_loads(str(dependency["attestation_json"]))
+                    if len(canonical_bytes(proof)) > 1024:
+                        raise MemoryError("stored_attestation_invalid")
                     added_proofs[memory_id] = proof
-                    added_bytes += len(canonical_bytes(proof))
-                if added_bytes > maximum_bytes - 1024:
+                    if not _complete_closure:
+                        added_bytes += len(canonical_bytes(proof))
+                if added_bytes > maximum_bytes - (0 if _complete_closure else 1024):
                     blocked_reason = "dependency_budget_exceeded"
                     break
                 pending.extend(str(relation["target"]) for relation in record["relations"])
             if blocked_reason is not None:
+                if _complete_closure and blocked_reason == "dependency_budget_exceeded":
+                    if records:
+                        more = True
+                        break
+                    # No cursor can be signed past an incomplete closure. A
+                    # larger-than-atomic-import graph stays explicitly pending.
+                    raise MemoryError("dependency_budget_exceeded")
                 disposition = {"memory_id": str(row["memory_id"]), "sequence": int(row["sequence"]), "reason": blocked_reason}
-                cost = len(canonical_bytes(disposition)) + 32
+                cost = 0 if _complete_closure else len(canonical_bytes(disposition)) + 32
                 if used + cost > maximum_bytes:
                     more = True
                     break
@@ -1550,7 +2312,7 @@ class Vault:
                 used += cost
                 cursor = int(row["sequence"])
                 continue
-            if used + added_bytes > maximum_bytes or len(records) + len(additions) > 1024:
+            if used + added_bytes > maximum_bytes or len(records) + len(additions) > record_limit:
                 more = True
                 break
             records.update(additions)
@@ -1565,6 +2327,29 @@ class Vault:
             "blocked": blocked,
             "dependency_closure_included": True, "network_accessed": False,
         }
+
+    def transfer_changes(
+        self, *, after: int = 0, store_id: str | None = None, limit: int = 100,
+        maximum_bytes: int = MAX_BUNDLE_BYTES, maximum_records: int = MAX_BUNDLE_RECORDS,
+        require_verified: bool = True,
+    ) -> Mapping[str, Any]:
+        """Complete bounded closure for an authorized local group transport.
+
+        This is not a memory JSON operation or a network/permission grant.
+        The byte bound applies to canonical records (the atomic importer bound);
+        attestations add at most 1024 bytes per record. An oversized individual
+        closure raises without returning a cursor that could skip it.
+        """
+        with contextlib.closing(self._connect(writable=False)) as connection, connection:
+            connection.execute("BEGIN")
+            result = dict(self._changes(
+                connection, after=after, store_id=store_id, limit=limit,
+                maximum_bytes=maximum_bytes, require_verified=require_verified,
+                _complete_closure=True, _record_limit=maximum_records,
+            ))
+            result["canonical_record_bytes"] = sum(len(canonical_bytes(record)) for record in result["records"])
+            result["maximum_attestation_bytes_per_record"] = 1024
+            return result
 
     def ingest_records(
         self, records: Iterable[Mapping[str, Any]], *, admission: str = "quarantined",
@@ -1641,20 +2426,41 @@ class Vault:
             ).rowcount
             return {"state": "quarantined", "records": count}
 
-    def requeue_records(self, identifiers: Sequence[str]) -> Mapping[str, Any]:
+    def requeue_records(self, identifiers: Sequence[str], *, request_id: str | None = None) -> Mapping[str, Any]:
         """Explicit delivery retry after trust/dependency/budget repair; no content edit."""
         if not identifiers or len(identifiers) > 256:
             raise MemoryError("invalid_limit")
         if any(not isinstance(value, str) or _MEMORY_ID.fullmatch(value) is None for value in identifiers):
             raise MemoryError("invalid_memory_id")
+        if request_id is not None and (not isinstance(request_id, str) or _REQUEST_ID.fullmatch(request_id) is None):
+            raise MemoryError("invalid_request_id")
+        selected = sorted(set(identifiers))
+        request_digest = sha256(canonical_bytes({"local_operation": "requeue_records/v1", "memory_ids": selected}))
         with contextlib.closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
-            for memory_id in set(identifiers):
+            if request_id is not None:
+                previous = connection.execute(
+                    "SELECT request_sha256,response_json FROM receipts WHERE request_id=?", (request_id,)
+                ).fetchone()
+                if previous is not None:
+                    if previous["request_sha256"] != request_digest:
+                        raise MemoryError("request_id_conflict")
+                    response = strict_json_loads(str(previous["response_json"]))
+                    if not isinstance(response, Mapping) or not isinstance(response.get("result"), Mapping):
+                        raise MemoryError("stored_receipt_invalid")
+                    return dict(response["result"])
+            for memory_id in selected:
                 if self._memory_status(connection, memory_id) == "quarantined":
                     raise MemoryError("record_not_admitted")
                 connection.execute("INSERT INTO delivery_log(memory_id) VALUES(?)", (memory_id,))
             self._requeue_dependents(connection, identifiers)
-            return {"state": "requeued", "records": len(set(identifiers)), "network_accessed": False}
+            result = {"state": "requeued", "records": len(selected), "network_accessed": False}
+            if request_id is not None:
+                connection.execute(
+                    "INSERT INTO receipts(request_id,request_sha256,response_json,created_at) VALUES(?,?,?,?)",
+                    (request_id, request_digest, canonical_bytes(success(result, request_id=request_id)).decode("utf-8"), utc_now()),
+                )
+            return result
 
     def handle(self, value: Any) -> Mapping[str, Any]:
         if not isinstance(value, Mapping):
@@ -1687,7 +2493,7 @@ class Vault:
                     exc.code, retryable=exc.retryable, request_id=request_id
                 )
         try:
-            mutating = request.get("op") in {"remember", "observe"}
+            mutating = request.get("op") in {"remember", "observe", "memory.reindex"}
             with contextlib.closing(self._connect(writable=mutating)) as connection, connection:
                 if mutating:
                     connection.execute("BEGIN IMMEDIATE")

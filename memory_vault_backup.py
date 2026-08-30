@@ -22,8 +22,8 @@ from typing import Any, Iterator, Mapping
 
 from memory_vault import (
     ADMISSION_STATES, AUTHORITY, DATABASE_READER, DATABASE_SCHEMA,
-    DATABASE_WRITER, MAX_BUNDLE_LINE_BYTES, MemoryError, RESULT_SCHEMA,
-    canonical_bytes, normalize_text, strict_json_loads, tokenize, utc_now,
+    DATABASE_WRITER, MAX_BUNDLE_LINE_BYTES, MemoryError, RESULT_SCHEMA, Vault,
+    canonical_bytes, normalize_text, strict_json_loads, utc_now,
     validate_record,
 )
 
@@ -68,6 +68,17 @@ _INDEX_SQL = {
     "relations_target": "CREATE INDEX relations_target ON relations(target_id,relation)",
     "delivery_memory": "CREATE INDEX delivery_memory ON delivery_log(memory_id)",
 }
+# Additive, disposable v0.25 indexes. A complete older v2 database remains a
+# supported input; a partially created or differently defined extension does
+# not become permission to execute unknown SQLite programs during restore.
+_DERIVED_TABLE_SQL = {
+    "memory_entities": "CREATE TABLE memory_entities(entity TEXT NOT NULL,memory_id TEXT NOT NULL REFERENCES memories(memory_id),PRIMARY KEY(entity,memory_id))",
+    "retrieval_index": "CREATE TABLE retrieval_index(memory_id TEXT PRIMARY KEY REFERENCES memories(memory_id),profile TEXT NOT NULL,token_count INTEGER NOT NULL CHECK(token_count>=0),timeline_key TEXT NOT NULL)",
+}
+_DERIVED_INDEX_SQL = {
+    "memory_entities_memory": "CREATE INDEX memory_entities_memory ON memory_entities(memory_id)",
+    "retrieval_index_timeline": "CREATE INDEX retrieval_index_timeline ON retrieval_index(timeline_key,memory_id)",
+}
 _TRIGGER_SQL = {
     "memories_no_update": "CREATE TRIGGER memories_no_update BEFORE UPDATE ON memories BEGIN SELECT RAISE(ABORT,'append-only memories'); END",
     "memories_no_delete": "CREATE TRIGGER memories_no_delete BEFORE DELETE ON memories BEGIN SELECT RAISE(ABORT,'append-only memories'); END",
@@ -80,11 +91,21 @@ def absolute(path: Path) -> Path:
         raise MemoryError("backup_path_must_be_absolute")
     if any(part.is_symlink() for part in (selected, *selected.parents)):
         raise MemoryError("unsafe_backup_path")
+    if os.name == "nt":
+        from memory_vault_storage import validate_path
+        return validate_path(selected)
     return selected
 
 
 def regular(path: Path, *, private: bool = True) -> os.stat_result:
     absolute(path)
+    if os.name == "nt":
+        from memory_vault_storage import open_file
+        descriptor = open_file(path, os.O_RDONLY, private=private)
+        try:
+            return os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise MemoryError("unsafe_backup_file")
@@ -98,6 +119,10 @@ def _fingerprint(info: os.stat_result) -> tuple[int, int, int, int, int]:
 
 
 def _private_parent(path: Path) -> None:
+    if os.name == "nt":
+        from memory_vault_storage import private_directory
+        private_directory(path)
+        return
     if os.name != "posix":
         raise MemoryError("protected_backup_storage_unavailable")
     absolute(path)
@@ -160,15 +185,18 @@ def database_summary(connection: sqlite3.Connection) -> dict[str, Any]:
     expected = {**{name: ("table", sql) for name, sql in _TABLE_SQL.items()},
                 **{name: ("index", sql) for name, sql in _INDEX_SQL.items()},
                 **{name: ("trigger", sql) for name, sql in _TRIGGER_SQL.items()}}
+    derived = {**{name: ("table", sql) for name, sql in _DERIVED_TABLE_SQL.items()},
+               **{name: ("index", sql) for name, sql in _DERIVED_INDEX_SQL.items()}}
+    allowed = {**expected, **derived}
     seen: set[str] = set()
     for row in connection.execute("SELECT type,name,tbl_name,sql FROM sqlite_master"):
         name = str(row["name"])
-        if row["type"] == "index" and row["sql"] is None and name.startswith("sqlite_autoindex_") and row["tbl_name"] in _TABLE_SQL:
+        if row["type"] == "index" and row["sql"] is None and name.startswith("sqlite_autoindex_") and row["tbl_name"] in (_TABLE_SQL | _DERIVED_TABLE_SQL):
             continue
-        if name not in expected or row["type"] != expected[name][0] or not isinstance(row["sql"], str) or _sql(row["sql"]) != _sql(expected[name][1]):
+        if name not in allowed or row["type"] != allowed[name][0] or not isinstance(row["sql"], str) or _sql(row["sql"]) != _sql(allowed[name][1]):
             raise MemoryError("unsupported_backup_database_schema")
         seen.add(name)
-    if seen != set(expected):
+    if seen not in (set(expected), set(allowed)):
         raise MemoryError("unsupported_backup_database_schema")
     metadata = dict(connection.execute("SELECT key,value FROM metadata WHERE key IN ('schema','min_reader','min_writer','store_id')"))
     if (metadata.get("schema") != DATABASE_SCHEMA or metadata.get("min_reader") != str(DATABASE_READER)
@@ -191,6 +219,7 @@ def database_summary(connection: sqlite3.Connection) -> dict[str, Any]:
     return {"database_schema": DATABASE_SCHEMA, "store_id": metadata["store_id"],
             "logical_bytes": pages * page_size, "page_size": page_size,
             "counts": counts, "admissions": admissions,
+            "extended_retrieval_index_present": set(derived).issubset(seen),
             "attestations": int(connection.execute("SELECT COUNT(*) FROM record_admissions WHERE attestation_json IS NOT NULL").fetchone()[0])}
 
 
@@ -239,6 +268,10 @@ def _file_hash(path: Path, deadline: float) -> tuple[str, int]:
 
 
 def _sync_directory(path: Path) -> None:
+    if os.name == "nt":
+        # Native publication uses MoveFileEx WRITE_THROUGH below; opening a
+        # directory with the POSIX fsync recipe is not supported on Windows.
+        return
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         os.fsync(descriptor)
@@ -248,6 +281,10 @@ def _sync_directory(path: Path) -> None:
 
 def _publish_file(temporary: Path, destination: Path) -> None:
     absolute(destination)
+    if os.name == "nt":
+        from memory_vault_storage import publish_file
+        publish_file(temporary, destination, replace=False)
+        return
     try:
         os.link(temporary, destination)
     except FileExistsError:
@@ -258,7 +295,11 @@ def _publish_file(temporary: Path, destination: Path) -> None:
 
 def _new_temporary(parent: Path) -> Path:
     descriptor, name = tempfile.mkstemp(prefix=".memory-recovery-", suffix=".sqlite3", dir=parent)
-    os.fchmod(descriptor, 0o600)
+    if os.name == "nt":
+        from memory_vault_storage import check_fd
+        check_fd(descriptor, private=True)
+    else:
+        os.fchmod(descriptor, 0o600)
     os.close(descriptor)
     return Path(name)
 
@@ -303,7 +344,11 @@ def backup_database(vault_path: Path, output: Path, *, timeout: int = DEFAULT_TI
             staged_manifest = Path(name)
             try:
                 with os.fdopen(descriptor, "wb") as stream:
-                    os.fchmod(stream.fileno(), 0o600)
+                    if os.name == "nt":
+                        from memory_vault_storage import check_fd
+                        check_fd(stream.fileno(), private=True)
+                    else:
+                        os.fchmod(stream.fileno(), 0o600)
                     stream.write(encoded)
                     stream.flush()
                     os.fsync(stream.fileno())
@@ -368,6 +413,29 @@ def _validate_write_receipts(connection: sqlite3.Connection, deadline: float) ->
                 or value["authority"] != dict(AUTHORITY) or value["request_id"] != row["request_id"]):
             raise MemoryError("invalid_backup_write_receipt")
         result = value["result"]
+        if isinstance(result, dict) and result.get("state") == "requeued":
+            if (set(result) != {"state", "records", "network_accessed"}
+                    or type(result["records"]) is not int or not 1 <= result["records"] <= 256
+                    or result["network_accessed"] is not False):
+                raise MemoryError("invalid_backup_write_receipt")
+            continue
+        if isinstance(result, dict) and result.get("state") == "index_page_rebuilt":
+            fields = {"state", "records", "through", "next_after", "complete", "range_complete", "index", "canonical_records_changed", "network_accessed"}
+            index = result.get("index")
+            if (set(result) != fields or type(result["records"]) is not int or not 0 <= result["records"] <= 256
+                    or type(result["through"]) is not int or not 0 <= result["through"] <= 2**63 - 1
+                    or (result["next_after"] is not None and (type(result["next_after"]) is not int or not 0 <= result["next_after"] <= result["through"]))
+                    or any(type(result[key]) is not bool for key in ("complete", "range_complete"))
+                    or result["canonical_records_changed"] is not False or result["network_accessed"] is not False
+                    or not isinstance(index, dict) or set(index) != {"profile", "complete", "first_unindexed_sequence", "repair_operation", "canonical_records_changed"}
+                    or not isinstance(index["profile"], str) or len(index["profile"]) > 128
+                    or type(index["complete"]) is not bool or index["repair_operation"] != "memory.reindex"
+                    or index["canonical_records_changed"] is not False
+                    or (index["first_unindexed_sequence"] is not None and (type(index["first_unindexed_sequence"]) is not int or not 1 <= index["first_unindexed_sequence"] <= result["through"]))):
+                raise MemoryError("invalid_backup_write_receipt")
+            # Historical derived-index receipts are retained for exact retry,
+            # not used as evidence that this restored index is still complete.
+            continue
         if (not isinstance(result, dict) or set(result) - {"state", "memory_id", "kind", "network_accessed", "verification"}
                 or result.get("state") not in {"stored", "duplicate"} or result.get("network_accessed") is not False
                 or not isinstance(result.get("memory_id"), str)):
@@ -385,7 +453,10 @@ def _rebuild_restored_copy(connection: sqlite3.Connection, deadline: float, *, t
         raise MemoryError("backup_attestation_too_large")
     _validate_write_receipts(connection, deadline)
     connection.execute("BEGIN IMMEDIATE")
+    Vault.ensure_retrieval_tables(connection)
     connection.execute("DELETE FROM terms")
+    connection.execute("DELETE FROM memory_entities")
+    connection.execute("DELETE FROM retrieval_index")
     connection.execute("DELETE FROM relations")
     connection.execute("DELETE FROM transfer_receipts")
     connection.execute("DELETE FROM delivery_log")
@@ -399,8 +470,7 @@ def _rebuild_restored_copy(connection: sqlite3.Connection, deadline: float, *, t
                 or any(record[name] != row[name] for name in ("memory_id", "record_sha256", "kind", "text", "created_at"))
                 or normalize_text(record["text"]) != row["normalized_text"]):
             raise MemoryError("invalid_backup_record")
-        frequencies = Counter(tokenize(" ".join([record["text"], *record["entities"]]), maximum=4096, maximum_input_bytes=MAX_BUNDLE_LINE_BYTES))
-        connection.executemany("INSERT INTO terms(token,memory_id,frequency) VALUES(?,?,?)", ((token, record["memory_id"], count) for token, count in frequencies.items()))
+        Vault.rebuild_record_index(connection, record)
         connection.executemany("INSERT INTO relations(source_id,relation,target_id) VALUES(?,?,?)", ((record["memory_id"], relation["type"], relation["target"]) for relation in record["relations"]))
         admission = "quarantined"
         if row["attestation_json"] is None:

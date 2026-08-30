@@ -9,8 +9,8 @@ client sessions that happen to produce them.
 This guide and [PROTOCOL.md](../PROTOCOL.md), [schemas](../schemas/README.md) and
 [examples](../examples/protocol/README.md) are sufficient implementation
 material for a documentation-only distribution. Executable reference code is
-an optional, separate
-[source checkout](https://github.com/qh-work/memory-vault-sync/tree/v0.24.1).
+an optional, separate source/review distribution. Use its exact manifest commit;
+the [development artifact guide](RELEASE.md) distinguishes it from older tags.
 Nothing here installs a client, turns on background capture, grants access,
 hides persistence or changes host logging.
 
@@ -31,8 +31,8 @@ storage, reading a document cannot provide persistent memory. Report that
 limitation instead of claiming a save. A host with storage but no hash helper
 can keep ordinary notes, but must not label them valid UAMP records yet.
 
-The lightweight reference is available when convenient, not compulsory:
-[memory_vault.py](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/memory_vault.py).
+The lightweight `memory_vault.py` reference is available in the matching
+source/review distribution when convenient, not compulsory.
 Using another language/storage engine is a first-class implementation choice.
 
 ## 2. Store independent, append-only records

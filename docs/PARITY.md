@@ -1,80 +1,71 @@
-# Lightweight and full-mode capability matrix
+# v0.25: v0.21 workflows plus an independent lightweight protocol
 
-Both modes use the same independent Memory Record model. A Task, Project,
-conversation, device or model is optional provenance, never a parent container,
-lifecycle owner or source of execution permission. "Full" means the optional
-operational integrations around that core; it does not mean the old monolithic
-plugin or all external services have been recreated.
+This development branch restores the useful, actually exposed v0.21 taskless
+workflows around the current canonical record contract. It is not a rollback
+to the old monolith. Both usage modes are first-class: a complete authorized
+client, or an independent implementation of the open protocol.
 
-This matrix describes source capabilities, **not executed acceptance tests**.
-The owner requested no test execution. Each host, signing, sync and recovery
-path still needs independent synthetic and consenting real-host validation.
+The baseline is v0.21.0 commit
+`030ed411ed9ddb969a03f0b5caec87dac9b0dd57`; the starting release was v0.24.1
+commit `de349ef8453b0aa0ebf68ae18484d0c1355cf91b`.
+The [full completion ledger](V0_25_PARITY_PLAN.md) is the acceptance scope.
+**Source present does not mean a test passed, a host was installed or v0.25
+was publicly released.** Runtime verification remains pending at the owner's
+request; do not use this table as production certification.
 
-| Capability | Independent/light path | Optional full path | Old v0.21 comparison |
+## Capability mapping
+
+| Capability | Independent protocol / core | Authorized full client in v0.25 | v0.21 mapping and limits |
 | --- | --- | --- | --- |
-| Persistent taskless records | Portable specification and small reference core | Same records and same selected Vault | Preserves the taskless direction; does not restore Task owners |
-| Facts/decisions/goals/continuity | Explicit remember/observe/recall/handoff | MCP, direct protocol, lifecycle and host adapters | Dynamic context replaces fixed Task directories |
-| Cross-model/client access | Any implementation of the record/protocol contract | Ready-made optional local client integrations | No requirement to use one vendor or one plugin |
-| Automatic visible-turn capture | Caller controls when to save | Opt-in host-visible adapters, staging and retries | Restores an integration workflow, not silent permissionless capture |
-| Crash/idempotency handling | Canonical stable-request write receipts | Durable lifecycle phases and explicit local queues | Implemented with smaller control modules, not legacy task binding |
-| Per-record signing | Optional profile; unsigned mode labeled | Ed25519 attestations and explicit current trust | **New actual record-signing path**; v0.21 ordinary records were hash-only |
-| Trust revocation | Runtime may supply independent trust checks | Configured client excludes currently untrusted signers | Replaces external-provider-only device-trust scaffolding; not a complete multi-device key ceremony |
-| Incremental logical transfer | Portable interchange, no built-in account service | Signed directory batches, explicit sync coordination and optional external transport | Replaces mandatory Git transport rather than requiring it again |
-| Drive/cloud carriage | External transport choice | Optional rclone-compatible carriage where configured | Not a reimplementation of the former native Drive-specific subsystem |
-| Diagnostics | Core capabilities/status | Content-free doctor, queue/lifecycle/trust/sync summaries | Restores operator visibility without scanning conversations |
-| Retry | Same request and arguments | Bounded explicit hook retry; lifecycle/host exact-request recovery | Does not automatically resolve incompatible events |
-| Memory backup | Unsigned logical NDJSON for interchange | Consistent SQLite snapshot with signatures and write receipts | Real memory recovery; explicitly excludes unsnapshotted live client queues |
-| Restore | Import reviewed records | Restore to a new database, rebuild index, current trust decision, new replication identity | No silent in-place rollback of live stores/cursors |
-| Compression/chunk carriage | An optional byte-pack profile | New bounded compressed chunks, resumable copy and new-output unpack | Not old v0.21 memory-pack wire compatibility |
-| Updates | Review a new protocol/source revision | Explicit check/stage workflow; activation remains a separate operator choice | Does not claim old signed-update production channel existed or silently reinstall hooks |
-| Old memory conversion | Supported explicit export conversion | Same conversion tool included with client | One-way migration, not retained legacy execution paths |
-| Artifact/file data | Independent artifact records/references | External file transfer/backup chosen separately | Not the complete old artifact hydration/object-store subsystem |
-| Multi-signature/key recovery | Specification can evolve independently | Not a completed multi-signature history or automated recovery quorum | Old state-machine interfaces were not a deployed production key ceremony |
-| Windows | Unsigned standard-library core | Protected signing/recovery require native ACL support | Do not label POSIX-only protected storage as universally deployed |
+| Persistent memory | Canonical taskless records, immutable IDs, provenance and relations | All entries use the same configured Vault | Preserves useful memory; no Task/Project owner |
+| Goal continuity | Dynamic recall/handoff over evidence | MCP, protocol and host entry points | A goal is a record; host coordination is not ownership |
+| Visible-turn capture | Caller decides what to append | Opt-in Codex/Claude/Gemini/generic adapters, durable staging and exact retry | Episode plus continuity restored; neither old nor new automatically infers every semantic claim |
+| Local retrieval | CJK/Latin terms, full-text fragments, bounded BM25/concept/polarity explanations | Same retrieval through every entry | Explicit paginated reindex for preexisting short indexes; not a global exhaustive ranking or a measured speed claim |
+| Claim and graph views | `memory.views`, `memory.graph`, non-executing proposals | Same core through MCP; source/claim timelines | Current/superseded/conflicted/resolved state with bounded continuation and trust-aware edges |
+| Old host operations | Optional separate wire profile | `compat`: the ten production v0.21 operations, durable handles/receipts and old-ID mapping | Not the new lifecycle envelope; no fabricated Git commit or original author identity |
+| Record attribution | Optional Ed25519 record/message proofs | Independent public-key registry, explicit enrollment, revocation-aware reads | Additional to v0.21's ordinary hash-only records; signatures are not truth or execution rights |
+| Incremental transfer | Logical records and signed transfer profile | Chained v2 streams, receive-only/flush, current trust, replay/fork/gap handling | Replaces mandatory Git, not memory semantics; v1 heads require explicit anchoring when evidence is missing |
+| Privacy-blocked delivery | Local records remain unchanged | Read-only review, explicit keep/exclude, idempotent decisions, signed dispositions, requeue | An exclusion means not delivered; original pending evidence is retained |
+| Large transfer | Complete dependency closure | Signed resumable fragment groups up to the core's 64 MiB / 100,000 records | Receiver commits only a complete validated group; no size-only silent skip |
+| Cloud carriage | Implementation chooses permitted transport | Directory or explicitly pinned/configured rclone remote and crypt | Replaces old native Drive/Git control-plane machinery; no credentials acquired automatically |
+| Diagnosis/reindex | Content-free status; explicit index repair | Doctor, scoped retry and bounded state summaries | Does not search private conversations or mutate canonical history |
+| Memory-only recovery | Portable bundles | Consistent snapshot, current-trust restore into a new Vault identity | No in-place data rollback or copied replication identity |
+| Full client recovery | Optional operator workflow | Quiesced selected-state snapshot, inert evidence restore, explicit local reactivation and reverified received capsules | No inherited keys, sync publication permission or host hook trust; no false global multi-file atomicity |
+| Old export/pack/checkpoint | Explicit compatibility/conversion profile | Real old pack/ZIP repack, checkpoint chains, 2 GiB / 250,000-object conversion, split canonical parts and mapping | Preserves original bytes/evidence and relationships; cyclic old graphs and invalid formats fail explicitly |
+| File packs | Optional byte carriage | Compression, resumable copy and verified new-path unpack | Separate from old pack wire compatibility, which is provided by `legacy-pack` |
+| Selected sharing | Content selectors and complete portable shares | Review/export/import preserving canonical bytes and proofs; quarantine by default | Selected roots plus all reachable dependencies, not a Task-owned export |
+| Software updates | Follow compatible protocol revisions | Independently pinned RSA-PSS metadata, bounded stage, isolated activation journal, retained rollback, separately opted-in finite updater | Real old verifier capability restored without Git; no production signing channel provisioned by default |
+| Encryption/device contracts | Optional transport metadata profiles | Fail-closed external provider APIs, device transitions and key-bound signed ciphertext catalogs | Restores old provider boundaries; not a deployed cipher, recovery quorum or service |
+| Platforms | Language/OS independent; single-file standard-library reference | POSIX private modes and native Windows local-fixed-NTFS handles/ACLs/locks | Native implementation present, not Windows runtime certification |
+| Distributions | No-executable protocol ZIP and readable agreement | Complete built client, local catalog and explicit setup instructions | No runtime build or repository login after a built client download; host installation remains authorized |
 
-## What was actually lost and what should return
+## Architecture that must not return
 
-The v0.23 cut removed more than Task/Git coupling: host lifecycle integration,
-durable client queues, operational diagnosis/recovery, optional signed-update
-verification and staged security modules went with the old runtime. A lightweight
-core alone did not replace those user-facing workflows. The full mode restores
-concrete integrations as optional modules while keeping the lightweight route
-independently usable.
+Task, Project, conversation, model, device and runtime IDs are optional
+references/provenance, not a memory's parent, retention rule, visibility boundary
+or authorization source. Finishing or deleting a task does not delete memory.
 
-The comparison must also avoid inflating the old baseline:
+There is no mandatory Git repository, login, task directory, hidden transcript
+discovery, permissionless installation, key auto-enrollment, policy change from
+memory, log suppression or agent spawning. These are explicit architectural
+exclusions, not unfinished features to reintroduce.
 
-- v0.21 ordinary memory records/checkpoints used canonical hashes and source
-  pseudonyms, not per-record cryptographic author signatures.
-- Ordinary Git writes disabled commit signing and used a generic client author.
-  Repository identity/private-access checks were not original-author proofs.
-- Device trust, encrypted sharing and signed replication catalogs exposed
-  external-provider contracts whose default production providers refused work.
-- RSA-PSS software-update verification was real code, but separate from memory
-  authorship; the documented production release-signing channel was not provisioned.
+The optional lifecycle and old compatibility handles coordinate calls only.
+Restore does not import execution permissions; signed update metadata does not
+approve a new host integration contract; a content selector is not an access
+control list.
 
-That is why simply restoring every old file would neither prove identity nor
-finish an interoperable full product. Current record attestations, explicit
-trust and actual recovery paths need their own evidence.
+## Read the actual boundary
 
-## Deliberate exclusions, not missing tasks to recreate
+- [Retrieval](RETRIEVAL.md) and [graph views](GRAPH_VIEWS.md)
+- [Old host compatibility](COMPATIBILITY.md) and [lifecycle](LIFECYCLE.md)
+- [Sync](SYNC.md), [transfer](TRANSFER.md) and [backends](REMOTE_BACKENDS.md)
+- [Recovery](BACKUP.md), [operations](OPERATIONS.md) and [old packs](LEGACY_PACKS.md)
+- [Sharing](SHARING.md), [encryption contracts](ENCRYPTION.md), [updates](UPDATES.md)
+- [Platforms](PLATFORMS.md) and [independent review handoff](REVIEW_HANDOFF.md)
 
-- No mandatory Git repository/login for owning or saving memory.
-- No `Project -> Task -> Memory` hierarchy or lifetime coupling.
-- No automatic enrollment of packet-contained keys, policy changes from memory,
-  permission creation, hidden persistence, log suppression or agent spawning.
-- No claim that a hash manifest proves a publisher, a valid signature proves a
-  statement true, or a successful transfer proves another AI read the record.
-- No claim that Work supports automatic hooks merely because an MCP or plugin
-  package exists. Actual host event delivery must be independently established.
-
-## Operational references
-
-Use [OPERATIONS.md](OPERATIONS.md) for diagnosis/retry,
-[BACKUP.md](BACKUP.md) for memory-only snapshots and new-copy recovery,
-[CLIENTS.md](CLIENTS.md) and [LIFECYCLE.md](LIFECYCLE.md) for integration boundaries,
-and [TRANSFER.md](TRANSFER.md) for signed incremental delivery.
-
-Capabilities implemented in source, capabilities enabled on an installation,
-and capabilities validated by execution are separate facts. This matrix must
-not be used as evidence that private data was migrated, a client was installed,
-a signing key was generated, a network account was connected, or tests passed.
+Ordinary NDJSON intentionally omits proofs; signed transfer and selected shares
+preserve them. A cryptographic proof identifies an enrolled key, not an original
+human/model or a true statement. Transport receipts do not establish that
+another AI read or used a memory. No independent adoption claim follows from
+source, visits, stars, forks or downloads.

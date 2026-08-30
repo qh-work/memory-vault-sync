@@ -1,99 +1,88 @@
-# Memory Vault v0.24.1 — complete optional client package
+# Memory Vault v0.25.0 development — authorized full client
 
-This archive contains a built plugin under `plugins/memory-vault-client` and a
-local marketplace catalog at `.agents/plugins/marketplace.json`. It includes
-its Python source runtime; no Git checkout or runtime build is needed.
+This is the full-client **review build**, not a claim of a finished or
+runtime-verified stable release. The plugin is under
+`plugins/memory-vault-client`; the local marketplace catalog is
+`.agents/plugins/marketplace.json`. All 26 required runtime source modules
+are included. No Git checkout or runtime build is needed to use the archive.
 
-Requirements: Python 3.10+ and a host supporting local stdio MCP/plugin sources.
-The ordinary unsigned path uses only the Python standard library. Signing is
-optional and requires the dependency listed in `requirements-integrations.txt`,
-separately configured keys and explicit public-key trust.
+Python 3.10+ and a host supporting local stdio MCP are required. The ordinary
+unsigned path uses only the standard library. Optional record signing requires
+the separately installed integration dependency, explicit keys and independent
+public-key trust. No production publisher/encryption/recovery provider is
+provisioned by this package.
 
-## Set up once, with the user's approval
+## Explicit setup
 
-1. Extract the archive into a location you choose and keep it there.
-2. From this directory, create the client configuration:
-
-   ```bash
-   python3 plugins/memory-vault-client/scripts/launcher.py configure
-   ```
-
-   The default uses the reference core's user-level Vault path. Use
-   `configure --vault /absolute/private/vault.sqlite3` to select another path.
-   Configuration is no-clobber and does not install a host or create a Vault.
-   If you also want automatic visible-turn capture, include
-   `--capture-visible-turns` when creating that configuration. This is a separate
-   explicit choice; it does not trust host hooks or change host policy.
-
-3. In a compatible Codex installation, add this extracted **root directory** as
-   a local marketplace source, then install `memory-vault-client` from the
-   `Memory Vault — Protocol and Client` source in the Plugins UI. The optional
-   CLI command for registering this explicit non-default source is:
+1. Extract into a location you control and keep it there.
+2. Create a new private configuration; existing configuration is not overwritten:
 
    ```bash
-   codex plugin marketplace add /absolute/path/to/this/extracted-directory
+   python3 -I -B plugins/memory-vault-client/scripts/launcher.py configure --vault /absolute/private/vault.sqlite3
    ```
 
-   This release has not been submitted to OpenAI's universal public directory.
-   Availability of local sources varies by host. Review and approve the plugin
-   and its tools normally; review lifecycle hooks separately before trusting
-   them. Start a fresh host session when required by that host.
+   Omit `--vault` to use the reference default. Configuration does not create a
+   Vault or install a host. Add `--capture-visible-turns` only to explicitly
+   enable visible-turn capture; host hook approval remains separate.
+3. For a compatible Codex installation, add the extracted **root directory** as
+   a local marketplace source, then review and install `memory-vault-client`
+   from `Memory Vault — Protocol and Client`. Review hooks separately. This
+   package is not a listing in a universal public plugin directory.
+4. For another local MCP host, use your Python executable with arguments
+   `-I -B /absolute/path/to/plugins/memory-vault-client/scripts/launcher.py mcp`.
+   Add `--config /absolute/private/client.json` before `mcp` when needed.
 
-4. A host that supports local MCP but not plugin catalogs can launch the same
-   runtime directly. Configure its command as your Python executable and args
-   as the absolute path to `scripts/launcher.py`, followed by `mcp`.
+On Windows use `py -3 -I -B` or the absolute installed Python executable.
+The packaged default command is `python3`; adapt the host command if it is not
+available. Native protected storage/locking supports local fixed NTFS under
+the documented owner/DACL rules. UNC, unsupported volumes, reparse points and
+unverified permissions fail closed. **Real Windows behavior was not tested.**
 
-On Windows, use `py -3` in place of `python3` in the examples. The packaged
-`.mcp.json` defaults to `python3`; if that executable is unavailable, configure
-the host's MCP command as `py` with `-3` before the launcher path. Hook templates
-contain an explicit Windows launcher. Native protected signing on Windows is
-not included, and this release was not validated on a real Windows host.
+## One Vault through either route
 
-## Use the same memory without the plugin
-
-The configured client's protocol bridge uses the same Vault and trust settings:
-
-```bash
-python3 plugins/memory-vault-client/scripts/launcher.py protocol --serve
-```
-
-For a different programming language or storage engine, implement `PROTOCOL.md`
-and exchange its canonical NDJSON records. Do not copy a live SQLite file as a
-portable format. The plugin and independent protocol path are equal clients;
-neither owns or partitions the memory.
-
-Read `CLIENTS.md`, `LIFECYCLE.md`, `TRUST.md` and `TRANSFER.md` in
-`plugins/memory-vault-client/docs/` for lifecycle, signing, portable import/export and explicit signed
-directory transfer. The full runtime also includes:
-
-- `host`: Claude Code, Gemini CLI and generic visible-event adapters, with
-  copyable configurations in `plugins/memory-vault-client/adapters/`.
-- `sync`: coalesced work, finite workers and directory/rclone delivery after
-  independent opt-in; bind `configure --sync-config /absolute/private/sync.json`
-  to use its exact Vault/identity/trust. See `docs/SYNC.md` and
-  `docs/REMOTE_BACKENDS.md` before enabling it.
-- `manage`: read-only doctor, bounded retry, snapshot backup and new-path restore.
-- `pack`: compressed chunks and resumable copy for an explicit export/snapshot.
-- `update`: explicit public release inspection and new-directory staging;
-  never installation or activation.
-
-For example, from the extracted package root:
+The same configured storage and trust work without MCP:
 
 ```bash
-python3 plugins/memory-vault-client/scripts/launcher.py manage doctor
-python3 plugins/memory-vault-client/scripts/launcher.py sync status
+python3 -I -B plugins/memory-vault-client/scripts/launcher.py protocol --serve
 ```
 
-The second command requires a bound sync configuration. No daemon, scheduler,
-host setting, signing key or trust enrollment is installed by extracting this
-package. Local memory saving never waits for network delivery. Read
-`docs/TWO_MODES.md` and `docs/PARITY.md` for the exact capabilities and limits.
+An independent implementation can instead follow the documentation-only UAMP
+protocol using another language or storage engine. Both exchange the same
+canonical records; neither a task, session nor a plugin owns them.
 
-## Validation and privacy
+The full client additionally includes:
 
-This release has source-level review, syntax/JSON and package-inventory checks,
-not runtime tests, desktop installation verification or cross-device trials.
-The supplied test/review material is for others to run with synthetic data and
-their host's authorization. No real memory, key, credential or local user config
-is included. The archive's SHA-256 checksums detect byte changes; they are not a
-publisher signature or an assertion of production security.
+- Eleven MCP tools, local visible-turn lifecycle and Codex/Claude Code/Gemini
+  CLI/generic adapters. Host support requires actual approved event delivery.
+- An explicit `compat` entry for the ten v0.21 production host operations;
+  legacy handles are local correlations, not new memory owners.
+- Full-record CJK/Latin retrieval, deterministic concept expansion, explained
+  BM25 ranking, derived claim views, graphs and repairable indexes.
+- Durable signed sync, explicit receive/flush, blocked-send review and selected
+  resolution, directory/rclone backends and resumable large-transfer fragments.
+- Memory snapshots plus separately explicit full-client recovery to new paths;
+  no silent key, permission or remote-delivery trust transplant.
+- Native portable chunks and v0.21 ZIP/pack/checkpoint verification/conversion,
+  preserving original evidence and graph/alias mappings.
+- Content-selected sharing, independent trust lifecycle and fail-closed
+  externally provided encryption/catalog contracts.
+- Controlled update staging, independently pinned publisher verification,
+  isolated managed activation/rollback and separately opted-in finite updates.
+
+See `plugins/memory-vault-client/docs/CLIENTS.md`, `COMPATIBILITY.md`,
+`PARITY.md`, `PLATFORMS.md` and the full `V0_25_PARITY_PLAN.md` ledger.
+Operational commands never derive permissions from memory. Ordinary recall and
+local saves do not wait for network. No host setting, private installation,
+startup service or real Vault is changed by extracting this package.
+
+## Evidence and independent review
+
+These are implemented source paths, **not passed runtime tests**. Application
+tests, host installation, performance and cross-device/native Windows trials
+were not run, at the owner's request. The separate review-kit archive includes
+synthetic cases and bounded reviewer instructions; run them only with your
+own authority and disposable data.
+
+Only allowlisted public source is packaged. No real memory, credentials, keys
+or local user configuration is included. Inventory/archive checks establish
+bytes, not publisher identity or production security.

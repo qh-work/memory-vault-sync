@@ -16,11 +16,13 @@ from pathlib import Path
 import re
 import stat
 import tempfile
-from typing import Any, Mapping, Sequence
+from typing import Any, BinaryIO, Iterator, Mapping, Sequence
+import uuid
 import zlib
 
 from memory_vault import MemoryError, canonical_bytes, failure, strict_json_loads, success, write_response
 from memory_vault_client import _absolute, _private_directory, _read_json, _write_once
+import memory_vault_storage as protected_storage
 
 
 SCHEMA = "memory-vault-file-pack/v1"
@@ -33,12 +35,35 @@ MAX_MANIFEST_BYTES = 128 * 1024
 _SHA = re.compile(r"[0-9a-f]{64}")
 
 
-def _read(path: Path, maximum: int) -> bytes:
-    descriptor = os.open(_absolute(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+def _fingerprint(info: os.stat_result) -> tuple[int, ...]:
+    # Native access control is checked through the handle, not synthesized
+    # POSIX permission bits from a Windows pathname/stat implementation.
+    mode = stat.S_IFMT(info.st_mode) if os.name == "nt" else info.st_mode
+    return (info.st_dev, info.st_ino, mode, info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+@contextlib.contextmanager
+def _source_stream(path: Path, maximum: int, *, private: bool = False) -> Iterator[BinaryIO]:
+    """Keep the validated descriptor for the entire read; never follow links."""
+    selected = _absolute(path)
+    before = selected.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > maximum:
+        raise MemoryError("pack_unsafe_or_oversized_file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+    descriptor = (protected_storage.open_file(selected, flags, private=private) if os.name == "nt"
+                  else os.open(selected, flags))
     with os.fdopen(descriptor, "rb") as stream:
         info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_size > maximum:
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > maximum
+                or _fingerprint(info) != _fingerprint(before)):
             raise MemoryError("pack_unsafe_or_oversized_file")
+        yield stream
+        if _fingerprint(os.fstat(stream.fileno())) != _fingerprint(info) or _fingerprint(selected.lstat()) != _fingerprint(info):
+            raise MemoryError("pack_source_changed_retry_new_output")
+
+
+def _read(path: Path, maximum: int) -> bytes:
+    with _source_stream(path, maximum) as stream:
         data = stream.read(maximum + 1)
     if len(data) > maximum:
         raise MemoryError("pack_file_limit")
@@ -46,9 +71,8 @@ def _read(path: Path, maximum: int) -> bytes:
 
 
 def _signature(path: Path) -> list[int]:
-    info = _absolute(path).lstat()
-    if not stat.S_ISREG(info.st_mode):
-        raise MemoryError("pack_unsafe_file")
+    with _source_stream(path, MAX_COMPRESSED_BYTES, private=True) as stream:
+        info = os.fstat(stream.fileno())
     return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]
 
 
@@ -71,6 +95,9 @@ def _atomic_state(path: Path, value: Mapping[str, Any]) -> None:
     _private_directory(path.parent)
     if path.exists():
         _read_json(path, maximum=MAX_MANIFEST_BYTES)
+    if os.name == "nt":
+        protected_storage.atomic_write(path, canonical_bytes(value) + b"\n", replace=True)
+        return
     descriptor, temporary = tempfile.mkstemp(prefix=".pack-state-", dir=path.parent)
     try:
         with os.fdopen(descriptor, "wb") as stream:
@@ -87,6 +114,9 @@ def _atomic_state(path: Path, value: Mapping[str, Any]) -> None:
 def _new_bytes(path: Path, data: bytes) -> None:
     """No-clobber publication of complete bytes, including the final manifest."""
     _absolute(path)
+    if os.name == "nt":
+        protected_storage.atomic_write(path, data, replace=False)
+        return
     descriptor, temporary = tempfile.mkstemp(prefix=".pack-write-", dir=path.parent)
     try:
         with os.fdopen(descriptor, "wb") as stream:
@@ -98,6 +128,20 @@ def _new_bytes(path: Path, data: bytes) -> None:
     finally:
         with contextlib.suppress(FileNotFoundError):
             Path(temporary).unlink()
+
+
+def _new_directory(path: Path) -> None:
+    """Create one new private pack root; do not adopt an existing directory."""
+    if os.name == "nt":
+        protected_storage.private_directory(path.parent)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    path.mkdir(mode=0o700)
+    if os.name == "nt":
+        protected_storage.check_private_directory(path)
+    (path / "chunks").mkdir(mode=0o700)
+    if os.name == "nt":
+        protected_storage.check_private_directory(path / "chunks")
 
 
 def _manifest(directory: Path) -> tuple[Mapping[str, Any], bytes]:
@@ -138,14 +182,9 @@ def create(source: Path, output: Path) -> Mapping[str, Any]:
     source, output = _absolute(source), _absolute(output)
     if output.exists():
         raise MemoryError("pack_output_exists")
-    descriptor = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
-    with os.fdopen(descriptor, "rb") as stream:
+    with _source_stream(source, MAX_SOURCE_BYTES) as stream:
         info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_SOURCE_BYTES:
-            raise MemoryError("pack_source_limit")
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.mkdir(mode=0o700)
-        (output / "chunks").mkdir(mode=0o700)
+        _new_directory(output)
         chunks: list[Mapping[str, Any]] = []
         whole = hashlib.sha256()
         total = 0
@@ -188,9 +227,7 @@ def copy(source: Path, output: Path, *, maximum_chunks: int = 32) -> Mapping[str
     manifest_hash = _digest(encoded)
     state_path = output / "COPY_STATE.json"
     if not output.exists():
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.mkdir(mode=0o700)
-        (output / "chunks").mkdir(mode=0o700)
+        _new_directory(output)
         _write_once(state_path, {"schema_version": COPY_SCHEMA, "manifest_sha256": manifest_hash, "verified": {}})
     _private_directory(output)
     _private_directory(output / "chunks")
@@ -247,8 +284,13 @@ def unpack(source: Path, output: Path) -> Mapping[str, Any]:
     if output.exists() or source == output or source in output.parents:
         raise MemoryError("pack_unpack_requires_new_external_file")
     manifest, _ = _manifest(source)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=".memory-unpack-", dir=output.parent)
+    if os.name == "nt":
+        protected_storage.private_directory(output.parent)
+        temporary = output.parent / (".memory-unpack-" + uuid.uuid4().hex)
+        descriptor = protected_storage.open_file(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, private=True)
+    else:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(prefix=".memory-unpack-", dir=output.parent)
     whole = hashlib.sha256()
     try:
         with os.fdopen(descriptor, "wb") as stream:
@@ -267,8 +309,11 @@ def unpack(source: Path, output: Path) -> Mapping[str, Any]:
                 raise MemoryError("pack_source_hash_mismatch")
             stream.flush()
             os.fsync(stream.fileno())
-        os.link(temporary, output)
-        _sync_directory(output.parent)
+        if os.name == "nt":
+            protected_storage.publish_file(Path(temporary), output, replace=False)
+        else:
+            os.link(temporary, output)
+            _sync_directory(output.parent)
     finally:
         with contextlib.suppress(FileNotFoundError):
             Path(temporary).unlink()

@@ -99,6 +99,8 @@ The source entry points are:
 ```text
 doctor(config_path) -> report
 retry(config_path, limit=16) -> local hook-outbox result
+retry_compat(config_path, limit=4) -> exact protocol-1.0 pending-intent result
+retry_host(config_path, host=..., session_key=...) -> one exact queued host session
 main(argv=None, *, config_path=None) -> exit code
 ```
 
@@ -109,11 +111,98 @@ The module imports client configuration lazily and only through
 
 Aggregate diagnostics are read-only and do not load protected signing keys.
 The existing trust provider may refuse unsupported storage platforms; that is
-reported instead of silently disabling configured trust. Snapshot/restore
-currently require POSIX private-file protections. Windows needs an explicit
-ACL-backed implementation for these protected recovery artifacts; the
-independent unsigned core remains separate from that limitation.
+reported instead of silently disabling configured trust. The protected full
+client uses POSIX private-file protections or native Windows ACL/handle checks
+on supported local fixed NTFS storage; unsupported storage fails closed. The
+Windows implementation and recovery sequence are not runtime-verified here.
 
 See [PARITY.md](PARITY.md) for the distinction between capabilities retained,
 replacement workflows implemented, intentionally removed dependencies and
 features that remain unimplemented or unvalidated.
+
+## Full client recovery is a separate, explicit workflow
+
+`backup`/`restore` retain their memory-only behavior. The additional full-client
+commands are `backup-client`, `restore-client`, `review-recovery`,
+`activate-recovery`, and `import-recovery`. See [BACKUP.md](BACKUP.md) for exact
+component selection, manifest/storage bounds and the required offline boundary.
+
+`backup-client --quiesced` requires the operator to have stopped all relevant
+writers. It does not stop applications, install a maintenance hook, or pretend
+that several files have become globally atomic. Existing locks, source hashes
+and directory-entry checks catch detected changes; an uncooperative writer is
+outside that guarantee.
+
+`restore-client` creates a new memory DB and a capture-disabled client. It
+retains all selected old control bytes under inert `evidence/`, not under that
+client's active `.state` directory. No old pending job runs and no old network
+configuration is adopted. `review-recovery` is a bounded inventory, not approval.
+
+Only `activate-recovery --authorize-local-resume` can create a different,
+capture-enabled configuration and its new state directory. It rebinds known
+local formats, preserves historical receipts, and performs **no retry itself**.
+Host approval and current signing identity remain independent. Its generated
+configuration has no sync path, so the following recovery retries stay local:
+
+```bash
+# Retry preserved visible-hook outbox entries, not conflicts.
+python3 /absolute/source/memory_vault_manage.py \
+  --config /absolute/private/recovered/resumed-client.json \
+  retry --scope hooks --limit 16
+
+# Drain only exact protocol-1.0 pending local intents, never sync.flush.
+python3 /absolute/source/memory_vault_manage.py \
+  --config /absolute/private/recovered/resumed-client.json \
+  retry --scope compat --limit 4
+
+# Resume one explicitly selected generic/Claude/Gemini session's saved requests.
+python3 /absolute/source/memory_vault_manage.py \
+  --config /absolute/private/recovered/resumed-client.json \
+  retry --scope hosts --host generic --session-key HASH_FROM_RECOVERY_INVENTORY
+```
+
+For `hosts`, use the 64-hex session directory key shown in a `control/hosts/...`
+inventory path; it is local correlation, not a Memory owner. One invocation
+uses the adapter's bounded recovery loop (up to eight queued commits). The
+`--limit` option applies to hooks/compat, not this host limit. Pending
+`turn.input` without a visible final response is not converted into a completed
+turn. Host recovery never fabricates the missing response.
+
+| Preserved state | Usable continuation |
+| --- | --- |
+| Hook `outbox` with matching visible text | Explicit `retry --scope hooks` after local activation |
+| Hook `conflicts` | Kept blocked; review original evidence rather than delete a conflict to force a save |
+| Lifecycle `committing` + a host's exact queued request | Explicit host-session recovery replays that same request |
+| Direct lifecycle `committing` without a host queue | Caller resends the exact original `turn.commit` request/ID; hashes cannot reconstruct a lost request ID |
+| Compatibility `pending` turn | Explicit `retry --scope compat` uses its frozen visible intent |
+| Compatibility incomplete `semantic_jobs` marker | Caller must resubmit its exact original proposal; the marker stores a digest, not the proposal body |
+| Completed hook/lifecycle/compat receipt | Historical local acknowledgment, not proof of current trust, remote use, or task completion |
+| Sync outgoing pending | Its canonical records survive; publish only through a separately authorized new stream/review |
+| Complete incoming signed capsule + fragments | Explicit `import-recovery`, current-trust verification, then one atomic local memory import |
+| Incomplete incoming fragment group | Keep evidence; independently retrieve the missing bytes. No partial admission or cursor advance |
+
+An existing non-recovery config can already have independent automatic sync
+enabled. Hook/host retries through **that** config may notify it, as documented
+above. The recovery path avoids this by creating a local-only config; it does
+not silently disable or modify another working client's settings.
+
+Old transfer cursors, peer state, privacy approvals and upload receipts are
+never copied into a new active sync directory. Preserve them for audit; use the
+normal explicit sync configuration flow with a fresh directory and the new
+Vault/store identity. Do not overwrite a current state file with archived JSON.
+
+New in-process recovery API, all operator-only (not Memory JSON operations):
+
+```text
+backup_client(config_path, output, include=[...], quiesced=True, timeout=60)
+restore_client(backup, output, trust_store=None, accept_unsigned=False, timeout=60)
+review_recovery(recovery, component=None, offset=0, limit=50, timeout=60)
+activate_recovery(recovery, output_config, include=[...], authorize_local_resume=True,
+                  identity=None, trust_store=None, allow_unsigned_local=False, timeout=60)
+import_recovery(recovery, entry_id=..., trust_store=..., authorize_memory_import=True, timeout=60)
+```
+
+The source includes public synthetic recovery cases. They were **not run** in
+this release work, and no real private Vault or service was accessed to claim
+validation. Byte-preserving backup, functional resumption and platform/crash
+behavior must be verified independently before relying on recovery in production.

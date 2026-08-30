@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Read-only v0.21 export-network ZIP to current portable NDJSON conversion.
+"""Small v0.21 export-network ZIP to current portable NDJSON conversion.
 
 This is a bounded, one-way, offline migration tool, not an old runtime. It never
 opens a Git repository, indexes private application data, connects to a server,
 modifies the source archive, grants trust, or imports the resulting bundle.
 Only an explicitly selected export file is read. Unknown schemas, unsupported
 claims, missing graph targets, and cyclic graphs fail before outputs are made.
+This retained, single-bundle interface is not the complete v0.25 pack migrator;
+memory_vault_legacy_pack.py supplies lossless large-pack/multipart conversion.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ import stat
 import sys
 import tempfile
 from typing import Any, BinaryIO, Iterator
+import uuid
 import zipfile
 
 # Adjacent source files are also usable when this file is loaded by path rather
@@ -46,6 +49,7 @@ from memory_vault import (  # noqa: E402
     sha256,
     validate_record,
 )
+import memory_vault_storage as protected_storage  # noqa: E402
 
 
 MIGRATION_SCHEMA = "universal-memory-migration-report/v1"
@@ -445,12 +449,29 @@ def _event(
 
 def _absolute(value: Path) -> Path:
     path = Path(value)
+    if os.name == "nt":
+        try:
+            return protected_storage.validate_path(path)
+        except protected_storage.StorageError as exc:
+            raise MigrationError(exc.code) from None
     if not path.is_absolute() or ".." in path.parts or not path.name or "\x00" in str(path):
         raise MigrationError("absolute_plain_path_required")
     return path
 
 
 def _check_parent_chain(path: Path, *, create: bool, private: bool) -> bool:
+    if os.name == "nt":
+        try:
+            protected_storage.validate_path(path)
+            if private:
+                protected_storage.private_directory(path.parent, create=create)
+            elif not path.parent.exists():
+                return False
+            return True
+        except FileNotFoundError:
+            return False
+        except protected_storage.StorageError as exc:
+            raise MigrationError(exc.code) from None
     if private and (os.name != "posix" or not hasattr(os, "O_NOFOLLOW")):
         raise MigrationError("protected_output_unavailable")
     current = Path(path.anchor)
@@ -484,21 +505,29 @@ def _check_parent_chain(path: Path, *, create: bool, private: bool) -> bool:
 
 @contextmanager
 def _open_source(path: Path) -> Iterator[BinaryIO]:
+    path = _absolute(path)
     if not _check_parent_chain(path, create=False, private=False):
         raise MigrationError("source_not_found")
     before = path.lstat()
-    if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_SOURCE_BYTES:
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > MAX_SOURCE_BYTES:
         raise MigrationError("invalid_source_file")
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0))
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = protected_storage.open_file(path, flags) if os.name == "nt" else os.open(path, flags)
     with os.fdopen(fd, "rb") as stream:
         observed = os.fstat(stream.fileno())
-        if not stat.S_ISREG(observed.st_mode) or (before.st_dev, before.st_ino) != (observed.st_dev, observed.st_ino):
+        if (not stat.S_ISREG(observed.st_mode) or observed.st_nlink != 1
+                or _source_fingerprint(before) != _source_fingerprint(observed)):
             raise MigrationError("source_changed")
-        fingerprint = (observed.st_size, observed.st_mtime_ns, observed.st_ctime_ns)
+        fingerprint = _source_fingerprint(observed)
         yield stream
         after = os.fstat(stream.fileno())
-        if fingerprint != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+        if fingerprint != _source_fingerprint(after) or fingerprint != _source_fingerprint(path.lstat()):
             raise MigrationError("source_changed")
+
+
+def _source_fingerprint(info: os.stat_result) -> tuple[int, ...]:
+    mode = stat.S_IFMT(info.st_mode) if os.name == "nt" else info.st_mode
+    return (info.st_dev, info.st_ino, mode, info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
 def _new_output(path: Path) -> None:
@@ -698,11 +727,16 @@ def _bundle_lines(records: list[dict[str, Any]], created_at: str) -> Iterator[by
 
 def _stage(path: Path, chunks: Iterator[bytes]) -> Path:
     _check_parent_chain(path, create=True, private=True)
-    fd, name = tempfile.mkstemp(prefix=".memory-migration-", dir=path.parent)
-    temporary = Path(name)
+    if os.name == "nt":
+        temporary = path.parent / (".memory-migration-" + uuid.uuid4().hex)
+        fd = protected_storage.open_file(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, private=True)
+    else:
+        fd, name = tempfile.mkstemp(prefix=".memory-migration-", dir=path.parent)
+        temporary = Path(name)
     try:
         with os.fdopen(fd, "wb") as stream:
-            os.fchmod(stream.fileno(), 0o600)
+            if os.name != "nt":
+                os.fchmod(stream.fileno(), 0o600)
             for chunk in chunks:
                 stream.write(chunk)
             stream.flush()
@@ -717,7 +751,7 @@ def _stage(path: Path, chunks: Iterator[bytes]) -> Path:
 
 
 def _publish_pair(output: Path, report: Path, bundle: list[bytes], report_bytes: bytes) -> None:
-    # Complete both private temporary files first, then link without replacement.
+    # Complete both private temporary files first, then publish without replacement.
     # These two paths cannot form a cross-directory atomic transaction. Publish
     # the report first so a complete output always has its mapping report.
     staged: list[Path] = []
@@ -728,11 +762,16 @@ def _publish_pair(output: Path, report: Path, bundle: list[bytes], report_bytes:
         for temporary, destination in ((staged[1], report), (staged[0], output)):
             info = temporary.lstat()
             try:
-                os.link(temporary, destination, follow_symlinks=False)
+                if os.name == "nt":
+                    # Native same-volume publication checks the actual source
+                    # handle, inherited ACLs and the resulting file identity.
+                    protected_storage.publish_file(temporary, destination, replace=False)
+                else:
+                    os.link(temporary, destination, follow_symlinks=False)
             except FileExistsError:
                 raise MigrationError("output_exists") from None
             published.append((destination, info.st_dev, info.st_ino))
-        for destination in (output, report):
+        for destination in (() if os.name == "nt" else (output, report)):
             try:
                 fd = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
                 try:
@@ -748,6 +787,16 @@ def _publish_pair(output: Path, report: Path, bundle: list[bytes], report_bytes:
             try:
                 info = destination.lstat()
                 if (info.st_dev, info.st_ino) == (device, inode):
+                    if os.name == "nt":
+                        # Never remove a replaced/reparse/hardlinked object
+                        # while rolling back this invocation's own outputs.
+                        descriptor = protected_storage.open_file(destination, os.O_RDONLY, private=True)
+                        try:
+                            current = os.fstat(descriptor)
+                            if (current.st_dev, current.st_ino) != (device, inode):
+                                continue
+                        finally:
+                            os.close(descriptor)
                     destination.unlink()
             except OSError:
                 pass

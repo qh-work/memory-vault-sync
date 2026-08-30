@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UAMP optional external-provider encrypted-share v1 header",
+  "$comment": "File framing is ASCII universal-memory-share-envelope/v1 plus LF, uint32 big-endian header byte length (1..16384), exact canonical header bytes, exact ciphertext bytes. The provider must authenticate the canonical binding excluding ciphertext_sha256 and ciphertext_bytes as AEAD associated data. This schema, hashes and metadata cannot prove encryption/authentication, select a provider, register a key or authorize execution. Plaintext is a complete selected share; capability_scope_sha256 is only its selector hash.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "crypto_profile",
+    "provider_version",
+    "recipient_fingerprint",
+    "key_epoch",
+    "capability_scope_sha256",
+    "plaintext_sha256",
+    "plaintext_bytes",
+    "ciphertext_sha256",
+    "ciphertext_bytes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "universal-memory-share-envelope/v1"
+    },
+    "crypto_profile": {
+      "$ref": "#/$defs/opaque"
+    },
+    "provider_version": {
+      "$ref": "#/$defs/opaque"
+    },
+    "recipient_fingerprint": {
+      "$ref": "#/$defs/opaque"
+    },
+    "key_epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "capability_scope_sha256": {
+      "$ref": "common.schema.json#/$defs/digest"
+    },
+    "plaintext_sha256": {
+      "$ref": "common.schema.json#/$defs/digest"
+    },
+    "plaintext_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483648
+    },
+    "ciphertext_sha256": {
+      "$ref": "common.schema.json#/$defs/digest"
+    },
+    "ciphertext_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2164260864
+    }
+  },
+  "additionalProperties": false,
+  "x-maxUtf8Bytes": 16384,
+  "$defs": {
+    "opaque": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$",
+      "not": {
+        "pattern": "[\\r\\n]"
+      }
+    }
+  }
+}

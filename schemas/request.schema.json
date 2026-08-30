@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "UAMP core request binding v1, with optional changes extension",
+  "title": "UAMP core request binding v1, with optional changes and cognitive-view extensions",
   "$comment": "No permission, signing, admission or execution field is accepted. request_id is optional on the wire but required for exact-effect mutation retries. JSON lexical floats/exponents and duplicate keys require a strict parser.",
   "oneOf": [
     {
@@ -159,6 +159,10 @@
           "type": "integer",
           "minimum": 512,
           "maximum": 65536
+        },
+        "semantic": {
+          "type": "boolean",
+          "description": "Enable the reference implementation's deterministic concept hints; false retains lexical/graph recall."
         }
       },
       "additionalProperties": false
@@ -187,19 +191,68 @@
     },
     {
       "type": "object",
-      "required": [
-        "op"
-      ],
+      "required": ["op"],
       "properties": {
-        "schema_version": {
-          "const": "universal-agent-memory-request/v1"
-        },
-        "request_id": {
-          "$ref": "common.schema.json#/$defs/request_id"
-        },
-        "op": {
-          "const": "changes"
-        },
+        "schema_version": {"const": "universal-agent-memory-request/v1"},
+        "request_id": {"$ref": "common.schema.json#/$defs/request_id"},
+        "op": {"const": "memory.views"},
+        "query": {"$ref": "common.schema.json#/$defs/text"},
+        "memory_id": {"$ref": "common.schema.json#/$defs/memory_id"},
+        "entity": {"type": "string", "minLength": 1, "maxLength": 512, "x-maxUtf8Bytes": 512},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 32},
+        "maximum_nodes": {"type": "integer", "minimum": 1, "maximum": 512},
+        "maximum_depth": {"type": "integer", "minimum": 0, "maximum": 8},
+        "include_proposals": {"type": "boolean"},
+        "through": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+        "after_sequence": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+        "after_memory_id": {"$ref": "common.schema.json#/$defs/memory_id"}
+      },
+      "allOf": [
+        {"not": {"required": ["entity", "memory_id"]}},
+        {"not": {"required": ["entity", "query"]}},
+        {"not": {"required": ["memory_id", "query"]}},
+        {"not": {"required": ["entity", "after_sequence"], "properties": {"after_sequence": {"minimum": 1}}}},
+        {"not": {"required": ["memory_id", "after_sequence"], "properties": {"after_sequence": {"minimum": 1}}}},
+        {"not": {"required": ["query", "after_sequence"], "properties": {"after_sequence": {"minimum": 1}}}}
+      ],
+      "dependentRequired": {"after_memory_id": ["entity"]},
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["op", "memory_id"],
+      "properties": {
+        "schema_version": {"const": "universal-agent-memory-request/v1"},
+        "request_id": {"$ref": "common.schema.json#/$defs/request_id"},
+        "op": {"const": "memory.graph"},
+        "memory_id": {"$ref": "common.schema.json#/$defs/memory_id"},
+        "maximum_nodes": {"type": "integer", "minimum": 1, "maximum": 512},
+        "maximum_edges": {"type": "integer", "minimum": 1, "maximum": 4096},
+        "maximum_depth": {"type": "integer", "minimum": 0, "maximum": 8},
+        "through": {"$ref": "common.schema.json#/$defs/nonnegative_integer"}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["op"],
+      "properties": {
+        "schema_version": {"const": "universal-agent-memory-request/v1"},
+        "request_id": {"$ref": "common.schema.json#/$defs/request_id"},
+        "op": {"const": "memory.reindex"},
+        "after": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+        "through": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 256}
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": ["op"],
+      "properties": {
+        "schema_version": {"const": "universal-agent-memory-request/v1"},
+        "request_id": {"$ref": "common.schema.json#/$defs/request_id"},
+        "op": {"const": "changes"},
         "after": {
           "$ref": "common.schema.json#/$defs/nonnegative_integer"
         },

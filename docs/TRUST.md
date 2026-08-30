@@ -38,10 +38,11 @@ dependency updates; no dependency was installed during this implementation.
   writable by another user. Ancestors may only belong to the current user or
   root; a root-owned sticky ancestor is allowed, but the immediate parent must
   be owned by the current user and not writable by others.
-- These protections are for POSIX/macOS/Linux storage. This version refuses
-  private identity and trust-store operations on Windows rather than treating
-  `chmod(0600)` as a Windows ACL. The lightweight core still works on Windows;
-  a native ACL/key-store integration remains follow-up work.
+- On Windows, the full client uses a separate native storage adapter for local
+  fixed NTFS, protected DACLs, verified handles and nonblocking file locks.
+  It does not treat `chmod(0600)` as a Windows ACL, fix existing permissions,
+  accept reparse/cloud placeholders or elevate. See [PLATFORMS.md](PLATFORMS.md).
+  This native path has not been verified by execution on a real Windows host.
 - File permissions **do not isolate code running under the same OS account**.
   A compromised same-user agent can read the signing key or edit the trust
   store. For mutually hostile agents, place signing/administration under a

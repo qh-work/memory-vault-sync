@@ -16,8 +16,13 @@ REQUIRED_MODULES = (
     "memory_vault_transfer.py", "memory_vault_sync.py", "memory_vault_remote.py",
     "memory_vault_hosts.py", "memory_vault_manage.py", "memory_vault_backup.py",
     "memory_vault_update.py", "memory_vault_pack.py", "memory_vault_privacy.py",
+    "memory_vault_update_trust.py", "memory_vault_install.py", "memory_vault_managed_launcher.py",
+    "memory_vault_compat.py",
+    "memory_vault_recovery.py", "memory_vault_legacy_pack.py", "memory_vault_metadata.py", "memory_vault_storage.py",
+    "memory_vault_sharing.py", "memory_vault_crypto.py", "memory_vault_device_trust.py", "memory_vault_encrypted_replication.py",
+    "memory_vault_migrate.py",
 )
-OPTIONAL_MODULES = ("memory_vault_migrate.py",)
+OPTIONAL_MODULES: tuple[str, ...] = ()
 PACKAGE_DOCUMENTS = (
     "LICENSE", "NOTICE", "SECURITY.md", "PROTOCOL.md", "requirements-integrations.txt",
     "docs/CLIENTS.md", "docs/LIFECYCLE.md", "docs/IMPLEMENTERS.md", "docs/TRUST.md",
@@ -25,6 +30,9 @@ PACKAGE_DOCUMENTS = (
     "docs/REVIEW_HANDOFF.md", "AI_START_HERE.md", "llms.txt", ".well-known/agent-memory.json",
     "docs/TWO_MODES.md", "docs/SYNC.md", "docs/REMOTE_BACKENDS.md", "docs/HOSTS.md",
     "docs/OPERATIONS.md", "docs/BACKUP.md", "docs/PARITY.md", "docs/UPDATES.md", "docs/PACKS.md",
+    "docs/RETRIEVAL.md", "docs/GRAPH_VIEWS.md", "docs/COMPATIBILITY.md",
+    "docs/LEGACY_PACKS.md", "docs/SHARING.md", "docs/ENCRYPTION.md", "docs/PLATFORMS.md",
+    "docs/V0_25_PARITY_PLAN.md",
 )
 TEMPLATE_FILES = (
     ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",

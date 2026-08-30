@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Operator-visible diagnostics, bounded local retry and memory-only recovery.
+"""Operator-visible diagnostics, bounded local retry and explicit recovery.
 
 No command installs a host, enrolls keys, starts another agent or reads host
 transcripts. ``doctor`` selects aggregate metadata, never memory bodies; all
@@ -51,6 +51,14 @@ def _file_metadata(path: Path | None) -> dict[str, Any]:
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         return {"configured": True, "exists": True, "regular_private_file": False}
     protected = None if os.name != "posix" else info.st_uid == os.getuid() and not info.st_mode & 0o077
+    if os.name == "nt":
+        from memory_vault_storage import open_file
+        try:
+            descriptor = open_file(selected, os.O_RDONLY, private=True)
+            os.close(descriptor)
+            protected = True
+        except OSError:
+            protected = False
     return {"configured": True, "exists": True, "bytes": info.st_size,
             "regular_private_file": protected, "contents_read": False}
 
@@ -62,6 +70,9 @@ def _queue_directory(path: Path, budget: list[int]) -> dict[str, Any]:
     info = selected.lstat()
     if not stat.S_ISDIR(info.st_mode) or (os.name == "posix" and (info.st_uid != os.getuid() or info.st_mode & 0o077)):
         raise MemoryError("unsafe_operator_queue")
+    if os.name == "nt":
+        from memory_vault_storage import check_private_directory
+        check_private_directory(selected)
     files = size = unsafe = unexpected = 0
     latest_ns = 0
     truncated = False
@@ -81,6 +92,9 @@ def _queue_directory(path: Path, budget: list[int]) -> dict[str, Any]:
             if os.name == "posix" and (item.st_uid != os.getuid() or item.st_mode & 0o077):
                 unsafe += 1
                 continue
+            if os.name == "nt" and _file_metadata(Path(entry.path))["regular_private_file"] is not True:
+                unsafe += 1
+                continue
             files += 1
             size += item.st_size
             latest_ns = max(latest_ns, item.st_mtime_ns)
@@ -96,6 +110,8 @@ def _host_queues(root: Path, budget: list[int]) -> dict[str, Any]:
         return {"exists": False, "pending_files": 0, "contents_read": False}
     if not root.is_dir():
         raise MemoryError("unsafe_host_queue")
+    from memory_vault_storage import check_private_directory
+    check_private_directory(root)
     pending = bytes_pending = sessions = unsafe = 0
     truncated = False
     with os.scandir(root) as hosts:
@@ -104,18 +120,20 @@ def _host_queues(root: Path, budget: list[int]) -> dict[str, Any]:
             if budget[0] > MAX_DISCOVERY:
                 truncated = True
                 break
-            if not host.is_dir(follow_symlinks=False):
+            if not host.is_dir(follow_symlinks=False) or host.name not in {"generic", "claude-code", "gemini-cli"}:
                 unsafe += 1
                 continue
+            check_private_directory(Path(host.path))
             with os.scandir(host.path) as entries:
                 for session in entries:
                     budget[0] += 1
                     if budget[0] > MAX_DISCOVERY:
                         truncated = True
                         break
-                    if not session.is_dir(follow_symlinks=False):
+                    if not session.is_dir(follow_symlinks=False) or re.fullmatch(r"[0-9a-f]{64}", session.name) is None:
                         unsafe += 1
                         continue
+                    check_private_directory(Path(session.path))
                     sessions += 1
                     detail = _queue_directory(Path(session.path) / "pending", budget)
                     pending += detail["files"]
@@ -291,6 +309,37 @@ def retry(config_path: Path, *, limit: int = 16) -> Mapping[str, Any]:
     raise MemoryError(problem.get("code", "outbox_retry_failed"), retryable=problem.get("retryable", False))
 
 
+def retry_compat(config_path: Path, *, limit: int = 4) -> Mapping[str, Any]:
+    """Retry preserved exact compatibility intents, without a sync window."""
+    if type(limit) is not int or not 1 <= limit <= 16:
+        raise MemoryError("invalid_retry_limit")
+    from memory_vault_compat import flush_local
+    result = dict(flush_local(_path(config_path), limit=limit))
+    result.update(scope="local_compat_intents_only", conflicts_resolved=False,
+                  semantic_proposals_reconstructed=False, worker_started=False,
+                  remote_delivery_confirmed=False)
+    return result
+
+
+def retry_host(config_path: Path, *, host: str, session_key: str) -> Mapping[str, Any]:
+    """Resume one explicitly selected hashed host session's exact saved jobs."""
+    from memory_vault_hosts import HOST_EVENTS, HostSession
+    if host not in HOST_EVENTS or not isinstance(session_key, str) or re.fullmatch(r"[0-9a-f]{64}", session_key) is None:
+        raise MemoryError("explicit_host_session_required")
+    config = _config(_path(config_path))
+    if not config.capture_visible_turns:
+        raise MemoryError("automatic_capture_disabled")
+    session = HostSession(config, host, session_key)
+    if not session.root.exists():
+        raise MemoryError("host_recovery_session_missing")
+    with session.locked():
+        result = dict(session.recover())
+    result.update(scope="one_local_host_session", input_without_final_invented=False,
+                  network_accessed=False, background_sync_may_run=config.sync_config_path is not None,
+                  remote_delivery_confirmed=False)
+    return result
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, help="existing selected client configuration")
@@ -298,6 +347,9 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("doctor", help="read aggregate state only; never repair or connect")
     retry_parser = commands.add_parser("retry", help="explicitly retry the bounded local hook outbox")
     retry_parser.add_argument("--limit", type=int, default=16)
+    retry_parser.add_argument("--scope", choices=("hooks", "compat", "hosts"), default="hooks")
+    retry_parser.add_argument("--host", choices=("generic", "claude-code", "gemini-cli"))
+    retry_parser.add_argument("--session-key", help="explicit local hashed session from the recovery inventory")
     backup_parser = commands.add_parser("backup", help="new memory-only SQLite snapshot directory; no keys/client queues")
     backup_parser.add_argument("--output", type=Path, required=True)
     backup_parser.add_argument("--timeout", type=int, default=60)
@@ -307,6 +359,38 @@ def build_parser() -> argparse.ArgumentParser:
     restore_parser.add_argument("--trust-store", type=Path, help="independent current public-key registry for signature re-verification")
     restore_parser.add_argument("--accept-unsigned", action="store_true", help="explicitly accept previously local/accepted unsigned records, not invalid signatures")
     restore_parser.add_argument("--timeout", type=int, default=60)
+    client_backup = commands.add_parser("backup-client", help="explicitly selected offline client snapshot; no keys or execution authority")
+    client_backup.add_argument("--output", type=Path, required=True)
+    client_backup.add_argument("--include", nargs="+", choices=("hooks", "lifecycle", "hosts", "compat", "sync"), required=True)
+    client_backup.add_argument("--quiesced", action="store_true", help="operator confirms all client/Vault writers and workers have been stopped")
+    client_backup.add_argument("--timeout", type=int, default=60)
+    client_restore = commands.add_parser("restore-client", help="restore memory and inert client evidence to a NEW directory; no pending replay")
+    client_restore.add_argument("--backup", type=Path, required=True)
+    client_restore.add_argument("--output", type=Path, required=True)
+    client_restore.add_argument("--trust-store", type=Path, help="independent current public-key registry, never an archived policy")
+    client_restore.add_argument("--accept-unsigned", action="store_true")
+    client_restore.add_argument("--timeout", type=int, default=60)
+    inspection = commands.add_parser("review-recovery", help="bounded content-free inventory of restored evidence; never approval or replay")
+    inspection.add_argument("--recovery", type=Path, required=True)
+    inspection.add_argument("--component", choices=("memory", "hooks", "lifecycle", "hosts", "compat", "sync"))
+    inspection.add_argument("--offset", type=int, default=0)
+    inspection.add_argument("--limit", type=int, default=50)
+    inspection.add_argument("--timeout", type=int, default=60)
+    activation = commands.add_parser("activate-recovery", help="explicitly prepare NEW local-only capture state; does not invoke pending work")
+    activation.add_argument("--recovery", type=Path, required=True)
+    activation.add_argument("--output", type=Path, required=True, help="NEW client configuration file, with a NEW sibling .state directory")
+    activation.add_argument("--include", nargs="+", choices=("hooks", "lifecycle", "hosts", "compat"), required=True)
+    activation.add_argument("--authorize-local-resume", action="store_true", help="independent operator opt-in to subsequent local capture/retry")
+    activation.add_argument("--identity", type=Path, help="independently selected signing identity; never copied or read during activation")
+    activation.add_argument("--trust-store", type=Path)
+    activation.add_argument("--allow-unsigned-local", action="store_true", help="explicitly permit unsigned new local saves if the old client used signing")
+    activation.add_argument("--timeout", type=int, default=60)
+    memory_import = commands.add_parser("import-recovery", help="reverify one complete archived signed capsule/group and admit locally; no old sync permission")
+    memory_import.add_argument("--recovery", type=Path, required=True)
+    memory_import.add_argument("--entry-id", required=True, help="exact signed-capsule candidate from review-recovery")
+    memory_import.add_argument("--trust-store", type=Path, required=True)
+    memory_import.add_argument("--authorize-memory-import", action="store_true")
+    memory_import.add_argument("--timeout", type=int, default=60)
     return parser
 
 
@@ -316,11 +400,19 @@ def main(argv: Sequence[str] | None = None, *, config_path: Path | None = None) 
         from memory_vault_client import default_config_path
         if config_path is not None and args.config is not None and _path(config_path) != _path(args.config):
             raise MemoryError("operator_config_conflict")
-        selected = _path(config_path or args.config or default_config_path())
+        # Restore/review/import must work after loss of the old configuration,
+        # including a stale default-config environment variable. Only commands
+        # operating on an existing selected client resolve that default.
+        selected = _path(config_path or args.config or default_config_path()) if args.action in {"doctor", "retry", "backup", "backup-client"} else None
         if args.action == "doctor":
             result = doctor(selected)
         elif args.action == "retry":
-            result = retry(selected, limit=args.limit)
+            if args.scope == "compat":
+                result = retry_compat(selected, limit=args.limit)
+            elif args.scope == "hosts":
+                result = retry_host(selected, host=args.host, session_key=args.session_key)
+            else:
+                result = retry(selected, limit=args.limit)
         elif args.action == "backup":
             from memory_vault_backup import backup_database
             config = _config(selected)
@@ -328,20 +420,41 @@ def main(argv: Sequence[str] | None = None, *, config_path: Path | None = None) 
             if output == config.state_path or config.state_path in output.parents:
                 raise MemoryError("backup_must_not_be_client_state")
             result = backup_database(config.vault_path, output, timeout=args.timeout)
-        else:
+        elif args.action == "restore":
             from memory_vault_backup import restore_database
             # Recovery does not require a surviving old config, and never
             # changes it. Current trust is used only when explicitly selected.
             result = restore_database(args.backup, args.output, trust_store=args.trust_store,
                                       accept_unsigned=args.accept_unsigned, timeout=args.timeout)
+        else:
+            import memory_vault_recovery as recovery
+            if args.action == "backup-client":
+                result = recovery.backup_client(selected, args.output, include=args.include, quiesced=args.quiesced, timeout=args.timeout)
+            elif args.action == "restore-client":
+                result = recovery.restore_client(args.backup, args.output, trust_store=args.trust_store,
+                                                 accept_unsigned=args.accept_unsigned, timeout=args.timeout)
+            elif args.action == "review-recovery":
+                result = recovery.review_recovery(args.recovery, component=args.component, offset=args.offset, limit=args.limit, timeout=args.timeout)
+            elif args.action == "activate-recovery":
+                result = recovery.activate_recovery(args.recovery, args.output, include=args.include,
+                    authorize_local_resume=args.authorize_local_resume, identity=args.identity,
+                    trust_store=args.trust_store, allow_unsigned_local=args.allow_unsigned_local, timeout=args.timeout)
+            elif args.action == "import-recovery":
+                result = recovery.import_recovery(args.recovery, entry_id=args.entry_id, trust_store=args.trust_store,
+                    authorize_memory_import=args.authorize_memory_import, timeout=args.timeout)
+            else:
+                raise MemoryError("unsupported_operator_action")
         write_response(success(result))
         return 0
     except MemoryError as exc:
         write_response(failure(exc.code, retryable=exc.retryable))
     except sqlite3.Error:
         write_response(failure("operator_database_unavailable", retryable=True))
-    except (ImportError, OSError, ValueError):
-        write_response(failure("operator_action_unavailable"))
+    except OSError as exc:
+        write_response(failure(getattr(exc, "code", "operator_action_unavailable"), retryable=getattr(exc, "retryable", False)))
+    except (ImportError, ValueError, KeyError, TypeError) as exc:
+        # TrustError is a content-free ValueError with a documented code.
+        write_response(failure(getattr(exc, "code", "operator_action_unavailable")))
     return 1
 
 

@@ -50,9 +50,14 @@ directory, SQLite WAL, `synchronous=FULL`, transactions, foreign keys, bounded
 input, strict JSON, parameterized SQL, and append-only triggers on canonical
 memory records.
 
-On POSIX systems it attempts `0700` on the directory and `0600` on the database.
-Python's standard library cannot reliably configure strict Windows ACLs, so the
-default is the current user's LocalAppData directory.
+The single-file reference attempts `0700` on its directory and `0600` on its
+database on POSIX. Its Windows default is the user's LocalAppData directory;
+the independent core alone does not provision a strict Windows ACL.
+The optional full client has a separate native local-fixed-NTFS storage adapter
+for explicit private directories/files, handle checks, locks and atomic
+publication. It fails closed on unsupported storage and does not repair or
+elevate existing permissions. Native source is not a Windows execution result;
+see [platform limits](docs/PLATFORMS.md).
 
 Do not use the SQLite file as a multi-host network filesystem database. Use a
 logical bundle to move memory across devices.

@@ -32,6 +32,9 @@ PROTOCOL_DOCUMENTS = (
     "docs/STATUS.md", "docs/RELEASE.md", "docs/SYNC.md", "docs/REMOTE_BACKENDS.md",
     "docs/HOSTS.md", "docs/OPERATIONS.md", "docs/BACKUP.md", "docs/PARITY.md",
     "docs/UPDATES.md", "docs/PACKS.md",
+    "docs/RETRIEVAL.md", "docs/GRAPH_VIEWS.md", "docs/COMPATIBILITY.md",
+    "docs/LEGACY_PACKS.md", "docs/SHARING.md", "docs/ENCRYPTION.md", "docs/PLATFORMS.md",
+    "docs/V0_25_PARITY_PLAN.md",
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_PACKAGE_BYTES = 32 * 1024 * 1024
@@ -79,10 +82,31 @@ def public_protocol_files() -> list[Path]:
     return files
 
 
-def inspect_sources(material: list[Path]) -> tuple[str, dict[str, int]]:
+def review_sources(material: list[Path]) -> list[Path]:
+    """A separate, explicitly executable review kit; never part of protocol-only."""
+    paths = [ROOT / name for name in (*REQUIRED_MODULES, *OPTIONAL_MODULES)]
+    paths.extend(ROOT / name for name in set(PROTOCOL_DOCUMENTS) | set(PACKAGE_DOCUMENTS))
+    paths.extend(ROOT / "plugins/memory-vault-client" / name for name in TEMPLATE_FILES)
+    paths.extend(ROOT / name for name in (
+        "scripts/build_client_plugin.py", "scripts/build_release.py",
+        "packaging/marketplace.json", "packaging/PROTOCOL_README.md", "packaging/CLIENT_README.md",
+        "tests/test_memory_vault.py", "packaging/REVIEW_README.md",
+    ))
+    paths.extend(sorted((ROOT / "tests").glob("test_v025_*.py")))
+    paths.extend(material)
+    result = sorted(set(paths))
+    if not any(path.name == "test_v025_install.py" for path in result):
+        raise ValueError("missing_v025_review_material")
+    for source in result:
+        read_public(source)
+    return result
+
+
+def inspect_sources(material: list[Path], review: list[Path]) -> tuple[str, dict[str, int]]:
     modules = [ROOT / name for name in (*REQUIRED_MODULES, *OPTIONAL_MODULES)]
     modules.extend(sorted((ROOT / "scripts").glob("*.py")))
     modules.append(ROOT / "plugins/memory-vault-client/scripts/launcher.py")
+    modules.extend(path for path in review if path.suffix == ".py")
     python_count = json_count = frame_count = 0
     version = None
     for source in dict.fromkeys(modules):
@@ -175,7 +199,8 @@ def build(output: Path, source_commit: str) -> dict[str, object]:
     if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
         raise ValueError("source_commit_must_be_full_sha")
     material = public_protocol_files()
-    version, checks = inspect_sources(material)
+    review_material = review_sources(material)
+    version, checks = inspect_sources(material, review_material)
     for name in set(PROTOCOL_DOCUMENTS) | set(PACKAGE_DOCUMENTS) | {
         "packaging/PROTOCOL_README.md", "packaging/CLIENT_README.md",
         "packaging/marketplace.json",
@@ -185,8 +210,10 @@ def build(output: Path, source_commit: str) -> dict[str, object]:
     destination.mkdir(mode=0o755)
     protocol = destination / f"memory-vault-protocol-v{version}"
     client = destination / f"memory-vault-client-v{version}"
+    review = destination / f"memory-vault-review-v{version}"
     protocol.mkdir()
     client.mkdir()
+    review.mkdir()
     for name in PROTOCOL_DOCUMENTS:
         copy_public(ROOT / name, protocol / name)
     for source in material:
@@ -195,10 +222,27 @@ def build(output: Path, source_commit: str) -> dict[str, object]:
     build_plugin(client / "plugins/memory-vault-client")
     copy_public(ROOT / "packaging/CLIENT_README.md", client / "README.md")
     copy_public(ROOT / "packaging/marketplace.json", client / ".agents/plugins/marketplace.json")
+    for source in review_material:
+        copy_public(source, review / source.relative_to(ROOT))
+    copy_public(ROOT / "packaging/REVIEW_README.md", review / "README.md")
+    review_manifest = {
+        "schema_version": "memory-vault-review-kit/v1", "version": version,
+        "source_commit": source_commit, "private_state_included": False,
+        "tests_executed_by_builder": False, "automatic_execution": False,
+        "files": {
+            **{source.relative_to(ROOT).as_posix(): hashlib.sha256(read_public(review / source.relative_to(ROOT))).hexdigest()
+               for source in review_material},
+            "README.md": hashlib.sha256(read_public(review / "README.md")).hexdigest(),
+        },
+    }
+    with (review / "REVIEW_MANIFEST.json").open("x", encoding="utf-8") as stream:
+        json.dump(review_manifest, stream, ensure_ascii=False, sort_keys=True, indent=2)
+        stream.write("\n")
     if any(path.suffix == ".py" for path in protocol.rglob("*")):
         raise ValueError("executable_in_protocol_only_package")
     assets = [archive(protocol, destination / (protocol.name + ".zip")),
-              archive(client, destination / (client.name + ".zip"))]
+              archive(client, destination / (client.name + ".zip")),
+              archive(review, destination / (review.name + ".zip"))]
     for name in ("memory_vault.py", "PROTOCOL.md"):
         target = destination / name
         copy_public(ROOT / name, target)

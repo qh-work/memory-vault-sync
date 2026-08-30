@@ -1,6 +1,6 @@
 {
   "name": "memory-vault-client",
-  "version": "0.24.1",
+  "version": "0.25.0",
   "description": "Full authorized client for the open memory protocol: MCP, visible-turn capture, queued signed sync, host adapters and recovery.",
   "author": {
     "name": "Memory Vault contributors"
@@ -13,7 +13,7 @@
   "interface": {
     "displayName": "Memory Vault Client",
     "shortDescription": "Shared memory, opt-in sync and recovery",
-    "longDescription": "One open protocol with two equal usage paths: independent protocol adoption or this full authorized client. Includes MCP, opt-in visible-turn capture, a configured protocol bridge, multiple host adapters, bounded signed directory/rclone synchronization, content-free diagnostics, backup/restore, compressed packs and explicit update staging. No Task/Git control plane, transcript scanning, self-installation, key auto-enrollment or log suppression. Work automatic lifecycle and production validation are not claimed.",
+    "longDescription": "One open protocol with two equal usage paths: independent protocol adoption or this authorized full client. Restores v0.21 workflows with local retrieval and graph views, old host-wire adapters, visible-turn capture, resumable signed sync, complete client recovery, old packs, selective sharing and independently controlled verified updates. No Task/Git ownership, transcript discovery, permission creation, key auto-enrollment or log suppression. Development version: runtime validation, Work automatic lifecycle and production signing/encryption provisioning are not claimed.",
     "developerName": "Memory Vault contributors",
     "category": "Productivity",
     "capabilities": [
@@ -26,7 +26,10 @@
       "Opt-in bounded signed synchronization",
       "Directory and configured rclone transport",
       "Diagnostics, backup and restore",
-      "Compressed resumable packs and staged updates"
+      "Old host-wire and pack compatibility",
+      "Selective complete memory sharing",
+      "Controlled signed updates and reversible activation",
+      "Native private storage with explicit platform limits"
     ],
     "websiteURL": "https://github.com/qh-work/memory-vault-sync",
     "defaultPrompt": [
