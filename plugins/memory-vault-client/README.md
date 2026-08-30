@@ -20,13 +20,13 @@ modules or bytecode caches. It suppresses new cache writes; inventory checks are
 not publisher signatures or isolation from a hostile same-user process.
 MCP/hook templates use isolated Python startup and retain separate host approval.
 
-The 12 offline cases in `docs/V0_25_SCOPED_SMOKE.md` passed on `066cd56`;
-the six retrieval/shared-retry cases in `docs/V0_25_FOLLOWUP_SMOKE.md` passed
-on `ecb83fd`. Each report pins its own full source commit: this is not 18 passing
-cases on the current source. Other authored cases remain unrun. These results
-do not establish full runtime acceptance, host installation, private-data
-migration or production signing/encryption provisioning; those trials were not run.
-Windows native protection is implemented but unverified on a real host; native
+The packaged [validation index](docs/VALIDATION.md) records limited offline
+synthetic evidence pinned to exact source commits; match each report to the
+artifact instead of transferring results between versions. The exercised entry
+paths share one Python reference, not independent implementations or models.
+Full P01–P14, signing/encryption, cloud, real-host/cross-device, native Windows
+and performance acceptance remain open. Recorded checks installed no host plugin
+and accessed no private memory. v0.25 remains unreleased development source;
 Work automatic lifecycle delivery is not established.
 
 Read the packaged `docs/CLIENTS.md`, `docs/COMPATIBILITY.md`,

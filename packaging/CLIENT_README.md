@@ -78,26 +78,15 @@ startup service or real Vault is changed by extracting this package.
 
 ## Evidence and independent review
 
-Two authorized offline campaigns used temporary synthetic data:
-
-- **12 selected cases passed** on `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`;
-  see `plugins/memory-vault-client/docs/V0_25_SCOPED_SMOKE.md`.
-- **6 selected cases passed** on `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`;
-  see `plugins/memory-vault-client/docs/V0_25_FOLLOWUP_SMOKE.md`. These cover two
-  retrieval regressions and four shared-Vault semantic receipt/retry cases,
-  including simultaneous first writers, interruption after commit and
-  tampering rejection.
-
-Each campaign had zero failures, errors or skips. They are not an 18-case pass
-on the current source; the remaining suite was not run. v0.25 remains unreleased
-development source, without full P01–P14 acceptance or certification of all paths.
-
-The two exercised entry paths use the same Python reference, not independent
-implementations or AI models. No host plugin was installed or private memory
-accessed. Signing/encryption, cloud, live-host/cross-device, native Windows and performance
-validation remain open. The separate review-kit archive includes synthetic
-cases and bounded reviewer instructions; run them only with your own authority
-and disposable data.
+The packaged [validation index](plugins/memory-vault-client/docs/VALIDATION.md)
+pins limited offline synthetic evidence to exact source commits. Match those
+reports to this artifact; results from other versions do not certify its paths.
+v0.25 remains unreleased development source. The exercised entry paths share one
+Python reference, not independent implementations or models. Full P01–P14,
+signing/encryption, cloud, real-host/cross-device, native Windows and performance
+acceptance remain open; recorded checks installed no host plugin and accessed
+no private memory. The separate review kit supplies synthetic cases and bounded
+instructions for reviewers using their own authorization and disposable data.
 
 Only allowlisted public source is packaged. No real memory, credentials, keys
 or local user configuration is included. Inventory/archive checks establish

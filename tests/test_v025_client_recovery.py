@@ -1,4 +1,4 @@
-"""Public synthetic recovery cases, supplied for reviewers; NOT run here.
+"""Public synthetic recovery cases; executed evidence is recorded separately.
 
 Only TemporaryDirectory fixtures are used. The fixtures are ordinary permitted
 local memory operations, never real account data, installed hooks or a network.

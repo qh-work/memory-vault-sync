@@ -40,23 +40,14 @@ services; the source exposes explicit fail-closed boundaries.
 
 The owner authorized minimal offline synthetic acceptance in temporary
 directories, without networking, plugin installation or private-memory access.
-That permission was scope-limited, not a one-run or 12-case quota. Two separate
-source-pinned campaigns completed within that scope:
-
-- [12 selected cases passed](V0_25_SCOPED_SMOKE.md) on
-  `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`.
-- [6 selected cases passed](V0_25_FOLLOWUP_SMOKE.md) on
-  `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`: two retrieval regressions and
-  four shared-Vault semantic receipt/retry cases, including simultaneous first
-  writes, interruption after commit and tampering rejection.
-
-Each campaign had zero failures, errors or skips. They are not an 18-case pass
-on the current source; the remaining suite was not run. This permission does
-not extend to full-suite discovery, cloud CI, networking, installation or
-publication. Source/AST/JSON, package structure and archive-byte inspection
-remain separate evidence. No real Vault, installed private plugin, key, host
-setting or remote account was used. The exercised entry paths share one Python
-reference; independent-implementation or cross-model interoperability is unproven.
+The [validation index](VALIDATION.md) records exact source commits and execution
+scope; match each report to the artifact rather than combining results across
+versions. Source/AST/JSON, package structure and archive-byte inspection are
+separate evidence. Recorded checks used no real Vault, installed private plugin,
+key, host setting or remote account. The exercised paths share one Python
+reference, not independent implementations or models. Permission for bounded
+local acceptance does not itself authorize full-suite discovery, cloud CI,
+networking, installation or publication.
 
 Full P01–P14 acceptance, broader crash/concurrency coverage, signing/encryption,
 real-host, native-platform, throughput and cross-device validation remain

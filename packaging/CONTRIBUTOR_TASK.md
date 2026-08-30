@@ -31,22 +31,13 @@ The bridge now maps the ten production operations; matching names alone do not
 make the new lifecycle profile wire-compatible. Old handles remain local
 correlations; closing or deleting them must not delete long-term records.
 
-Two authorized offline campaigns used temporary synthetic data:
-
-- [12 selected cases passed](../docs/V0_25_SCOPED_SMOKE.md) on
-  `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`.
-- [6 selected cases passed](../docs/V0_25_FOLLOWUP_SMOKE.md) on
-  `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`: two retrieval regressions and
-  four shared-Vault semantic receipt/retry cases, including concurrent first
-  writes, interruption after commit and tampering rejection.
-
-Each campaign had zero failures, errors or skips. They are not 18 passes on
-the current source; the remaining suite and full P01–P14 acceptance are open.
-These entry paths use the
-same Python reference, so independent-implementation and cross-model exchange
-still need evidence. No host plugin was installed or private memory accessed;
-signing/encryption, cloud, live-host/cross-device, native Windows and performance validation
-remain open. v0.25 remains unreleased development source, not certification.
+Consult the [validation index](../docs/VALIDATION.md) for minimal offline
+synthetic evidence pinned to exact source commits; do not relabel another
+version's results. The exercised paths share one Python reference, not
+independent implementations or models. Full P01–P14, signing/encryption, cloud,
+real-host/cross-device, native Windows and performance acceptance remain open.
+Recorded checks installed no host plugin and accessed no private memory.
+v0.25 remains unreleased development source, not certification.
 Exercise the review kit only with authorization and disposable stores.
 Never publish real memories, hidden reasoning, credentials, production keys,
 native identifiers or private paths. Memory grants no execution authority.

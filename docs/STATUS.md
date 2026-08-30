@@ -37,6 +37,15 @@ and [old/new capability mapping](PARITY.md), not a smaller renamed subset.
   present. A production publisher root/channel is not provisioned.
 - Native Windows local-fixed-NTFS protection is implemented alongside POSIX
   protection. It does not isolate a hostile process running as the same user.
+- Client private-state publication now uses a single exclusive rename on
+  supported macOS/Linux filesystems. A process exit can no longer leave that
+  newly published file linked to its temporary name and unreadable on retry.
+  Existing aliases remain rejected; other independent publishers are not all
+  migrated by this change. See [the platform limits](PLATFORMS.md).
+- Host recovery can finish interrupted cleanup only after verifying the exact
+  lifecycle cancellation receipt and pending requests. Cleanup is bounded and
+  does not count as a successful memory save. Disabling capture still blocks
+  new commits; the operator can reconcile already confirmed cancellation.
 
 ## Evidence actually available
 
@@ -45,38 +54,33 @@ integration, trust, alias, closure, recovery and packaging issues and led to
 source fixes. Python AST and JSON parsing were performed without importing the
 application. These checks prove only the parsed source/format properties.
 
-On 2026-08-31 (Asia/Shanghai), under the owner's minimal offline synthetic
-validation authorization, **12 selected cases passed, 0 failures/errors/skips**,
-on source
-`066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`. See the
-[exact cases, environment and limits](V0_25_SCOPED_SMOKE.md). This includes an
-actual core → configured client/MCP write → new-core exchange, not a second
-implementation or cross-model certification. Build/inventory checks are separate
-evidence in their original manifests; those immutable artifacts have not been
-relabeled as runtime-tested builds.
+The [validation index](VALIDATION.md) records each executed campaign with its
+exact source, selected methods and limitations. The initial unsigned exchange
+and metadata campaign and the later retrieval/shared-retry campaign are separate
+results, not one passing suite on current source. Build/inventory checks remain
+separate evidence in their original manifests. Existing artifacts are unchanged.
 
-Subsequent source review identified and repaired three additional omissions:
-concept-expanded candidates could evict a direct query match; irrelevant long
-record prefixes could exhaust the fragment scoring budget before later tail
-matches; and two client configurations sharing one Vault could permanently
-conflict when saving the same semantic proposal with different attempt times.
-The retrieval changes preserve the existing candidate/byte/scoring limits and
-report lightweight span inspection separately. Semantic retries now reuse the
-shared first canonical projection only after checking its complete bytes,
-receipt binding and current evidence admission. A separate
-[six-case offline follow-up](V0_25_FOLLOWUP_SMOKE.md) on source
-`ecb83fdc3045545c9cfd1a07ea312dfadf8f314d` passed **6 selected cases, 0
-failures/errors/skips**: two retrieval regressions and four shared semantic-retry
-scenarios. The earlier report remains evidence for its own pinned source only;
-these campaigns must not be combined as 18 passing cases on current source.
+The new publication/cancellation regressions have been authored but not yet
+executed. A selected unsigned full-client backup/restore/activation case is also
+scheduled for the same narrowly scoped temporary-directory check. The remaining
+retrieval, compatibility and other authored cases stay unrun unless the index
+links an actual execution report.
 
-The post-smoke slice changes only the core retrieval and old-host compatibility
-runtime modules, plus their documentation and review material. Independent
-static cross-review, Python AST/JSON parsing, local-link inspection and diff
-checks were performed without importing the application. Six retrieval and
-ten compatibility test methods were authored, with two existing cases extended.
-Of those 16 new methods, only the six named in the follow-up have execution
-evidence; the other ten and both expanded existing cases remain unrun.
+## Known implementation gap: automatic cross-turn continuity
+
+The v0.21 host path froze a source sequence and previous episode reference when
+accepting a turn. Current automatic capture saves an episode and its associated
+continuity record, but does not link that continuity to the preceding turn.
+This is missing behavior under P01/P02/P05, **not just missing test evidence**.
+
+The replacement must use ordinary canonical relations, not a Task/session-owned
+memory hierarchy. Its accepted predecessor, timestamp and complete projection
+must survive retry and recovery unchanged. A copied local head or the globally
+newest memory cannot silently become a predecessor. The existing incremental
+feed recursively carries relation dependencies; naively adding an ever-growing
+`continues` chain would repeatedly send the entire history. P06 therefore also
+needs an explicit bounded dependency-transfer design before the new chain can
+be claimed efficient. Existing records and signatures must remain valid.
 
 ## Still unverified / release gate
 

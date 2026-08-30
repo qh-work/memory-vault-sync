@@ -26,22 +26,13 @@ artifacts described in `docs/RELEASE.md`. This development build is not the
 previous v0.24.1 package and does not assert that v0.25 is a finished published
 release. Check the matching source commit and validation scope in its manifest.
 
-Two authorized offline campaigns used temporary synthetic data:
-
-- 12 selected cases passed on `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`;
-  see `docs/V0_25_SCOPED_SMOKE.md`.
-- 6 selected cases passed on `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`;
-  see `docs/V0_25_FOLLOWUP_SMOKE.md`. These cover two retrieval regressions and
-  four shared-Vault semantic receipt/retry cases, including concurrent first
-  writes, interruption after commit and tampering rejection.
-
-Each campaign had zero failures, errors or skips. They are not 18 passes on
-the current source; the remaining suite and full P01–P14 acceptance are open.
-The exercised routes share the Python reference;
-they do not prove independent-implementation or cross-model interoperability.
-No host plugin was installed or private memory accessed. Signing/encryption, cloud,
-live-host/cross-device, native Windows and performance validation remain open.
-v0.25 remains unreleased development source.
+The [validation index](docs/VALIDATION.md) records minimal offline synthetic
+evidence with exact source pins; do not transfer results between versions.
+The exercised paths share one Python reference, not independent implementations
+or AI models. Full P01–P14, signing/encryption, cloud, real-host/cross-device,
+native Windows and performance acceptance remain open. Recorded checks installed
+no host plugin and accessed no private memory; v0.25 remains unreleased
+development source.
 
 Reading this agreement alone cannot create persistent storage, suppress logs,
 bypass permissions or prove another agent read a memory. Memory outlives tasks,

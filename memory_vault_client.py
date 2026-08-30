@@ -21,7 +21,6 @@ from pathlib import Path
 import re
 import stat
 import sys
-import tempfile
 from typing import Any, Mapping, Sequence
 
 from memory_vault import (
@@ -148,32 +147,14 @@ def _read_json(path: Path, *, maximum: int = MAX_STATE_BYTES) -> Any:
 def _write_once(path: Path, value: Any) -> None:
     """Publish a complete 0600 file without replacing any existing pathname."""
     _absolute(path)
-    _private_directory(path.parent)
     encoded = canonical_bytes(value) + b"\n"
     if len(encoded) > MAX_STATE_BYTES:
         raise MemoryError("client_file_too_large")
-    if os.name == "nt":
-        from memory_vault_storage import atomic_write
-        atomic_write(path, encoded, replace=False)
-        return
-    descriptor, temporary = tempfile.mkstemp(prefix=".memory-vault-", dir=path.parent)
+    from memory_vault_storage import StorageError, atomic_write
     try:
-        with os.fdopen(descriptor, "wb") as stream:
-            os.chmod(temporary, 0o600)
-            stream.write(encoded)
-            stream.flush()
-            os.fsync(stream.fileno())
-        # A hard link gives no-clobber atomic publication, unlike replace().
-        os.link(temporary, path)
-        if os.name != "nt":
-            directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            Path(temporary).unlink()
+        atomic_write(path, encoded, replace=False)
+    except StorageError as exc:
+        raise MemoryError(exc.code, retryable=exc.retryable) from None
 
 
 def default_config_path() -> Path:

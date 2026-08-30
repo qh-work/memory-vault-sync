@@ -112,9 +112,10 @@ instead of silently creating a second saved turn. The lifecycle's transaction
 arbitrates cancel versus commit: staged input can be discarded, but a frozen or
 partly written commit cannot honestly be reported as rolled back.
 
-An authorized non-compaction session start retries at most eight pending final
-saves for that session. A crash before the native session resumes can also be
-handled explicitly, without knowing its original native ID:
+An authorized non-compaction session start processes at most eight pending final
+jobs for that session, including confirmations of already cancelled jobs. A
+crash before the native session resumes can also be handled explicitly, without
+knowing its original native ID:
 
 ```text
 python3 memory_vault_client.py --config /absolute/path/to/private/client.json host --host claude-code --event status
@@ -124,10 +125,28 @@ Send `{}` on stdin. This lists only queue counts and session hashes, without
 opening pending bodies, creating directories, or initializing a Vault. Select a
 returned hash and use the same command with `--event recover`, sending
 `{"session_key":"<64-hex-session-hash>"}`. Repeat for further batches; inspect
-`result.recovery.confirmed`, `error_codes`, and `remaining_jobs`. The administrative
-events work with all three `--host` choices. Recovery retries only final-save
-jobs; unmatched inputs remain staged until a cancel, later input, or close.
-It never invents missing user/final text or scans transcripts.
+`result.recovery.processed`, `attempted`, `confirmed`, `cancelled_cleaned`,
+`error_codes`, and `remaining_jobs`. `processed` counts final jobs considered
+within the eight-job bound. `attempted` counts final-save confirmation calls;
+`confirmed` counts their successful local-save acknowledgments, including exact
+historical replays. `cancelled_cleaned` separately counts already cancelled final
+jobs whose matching queued input/final paths were cleared. Cleanup never counts
+as a saved memory. The administrative events work with all three `--host` choices.
+Recovery retries only final-save jobs; unmatched inputs remain staged until a
+cancel, later input, or close. It never invents missing user/final text or scans
+transcripts.
+
+If cancellation became durable just before adapter cleanup was interrupted,
+recovery reads the exact existing `turn.abort` receipt from lifecycle state and
+checks its request, turn, session and current aborted state. It does **not** issue
+a new abort. An adapter's `phase: aborted`, a copied host receipt, or memory text
+is insufficient to authorize cleanup. Matching pending paths and request hashes
+are checked before removal; unverifiable or corrupt evidence is retained with an
+error. Confirmed cancelled jobs are removed within the same bounded batch, so
+repeated batches can advance beyond a cancelled prefix to later legitimate
+finals. Each cleanup touches at most that turn's two pending paths; it never
+deletes a canonical record.
+
 If a delivered close event was blocked by an already-started commit, its local
 close intent is retained and retried after final-save recovery. A resumed host
 then opens a fresh local handle; the saved records remain independent of it.
@@ -139,9 +158,17 @@ directory is also bounded; unexpected excess entries require operator repair.
 Disabling capture prevents new staging and canonical writes. Exact already
 completed receipts can still be read, and abort/close can clear uncommitted
 local text. Recovery may acknowledge an already completed save after opt-out,
-but cannot resume a partial save. Keep pending evidence for explicit repair;
-do not delete the control directory to force a commit or erase cancellation
-state. Corrupt or retargeted control state is rejected, not silently reset.
+or finish cleanup backed by an already durable cancellation receipt, but cannot
+resume a partial save or create a new cancellation merely from a cached phase.
+Keep pending evidence for explicit repair; do not delete the control directory
+to force a commit or erase cancellation state. Corrupt or retargeted control
+state is rejected, not silently reset.
+
+The focused cancellation cases in
+[`tests/test_v025_host_recovery.py`](../tests/test_v025_host_recovery.py) use only
+unsigned temporary fixtures. They are authored, not executed during this change;
+the previous smoke campaigns do not cover this host-recovery repair. Injected
+exceptions and retained artifacts are not actual power-loss or real-host tests.
 
 Generic callers must inspect response JSON: exit 0 means the hook did not block
 the host, **not** that memory was saved. Only `ok: true` together with

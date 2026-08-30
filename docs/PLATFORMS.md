@@ -8,9 +8,10 @@ installation on every filesystem.
 The v0.25 source includes an explicit Windows native storage profile alongside
 the existing POSIX implementation. It has been **statically inspected/parsed,
 not executed or certified on a Windows machine** in this development pass.
-No ACL changes, keys, Vaults, tests, providers or installer processes were run.
-The native implementation and synthetic cases are material for independent
-validation, not evidence that all combinations below passed.
+No native Windows ACL or installer trial was run. Limited POSIX synthetic
+evidence is recorded separately in [the validation index](VALIDATION.md);
+it is not Windows evidence. The implementation and authored cases do not
+establish that all combinations below passed.
 
 ## Supported protection contracts
 
@@ -26,6 +27,37 @@ NTFS; a separately authorized rclone backend can carry signed exchange files.
 This profile is not a universal Windows folder-sharing or ACL repair utility.
 Unknown permission conditions return a visible error rather than automatically
 changing an existing object to make it pass.
+
+## macOS/Linux exclusive private-file publication
+
+Shared `publish_file(..., replace=False)` now uses a single exclusive rename
+instead of a hard-link followed by unlink. The client hook/host control writer
+uses the same `atomic_write` implementation. A process exit after publication
+can no longer leave that writer's complete destination aliased to its temporary
+name. A later exact retry still compares the existing bytes via
+`FileExistsError`; a conflicting write does not overwrite them. Private owner,
+mode, single-link and inode checks remain in force.
+
+The standard-library binding is loaded lazily from the current process, without
+a library search, subprocess or dependency installation. macOS uses
+`renamex_np(RENAME_EXCL)` as described by
+[Apple's exclusive-renaming contract](https://developer.apple.com/documentation/foundation/urlresourcevalues/volumesupportsexclusiverenaming)
+and its SDK headers; Linux uses `renameat2(RENAME_NOREPLACE)` with the
+[documented filesystem support and errors](https://man7.org/linux/man-pages/man2/renameat2.2.html).
+Unsupported symbols, kernels, filesystems or other POSIX systems return
+`atomic_no_replace_unavailable`; there is no overwrite, copy or hard-link
+fallback. This narrows the exclusive-publication primitive's support beyond
+the general POSIX read/mode checks. `replace=True` and Windows keep their
+existing explicit replacement paths.
+
+The destination's identity and private single-link state are checked after
+rename, followed by directory fsync. The new synthetic cases in
+`tests/test_v025_publication_recovery.py` exercise this path separately; their
+execution status is in the validation index. A controlled process exit after
+fsync is not power-loss durability certification. Existing abandoned aliases
+are still rejected, not automatically removed or declared safe. Other modules'
+independent POSIX hard-link publishers have not all been converted by this
+slice, and must not inherit its interruption guarantee.
 
 ## Native Windows design
 

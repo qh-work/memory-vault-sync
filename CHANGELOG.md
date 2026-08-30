@@ -40,6 +40,18 @@ acceptance or a published stable release**.
   Client-local attempt clocks no longer create permanent retry conflicts.
   A separate six-case follow-up below checks selected new regressions; these
   repairs are not covered by the earlier pinned smoke evidence.
+- Fix a private-client publication crash window: native exclusive macOS/Linux
+  rename consumes the temporary name atomically, preserving single-link checks
+  and exact no-clobber retries. Unsupported kernels/filesystems fail closed;
+  existing hard-link aliases are not silently trusted or repaired.
+- Recover interrupted host cancellation cleanup only from an exact durable
+  lifecycle receipt and strictly validated pending requests. Bounded cleanup
+  advances past confirmed cancelled jobs without counting them as saved memory.
+  Capture-disabled operator retries cannot create memory or trigger sync.
+- Keep the remaining automatic cross-turn continuity gap explicit. Restoring
+  the old accepted predecessor chain also needs stable retry/recovery projection
+  and bounded incremental dependency handling; it is not implemented merely
+  because single-turn episode/continuity records can be saved.
 - An explicitly authorized offline check in temporary directories passed 12
   selected synthetic cases on source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`
   (zero failures, errors or skips); see the

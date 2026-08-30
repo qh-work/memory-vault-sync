@@ -32,21 +32,14 @@ The build produces two usage packages and a separate review kit:
 - **Optional single-file reference:** [`memory_vault.py`](memory_vault.py),
   requiring only Python 3.10+ and its standard library.
 
-Two authorized, temporary-directory offline campaigns have separate evidence:
-
-- **12 selected cases passed** on `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`:
-  [original scoped smoke report](docs/V0_25_SCOPED_SMOKE.md).
-- **6 selected cases passed** on `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`:
-  [follow-up report](docs/V0_25_FOLLOWUP_SMOKE.md), covering two retrieval
-  regressions and four shared-Vault semantic receipt/retry cases, including
-  simultaneous first writers, interruption after commit and receipt tampering.
-
-Each campaign had zero failures, errors or skips. They are not an 18-case pass
-on the current source; the remaining suite was not run in either campaign.
-The cross-entry checks share the Python reference: they do not establish
-independent-implementation or cross-model interoperability. No host plugin was
-installed or private memory accessed. Signing/encryption, cloud backends, live-host or
-cross-device behavior, native Windows and performance remain unvalidated.
+The [validation index](docs/VALIDATION.md) records the limited offline synthetic
+evidence and its exact source commits. Match those pinned sources to the checkout
+or artifact under review; results from different versions are not cumulative
+certification of the current source. The exercised entry paths share one Python
+reference, not independent implementations or AI models. Full P01–P14 acceptance,
+signing/encryption, cloud, real-host/cross-device, native Windows and performance
+validation remain open. Recorded checks installed no host plugin and accessed
+no private memory.
 The protected main branch is not bypassed to avoid its required tests; use the
 exact source/version when reviewing. See [status](docs/STATUS.md),
 [release scope](docs/RELEASE.md) and [independent review tasks](docs/REVIEW_HANDOFF.md).

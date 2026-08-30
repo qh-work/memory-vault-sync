@@ -1,27 +1,17 @@
 # Memory Vault v0.25 independent review kit
 
 This separate archive contains public source and synthetic tests, not private
-memory or a preconfigured installation. Two authorized offline campaigns used
-temporary synthetic data:
-
-- **12 selected cases passed** on `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`;
-  see `docs/V0_25_SCOPED_SMOKE.md`.
-- **6 selected cases passed** on `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`;
-  see `docs/V0_25_FOLLOWUP_SMOKE.md`. These cover two retrieval regressions and
-  four shared-Vault semantic receipt/retry cases, including simultaneous first
-  writers, interruption after commit and tampering rejection.
-
-Each campaign had zero failures, errors or skips. They are not an 18-case pass
-on the current source; the remaining suite was not run. Case presence or AST
-parsing is not a pass result. Compare each report's source with
-REVIEW_MANIFEST.json's source commit and byte inventory, then read
-docs/REVIEW_HANDOFF.md and docs/V0_25_PARITY_PLAN.md for the full review scope.
+memory or a preconfigured installation. The [validation index](docs/VALIDATION.md)
+pins limited offline synthetic evidence to exact source commits. Compare each
+report with `REVIEW_MANIFEST.json`'s source and byte inventory; case presence,
+AST parsing and results from other commits do not certify this kit.
+Read `docs/REVIEW_HANDOFF.md` and `docs/V0_25_PARITY_PLAN.md` for the full scope.
 
 The exercised entry paths share one Python reference, not independent
-implementations or AI models. No host plugin was installed or private memory
-accessed. Signing/encryption, cloud, live-host/cross-device, native Windows and performance
-validation remain open. v0.25 is still unreleased development source, not a
-finished stable release; neither campaign certifies the whole kit or P01–P14.
+implementations or models. Full P01–P14, signing/encryption, cloud,
+real-host/cross-device, native Windows and performance acceptance remain open.
+Recorded checks installed no host plugin and accessed no private memory.
+v0.25 is unreleased development source, not a finished stable release.
 
 The kit includes attributed adaptations of the three cases from PR #11 and a
 new actual core → client/MCP write → core exchange case. The contributor's

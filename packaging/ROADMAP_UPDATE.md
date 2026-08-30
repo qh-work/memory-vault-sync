@@ -13,27 +13,15 @@ retrieval/graph views, signed resumable transfer and blocked-send review, legacy
 packs/checkpoints, full recovery, managed updates/rollback, selected sharing,
 external trust/encryption boundaries and native protected storage adapters.
 
-Source implementation is **not runtime evidence**. Two authorized offline
-campaigns used temporary synthetic data:
-
-- [12 selected cases passed](../docs/V0_25_SCOPED_SMOKE.md) on
-  `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`.
-- [6 selected cases passed](../docs/V0_25_FOLLOWUP_SMOKE.md) on
-  `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`: two retrieval regressions and
-  four shared-Vault semantic receipt/retry cases, including concurrent first
-  writes, interruption after commit and tampering rejection.
-
-Each campaign had zero failures, errors or skips. These are separate results,
-not 18 passes on the current source; the remaining suite was not run.
-The two exercised paths
-share one Python reference; independent-implementation and cross-model
-interoperability are not established.
-
-No host plugin was installed or private memory accessed. Signing/encryption, cloud,
-live-host/cross-device, native Windows and performance validation remain open,
-as do the full recovery and update-crash acceptance requirements. The separate
-review-kit build includes synthetic material for authorized independent
-reviewers. v0.25 remains unreleased development source, not a certified release.
+Source implementation is **not runtime evidence**. The
+[validation index](../docs/VALIDATION.md) pins limited offline synthetic results
+to exact source commits; they do not transfer between versions. The exercised
+paths share one Python reference, not independent implementations or models.
+Full P01–P14, signing/encryption, cloud, real-host/cross-device, native Windows,
+performance and broader recovery/update-crash acceptance remain open. Recorded
+checks installed no host plugin and accessed no private memory. v0.25 remains
+unreleased development source; the separate review kit supplies synthetic
+material for independently authorized reviewers.
 
 Start with [AI_START_HERE.md](../AI_START_HERE.md),
 [the capability map](../docs/PARITY.md),

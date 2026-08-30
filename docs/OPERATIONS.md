@@ -166,10 +166,19 @@ python3 /absolute/source/memory_vault_manage.py \
 
 For `hosts`, use the 64-hex session directory key shown in a `control/hosts/...`
 inventory path; it is local correlation, not a Memory owner. One invocation
-uses the adapter's bounded recovery loop (up to eight queued commits). The
+uses the adapter's bounded recovery loop (up to eight queued final jobs). The
 `--limit` option applies to hooks/compat, not this host limit. Pending
 `turn.input` without a visible final response is not converted into a completed
 turn. Host recovery never fabricates the missing response.
+
+The loop also reconciles interrupted cancellation cleanup. It deletes only the
+matching pending inputs/final after checking the exact durable lifecycle abort
+receipt, current cancelled state and complete request bindings. A local phase
+label or copied host receipt is insufficient. `processed` includes these jobs;
+`cancelled_cleaned` is separate from `attempted` and `confirmed` memory saves.
+Capture-disabled configurations may finish that already confirmed cleanup, but
+cannot begin/resume an incomplete commit, enable capture or start synchronization.
+Missing or invalid cancellation evidence stays visible for review.
 
 | Preserved state | Usable continuation |
 | --- | --- |

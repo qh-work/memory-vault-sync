@@ -54,22 +54,10 @@ key auto-enrollment or high-privilege instruction channel is restored. New
 lifecycle and old `compat` envelopes remain explicitly separate. [PARITY.md](PARITY.md)
 maps old capabilities to their current replacements and limits.
 
-This is unreleased development source for two distributions, not a runtime
-certification. Two authorized offline campaigns used temporary synthetic data:
-
-- [12 selected cases passed](V0_25_SCOPED_SMOKE.md) on
-  `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`.
-- [6 selected cases passed](V0_25_FOLLOWUP_SMOKE.md) on
-  `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`: two retrieval regressions and
-  four shared-Vault semantic receipt/retry cases, including concurrent first
-  writes, interruption after commit and tampering rejection.
-
-Each campaign had zero failures, errors or skips. These are separate results,
-not 18 passed cases on the current source; the remaining suite was not run.
-The exercised paths use the same Python reference: this is not proof of
-independent-implementation or cross-model interoperability.
-
-No host plugin was installed or private memory accessed. Full P01–P14 acceptance,
-signing/encryption, cloud,
-live-host/cross-device, native Windows and performance validation remain open;
-native Work automatic event delivery is still not established.
+This is unreleased development source, not runtime certification. The
+[validation index](VALIDATION.md) pins the limited offline synthetic evidence
+to exact source commits; match those to the artifact under review. The exercised
+paths share one Python reference, not independent implementations or AI models.
+Full P01–P14, signing/encryption, cloud, real-host/cross-device, native Windows
+and performance acceptance remain open. Recorded checks installed no host plugin
+and accessed no private memory; Work automatic event delivery is not established.

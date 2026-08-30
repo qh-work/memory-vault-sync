@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import re
+import sqlite3
 import stat
 import sys
 import tempfile
@@ -33,6 +34,8 @@ from memory_vault_client import (
 )
 from memory_vault_lifecycle import REQUEST_SCHEMA as LIFECYCLE_REQUEST_SCHEMA
 from memory_vault_lifecycle import RESULT_SCHEMA as LIFECYCLE_RESULT_SCHEMA
+from memory_vault_lifecycle import LifecycleState
+from memory_vault_lifecycle import _validate as validate_lifecycle_request
 from memory_vault_lifecycle import handle as lifecycle_handle
 
 
@@ -536,6 +539,62 @@ class HostSession:
             session["active_turn"] = None
             self.save(self.root / "session.json", session)
 
+    def confirmed_abort(self, key: str, turn: Mapping[str, Any]) -> bool:
+        """Read an exact durable cancellation receipt; never issue an abort.
+
+        Adapter phases and copied host receipts are not cancellation authority.
+        Lifecycle's read-only receipt lookup also checks the actual current
+        turn state. It cannot initialize state, resume a commit or load a key,
+        including when capture has been disabled.
+        """
+        handle = turn.get("turn_handle")
+        if not isinstance(handle, str) or turn.get("turn_key") != key:
+            return False
+        current = ClientConfig.load(self.config.path)
+        if _digest(str(current.vault_path)) != self.binding:
+            raise MemoryError("host_vault_changed")
+        request = _request("turn.abort", key, turn_handle=handle)
+        receipt = LifecycleState(current).completed_receipt(request)
+        if receipt is None:
+            return False
+        result = receipt.get("result")
+        if (receipt.get("schema_version") != LIFECYCLE_RESULT_SCHEMA
+                or receipt.get("op") != "turn.abort" or receipt.get("ok") is not True
+                or receipt.get("request_id") != request["request_id"]
+                or receipt.get("replayed") is not True or not isinstance(result, dict)
+                or result.get("state") != "aborted" or result.get("current_state") != "aborted"
+                or result.get("turn_handle") != handle
+                or result.get("session_handle") != turn.get("session_handle")
+                or result.get("memory_saved") is not False
+                or result.get("long_term_memory_deleted") is not False):
+            raise MemoryError("invalid_host_cancel_receipt")
+        # Validate both exact pending paths before finish_abort removes either.
+        # A corrupt job must not borrow another turn's genuine cancellation.
+        for op in ("turn.input", "turn.commit"):
+            request_id = _request(op, key)["request_id"]
+            job = self.read(self.path("pending", _digest(request_id)))
+            if job is None:
+                continue
+            pending = job.get("request")
+            try:
+                _object(job, required={"schema_version", "vault_path_sha256", "request", "request_sha256", "turn_key"})
+                pending = validate_lifecycle_request(pending)
+            except MemoryError:
+                raise MemoryError("invalid_host_pending_request") from None
+            if (job.get("turn_key") != key or not isinstance(pending, dict)
+                    or pending.get("schema_version") != LIFECYCLE_REQUEST_SCHEMA
+                    or pending.get("op") != op or pending.get("request_id") != request_id
+                    or job.get("request_sha256") != _digest(pending)):
+                raise MemoryError("invalid_host_pending_request")
+            if op == "turn.commit":
+                if pending.get("turn_handle") != handle:
+                    raise MemoryError("invalid_host_pending_request")
+            elif (pending.get("session_handle") != turn.get("session_handle")
+                  or not isinstance(pending.get("user"), str)
+                  or _digest(pending["user"]) != turn.get("prompt_sha256")):
+                raise MemoryError("invalid_host_pending_request")
+        return True
+
     def close(self) -> Mapping[str, Any]:
         session = self.session()
         if session is None:
@@ -568,19 +627,53 @@ class HostSession:
     def recover(self) -> dict[str, Any]:
         completed = 0
         attempted = 0
+        processed = 0
+        cancelled_cleaned = 0
         errors: list[str] = []
         for path in self.pending():
+            if processed >= MAX_RECOVERY_PER_EVENT:
+                break
             job = self.read(path)
             if job is None or job.get("request", {}).get("op") != "turn.commit":
                 continue
-            if attempted >= MAX_RECOVERY_PER_EVENT:
-                break
-            attempted += 1
+            processed += 1
             key = _key(job["turn_key"])
+            request = job["request"]
+            request_id = _request("turn.commit", key)["request_id"]
+            if (path != self.path("pending", _digest(request_id))
+                    or request.get("schema_version") != LIFECYCLE_REQUEST_SCHEMA
+                    or request.get("request_id") != request_id
+                    or job.get("request_sha256") != _digest(request)):
+                errors.append("invalid_host_pending_request")
+                continue
             turn = self.turn(key)
+            if turn is not None:
+                try:
+                    cancelled = self.confirmed_abort(key, turn)
+                except sqlite3.OperationalError:
+                    # A hot lifecycle journal may need its existing authorized
+                    # commit path to reopen writable. A failed read-only lookup
+                    # never proves cancellation and must not block that path
+                    # for a still-pending turn. invoke() rechecks capture opt-in;
+                    # it cannot start/resume a commit after capture is disabled.
+                    if turn["phase"] == "aborted":
+                        errors.append("host_cancel_receipt_unconfirmed")
+                        continue
+                    cancelled = False
+                except MemoryError as exc:
+                    errors.append(exc.code)
+                    continue
+                except Exception:
+                    errors.append("host_cancel_receipt_unconfirmed")
+                    continue
+                if cancelled:
+                    self.finish_abort(key, turn)
+                    cancelled_cleaned += 1
+                    continue
             if turn is None or turn["phase"] == "aborted":
                 errors.append("pending_turn_unavailable_not_resumed")
                 continue
+            attempted += 1
             response = self.invoke(job["request"], turn_key=key)
             if response.get("ok"):
                 receipt_path = self.path("receipts", _digest(job["request"]["request_id"]))
@@ -599,7 +692,9 @@ class HostSession:
             closed = self.close()
             if not closed.get("ok"):
                 errors.append(closed.get("error", {}).get("code", "host_close_unconfirmed"))
-        return {"attempted": attempted, "confirmed": completed, "error_codes": errors, "remaining_jobs": len(self.pending())}
+        return {"processed": processed, "attempted": attempted, "confirmed": completed,
+                "cancelled_cleaned": cancelled_cleaned, "error_codes": errors,
+                "remaining_jobs": len(self.pending())}
 
     def replay_disabled(self, event: Mapping[str, Any]) -> Mapping[str, Any]:
         """No directories, locks, keys or new control files for receipt lookup."""

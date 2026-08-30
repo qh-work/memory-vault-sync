@@ -322,20 +322,19 @@ def retry_compat(config_path: Path, *, limit: int = 4) -> Mapping[str, Any]:
 
 
 def retry_host(config_path: Path, *, host: str, session_key: str) -> Mapping[str, Any]:
-    """Resume one explicitly selected hashed host session's exact saved jobs."""
+    """Reconcile one selected session; opt-out allows confirmed cleanup only."""
     from memory_vault_hosts import HOST_EVENTS, HostSession
     if host not in HOST_EVENTS or not isinstance(session_key, str) or re.fullmatch(r"[0-9a-f]{64}", session_key) is None:
         raise MemoryError("explicit_host_session_required")
     config = _config(_path(config_path))
-    if not config.capture_visible_turns:
-        raise MemoryError("automatic_capture_disabled")
     session = HostSession(config, host, session_key)
     if not session.root.exists():
         raise MemoryError("host_recovery_session_missing")
     with session.locked():
         result = dict(session.recover())
     result.update(scope="one_local_host_session", input_without_final_invented=False,
-                  network_accessed=False, background_sync_may_run=config.sync_config_path is not None,
+                  network_accessed=False,
+                  background_sync_may_run=config.capture_visible_turns and config.sync_config_path is not None,
                   remote_delivery_confirmed=False)
     return result
 

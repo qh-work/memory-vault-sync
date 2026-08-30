@@ -1,8 +1,8 @@
 # v0.25: v0.21 workflows plus an independent lightweight protocol
 
-This development branch restores the useful, actually exposed v0.21 taskless
+This development branch is restoring the useful, actually exposed v0.21 taskless
 workflows around the current canonical record contract. It is not a rollback
-to the old monolith. Both usage modes are first-class: a complete authorized
+to the old monolith. Both usage modes are first-class: a full authorized
 client, or an independent implementation of the open protocol.
 
 The baseline is v0.21.0 commit
@@ -10,21 +10,13 @@ The baseline is v0.21.0 commit
 commit `de349ef8453b0aa0ebf68ae18484d0c1355cf91b`.
 The [full completion ledger](V0_25_PARITY_PLAN.md) is the acceptance scope.
 **Source present does not mean a test passed, a host was installed or v0.25
-was publicly released.** Execution evidence is limited to two separate
-temporary-directory offline campaigns:
-
-- [12 selected cases passed](V0_25_SCOPED_SMOKE.md) on
-  `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`.
-- [6 selected cases passed](V0_25_FOLLOWUP_SMOKE.md) on
-  `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`: two retrieval regressions and
-  four shared-Vault semantic receipt/retry cases, including concurrent first
-  writes, interruption after commit and tampering rejection.
-
-Each campaign had zero failures, errors or skips. This is not 18 passes on the
-current source; the remaining suite and full P01–P14 acceptance remain open.
-These synthetic checks of one Python reference do not certify independent
-implementations/models, real hosts, signing/encryption, cross-device behavior,
-native Windows or performance. Do not use this table as production certification.
+was publicly released.** The [validation index](VALIDATION.md) identifies the
+limited offline synthetic evidence and its exact source commits; results do not
+transfer between versions. Full P01–P14 acceptance remains open. The exercised
+paths share one Python reference, not independent implementations or models, and
+do not certify real hosts, signing/encryption, cloud, cross-device behavior,
+native Windows or performance. Recorded checks installed no host plugin and
+accessed no private memory. This table is not production certification.
 
 ## Capability mapping
 
@@ -32,7 +24,7 @@ native Windows or performance. Do not use this table as production certification
 | --- | --- | --- | --- |
 | Persistent memory | Canonical taskless records, immutable IDs, provenance and relations | All entries use the same configured Vault | Preserves useful memory; no Task/Project owner |
 | Goal continuity | Dynamic recall/handoff over evidence | MCP, protocol and host entry points | A goal is a record; host coordination is not ownership |
-| Visible-turn capture | Caller decides what to append | Opt-in Codex/Claude/Gemini/generic adapters, durable staging and exact retry | Episode plus continuity restored; neither old nor new automatically infers every semantic claim |
+| Visible-turn capture | Caller decides what to append | Opt-in Codex/Claude/Gemini/generic adapters, durable staging and exact retry | Per-turn episode and continuity excerpt implemented; automatic cross-turn `continues` chain still missing. Neither old nor new automatically infers every semantic claim |
 | Local retrieval | CJK/Latin terms, full-text fragments, bounded BM25/concept/polarity explanations | Same retrieval through every entry | Explicit paginated reindex for preexisting short indexes; not a global exhaustive ranking or a measured speed claim |
 | Claim and graph views | `memory.views`, `memory.graph`, non-executing proposals | Same core through MCP; source/claim timelines | Current/superseded/conflicted/resolved state with bounded continuation and trust-aware edges |
 | Old host operations | Optional separate wire profile | `compat`: the ten production v0.21 operations, durable handles/receipts and old-ID mapping | Not the new lifecycle envelope; no fabricated Git commit or original author identity |
@@ -51,6 +43,17 @@ native Windows or performance. Do not use this table as production certification
 | Encryption/device contracts | Optional transport metadata profiles | Explicit device metadata init/status and new/old envelope inspection; fail-closed providers, device transitions and key-bound signed ciphertext catalogs | Restores old operator and provider boundaries; old envelope inspection is hash-only, not new-format decryption or a deployed cipher/recovery service |
 | Platforms | Language/OS independent; single-file standard-library reference | POSIX private modes and native Windows local-fixed-NTFS handles/ACLs/locks | Native implementation present, not Windows runtime certification |
 | Distributions | No-executable protocol ZIP and readable agreement | Complete built client, local catalog and explicit setup instructions | No runtime build or repository login after a built client download; host installation remains authorized |
+
+## Known capture gap: cross-turn continuity
+
+Automatic capture links a continuity excerpt to its own episode but does not
+append a `continues` reference to the preceding captured turn. v0.21 emitted a
+source-local predecessor chain. This is an implementation gap in P02/P05, not
+merely missing execution evidence; explicit `continues` relations are already
+supported by the core. Completing automatic chaining requires immutable
+acceptance-time projections, consistent retry/recovery and efficient incremental
+handling of long dependency chains. Memory references must not become Session,
+Task or Project ownership. See the [completion ledger](V0_25_PARITY_PLAN.md).
 
 ## Architecture that must not return
 

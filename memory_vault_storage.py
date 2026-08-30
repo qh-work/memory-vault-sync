@@ -18,6 +18,7 @@ import os
 from pathlib import Path, PureWindowsPath
 import re
 import stat
+import sys
 from typing import Any, Iterator
 import uuid
 
@@ -467,12 +468,52 @@ def open_file(path: Path, flags: int, *, private: bool = False, trusted: bool = 
                 native.close(handle)
 
 
+def _rename_no_replace(temporary: Path, destination: Path) -> None:
+    """One native rename, never a link/unlink crash window or overwrite fallback.
+
+    Called only after publish_file checks private sibling paths. Loading the
+    current process's C symbols is lazy and needs no library search, executable,
+    network or extra package. Unsupported kernels/filesystems fail closed.
+    """
+    if sys.platform == "darwin":
+        symbol = "renamex_np"
+        arguments = (os.fsencode(temporary), os.fsencode(destination), 0x00000004)  # RENAME_EXCL
+        signature = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    elif sys.platform.startswith("linux"):
+        symbol = "renameat2"
+        arguments = (-100, os.fsencode(temporary), -100, os.fsencode(destination), 1)  # AT_FDCWD, RENAME_NOREPLACE
+        signature = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    else:
+        raise StorageError("atomic_no_replace_unavailable")
+    try:
+        library = ctypes.CDLL(None, use_errno=True)
+        rename = getattr(library, symbol)
+    except (AttributeError, OSError):
+        raise StorageError("atomic_no_replace_unavailable") from None
+    rename.argtypes = signature
+    rename.restype = ctypes.c_int
+    if rename(*arguments) == 0:
+        return
+    error = ctypes.get_errno()
+    if error == errno.EEXIST:
+        # Callers compare the existing complete bytes on an exact retry.
+        raise FileExistsError(error, "private_storage_exists")
+    if error in {errno.ENOSYS, errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}:
+        raise StorageError("atomic_no_replace_unavailable")
+    if error == errno.EXDEV:
+        raise StorageError("private_sibling_publication_required")
+    raise StorageError("atomic_publication_failed", retryable=error in {errno.EINTR, errno.EAGAIN, errno.EBUSY})
+
+
 def publish_file(temporary: Path, destination: Path, *, replace: bool = False) -> None:
     """Publish a caller-flushed private sibling without reading its contents.
 
     Fixed local NTFS, no COPY_ALLOWED fallback, exact before/after file identity.
     Parents are held without delete-sharing through the move; same-account or
     administrator tampering is not claimed to be an isolation boundary.
+    On macOS/Linux, no-replace uses an exclusive rename so interruption cannot
+    leave a published inode with a temporary hard-link alias. Existing aliases
+    are still rejected; this is not automatic repair of an older damaged file.
     """
     temporary, destination = validate_path(temporary), validate_path(destination)
     if type(replace) is not bool or temporary == destination or temporary.parent != destination.parent:
@@ -508,9 +549,12 @@ def publish_file(temporary: Path, destination: Path, *, replace: bool = False) -
         if replace:
             os.replace(temporary, destination)
         else:
-            os.link(temporary, destination)
-            temporary.unlink()
-        observed = destination.lstat()
+            _rename_no_replace(temporary, destination)
+        check = open_file(destination, os.O_RDONLY, private=True)
+        try:
+            observed = os.fstat(check)
+        finally:
+            os.close(check)
         if (source_info.st_dev, source_info.st_ino) != (observed.st_dev, observed.st_ino):
             raise StorageError("publication_identity_changed")
         directory_fd = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW)

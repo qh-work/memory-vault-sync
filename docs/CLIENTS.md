@@ -345,7 +345,11 @@ retry correlation; raw IDs and device paths are not copied into canonical
 memory provenance. This correlation is not memory ownership.
 
 Staging files are published atomically without replacement with mode `0600`
-under an operator-owned `0700` client-state directory on POSIX. Two simultaneous
+under an operator-owned `0700` client-state directory on POSIX. macOS/Linux
+control publication uses an exclusive rename, not a link/unlink pair that can
+leave two names after an interrupted write. Unsupported exclusive-rename
+platforms or filesystems fail closed; see [platform limits](PLATFORMS.md).
+Two simultaneous
 events cannot overwrite each other's visible text. Different prompts or final
 responses for the same event identity are rejected as conflicts instead of
 guessing a pairing. If the host omits the necessary IDs or final visible text,

@@ -9,8 +9,8 @@ release is published, installed, fully runtime-accepted or certified.
 The owner initially requested no tests and later allowed minimal offline
 synthetic validation in temporary directories, without networking, installation
 or private-memory access. The authorization was not limited to one run or 12
-cases. The [initial campaign](V0_25_SCOPED_SMOKE.md) and
-[six-case follow-up](V0_25_FOLLOWUP_SMOKE.md) record separate pinned results.
+cases. The [validation index](VALIDATION.md) links separate source-pinned
+campaigns and their exact scopes.
 Reading this handoff
 is **not permission to run tests or applications**. Obtain the current review
 user/host's authorization for the chosen execution scope first; without it,
@@ -100,6 +100,13 @@ These exclusions do not justify omitting useful v0.21 features. Old ordinary
 records were hash-addressed, **not individually author-signed**; update
 signatures and Git commit identities are different evidence.
 
+An actual gap remains in automatic capture: its episode/continuity pair lacks
+the preceding turn's canonical continuity edge. Review acceptance-time freezing,
+exact retry, restored control state and bounded incremental dependency transfer
+together. A session/source handle can correlate requests, never own memories.
+Do not mistake a single saved turn or unlinked imported history for this full
+v0.21 behavior. See [current status](STATUS.md) and P01/P02/P05/P06 in the ledger.
+
 ### External contribution intake: PR #11
 
 [PR #11](https://github.com/qh-work/memory-vault-sync/pull/11) from
@@ -134,10 +141,8 @@ also passed in the recorded campaign; the source repair alone was not proof.
 ### Current v0.25 synthetic source inventory
 
 This is an **authored inventory, not a passing full-suite result**. Only the
-12 exact cases in [the first report](V0_25_SCOPED_SMOKE.md) and six exact cases in
-[the follow-up](V0_25_FOLLOWUP_SMOKE.md) have execution evidence on their
-respective source commits. They are not an 18-case pass on current source;
-the other cases remain unrun. Re-list the selected commit
+exact methods in the [validation index](VALIDATION.md) have execution evidence
+on their respective source commits; the other cases remain unrun. Re-list the selected commit
 before reporting coverage; retain `tests/test_memory_vault.py` for shared
 core/client regressions too. Asserting a size constant is not a scale trial.
 
@@ -153,6 +158,8 @@ core/client regressions too. Asserting a size constant is not a scale trial.
 | `test_v025_legacy_pack.py` | Old wire fixtures, checkpoints, exact evidence, ordered parts and aliases |
 | `test_v025_legacy_pack_edges.py` | Escaped secrets, same-kind alias misdirection, cycles/missing targets, cross-part replay |
 | `test_v025_client_recovery.py` | Quiesced snapshots, inert restore, activation, queues and current-trust signed recovery |
+| `test_v025_host_recovery.py` | Exact durable cancellation proof, bounded stale-job cleanup, disabled-capture safety and later-final progress |
+| `test_v025_publication_recovery.py` | One bounded synthetic child exiting after publication, no-clobber fixture threads, exact retries, aliases and unsupported-native failure |
 | `test_v025_install.py` | Isolated install, pinned inventory, activation journal, rollback, automation gates |
 | `test_v025_update_trust.py` | RSA-PSS, independent verifier comparison, thresholds/rotation/expiry/rollback |
 | `test_v025_update_edges.py` | Activation expiry, complete runtime inventory, external bytecode paths and physical-key quorum uniqueness |

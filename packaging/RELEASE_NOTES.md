@@ -41,25 +41,17 @@ development contents from an older release or an unqualified main checkout.
 
 ## Verification boundary
 
-Two authorized offline campaigns used temporary synthetic data:
-
-- [12 selected cases passed](../docs/V0_25_SCOPED_SMOKE.md) on
-  `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`.
-- [6 selected cases passed](../docs/V0_25_FOLLOWUP_SMOKE.md) on
-  `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`: two retrieval regressions and
-  four shared-Vault semantic receipt/retry cases, including simultaneous first
-  writers, interruption after commit and tampering rejection.
-
-Each campaign had zero failures, errors or skips. They are not an 18-case pass
-on the current source; the remaining suite and full P01–P14 acceptance are open.
-The exercised entry paths share the Python reference, not independent
-implementations or AI models. No host plugin was installed or private memory
-accessed; signing/encryption, cloud, live-host/cross-device, native Windows and performance
-validation remain open.
+The [validation index](../docs/VALIDATION.md) records the minimal offline
+synthetic evidence and exact source pins; results do not transfer between
+versions. Full P01–P14 acceptance remains open. The exercised paths share one
+Python reference, not independent implementations or AI models. Recorded checks
+installed no host plugin and accessed no private memory; signing/encryption,
+cloud, real-host/cross-device, native Windows and performance acceptance remain
+open.
 
 Static source, syntax/schema-document and archive/inventory inspection are
-separate evidence, not runtime or production-security certification. Neither
-limited smoke campaign nor this document changes the unreleased status.
+separate evidence, not runtime or production-security certification. Limited
+smoke evidence and this document do not change the unreleased status.
 
 See [the full parity ledger](../docs/V0_25_PARITY_PLAN.md) and
 [review handoff](../docs/REVIEW_HANDOFF.md). Remaining runtime evidence must be
