@@ -43,8 +43,9 @@ directories, without networking, plugin installation or private-memory access.
 The [validation index](VALIDATION.md) records exact source commits and execution
 scope; match each report to the artifact rather than combining results across
 versions. Source/AST/JSON, package structure and archive-byte inspection are
-separate evidence. Recorded checks used no real Vault, installed private plugin,
-key, host setting or remote account. The exercised paths share one Python
+separate evidence. Recorded checks use disposable synthetic Vaults and state,
+not pre-existing private memory, installed plugins, production keys, existing
+host settings or remote accounts. The exercised paths share one Python
 reference, not independent implementations or models. Permission for bounded
 local acceptance does not itself authorize full-suite discovery, cloud CI,
 networking, installation or publication.

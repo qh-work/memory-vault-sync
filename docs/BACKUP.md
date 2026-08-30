@@ -13,10 +13,14 @@ record attestations or exact local write receipts. It is an interchange format,
 view with SQLite's backup API, including a live Vault's committed WAL state.
 It does not copy the SQLite pathname while a writer may be modifying it.
 
-The implementation has not been executed against a live or synthetic Vault as
-part of this release work. No crash-recovery, platform or performance result is
-claimed. Independent maintainers should validate the documented workflow with
-synthetic data before entrusting production recovery to it.
+The [seven-case recovery campaign](V0_25_RECOVERY_SMOKE.md), at source
+`332e944a6bda8f70dd3af6526d926d9468ed2f0d`, includes one passing unsigned
+client-state case using actual snapshot, restore-to-new-copy, local activation
+and hook retry through Python APIs. It is scoped synthetic evidence, not
+acceptance of all backup/restore paths. Live concurrent-writer snapshots, signed
+recovery, Windows behavior, power-loss durability and performance remain outside
+that validation. Independently validate the required workflow before entrusting
+production recovery to it.
 
 ## Create a new snapshot
 
@@ -356,8 +360,19 @@ can require several independently quiesced attempts, not an implicit unbounded
 background backup. Restoring the original evidence **and** a new memory DB needs
 additional disk space; the evidence copy is intentionally not deleted afterward.
 
-The source and public synthetic cases in
-`tests/test_v025_client_recovery.py` were prepared, not executed during this
-work. Actual crash injection, large-state timing, supported Windows ACL/locking,
-and real multi-process offline-boundary behavior still require independent
-verification. Do not describe static review as tested disaster recovery.
+Of the public synthetic cases in
+[`tests/test_v025_client_recovery.py`](../tests/test_v025_client_recovery.py),
+`ClientRecoveryTests.test_explicit_local_activation_then_retry_preserves_no_network_boundary`
+passed in the [seven-case recovery campaign](V0_25_RECOVERY_SMOKE.md). Its actual
+`backup_client` / `restore_client` / `activate_recovery` / `manage.retry` path
+uses one unsigned baseline record and one pending `hooks` pair. The assertions
+confirm one record after recovery/activation, three after retry, a completed
+hook receipt, no sync configuration or background-sync permission, and zero
+processed jobs on the repeated retry. Original outbox evidence still exists;
+this selected case does not assert byte-for-byte evidence equality.
+
+Other recovery methods and component combinations are not covered by that run.
+No real private Vault, signing key, native host or provider was used. Database
+crash/power-loss recovery, large-state timing, supported Windows ACL/locking,
+and concurrent-writer behavior still require independent verification. This
+narrow functional result is not complete disaster-recovery acceptance.

@@ -71,6 +71,14 @@ acceptance or a published stable release**.
   ten newly authored regressions and both expanded existing cases remain unrun;
   full host, crypto, device, platform, recovery and performance acceptance is
   still pending. No additional runtime repair was needed for this follow-up.
+- A separate seven-case temporary/offline recovery campaign passed on
+  `332e944a6bda8f70dd3af6526d926d9468ed2f0d` (zero failures/errors/skips).
+  It includes the new publication/cancellation cases and an actual unsigned
+  hooks backup/restore/activation/retry. The same publication case on the pinned
+  pre-fix runtime reproduced its expected double-link failure; that is not a
+  passing case. See [exact recovery evidence](docs/V0_25_RECOVERY_SMOKE.md).
+  One controlled fixture-child exit is not power-loss or native-host acceptance;
+  the separate campaigns are not a combined current-source suite.
 
 ## 0.24.1 — Full authorized client alongside the lightweight protocol
 

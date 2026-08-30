@@ -60,11 +60,12 @@ and metadata campaign and the later retrieval/shared-retry campaign are separate
 results, not one passing suite on current source. Build/inventory checks remain
 separate evidence in their original manifests. Existing artifacts are unchanged.
 
-The new publication/cancellation regressions have been authored but not yet
-executed. A selected unsigned full-client backup/restore/activation case is also
-scheduled for the same narrowly scoped temporary-directory check. The remaining
-retrieval, compatibility and other authored cases stay unrun unless the index
-links an actual execution report.
+The [publication and recovery campaign](V0_25_RECOVERY_SMOKE.md) now records seven
+passing cases on its pinned source, including one controlled child-process exit
+and one actual unsigned hooks backup/restore/activation/retry path. A separate
+pre-fix run of the same publication case reproduced the exact double-link
+failure. Remaining retrieval, compatibility and other authored cases stay unrun
+unless the index links an actual execution report.
 
 ## Known implementation gap: automatic cross-turn continuity
 
@@ -85,15 +86,15 @@ be claimed efficient. Existing records and signatures must remain valid.
 ## Still unverified / release gate
 
 The scoped campaigns did not cover live capture, installed-host compatibility,
-real process/device crash and concurrency recovery, cryptographic
-interoperability, Windows native behavior, 2 GiB operation, throughput,
-two-device delivery or a cross-language
-round trip. Configuration/recovery routing used mocks; it does not establish
-actual restore correctness. Metadata checks do not authenticate an author or
-verify an encryption provider. Do not infer these outcomes from source presence
-or either passing subset. The follow-up used two local fixture threads and an
-injected exception, not separate devices or a real process crash; its roughly
-7 MiB long-tail fixture is not a scale or performance certification.
+device/power-loss recovery, complete process/concurrency recovery, cryptographic
+interoperability, Windows/Linux native behavior, 2 GiB operation, throughput,
+two-device delivery or a cross-language round trip. Earlier configuration/recovery
+routing used mocks; the later actual unsigned hooks recovery case does not
+establish every restore component or real-installation recovery. Metadata checks
+do not authenticate an author or verify an encryption provider. The retrieval
+follow-up used fixture threads and an injected exception; its roughly 7 MiB
+long-tail fixture is not a scale or performance certification. The later
+publication case used one real temporary child exit, not a power-loss trial.
 
 The work also does not establish native Work automatic events, production
 encryption/recovery ceremonies, a security audit, vendor certification or

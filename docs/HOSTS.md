@@ -8,9 +8,12 @@ old v0.21 wire protocol or an import of its runtime.
 The separate [compatibility entry](COMPATIBILITY.md) now maps the old production
 host envelope; do not send that envelope to this new lifecycle adapter.
 
-These source adapters and example configurations received static review only.
-No host was installed, launched, or integration-tested for this change. Host
-version, hook trust, Python availability, permissions, and actual event delivery
+The [seven-case recovery campaign](V0_25_RECOVERY_SMOKE.md), at source
+`332e944a6bda8f70dd3af6526d926d9468ed2f0d`, passed three synthetic adapter
+cancellation-recovery cases through local Python interfaces with unsigned
+temporary state. This is not native-host integration evidence. No host or plugin
+was installed or launched for the campaign; the example configurations, host
+version, hook trust, Python availability, permissions and actual event delivery
 still require validation by the installing operator.
 
 ## Configure explicitly
@@ -166,9 +169,17 @@ state is rejected, not silently reset.
 
 The focused cancellation cases in
 [`tests/test_v025_host_recovery.py`](../tests/test_v025_host_recovery.py) use only
-unsigned temporary fixtures. They are authored, not executed during this change;
-the previous smoke campaigns do not cover this host-recovery repair. Injected
-exceptions and retained artifacts are not actual power-loss or real-host tests.
+unsigned temporary fixtures. All three passed in the
+[seven-case recovery campaign](V0_25_RECOVERY_SMOKE.md). They cover cleanup backed
+by a durable abort receipt after an injected interruption, including
+`manage.retry_host` with capture disabled; rejection of a phase label or copied
+host receipt as cancellation authority; and bounded cleanup of cancelled jobs
+before a later legitimate final. Capture-disabled recovery leaves that pending
+final unsaved; re-enabling capture permits its subsequent local commit without
+duplicate records. The latter case also simulates a read-only cancellation
+lookup error, not an actual hot SQLite journal. Injected exceptions and retained
+artifacts are not actual power-loss or real-host tests. The earlier smoke
+campaigns did not cover this repair.
 
 Generic callers must inspect response JSON: exit 0 means the hook did not block
 the host, **not** that memory was saved. Only `ok: true` together with

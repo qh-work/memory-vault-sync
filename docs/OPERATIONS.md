@@ -9,9 +9,13 @@ These commands are implementation interfaces, not evidence of a successful
 installation. The [initial scoped campaign](V0_25_SCOPED_SMOKE.md) included a
 mocked restore-routing case, not an actual recovery. The
 [six-case follow-up](V0_25_FOLLOWUP_SMOKE.md) did not exercise these operator
-workflows. Real backup/restore, key ceremonies and private-data migration remain
-unverified. Use authorized synthetic validation before relying on recovery in
-production.
+workflows. The later [seven-case recovery campaign](V0_25_RECOVERY_SMOKE.md), at
+source `332e944a6bda8f70dd3af6526d926d9468ed2f0d`, passed one actual unsigned
+temporary `hooks` backup/restore/activation/retry workflow and three synthetic
+host cancellation-recovery cases, alongside three local-file publication cases.
+These invoke Python interfaces, not installed native hosts or the displayed CLI
+commands. Key ceremonies, private-data migration and complete recovery remain
+unverified. Validate the required workflow before relying on it in production.
 
 ## Read-only doctor
 
@@ -214,7 +218,17 @@ activate_recovery(recovery, output_config, include=[...], authorize_local_resume
 import_recovery(recovery, entry_id=..., trust_store=..., authorize_memory_import=True, timeout=60)
 ```
 
-The source includes public synthetic recovery cases. They were **not run** in
-this release work, and no real private Vault or service was accessed to claim
-validation. Byte-preserving backup, functional resumption and platform/crash
-behavior must be verified independently before relying on recovery in production.
+The [seven-case recovery campaign](V0_25_RECOVERY_SMOKE.md) includes a passing
+`ClientRecoveryTests.test_explicit_local_activation_then_retry_preserves_no_network_boundary`
+from the public synthetic recovery cases. Actual unsigned backup, restore,
+explicit local activation and hook retry ran; the assertions confirm one record
+before retry and three afterward, with a done receipt for the pending pair. The
+resumed configuration had no sync path, retry reported no background-sync permission,
+and a repeated retry processed no jobs. Original outbox evidence remained
+present; byte-for-byte evidence equality was not an assertion of this case.
+
+No real private Vault, signing key, native host or service was accessed for that
+campaign. It does not cover every recovery component, signed/current-trust
+recovery, live concurrent writers, Windows, database crash/power-loss durability
+or production disaster recovery. Earlier campaigns keep their own pinned-source
+scope; their results are not additional coverage of this source revision.

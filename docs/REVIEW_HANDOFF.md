@@ -220,6 +220,23 @@ existing cases remain unrun. All full ledger requirements stay open; these six
 passing results do not replace independent cross-model or cross-device evidence
 or authorize native hosts, real keys/providers, cloud CI or publication.
 
+### Publication and recovery follow-up — seven selected cases
+
+The [recovery report](V0_25_RECOVERY_SMOKE.md) records seven passing methods on
+`332e944a6bda8f70dd3af6526d926d9468ed2f0d`, with zero failures, errors or skips.
+They cover three publication cases, three confirmed-cancellation cases and one
+actual unsigned hooks backup/restore/activation/retry path. The same first
+publication test, overlaid onto the pinned pre-fix runtime, separately produced
+the expected hard-link failure; it is not counted as a pass.
+
+One controlled temporary child exited at a real directory-fsync boundary. The
+host cleanup and read-only hot-journal boundaries used injected failures or
+retained synthetic artifacts, not actual host crashes. All execution remained
+offline, without installation, keys or private data. The report identifies
+exact methods, source/overlay inventories and raw hashes. Do not generalize its
+single unsigned recovery path to all components, native platforms or live
+installations. Automatic cross-turn continuity and the full ledger remain open.
+
 ## 3. Review campaigns — scoped authorization required
 
 Use a fresh reviewer-owned temporary workspace with explicit Vault/config/
