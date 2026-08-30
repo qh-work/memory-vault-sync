@@ -14,7 +14,7 @@ body:
     id: version
     attributes:
       label: Version
-      placeholder: 0.23.0
+      placeholder: 0.24.1 (release tag, not unqualified main)
     validations:
       required: true
   - type: dropdown

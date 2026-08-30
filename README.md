@@ -10,14 +10,15 @@ the optional client to automate the same operations. The record, relation,
 provenance and exchange contracts are shared; Python, SQLite, a particular
 model, and a particular plugin are not protocol requirements.
 
-## v0.24.0: protocol and plugin, released together
+## v0.24.1: full plugin + lightweight protocol
 
-Get the [v0.24.0 release and download packages](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.24.0):
+Get the [v0.24.1 release and download packages](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.24.1):
 
 - **Protocol-only package:** the specification, JSON Schemas and synthetic
   interchange examples. No executable, plugin or database dependency.
-- **Plugin package:** the complete source-built client runtime and a local
-  marketplace catalog. No runtime build or repository login is needed after
+- **Full plugin package:** automatic local saving, queued signed sync, optional
+  remote backends, host adapters, diagnosis, backup/restore and staged updates;
+  the shared runtime and a local marketplace catalog. No runtime build or repository login is needed after
   download; installation, hook trust and capture remain explicit user choices.
 - **Optional single-file reference:** [`memory_vault.py`](memory_vault.py),
   requiring only Python 3.10+ and its standard library.
@@ -28,14 +29,22 @@ The protected main branch is not bypassed to avoid its required tests; use the
 release tag/packages for v0.24. See [status](docs/STATUS.md),
 [release scope](docs/RELEASE.md) and [independent review tasks](docs/REVIEW_HANDOFF.md).
 
+**AI implementers: [start here](AI_START_HERE.md).** Compare the
+[two modes](docs/TWO_MODES.md) and the [old/new capability map](docs/PARITY.md).
+v0.24.0 supplied a thin integration client; this patch adds the full-mode
+automation and operations without replacing the independent protocol.
+
 | Entry point | Purpose | Required extra |
 | --- | --- | --- |
 | [Direct protocol](docs/IMPLEMENTERS.md) | Implement compatible persistent records and exchange in any host | Existing host storage/tools; no particular language or database |
 | Single-file core | Local save, recall, continuity and portable records | Python 3.10+, SQLite from stdlib |
-| [Optional client](docs/CLIENTS.md) | 8 MCP tools; opt-in Codex visible-turn saving | An authorized local stdio MCP/hook host |
+| [Full client](docs/CLIENTS.md) | 8 MCP tools; opt-in visible-turn saving and queued delivery | An authorized local stdio MCP/hook host |
+| [Host adapters](docs/HOSTS.md) | Codex, Claude Code, Gemini CLI and generic visible-event profiles | Host event support and explicit capture approval |
 | [Lifecycle profile](docs/LIFECYCLE.md) | Optional session/turn staging, durable commit and cancellation | The same configured client; not the old v0.21 wire format |
 | [Signing and trust](docs/TRUST.md) | Ed25519 record attribution, independent key registry, revocation-aware views | Explicit key enrollment and PyCA cryptography; protected POSIX storage |
-| [Incremental transfer](docs/TRANSFER.md) | Bounded signed batches, dependency closure, durable retries | An explicitly selected exchange directory; signing/trust |
+| [Automatic sync](docs/SYNC.md) | Bounded signed batches, offline queue/retry and content-free receipts | Independent sync opt-in; explicit signing/trust and destination |
+| [Remote backends](docs/REMOTE_BACKENDS.md) | Directory or rclone-backed Drive/S3/WebDAV/SFTP/crypt | Existing, explicitly selected rclone configuration where used |
+| [Operations](docs/OPERATIONS.md) | Doctor, backups/restores, resumable compressed packs, staged updates | Explicit operator commands; never automatic activation |
 | [Offline migration](docs/MIGRATION.md) | Convert supported old network exports without restoring the old runtime | A staged export, not access to the live private plugin |
 
 The bundled client reuses the reference core. Independent implementations may

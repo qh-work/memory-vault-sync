@@ -12,9 +12,10 @@ import contextlib
 import os
 from pathlib import Path
 import re
+import sqlite3
 import stat
 import tempfile
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from memory_vault import MemoryError, Vault, canonical_bytes, failure, sha256, strict_json_loads, success, validate_record, write_response
 from memory_vault_trust import Identity, TrustError, TrustStore
@@ -184,15 +185,24 @@ class DirectoryTransfer:
         return value
 
     def _bind_vault(self, state: dict[str, Any], *, missing_ok: bool) -> None:
-        result = self.vault.handle({"op": "status"})
-        if not result["ok"]:
-            code = str(result["error"]["code"])
-            if code == "not_initialized" and missing_ok and state["vault_store_id"] is None:
+        # A stream binding needs one indexed metadata value, not status's full
+        # memory/admission counts. The core read-only connection retains its
+        # path, schema/version and required-table checks without migrating data.
+        _path(self.vault_path)
+        try:
+            with contextlib.closing(self.vault._connect(writable=False)) as connection:
+                row = connection.execute("SELECT value FROM metadata WHERE key='store_id'").fetchone()
+                store_id = str(row[0]) if row is not None else ""
+                if _STORE.fullmatch(store_id) is None:
+                    raise MemoryError("unsupported_database_schema")
+        except MemoryError as exc:
+            if exc.code == "not_initialized" and missing_ok and state["vault_store_id"] is None:
                 return
-            if code == "not_initialized" and state["vault_store_id"] is not None:
-                raise MemoryError("receiver_vault_missing")
-            raise MemoryError(code)
-        store_id = result["result"]["store_id"]
+            if exc.code == "not_initialized" and state["vault_store_id"] is not None:
+                raise MemoryError("receiver_vault_missing") from None
+            raise
+        except sqlite3.Error:
+            raise MemoryError("vault_metadata_unavailable", retryable=True) from None
         if state["vault_store_id"] is not None and state["vault_store_id"] != store_id:
             raise MemoryError("store_identity_changed")
         state["vault_store_id"] = store_id
@@ -240,7 +250,11 @@ class DirectoryTransfer:
             raise MemoryError("unexpected_attestation")
         return payload, sha256(canonical_bytes(payload))
 
-    def publish(self, *, limit: int = 100, maximum_bytes: int = 256 * 1024, attest_unsigned: bool = False) -> Mapping[str, Any]:
+    def publish(
+        self, *, limit: int = 100, maximum_bytes: int = 256 * 1024,
+        attest_unsigned: bool = False,
+        publication_guard: Callable[[Sequence[Mapping[str, Any]]], None] | None = None,
+    ) -> Mapping[str, Any]:
         if self.identity is None:
             raise MemoryError("publisher_identity_required")
         self.trust.require_trusted(self.identity.key_id)
@@ -294,6 +308,11 @@ class DirectoryTransfer:
                 # Save the exact signed bytes before delivery so a crash cannot
                 # turn a retry into a different batch with the same cursor.
                 _write(self.pending_path, capsule, replace=False)
+            # A full client can enforce an outbound privacy policy without
+            # turning local memory storage into a publication permission.
+            # Keep exact pending bytes and the old cursor if review blocks it.
+            if publication_guard is not None:
+                publication_guard(payload["records"])
             self.exchange.mkdir(parents=True, exist_ok=True, mode=0o700)
             directory = _path(self.exchange / self.identity.key_id / str(payload["source_store_id"]))
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -306,6 +325,39 @@ class DirectoryTransfer:
             return {"state": "published_with_blocked" if payload["blocked"] else "published", "records": len(payload["records"]),
                     "cursor": payload["cursor"], "blocked": payload["blocked"],
                     "batch_sha256": digest, "network_accessed": False}
+
+    def receive_capsule(
+        self, capsule: Mapping[str, Any], *, sender_key_id: str,
+        source_store_id: str, after: int,
+    ) -> Mapping[str, Any]:
+        """Admit one explicitly fetched signed prefix, never a directory trust hint.
+
+        A bounded remote adapter must establish that no other authenticated
+        candidate exists at this prefix before calling this method. No network
+        operation occurs while the local transfer lock is held.
+        """
+        with _lock(self.state_directory):
+            state = self._state()
+            self._bind_vault(state, missing_ok=True)
+            payload, digest = self._verify_capsule(capsule)
+            peer = sender_key_id + "/" + source_store_id
+            if (payload["sender_key_id"] != sender_key_id
+                    or payload["source_store_id"] != source_store_id
+                    or payload["after"] != after
+                    or int(state["received"].get(peer, 0)) != after):
+                raise MemoryError("receive_cursor_changed")
+            if peer not in state["received"] and len(state["received"]) >= MAX_PEERS:
+                raise MemoryError("too_many_transfer_peers")
+            result = self.vault.ingest_records(
+                payload["records"], admission="verified", attestations=payload["attestations"],
+                transfer_id="xfer_" + digest, payload_sha256=digest,
+            )
+            self._bind_vault(state, missing_ok=False)
+            state["received"][peer] = payload["cursor"]
+            _write(self.state_path, state, replace=True)
+            return {"state": "received", "records_added": int(result["records_added"]),
+                    "receipt_replayed": bool(result.get("receipt_replayed", False)),
+                    "blocked_records": len(payload["blocked"]), "cursor": payload["cursor"]}
 
     def acknowledge_published(self) -> Mapping[str, Any]:
         """Explicit crash recovery: acknowledge an identical, already present file.
@@ -335,7 +387,12 @@ class DirectoryTransfer:
             self.pending_path.unlink()
             return {"state": "publication_acknowledged", "records_republished": 0, "network_accessed": False}
 
-    def receive(self, *, maximum_batches: int = 16) -> Mapping[str, Any]:
+    def receive(
+        self, *, maximum_batches: int = 16,
+        active_check: Callable[[], None] | None = None,
+        before_read: Callable[[], None] | None = None,
+        skip_local_stream: bool = False,
+    ) -> Mapping[str, Any]:
         if not isinstance(maximum_batches, int) or isinstance(maximum_batches, bool) or not 1 <= maximum_batches <= 256:
             raise MemoryError("invalid_limit")
         report: dict[str, Any] = {"state": "received", "batches": 0, "records_added": 0, "unknown_senders": 0,
@@ -351,6 +408,8 @@ class DirectoryTransfer:
             entries_seen = 0
             with os.scandir(self.exchange) as senders:
                 for sender in senders:
+                    if active_check is not None:
+                        active_check()
                     entries_seen += 1
                     if entries_seen > MAX_DISCOVERY_FILES:
                         raise MemoryError("exchange_discovery_limit")
@@ -363,10 +422,15 @@ class DirectoryTransfer:
                         continue
                     with os.scandir(sender.path) as stores:
                         for store in stores:
+                            if active_check is not None:
+                                active_check()
                             entries_seen += 1
                             if entries_seen > MAX_DISCOVERY_FILES:
                                 raise MemoryError("exchange_discovery_limit")
                             if _STORE.fullmatch(store.name) and store.is_dir(follow_symlinks=False):
+                                if (skip_local_stream and self.identity is not None
+                                        and sender.name == self.identity.key_id and store.name == state["vault_store_id"]):
+                                    continue
                                 peers.append((sender.name, store.name, Path(store.path)))
                                 if len(peers) > MAX_PEERS:
                                     raise MemoryError("too_many_transfer_peers")
@@ -377,6 +441,8 @@ class DirectoryTransfer:
                 candidates: dict[int, list[tuple[int, str, Path]]] = {}
                 with os.scandir(directory) as entries:
                     for entry in entries:
+                        if active_check is not None and entries_seen % 64 == 0:
+                            active_check()
                         entries_seen += 1
                         if entries_seen > MAX_DISCOVERY_FILES:
                             raise MemoryError("exchange_discovery_limit")
@@ -392,11 +458,15 @@ class DirectoryTransfer:
                         break  # Never skip a missing authenticated prefix.
                     authenticated: dict[str, Mapping[str, Any]] = {}
                     for cursor, digest, path in sorted(group):
+                        if active_check is not None:
+                            active_check()
                         candidate_checks += 1
                         if candidate_checks > 256:
                             report["more_possible"] = True
                             report["candidate_limit_reached"] = True
                             return report
+                        if before_read is not None:
+                            before_read()  # Budget failures are not malformed-peer rejections.
                         try:
                             payload, actual_digest = self._verify_capsule(_read(path))
                             if (actual_digest != digest or payload["sender_key_id"] != sender or payload["source_store_id"] != store

@@ -4,7 +4,7 @@ Universal Agent Memory Protocol (UAMP) is a model-, vendor-, session-, device-,
 and task-independent way for AI agents to share durable memory.
 
 The protocol is the product, not a particular plugin, programming language or
-database. [`memory_vault.py`](https://github.com/qh-work/memory-vault-sync/blob/v0.24.0/memory_vault.py) is one standard-library reference
+database. [`memory_vault.py`](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/memory_vault.py) is one standard-library reference
 implementation. Independent implementations MAY use another language, an
 append-only file, another database or an already authorized storage service.
 They exchange the same records, relations, provenance and logical bundles;
@@ -19,7 +19,7 @@ There are two complete ways to use this agreement:
 Both ways preserve identical memory semantics. Reading this document alone
 does not create storage, grant permissions or make a model remember forever.
 Start with [IMPLEMENTERS.md](docs/IMPLEMENTERS.md) for the direct route and
-[CLIENTS.md](https://github.com/qh-work/memory-vault-sync/blob/v0.24.0/docs/CLIENTS.md) for the optional client.
+[CLIENTS.md](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/CLIENTS.md) for the optional client.
 
 ## 1. Scope
 
@@ -47,7 +47,7 @@ database is not required. Host-native tools can expose the same operations.
 ordinary record or bundle exchange.
 
 `signed-v1` adds the independent trust and Ed25519 proofs in section 10 and
-[TRUST.md](https://github.com/qh-work/memory-vault-sync/blob/v0.24.0/docs/TRUST.md). `lifecycle-v1` adds explicit client-session/turn
+[TRUST.md](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/TRUST.md). `lifecycle-v1` adds explicit client-session/turn
 coordination in [LIFECYCLE.md](docs/LIFECYCLE.md), using
 `universal-memory-lifecycle-request/v1` and
 `universal-memory-lifecycle-result/v1`. Its `session.open`, `turn.input`,
@@ -528,7 +528,7 @@ Unsigned imports default to `quarantined`. The explicit CLI option
 `--accept-unsigned` admits the same bytes as `accepted_unsigned`; it cannot
 authenticate an author. A duplicate quarantine import never demotes an already
 admitted record. The v1 bundle intentionally does not preserve signature/trust
-metadata. Use the optional [signed delta envelope](https://github.com/qh-work/memory-vault-sync/blob/v0.24.0/docs/TRANSFER.md) for that.
+metadata. Use the optional [signed delta envelope](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/TRANSFER.md) for that.
 
 Bundles are plaintext. Their hashes prove byte integrity, not sender identity.
 Sensitive bundles require a user-approved encrypted transport outside UAMP.
@@ -610,7 +610,7 @@ from views without changing records. Without it, the core can report only
 verification at the time of admission, not current key trust. Revocation is
 local policy; it does not remotely delete historical records or withdraw data
 from every offline recipient. See
-[TRUST.md](https://github.com/qh-work/memory-vault-sync/blob/v0.24.0/docs/TRUST.md).
+[TRUST.md](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/TRUST.md).
 
 ### Signed-v1 wire primitives
 

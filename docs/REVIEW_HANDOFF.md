@@ -7,7 +7,8 @@ state or treat remembered goals as a mandate to keep running.
 
 ## Scope and starting point
 
-Review release tag `v0.24.0` against `v0.23.0`. The implementation was not
+Review release tag `v0.24.1` against `v0.24.0` for full-mode operations, or
+against `v0.23.0` for the shared protocol/client transition. The implementation was not
 runtime-tested at the owner's request. Only run checks if the current user/host
 authorizes them. Use fresh temporary directories and synthetic conversations;
 never point these examples at a real private Vault or copy real credentials.
@@ -66,6 +67,26 @@ and report that as v0.24 conformance.
    missing/cyclic relations and unknown profiles fail closed. Compare preserved
    visible text/UTC times/relations and content-free losses. Dry-run must write
    nothing; import should be quarantine, never inherited task ownership.
+6. **Full sync and remote backends.** Use isolated local Vaults, fresh explicit
+   keys/trust, and an operator-owned exchange; substitute a deliberately failing
+   synthetic rclone executable only in a controlled fixture. Check save/queue
+   separation, one finite worker, durable offline retries, stream bounds,
+   configuration rebinding refusal, publication privacy guard and signature
+   verification before admission. Do not use real remote credentials. Pin the
+   executable digest explicitly. Confirm disabled automatic sync creates no
+   network activity and receipts never claim another agent consumed a batch.
+7. **Operations and packs.** Verify backup consistency and restore-to-new-path;
+   original data/keys/client queues must remain untouched. Restore without a
+   current independent trust store must quarantine evidence; a copied admission
+   label or hash cannot grant trust. Check pack partial-copy resume, cache
+   invalidation, malformed/truncated chunks and bounded decompression. Final
+   unpack must reverify every hash even if the copy receipt reports a cache hit.
+8. **Host adapters and updates.** Verify actual host field/version coverage and
+   missing-pair/final behavior, including Claude prompt_id and Gemini timestamp
+   constraints. Do not substitute hidden transcripts. Review updater URL/path,
+   expansion and manifest bounds; staging must never execute downloaded code,
+   overwrite an installed package or activate hooks. See [HOSTS.md](HOSTS.md),
+   [UPDATES.md](UPDATES.md) and [PARITY.md](PARITY.md).
 
 The existing small synthetic core suite is in `tests/test_memory_vault.py` and
 has been adjusted for the changed import policy. Its presence is not a passed

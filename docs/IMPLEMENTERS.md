@@ -10,7 +10,7 @@ This guide and [PROTOCOL.md](../PROTOCOL.md), [schemas](../schemas/README.md) an
 [examples](../examples/protocol/README.md) are sufficient implementation
 material for a documentation-only distribution. Executable reference code is
 an optional, separate
-[source checkout](https://github.com/qh-work/memory-vault-sync/tree/v0.24.0).
+[source checkout](https://github.com/qh-work/memory-vault-sync/tree/v0.24.1).
 Nothing here installs a client, turns on background capture, grants access,
 hides persistence or changes host logging.
 
@@ -32,7 +32,7 @@ limitation instead of claiming a save. A host with storage but no hash helper
 can keep ordinary notes, but must not label them valid UAMP records yet.
 
 The lightweight reference is available when convenient, not compulsory:
-[memory_vault.py](https://github.com/qh-work/memory-vault-sync/blob/v0.24.0/memory_vault.py).
+[memory_vault.py](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/memory_vault.py).
 Using another language/storage engine is a first-class implementation choice.
 
 ## 2. Store independent, append-only records

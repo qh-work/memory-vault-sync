@@ -28,6 +28,10 @@ PROTOCOL_DOCUMENTS = (
     "LICENSE", "NOTICE", "PROTOCOL.md", "docs/IMPLEMENTERS.md",
     "docs/LIFECYCLE.md", "docs/TRUST.md", "docs/TRANSFER.md", "SECURITY.md",
     "docs/CLIENTS.md", "docs/MIGRATION.md", "docs/REVIEW_HANDOFF.md",
+    "AI_START_HERE.md", "llms.txt", ".well-known/agent-memory.json", "docs/TWO_MODES.md",
+    "docs/STATUS.md", "docs/RELEASE.md", "docs/SYNC.md", "docs/REMOTE_BACKENDS.md",
+    "docs/HOSTS.md", "docs/OPERATIONS.md", "docs/BACKUP.md", "docs/PARITY.md",
+    "docs/UPDATES.md", "docs/PACKS.md",
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_PACKAGE_BYTES = 32 * 1024 * 1024
@@ -57,7 +61,7 @@ def parse_json(data: bytes) -> object:
 
 def public_protocol_files() -> list[Path]:
     files: list[Path] = []
-    for name in ("schemas", "examples/protocol"):
+    for name in ("schemas", "examples/protocol", "adapters"):
         directory = ROOT / name
         if not directory.is_dir() or directory.is_symlink():
             raise ValueError("missing_protocol_material")
@@ -95,8 +99,10 @@ def inspect_sources(material: list[Path]) -> tuple[str, dict[str, int]]:
         raise ValueError("invalid_release_version")
     json_sources = [
         ROOT / "packaging/marketplace.json",
+        ROOT / ".well-known/agent-memory.json",
         *(ROOT / "plugins/memory-vault-client" / name for name in TEMPLATE_FILES if name.endswith(".json")),
         *(path for path in material if path.suffix == ".json"),
+        *sorted((ROOT / "adapters").rglob("*.json")),
     ]
     for source in json_sources:
         value = parse_json(read_public(source))

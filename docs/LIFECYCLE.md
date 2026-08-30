@@ -3,7 +3,10 @@
 This optional adapter lets an authorized local runtime stage a visible turn,
 commit it to the shared Memory Vault, cancel an uncommitted turn, and read back
 durable receipts after process restarts. It has no model/vendor dependency,
-network connection, auto-start worker, transcript scanner or execution gateway.
+transcript scanner or execution gateway. In the full client a new durable commit
+can notify the separately opted-in sync queue without waiting for network
+delivery. Re-reading a completed receipt does not schedule work or imply current
+trust/remote delivery; the lightweight protocol does not require this worker.
 
 This is a **new profile**, `universal-memory-lifecycle/v1`, with request schema
 `universal-memory-lifecycle-request/v1` and result schema

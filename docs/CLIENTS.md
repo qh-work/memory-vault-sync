@@ -1,4 +1,4 @@
-# One Vault, optional client integrations
+# One Vault, full authorized client
 
 The lightweight file and the optional client use the same canonical records,
 SQLite database, provenance rules and transfer format. There is no separate
@@ -19,12 +19,21 @@ changed by adding these source files.
 | `memory_vault_client.py protocol` | An explicitly launched configured client | The same core wire protocol, with the client's exact path and current trust checks |
 | `memory_vault_client.py mcp` | A host that supports local stdio MCP | Discoverable read/write memory tools |
 | `memory_vault_client.py lifecycle` | An explicitly launched runtime adapter | Stage, commit or abort visible turns using the new optional lifecycle v1 profile |
+| `memory_vault_client.py host` | Approved Claude Code/Gemini CLI/generic events | Correlate documented visible events with the same lifecycle and Vault |
+| `memory_vault_client.py sync` | Explicit operator run or separately opted-in finite worker | Signed incremental directory/rclone transfer; pending work and content-free receipts |
+| `memory_vault_client.py manage` | Explicit operator command | Read-only diagnosis, bounded replay, snapshot and restore-to-new-path |
+| `memory_vault_client.py pack` / `update` | Explicit operator command | Compressed resumable file packs / release staging without activation |
 | Optional Codex hooks | Reviewed/trusted host lifecycle events, plus capture opt-in | Stage the visible prompt, recall locally, save the visible final pair |
 | Work MCP entry point | Work installations that support the packaged local MCP server | Explicit tool calls; automatic Work lifecycle capture is **not established** |
 
 Reading instructions does not create storage access or install tools. Hosts
 retain their authorization rules. A model's persistence needs do not grant it
 new filesystem access, network access, execution rights, or hook trust.
+
+The runtime in the full plugin includes these adapters and operations. They are
+optional for the independent protocol and standard-library core. See
+[the two modes](TWO_MODES.md), [host setup](HOSTS.md) and
+[old/new capability map](PARITY.md).
 
 ## 1. Explicitly configure a shared Vault
 
@@ -68,6 +77,34 @@ otherwise it reads `client.json` under:
 
 The client does not discover all old plugins or conversations and does not
 silently migrate another Vault. Use the explicit migration workflow separately.
+
+### Add automatic sharing without waiting for the network
+
+Configure keys and independent trust using [TRUST.md](TRUST.md), then create an
+explicit signed sync configuration using [SYNC.md](SYNC.md). Bind that existing
+configuration when creating the client:
+
+```bash
+python3 /absolute/path/memory-vault-sync/memory_vault_client.py \
+  --config /absolute/private/control/client.json configure \
+  --sync-config /absolute/private/control/sync.json --capture-visible-turns
+```
+
+This inherits the sync configuration's exact Vault, signing identity and trust
+registry. Supplying conflicting paths is refused. Existing client configuration
+is not replaced; change the operator-controlled file or create a new one.
+Capture and automatic sync are independent opt-ins: MCP/direct writes do not
+require automatic visible-turn capture. A newly saved hook/lifecycle turn,
+MCP write, configured protocol write or import notifies the sync queue; bare
+`memory_vault.py` stays independent and never spawns a worker. An explicit sync
+run also discovers unsent Vault changes if a notification was interrupted.
+
+Notification performs no remote I/O and never waits for worker completion.
+Only the independently enabled automatic/background configuration can launch a
+finite transfer worker. The saved-local reply is not a delivery acknowledgement.
+An event-triggered worker is not an always-on service; while no host is active,
+use an explicit `sync run` when a transfer is wanted. Inspect `sync status` or
+`manage doctor` for content-free health and pending/error information.
 
 ### Direct protocol access to the configured client's records
 
@@ -227,7 +264,7 @@ host must deliver the documented fields and the operator must trust the hooks.
 
 | Event | Local behavior |
 | --- | --- |
-| `SessionStart` | Read a bounded dynamic handoff view; no network request |
+| `SessionStart` | Notify independently enabled sync, retry at most four local pending saves, read a bounded local handoff; never wait for network |
 | `UserPromptSubmit` | Stage only `prompt` for the supplied `session_id` and `turn_id`, then recall relevant local evidence |
 | `Stop` | Pair the staged prompt with `last_assistant_message`, save episode and continuity, report an advisory result |
 
@@ -261,8 +298,9 @@ python3 /absolute/path/memory-vault-sync/memory_vault_client.py \
   --config /absolute/private/control/client.json retry --limit 16
 ```
 
-This command retries local saving only; it does not synchronize with another
-machine. Disabling capture also disables replay of these automatic jobs. No
+This command retries local saving; successful writes may notify the independently
+configured background sync worker. It never waits for remote delivery.
+Disabling capture also disables replay of these automatic jobs. No always-on
 daemon is installed, and there is no promise that a host will deliver an event
 after being force-killed. A never-completed turn may leave its staged prompt;
 there is no indiscriminate automatic cleanup of old private state.

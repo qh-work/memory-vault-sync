@@ -23,8 +23,20 @@ Task containers.
 Optional client hooks/MCP, externally provisioned signing, explicit transfer
 adapters and offline export converters belong in separate modules. They must
 leave the lightweight file independently usable and must not install, enable,
-authorize or spawn themselves. An old format converter is not a license to
+or authorize themselves. A finite sync worker may start only after independent
+operator opt-in, within existing host permissions; memory cannot request a new
+agent, worker or permission. An old format converter is not a license to
 restore old Task/Git ownership or the old runtime.
+
+## Pick a bounded contribution
+
+Read [AI_START_HERE.md](AI_START_HERE.md) for independent protocol adoption, or
+[TWO_MODES.md](docs/TWO_MODES.md) for full-client integrations. Start from the
+exact v0.24.1 release tag; protected main may still be the earlier release.
+[Issue #3](https://github.com/qh-work/memory-vault-sync/issues/3) collects small
+interoperability contributions and reproducible synthetic evidence. Reports
+should separate source inspection, executed checks and actual host use. We
+welcome human and AI-assisted work without assuming a visit/download is adoption.
 
 ## Privacy
 

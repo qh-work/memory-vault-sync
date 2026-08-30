@@ -1,6 +1,6 @@
 # v0.24 contribution: prove the protocol and authorized client interoperate
 
-The target is now [v0.24.0](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.24.0),
+The target is now [v0.24.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.24.1),
 not the old v0.21 Host Adapter envelope or an unqualified main checkout. The
 protected main branch may still be v0.23. Earlier discussion is historical;
 please base new work on the version tag and keep this contribution small.
@@ -31,12 +31,12 @@ compatibility. Closing a session must not remove long-term memory.
 
 ## References
 
-- [Protocol](https://github.com/qh-work/memory-vault-sync/blob/v0.24.0/PROTOCOL.md)
-- [Independent implementer guide](https://github.com/qh-work/memory-vault-sync/blob/v0.24.0/docs/IMPLEMENTERS.md)
-- [Synthetic interchange material](https://github.com/qh-work/memory-vault-sync/tree/v0.24.0/examples/protocol)
-- [Client guide](https://github.com/qh-work/memory-vault-sync/blob/v0.24.0/docs/CLIENTS.md)
-- [Lifecycle profile](https://github.com/qh-work/memory-vault-sync/blob/v0.24.0/docs/LIFECYCLE.md)
-- [Full bounded review handoff](https://github.com/qh-work/memory-vault-sync/blob/v0.24.0/docs/REVIEW_HANDOFF.md)
+- [Protocol](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/PROTOCOL.md)
+- [Independent implementer guide](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/IMPLEMENTERS.md)
+- [Synthetic interchange material](https://github.com/qh-work/memory-vault-sync/tree/v0.24.1/examples/protocol)
+- [Client guide](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/CLIENTS.md)
+- [Lifecycle profile](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/LIFECYCLE.md)
+- [Full bounded review handoff](https://github.com/qh-work/memory-vault-sync/blob/v0.24.1/docs/REVIEW_HANDOFF.md)
 
 The maintainer did not run application tests for this release. These are
 independent review tasks to perform only with your own host/user authorization.

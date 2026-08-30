@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.24.1 — Full authorized client alongside the lightweight protocol
+
+- Corrected the v0.24.0 thin-client gap: added durable coalesced sync work,
+  bounded event-triggered workers, offline retry, directory/rclone remote
+  backends and content-free sync receipts. Local save/recall never waits for
+  remote delivery; automatic sync is an independent operator opt-in.
+- Added Claude Code, Gemini CLI and generic visible-event adapters around the
+  shared lifecycle. Session correlation never becomes memory ownership.
+- Added read-only diagnosis, consistent snapshot backup, restore to a new Vault
+  with fresh delivery identity/current trust, compressed resumable file packs,
+  and explicit release staging without installation or activation.
+- Added a best-effort publication secret/path guard without restricting local
+  persistence or turning the lightweight protocol into an installation format.
+- Published an AI implementer start page, machine-readable discovery document,
+  two-mode/capability maps and bounded independent review tasks.
+- Kept one canonical protocol/core and independent signing/trust. No old
+  Task/Git runtime, hidden transcripts, live private migration or key/policy
+  auto-enrollment is restored. v0.24.0 release assets remain immutable.
+- **No runtime tests, host installation or performance benchmarks were run.**
+  Source syntax, public JSON, packaging and inventories were reviewed instead;
+  independent executed verification remains required before production use.
+
 ## 0.24.0 — One protocol, two equal usage paths
 
 - Made the language- and storage-independent protocol and the authorized plugin

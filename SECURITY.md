@@ -129,6 +129,41 @@ Missing or revoked dependencies and over-budget closures are reported as
 Vault and can be requeued explicitly. A successful local save, published batch,
 or receiver commit is not proof that another model consumed or accepted memory.
 
+## Full-mode transport and operations
+
+The full client's [sync layer](docs/SYNC.md) is outside the memory protocol's
+authority boundary. Configuration, destination, identity, independent trust and
+automatic/background opt-in are operator-controlled files, never memory fields.
+Client and sync bindings must agree; staging/queues/keys cannot be placed in the
+exchange. A saved-local acknowledgement does not depend on network success.
+Finite workers preserve pending work and content-free visible receipts; no
+always-on agent or host audit-log suppression is installed.
+
+Directory exchange is not confidential by itself. Optional rclone transport
+uses an explicitly selected binary pinned by digest and a private configuration;
+it does not discover credentials, delete remote files or enroll received keys.
+Transport credentials and remote access policies remain the operator's concern.
+Only bounded, known sender/store cursor prefixes are fetched; a hostile remote
+can still deny availability. A crypt backend can supply encryption, but this
+release does not independently certify every cloud provider or rclone build.
+
+Automatic publication checks common credential/private-key patterns and local
+paths before a batch is published, and again before rclone upload. A rejection
+preserves local memory and pending work. This is best-effort screening, not a
+privacy guarantee: unknown secret formats and personal information can pass.
+Explicit low-level export/transfer commands remain operator-controlled;
+select and review what you share. The guard is not a mandatory protocol field
+and does not scan or suppress host audit logs.
+
+[Backups](docs/BACKUP.md) preserve memory, not private keys or a consistent image
+of all client queues. Restoring uses a new database and replication identity;
+independent current trust is required to re-admit signed evidence. A hash alone
+does not authenticate a backup. [Chunk packs](docs/PACKS.md) are compression and
+integrity, not encryption or signing; unpack verifies bytes again rather than
+trusting the resumable-copy cache. [Update staging](docs/UPDATES.md) is explicit,
+fixed-repository HTTPS with bounded archive validation. It never imports,
+executes or activates downloaded modules; hashes are not publisher signatures.
+
 ## Transparent optional capture
 
 The [client](docs/CLIENTS.md) does not install, enable or trust its own hooks.

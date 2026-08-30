@@ -1,6 +1,6 @@
-# v0.24.0 release status
+# v0.24.1 release status
 
-Version: **0.24.0**, two-path source/package release. The protocol-only archive
+Version: **0.24.1**, full-client + independent-protocol source/package release. The protocol-only archive
 and the complete optional plugin archive are distributed together. The protected
 main branch and the maintainer's installed private client are unchanged.
 Implementation and packaging are not claims of runtime or production validation.
@@ -12,9 +12,13 @@ Implementation and packaging are not claims of runtime or production validation.
 | Shared client entry | Eight stdio MCP tools; same Vault/core; explicit configuration | Every vendor/model host can install/use it unchanged |
 | Direct client protocol | Uses the configured Vault and trust settings; single requests, stdio and portable export/import | A live cross-implementation round trip |
 | Lifecycle profile | New explicit session/turn profile, durable commit, exact retries and cancellation boundary | Old v0.21 wire compatibility or an executed crash/cancel suite |
-| Optional automatic save | Reviewed Codex hook template, opt-in visible event capture, private retry state | Live host capture or native Work automatic lifecycle |
+| Optional automatic save | Codex hooks, Claude Code/Gemini CLI/generic visible-event adapters, private retry state | Live host capture, all vendor versions or native Work automatic lifecycle |
 | Signing and admission | Ed25519 provider, explicit independent trust, quarantine, revocation-aware views | Security audit, multi-signature history, hostile same-user isolation |
-| Incremental sharing | Bounded signed directory batches, closure, blocked dispositions, requeue, receipts | Network backend, remote consumption acknowledgment, throughput benchmark |
+| Automatic incremental sharing | Bounded signed batches, coalesced queue, finite opted-in worker, closure, retry and content-free receipts | Always-on delivery, remote consumption acknowledgment, throughput benchmark |
+| Remote backends | Explicit directory or pinned rclone/config/peer streams; Drive/S3/WebDAV/SFTP/crypt through rclone | Every backend/provider's live behavior; native direct Drive API parity |
+| Diagnosis and recovery | Read-only doctor, bounded replay, consistent snapshot and restore-to-new-path with current trust | A complete old-client settings/queue migration or executed crash-recovery suite |
+| Large exports/snapshots | Bounded compressed chunk packs, cached resumable copy, full verification on unpack | Old pack wire compatibility, object-store byte-range resume, benchmark |
+| Controlled updates | Explicit stable-release check, bounded verified stage to new path, no downloaded-code execution | Publisher signature, auto-install, marketplace certification or host activation |
 | Old data conversion | One-way supported v0.21 export ZIP conversion, mapping/loss report, dry-run | Arbitrary legacy formats or a real private-data migration |
 | Portability | Standard-library core and unsigned client paths | Native Windows protected signing/ACL adapter |
 | Packaging | Complete source-built plugin, local catalog, protocol-only ZIP, source/JSON parsing and byte inventories | Desktop installation, marketplace activation or host hook trust |
@@ -47,6 +51,11 @@ At the owner's request, **tests were not run**. No live capture, dependency
 installation, runtime migration, key generation, benchmark, plugin installation,
 or cross-device trial was performed. Follow [REVIEW_HANDOFF.md](REVIEW_HANDOFF.md)
 for independent synthetic checks before treating this as a stable release.
+
+Full mode restores these product capabilities as separate modules, not by
+reintroducing the old monolith. [PARITY.md](PARITY.md) records deliberate
+replacements and remaining differences. The lightweight core does not import
+the optional runtime or acquire its dependencies.
 
 Next release priorities are evidence from a real consenting local client,
 signed two-device interoperability and crash-recovery checks, Windows protected

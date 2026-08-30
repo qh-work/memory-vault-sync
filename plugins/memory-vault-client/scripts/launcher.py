@@ -14,8 +14,11 @@ import sys
 ALLOWED_MODULES = {
     "memory_vault.py", "memory_vault_client.py", "memory_vault_lifecycle.py", "memory_vault_trust.py",
     "memory_vault_transfer.py", "memory_vault_migrate.py",
+    "memory_vault_sync.py", "memory_vault_remote.py", "memory_vault_privacy.py",
+    "memory_vault_hosts.py", "memory_vault_manage.py", "memory_vault_backup.py",
+    "memory_vault_update.py", "memory_vault_pack.py",
 }
-REQUIRED_MODULES = {"memory_vault.py", "memory_vault_client.py", "memory_vault_lifecycle.py", "memory_vault_trust.py"}
+REQUIRED_MODULES = ALLOWED_MODULES - {"memory_vault_migrate.py"}
 MAX_MODULE_BYTES = 1024 * 1024
 
 

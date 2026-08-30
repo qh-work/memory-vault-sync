@@ -1,4 +1,4 @@
-# Memory Vault v0.24.0 — protocol-only package
+# Memory Vault v0.24.1 — protocol-only package
 
 This archive is the agreement, not an installed program. No Python, database,
 plugin, account or network service is required to read or implement it.
@@ -18,7 +18,7 @@ and result envelopes; matching old operation names does not make the v0.21 Host
 Adapter wire format compatible.
 
 The optional Python reference and complete client package are separate downloads:
-[v0.24.0 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.24.0).
+[v0.24.1 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.24.1).
 
 Examples and schemas were structurally inspected, not executed as a cross-host
 conformance test. Do not interpret this package as execution authorization,

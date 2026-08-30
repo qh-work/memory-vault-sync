@@ -5,8 +5,9 @@ This is universal-memory-lifecycle/v1, not the legacy v0.21 wire protocol.
 Session/turn handles correlate local staging only. They never own memory or
 enter canonical records. Capture must be explicitly enabled by the operator;
 requests provide caller-reported visible text, never independent host evidence.
-There is no networking, transcript discovery, background worker or permission
-decision. See docs/LIFECYCLE.md for cancellation and crash-retry semantics.
+There is no transcript discovery or permission decision. A committed local turn
+can notify the independently opted-in full-mode sync worker without waiting for
+network delivery. See docs/LIFECYCLE.md for cancellation and crash-retry semantics.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from memory_vault import (
 )
 from memory_vault_client import (
     MAX_TURN_PART_BYTES, ClientConfig, _absolute, _continuity, _digest, _object,
-    _private_directory, _request_id, _text, default_config_path, observe_turn,
+    _private_directory, _request_id, _text, default_config_path, notify_sync, observe_turn,
 )
 
 
@@ -412,7 +413,8 @@ class LifecycleState:
                 connection.execute(
                     "UPDATE requests SET response_json=? WHERE request_key=?", (canonical_bytes(response).decode("utf-8"), _digest(request["request_id"]))
                 )
-                return response
+            notify_sync(self.config, "turn-commit")
+            return response
         except MemoryError as exc:
             response = _error(exc.code, request=request, retryable=exc.retryable)
         except Exception:

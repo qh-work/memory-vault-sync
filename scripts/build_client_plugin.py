@@ -11,13 +11,20 @@ import shutil
 import sys
 
 
-REQUIRED_MODULES = ("memory_vault.py", "memory_vault_client.py", "memory_vault_lifecycle.py", "memory_vault_trust.py")
-OPTIONAL_MODULES = ("memory_vault_transfer.py", "memory_vault_migrate.py")
+REQUIRED_MODULES = (
+    "memory_vault.py", "memory_vault_client.py", "memory_vault_lifecycle.py", "memory_vault_trust.py",
+    "memory_vault_transfer.py", "memory_vault_sync.py", "memory_vault_remote.py",
+    "memory_vault_hosts.py", "memory_vault_manage.py", "memory_vault_backup.py",
+    "memory_vault_update.py", "memory_vault_pack.py", "memory_vault_privacy.py",
+)
+OPTIONAL_MODULES = ("memory_vault_migrate.py",)
 PACKAGE_DOCUMENTS = (
     "LICENSE", "NOTICE", "SECURITY.md", "PROTOCOL.md", "requirements-integrations.txt",
     "docs/CLIENTS.md", "docs/LIFECYCLE.md", "docs/IMPLEMENTERS.md", "docs/TRUST.md",
     "docs/TRANSFER.md", "docs/MIGRATION.md", "docs/STATUS.md", "docs/RELEASE.md",
-    "docs/REVIEW_HANDOFF.md",
+    "docs/REVIEW_HANDOFF.md", "AI_START_HERE.md", "llms.txt", ".well-known/agent-memory.json",
+    "docs/TWO_MODES.md", "docs/SYNC.md", "docs/REMOTE_BACKENDS.md", "docs/HOSTS.md",
+    "docs/OPERATIONS.md", "docs/BACKUP.md", "docs/PARITY.md", "docs/UPDATES.md", "docs/PACKS.md",
 )
 TEMPLATE_FILES = (
     ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",
@@ -66,7 +73,7 @@ def build(output: Path) -> Path:
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(root / name, target)
-    for directory in ("schemas", "examples/protocol"):
+    for directory in ("schemas", "examples/protocol", "adapters"):
         for source in sorted((root / directory).rglob("*")):
             if source.is_dir() and not source.is_symlink():
                 continue

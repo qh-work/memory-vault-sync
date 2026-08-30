@@ -1,4 +1,4 @@
-# Memory Vault v0.24.0 — complete optional client package
+# Memory Vault v0.24.1 — complete optional client package
 
 This archive contains a built plugin under `plugins/memory-vault-client` and a
 local marketplace catalog at `.agents/plugins/marketplace.json`. It includes
@@ -64,7 +64,30 @@ neither owns or partitions the memory.
 
 Read `CLIENTS.md`, `LIFECYCLE.md`, `TRUST.md` and `TRANSFER.md` in
 `plugins/memory-vault-client/docs/` for lifecycle, signing, portable import/export and explicit signed
-directory transfer. No background network synchronization is installed.
+directory transfer. The full runtime also includes:
+
+- `host`: Claude Code, Gemini CLI and generic visible-event adapters, with
+  copyable configurations in `plugins/memory-vault-client/adapters/`.
+- `sync`: coalesced work, finite workers and directory/rclone delivery after
+  independent opt-in; bind `configure --sync-config /absolute/private/sync.json`
+  to use its exact Vault/identity/trust. See `docs/SYNC.md` and
+  `docs/REMOTE_BACKENDS.md` before enabling it.
+- `manage`: read-only doctor, bounded retry, snapshot backup and new-path restore.
+- `pack`: compressed chunks and resumable copy for an explicit export/snapshot.
+- `update`: explicit public release inspection and new-directory staging;
+  never installation or activation.
+
+For example, from the extracted package root:
+
+```bash
+python3 plugins/memory-vault-client/scripts/launcher.py manage doctor
+python3 plugins/memory-vault-client/scripts/launcher.py sync status
+```
+
+The second command requires a bound sync configuration. No daemon, scheduler,
+host setting, signing key or trust enrollment is installed by extracting this
+package. Local memory saving never waits for network delivery. Read
+`docs/TWO_MODES.md` and `docs/PARITY.md` for the exact capabilities and limits.
 
 ## Validation and privacy
 

@@ -5,8 +5,9 @@
 ``hook`` accepts only the documented visible Codex event fields; it never reads
 transcripts. Automatic capture requires an operator-created configuration with
 ``capture_visible_turns: true`` as well as the host's normal hook trust approval.
-No command in this module installs a plugin, changes host permissions, starts a
-background process, contacts a network, or removes host audit logs.
+No command installs a plugin, changes host permissions or removes host audit
+logs. The separately configured full-mode sync can queue a bounded worker after
+local saves; remote access requires the operator's independent sync opt-in.
 """
 
 from __future__ import annotations
@@ -175,6 +176,7 @@ class ClientConfig:
     capture_visible_turns: bool = False
     identity_path: Path | None = None
     trust_path: Path | None = None
+    sync_config_path: Path | None = None
 
     @property
     def state_path(self) -> Path:
@@ -190,7 +192,7 @@ class ClientConfig:
         value = _object(
             raw,
             required={"schema_version", "vault_path", "capture_visible_turns"},
-            optional={"identity_path", "trust_path"},
+            optional={"identity_path", "trust_path", "sync_config_path"},
         )
         if value["schema_version"] != CONFIG_SCHEMA or not isinstance(value["capture_visible_turns"], bool):
             raise MemoryError("invalid_client_config")
@@ -201,13 +203,15 @@ class ClientConfig:
         vault = _absolute(value["vault_path"])
         identity_path = _absolute(identity) if identity is not None else None
         trust_path = _absolute(trust) if trust is not None else None
-        all_paths = [candidate for candidate in (path, vault, identity_path, trust_path) if candidate is not None]
+        sync_value = value.get("sync_config_path")
+        sync_path = _absolute(sync_value) if sync_value is not None else None
+        all_paths = [candidate for candidate in (path, vault, identity_path, trust_path, sync_path) if candidate is not None]
         if len(set(all_paths)) != len(all_paths):
             raise MemoryError("client_paths_must_be_separate")
         state = path.parent / (path.stem + ".state")
         if any(state == candidate or state in candidate.parents for candidate in all_paths):
             raise MemoryError("keys_and_vault_must_not_be_client_state")
-        return cls(path, vault, value["capture_visible_turns"], identity_path, trust_path)
+        return cls(path, vault, value["capture_visible_turns"], identity_path, trust_path, sync_path)
 
     def vault(self, *, writing: bool = False, host_visible: bool = False) -> Vault:
         signer = None
@@ -249,6 +253,74 @@ class ClientConfig:
             observation_source="host_visible_turn" if host_visible else "caller_reported",
             trust_check=trust.require_trusted if trust is not None else None,
         )
+
+
+def bound_sync_config(config: ClientConfig) -> Any:
+    """Keep memory, host staging, sync queues and public exchange disjoint."""
+    if config.sync_config_path is None:
+        raise MemoryError("sync_not_configured")
+    from memory_vault_sync import SyncConfig
+    selected = SyncConfig.load(config.sync_config_path)
+    selected.matches(config.vault_path, config.identity_path, config.trust_path)
+    client_state = config.state_path
+    sync_state = selected.state_directory
+
+    def overlaps(left: Path, right: Path) -> bool:
+        return left == right or left in right.parents or right in left.parents
+
+    if overlaps(client_state, sync_state) or overlaps(config.path, sync_state):
+        raise MemoryError("client_sync_state_overlap")
+    if selected.backend["kind"] == "directory":
+        exchange = _absolute(selected.backend["exchange"])
+        if overlaps(config.path, exchange) or overlaps(client_state, exchange):
+            raise MemoryError("client_state_inside_exchange")
+    else:
+        for name in ("config_file", "executable"):
+            selected_file = _absolute(selected.backend[name])
+            if selected_file == config.path or overlaps(client_state, selected_file):
+                raise MemoryError("client_remote_control_overlap")
+    return selected
+
+
+def client_health(config: ClientConfig) -> Mapping[str, Any]:
+    """Content-free read-only metadata; never starts recovery or a worker."""
+    result: dict[str, Any] = {
+        "configured": True, "capture_visible_turns": config.capture_visible_turns,
+        "signing_configured": config.identity_path is not None,
+        "sync_configured": config.sync_config_path is not None,
+        "work_automatic_hooks_verified": False,
+    }
+    if config.sync_config_path is not None:
+        try:
+            from memory_vault_sync import status as sync_status
+            bound_sync_config(config)
+            result["sync"] = sync_status(config.sync_config_path)
+        except Exception:
+            result["sync"] = {"state": "sync_unavailable", "memory_content_included": False,
+                              "network_accessed": False, "remote_ai_read_verified": False}
+    return result
+
+
+def notify_sync(config: ClientConfig, reason: str) -> Mapping[str, Any]:
+    """Advisory notification only; local durability does not depend on delivery.
+
+    request_sync performs no remote I/O and never waits for a worker. Both the
+    client and the independent sync configuration must name the same Vault and
+    identity. Missing/changed configuration must never silently change targets.
+    """
+    if config.sync_config_path is None:
+        return {"state": "sync_not_configured", "local_memory_unchanged": True}
+    try:
+        from memory_vault_sync import request_sync
+        bound_sync_config(config)
+        return request_sync(
+            config.sync_config_path, expected_vault=config.vault_path,
+            expected_identity=config.identity_path, expected_trust=config.trust_path,
+            reason=reason,
+        )
+    except Exception:
+        return {"state": "sync_unavailable", "error_code": "sync_notification_failed",
+                "local_memory_unchanged": True}
 
 
 def _request_id(value: Any, suffix: str) -> str:
@@ -431,18 +503,26 @@ def _persist_job(config: ClientConfig, state: HookState, key: str, job: Mapping[
     )
     if response.get("ok"):
         state.finish(key, response["result"], value["user"], value["assistant"])
+        notify_sync(config, "turn-commit")
     return response
 
 
 def handle_hook(config: ClientConfig, action: str, value: Any) -> Mapping[str, Any]:
-    if not config.capture_visible_turns:
-        return {}
     if not isinstance(value, dict) or value.get("hook_event_name") != _EVENTS[action]:
         raise MemoryError("invalid_hook_event")
     # Ignore all unrelated event fields, especially transcript_path, cwd,
     # permission_mode and arbitrary extension fields. They are not authority.
     if action == "session-start":
+        notify_sync(config, "session-start")
+        if not config.capture_visible_turns:
+            return {}
+        # Only a bounded number of local durable jobs is replayed. Network
+        # delivery remains asynchronous and cannot delay this recall path.
+        with contextlib.suppress(MemoryError, OSError):
+            retry_pending(config, limit=4)
         return _hook_recall(config, "SessionStart", "Current goals, decisions, continuity and unresolved next actions")
+    if not config.capture_visible_turns:
+        return {}
     key = _turn_key(value)
     state = HookState(config)
     if action == "user-prompt-submit":
@@ -495,7 +575,8 @@ def retry_pending(config: ClientConfig, *, limit: int = 16) -> Mapping[str, Any]
                 failed += 1
         except (MemoryError, OSError):
             failed += 1
-    return success({"processed": processed, "saved": saved, "failed": failed, "network_accessed": False})
+    return success({"processed": processed, "saved": saved, "failed": failed,
+                    "network_accessed": False, "background_sync_may_run": config.sync_config_path is not None})
 
 
 def _schema(properties: Mapping[str, Any], required: Sequence[str] = ()) -> dict[str, Any]:
@@ -592,21 +673,31 @@ class MCPServer:
                 "mcp_protocol": MCP_PROTOCOL, "transport": "stdio",
                 "automatic_capture_default": False, "network_accessed": False,
                 "work_automatic_hooks_verified": False,
+                "optional_full_mode": ["automatic_sync", "remote_backends", "host_adapters", "backup_restore", "diagnostics", "staged_updates", "chunk_packs"],
             }
             return response
         config = ClientConfig.load(self.config_path)
         operation = name.removeprefix("memory_")
         if operation == "observe":
-            return observe_turn(config, **arguments)
+            response = observe_turn(config, **arguments)
+            if response.get("ok"):
+                notify_sync(config, "memory-write")
+            return response
         request = {"op": operation, **arguments}
         if operation == "remember":
             request["request_id"] = _request_id(arguments["request_id"], "remember")
-            return config.vault(writing=True).handle(request)
+            response = config.vault(writing=True).handle(request)
+            if response.get("ok"):
+                notify_sync(config, "memory-write")
+            return response
         if operation == "changes":
             # Pin a safe default even if a future core changes its own default.
             # Explicit values have already passed the <=1 MiB input schema.
             request["maximum_bytes"] = arguments.get("maximum_bytes", 256 * 1024)
-        return _read_operation(config, request)
+        response = _read_operation(config, request)
+        if operation == "status":
+            return {**response, "client": client_health(config)}
+        return response
 
     def handle(self, value: Any) -> Mapping[str, Any] | None:
         if not isinstance(value, dict):
@@ -698,16 +789,23 @@ def _emit(value: Mapping[str, Any]) -> None:
 
 
 def configure(args: argparse.Namespace, path: Path) -> Mapping[str, Any]:
-    vault = _absolute(args.vault if args.vault is not None else default_vault_path())
-    identity = _absolute(args.identity) if args.identity is not None else None
-    trust = _absolute(args.trust) if args.trust is not None else None
+    sync_path = _absolute(args.sync_config) if args.sync_config is not None else None
+    sync = None
+    if sync_path is not None:
+        from memory_vault_sync import SyncConfig
+        sync = SyncConfig.load(sync_path)
+    vault = _absolute(args.vault if args.vault is not None else (sync.vault if sync else default_vault_path()))
+    identity = _absolute(args.identity) if args.identity is not None else (sync.identity if sync else None)
+    trust = _absolute(args.trust) if args.trust is not None else (sync.trust_store if sync else None)
+    if sync is not None and (vault, identity, trust) != (sync.vault, sync.identity, sync.trust_store):
+        raise MemoryError("sync_client_binding_mismatch")
     if identity is not None and trust is None:
         raise MemoryError("identity_requires_trust_store")
-    all_paths = [candidate for candidate in (path, vault, identity, trust) if candidate is not None]
+    all_paths = [candidate for candidate in (path, vault, identity, trust, sync_path) if candidate is not None]
     if len(set(all_paths)) != len(all_paths):
         raise MemoryError("client_paths_must_be_separate")
     state = path.parent / (path.stem + ".state")
-    if any(state == candidate or state in candidate.parents for candidate in (path, vault, identity, trust) if candidate is not None):
+    if any(state == candidate or state in candidate.parents for candidate in all_paths):
         raise MemoryError("keys_and_vault_must_not_be_client_state")
     config = {
         "schema_version": CONFIG_SCHEMA, "vault_path": str(vault),
@@ -717,6 +815,9 @@ def configure(args: argparse.Namespace, path: Path) -> Mapping[str, Any]:
         config["identity_path"] = str(identity)
     if trust is not None:
         config["trust_path"] = str(trust)
+    if sync_path is not None:
+        config["sync_config_path"] = str(sync_path)
+        bound_sync_config(ClientConfig(path, vault, bool(args.capture_visible_turns), identity, trust, sync_path))
     try:
         _write_once(path, config)
     except FileExistsError:
@@ -726,6 +827,7 @@ def configure(args: argparse.Namespace, path: Path) -> Mapping[str, Any]:
         "vault_path": str(vault),
         "signing_configured": identity is not None,
         "trust_checks_configured": trust is not None,
+        "sync_configured": sync_path is not None,
         "host_installed": False, "host_hooks_trusted": False,
         "network_accessed": False,
     })
@@ -741,7 +843,10 @@ def protocol_request(config_path: Path, request: Any) -> Mapping[str, Any]:
         return Vault().handle(request)
     config = ClientConfig.load(config_path)
     writing = isinstance(request, dict) and request.get("op") in {"remember", "observe"}
-    return config.vault(writing=writing).handle(request)
+    response = config.vault(writing=writing).handle(request)
+    if writing and response.get("ok"):
+        notify_sync(config, "memory-write")
+    return response
 
 
 def run_protocol(args: argparse.Namespace, config_path: Path) -> int:
@@ -750,11 +855,13 @@ def run_protocol(args: argparse.Namespace, config_path: Path) -> int:
     if args.export_path is not None or args.import_path is not None:
         # Bundles contain original records, not new assertions by the importer.
         # Do not load a private key or silently re-sign another author's bytes.
-        vault = ClientConfig.load(config_path).vault()
+        config = ClientConfig.load(config_path)
+        vault = config.vault()
         if args.export_path is not None:
             result = vault.export_bundle(_absolute(args.export_path))
         else:
             result = vault.import_bundle(_absolute(args.import_path), accept_unsigned=args.accept_unsigned)
+            notify_sync(config, "memory-write")
         write_response(success(result))
         return 0
     if not args.serve:
@@ -785,6 +892,7 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument("--vault", type=Path, help="absolute shared Vault path; omitted: the core's MEMORY_VAULT_PATH or user-data default")
     setup.add_argument("--identity", type=Path)
     setup.add_argument("--trust", type=Path)
+    setup.add_argument("--sync-config", type=Path, help="bind an existing explicit sync config; inherit its exact Vault, identity and trust")
     setup.add_argument("--capture-visible-turns", action="store_true", help="explicit opt-in to local visible-turn capture when the host delivers approved hooks")
     sub.add_parser("mcp", help="serve MCP JSON-RPC on stdio until the host closes stdin")
     protocol = sub.add_parser("protocol", help="use the core protocol with this client's exact Vault, identity and trust configuration")
@@ -800,11 +908,23 @@ def build_parser() -> argparse.ArgumentParser:
     retry = sub.add_parser("retry", help="explicitly retry bounded local visible-turn outbox work; no network")
     retry.add_argument("--limit", type=int, default=16)
     sub.add_parser("status", help="read client configuration and Vault counts without memory text")
+    for name, description in {
+        "sync": "explicit full-mode synchronization and status",
+        "manage": "read-only diagnosis, bounded local retry, backup and restore",
+        "host": "explicit Claude Code, Gemini CLI or generic lifecycle adapter",
+        "update": "explicit release check and stage-to-new-directory; never activate",
+        "pack": "explicit compressed chunk packing, resumable copy and unpack",
+    }.items():
+        sub.add_parser(name, help=description, add_help=False)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args, remaining = parser.parse_known_args(argv)
+    forwarded = {"sync", "manage", "host", "update", "pack"}
+    if remaining and args.command not in forwarded:
+        parser.error("unrecognized arguments: " + " ".join(remaining))
     try:
         path = _absolute(args.config) if args.config is not None else default_config_path()
         if args.command == "mcp":
@@ -817,7 +937,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "lifecycle":
             from memory_vault_lifecycle import run_stream
             return run_stream(path, serve=args.serve)
+        if args.command == "manage":
+            from memory_vault_manage import main as manage_main
+            return manage_main(remaining, config_path=path)
+        if args.command == "host":
+            from memory_vault_hosts import main as hosts_main
+            return hosts_main(remaining, config_path=path)
+        if args.command == "update":
+            from memory_vault_update import main as update_main
+            return update_main(remaining)
+        if args.command == "pack":
+            from memory_vault_pack import main as pack_main
+            return pack_main(remaining)
         config = ClientConfig.load(path)
+        if args.command == "sync":
+            from memory_vault_sync import main as sync_main
+            if config.sync_config_path is None:
+                raise MemoryError("sync_not_configured")
+            bound_sync_config(config)
+            if "--config" in remaining or any(part.startswith("--config=") for part in remaining):
+                raise MemoryError("use_client_bound_sync_config")
+            return sync_main(["--config", str(config.sync_config_path), *remaining])
         if args.command == "hook":
             raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
             if len(raw) > MAX_REQUEST_BYTES:
@@ -829,11 +969,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _emit(retry_pending(config, limit=args.limit))
         else:
             response = dict(_read_operation(config, {"op": "status"}))
-            response["client"] = {
-                "configured": True, "capture_visible_turns": config.capture_visible_turns,
-                "signing_configured": config.identity_path is not None,
-                "work_automatic_hooks_verified": False,
-            }
+            response["client"] = client_health(config)
             _emit(response)
         return 0
     except MemoryError as exc:
