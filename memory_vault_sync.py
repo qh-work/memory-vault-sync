@@ -396,6 +396,7 @@ def _push_pending(config: SyncConfig, endpoint: DirectoryTransfer, remote: Rclon
             or payload["sender_key_id"] != key or payload["source_store_id"] != store
             or digest != state["last_published"]):
         raise MemoryError("remote_pending_source_changed")
+    endpoint.validate_outgoing_payload(payload)
     _publication_guard(endpoint.records_for_payload(payload)[0], endpoint=endpoint, payload=payload)
     # Refuse to create a new authenticated fork after control-state loss or a
     # second publisher configuration. This is a bounded preflight, not a remote

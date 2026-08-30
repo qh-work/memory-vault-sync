@@ -68,10 +68,10 @@ class HostCancellationRecoveryTests(unittest.TestCase):
         self.assertTrue(staged["ok"], staged)
         original = hosts.lifecycle_handle
 
-        def unavailable_before_commit(config_path: Path, request: dict) -> dict:
+        def unavailable_before_commit(config_path: Path, request: dict, *, capture_scope: str | None = None) -> dict:
             if request["op"] == "turn.commit":
                 return lifecycle._error("synthetic_before_commit", request=request, retryable=True)
-            return dict(original(config_path, request))
+            return dict(original(config_path, request, capture_scope=capture_scope))
 
         with mock.patch.object(hosts, "lifecycle_handle", side_effect=unavailable_before_commit):
             failed = self.event("turn.commit", turn_id, assistant="Synthetic final " + turn_id)

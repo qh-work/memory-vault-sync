@@ -29,14 +29,27 @@ from memory_vault import (
 )
 from memory_vault_client import (
     MAX_TURN_PART_BYTES, ClientConfig, _absolute, _continuity, _digest, _object,
-    _private_directory, _request_id, _text, default_config_path, notify_sync, observe_turn,
+    _private_directory, _request_id, _text, build_turn_projection, default_config_path,
+    notify_sync, observe_turn, save_turn_projection,
 )
+from memory_vault_capture import CAPTURE_SQL, freeze_capture, load_capture, mark_capture_saved
 
 
 PROFILE = "universal-memory-lifecycle/v1"
 REQUEST_SCHEMA = "universal-memory-lifecycle-request/v1"
 RESULT_SCHEMA = "universal-memory-lifecycle-result/v1"
-STATE_SCHEMA = "universal-memory-lifecycle-state/v1"
+LEGACY_STATE_SCHEMA = "universal-memory-lifecycle-state/v1"
+STATE_SCHEMA = "universal-memory-lifecycle-state/v2"
+STATE_SCHEMAS = {1: LEGACY_STATE_SCHEMA, 2: STATE_SCHEMA}
+CAPTURE_PROFILE = "lifecycle-visible-turn+continues/v1"
+CAPTURE_SESSIONS_SQL = "CREATE TABLE capture_sessions(session_handle TEXT PRIMARY KEY REFERENCES sessions(handle),scope_key TEXT NOT NULL)"
+LIFECYCLE_SQL = {
+    "meta": "CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
+    "sessions": "CREATE TABLE sessions(handle TEXT PRIMARY KEY,state TEXT NOT NULL CHECK(state IN ('open','closed')))",
+    "turns": "CREATE TABLE turns(handle TEXT PRIMARY KEY,session_handle TEXT NOT NULL REFERENCES sessions(handle),phase TEXT NOT NULL CHECK(phase IN ('staged','committing','committed','aborted')),user_text TEXT,assistant_text TEXT,continuity_text TEXT,commit_request TEXT)",
+    "turns_session": "CREATE INDEX turns_session ON turns(session_handle,phase)",
+    "requests": "CREATE TABLE requests(request_key TEXT PRIMARY KEY,payload_sha256 TEXT NOT NULL,response_json TEXT,session_handle TEXT REFERENCES sessions(handle),turn_handle TEXT REFERENCES turns(handle))",
+}
 OPERATIONS = (
     "capabilities", "session.open", "turn.input", "turn.commit", "turn.abort",
     "session.close",
@@ -44,8 +57,10 @@ OPERATIONS = (
 MAX_ACTIVE_SESSIONS = 128
 MAX_PENDING_TURNS = 256
 MAX_PENDING_BYTES = 32 * 1024 * 1024
+MAX_CAPTURE_WRITES = 4
 _SESSION = re.compile(r"ses_[0-9a-f]{32}")
 _TURN = re.compile(r"turn_[0-9a-f]{32}")
+_SCOPE = re.compile(r"[A-Za-z0-9._:@+-]{1,256}")
 
 
 def _ok(op: str, result: Mapping[str, Any], request_id: str | None = None) -> dict[str, Any]:
@@ -124,9 +139,48 @@ class LifecycleState:
     crashed process therefore cannot make a later abort falsely claim rollback.
     """
 
-    def __init__(self, config: ClientConfig):
+    def __init__(self, config: ClientConfig, *, capture_scope: str | None = None):
+        if capture_scope is not None and (not isinstance(capture_scope, str) or _SCOPE.fullmatch(capture_scope) is None):
+            raise MemoryError("invalid_lifecycle_capture_scope")
         self.config = config
+        # An internal host correlation only, never a wire-supplied authority or
+        # a memory owner. A native session may survive lifecycle generations.
+        self.capture_scope = capture_scope
         self.path = _absolute(config.state_path / "lifecycle-v1.sqlite3")
+
+    @staticmethod
+    def check_schema(connection: sqlite3.Connection, version: int) -> None:
+        if version not in STATE_SCHEMAS:
+            raise MemoryError("unsupported_lifecycle_state")
+        expected = dict(LIFECYCLE_SQL)
+        if version == 2:
+            expected.update(CAPTURE_SQL)
+            expected["capture_sessions"] = CAPTURE_SESSIONS_SQL
+        normalize = lambda value: re.sub(r"\s+", "", value).lower()
+        seen = set()
+        for name, statement in connection.execute("SELECT name,sql FROM sqlite_master WHERE sql IS NOT NULL"):
+            if name not in expected or normalize(statement) != normalize(expected[name]):
+                raise MemoryError("unsupported_lifecycle_state")
+            seen.add(name)
+        if seen != set(expected):
+            raise MemoryError("unsupported_lifecycle_state")
+
+    def scope(self, connection: sqlite3.Connection, session: str, *, establish: bool = False) -> str:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        row = (connection.execute("SELECT scope_key FROM capture_sessions WHERE session_handle=?", (session,)).fetchone()
+               if version == 2 else None)
+        if row is not None:
+            selected = row[0]
+            if (not isinstance(selected, str) or _SCOPE.fullmatch(selected) is None
+                    or (self.capture_scope is not None and self.capture_scope != selected)):
+                raise MemoryError("lifecycle_capture_scope_changed")
+            return selected
+        selected = self.capture_scope or session
+        if establish:
+            if version != 2:
+                raise MemoryError("unsupported_lifecycle_state")
+            connection.execute("INSERT INTO capture_sessions(session_handle,scope_key) VALUES(?,?)", (session, selected))
+        return selected
 
     @staticmethod
     def _check_file(path: Path, *, create: bool = False, readonly: bool = False) -> bool:
@@ -185,14 +239,18 @@ class LifecycleState:
                 # schema initialization. There is no receipt to replay; only
                 # the later, explicitly authorized mutation may initialize it.
                 return None
-            if version != 1:
+            if version not in STATE_SCHEMAS:
                 raise MemoryError("unsupported_lifecycle_state")
+            self.check_schema(connection, version)
             meta = dict(connection.execute("SELECT key,value FROM meta"))
-            if meta.get("schema_version") != STATE_SCHEMA:
+            if set(meta) != {"schema_version", "vault_path_sha256"} or meta.get("schema_version") != STATE_SCHEMAS[version]:
                 raise MemoryError("unsupported_lifecycle_state")
             if meta.get("vault_path_sha256") != _digest(str(self.config.vault_path)):
                 raise MemoryError("lifecycle_vault_changed")
-            return self.receipt(connection, request)
+            response = self.receipt(connection, request)
+            if response is not None:
+                self.scope(connection, response["result"]["session_handle"])
+            return response
 
     def _connect(self) -> sqlite3.Connection:
         _private_directory(self.path.parent)
@@ -212,26 +270,31 @@ class LifecycleState:
             if version == 0:
                 if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1").fetchone():
                     raise MemoryError("unsupported_lifecycle_state")
-                for statement in (
-                    "CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
-                    "CREATE TABLE sessions(handle TEXT PRIMARY KEY,state TEXT NOT NULL CHECK(state IN ('open','closed')))",
-                    "CREATE TABLE turns(handle TEXT PRIMARY KEY,session_handle TEXT NOT NULL REFERENCES sessions(handle),phase TEXT NOT NULL CHECK(phase IN ('staged','committing','committed','aborted')),user_text TEXT,assistant_text TEXT,continuity_text TEXT,commit_request TEXT)",
-                    "CREATE INDEX turns_session ON turns(session_handle,phase)",
-                    "CREATE TABLE requests(request_key TEXT PRIMARY KEY,payload_sha256 TEXT NOT NULL,response_json TEXT,session_handle TEXT REFERENCES sessions(handle),turn_handle TEXT REFERENCES turns(handle))",
-                ):
+                for statement in LIFECYCLE_SQL.values():
                     connection.execute(statement)
                 connection.executemany("INSERT INTO meta(key,value) VALUES(?,?)", (
-                    ("schema_version", STATE_SCHEMA),
+                    ("schema_version", LEGACY_STATE_SCHEMA),
                     ("vault_path_sha256", _digest(str(self.config.vault_path))),
                 ))
                 connection.execute("PRAGMA user_version=1")
-            elif version != 1:
+                version = 1
+            elif version not in STATE_SCHEMAS:
                 raise MemoryError("unsupported_lifecycle_state")
+            self.check_schema(connection, version)
             meta = dict(connection.execute("SELECT key,value FROM meta"))
-            if meta.get("schema_version") != STATE_SCHEMA:
+            if set(meta) != {"schema_version", "vault_path_sha256"} or meta.get("schema_version") != STATE_SCHEMAS[version]:
                 raise MemoryError("unsupported_lifecycle_state")
             if meta.get("vault_path_sha256") != _digest(str(self.config.vault_path)):
                 raise MemoryError("lifecycle_vault_changed")
+            if version == 1:
+                # Only an independently authorized write reaches this point.
+                # Existing rows and exact request receipts are not rewritten;
+                # old committing rows have no capture plan and retain v1 replay.
+                for statement in CAPTURE_SQL.values():
+                    connection.execute(statement)
+                connection.execute(CAPTURE_SESSIONS_SQL)
+                connection.execute("UPDATE meta SET value=? WHERE key='schema_version'", (STATE_SCHEMA,))
+                connection.execute("PRAGMA user_version=2")
             connection.commit()
             if os.name != "nt":
                 directory = os.open(self.path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
@@ -311,6 +374,7 @@ class LifecycleState:
         with self.transaction() as connection:
             prior = self.receipt(connection, request)
             if prior is not None:
+                self.scope(connection, prior["result"]["session_handle"])
                 return prior, None
             if op == "session.open":
                 count = connection.execute("SELECT COUNT(*) FROM sessions WHERE state='open'").fetchone()[0]
@@ -318,6 +382,7 @@ class LifecycleState:
                     raise MemoryError("lifecycle_session_limit")
                 session = "ses_" + secrets.token_hex(16)
                 connection.execute("INSERT INTO sessions(handle,state) VALUES(?,'open')", (session,))
+                self.scope(connection, session, establish=True)
                 return self.save_receipt(connection, request, {
                     "state": "opened", "current_state": "open", "session_handle": session,
                     "memory_saved": False,
@@ -327,6 +392,7 @@ class LifecycleState:
                 current_session = self.session(connection, session)
                 if current_session["state"] != "open":
                     raise MemoryError("session_closed")
+                self.scope(connection, session, establish=op == "turn.input")
                 if op == "session.close":
                     if connection.execute("SELECT 1 FROM turns WHERE session_handle=? AND phase='committing' LIMIT 1", (session,)).fetchone():
                         raise MemoryError("session_commit_in_progress")
@@ -351,6 +417,7 @@ class LifecycleState:
             turn = request["turn_handle"]
             current_turn = self.turn(connection, turn)
             session = current_turn["session_handle"]
+            scope_key = self.scope(connection, session)
             if op == "turn.abort":
                 if current_turn["phase"] == "committing":
                     raise MemoryError("commit_started_cannot_abort")
@@ -369,9 +436,17 @@ class LifecycleState:
             if current_turn["phase"] == "committing":
                 if current_turn["commit_request"] != request_key:
                     raise MemoryError("turn_commit_in_progress")
-                return None, dict(current_turn)
+                job = dict(current_turn)
+                plan = load_capture(connection, turn)
+                if plan is not None:
+                    self.check_plan(job, plan, scope_key)
+                    if plan["canonical_request_id"] != _request_id(request["request_id"], "lifecycle-capture-v2"):
+                        raise MemoryError("lifecycle_capture_intent_changed")
+                    job["capture_plan"] = plan
+                return None, job
             if self.session(connection, session)["state"] != "open":
                 raise MemoryError("session_closed")
+            scope_key = self.scope(connection, session, establish=True)
             continuity = request.get("continuity")
             if continuity is None:
                 # Freeze derived text now so software upgrades cannot silently
@@ -386,15 +461,100 @@ class LifecycleState:
                 "UPDATE turns SET phase='committing',assistant_text=?,continuity_text=?,commit_request=? WHERE handle=?",
                 (request["assistant"], continuity, request_key, turn),
             )
-            return None, dict(self.turn(connection, turn))
+            job = dict(self.turn(connection, turn))
+            plan = freeze_capture(
+                connection, scope_key=scope_key, job_key=turn,
+                input_sha256=self.capture_input_digest(job), builder_profile=CAPTURE_PROFILE,
+                canonical_request_id=_request_id(request["request_id"], "lifecycle-capture-v2"),
+                build_projection=lambda created_at, previous_ref: build_turn_projection(
+                    job["user_text"], job["assistant_text"], job["continuity_text"],
+                    created_at=created_at, host_visible=False,
+                    caller_source="lifecycle-caller-reported", predecessor=previous_ref,
+                ),
+            )
+            job["capture_plan"] = plan
+            return None, job
+
+    @staticmethod
+    def capture_input_digest(job: Mapping[str, Any]) -> str:
+        return _digest({"user": job["user_text"], "assistant": job["assistant_text"], "continuity": job["continuity_text"]})
+
+    @staticmethod
+    def check_plan(job: Mapping[str, Any], plan: Mapping[str, Any], scope_key: str) -> None:
+        if (plan["job_key"] != job["handle"] or plan["scope_key"] != scope_key
+                or plan["builder_profile"] != CAPTURE_PROFILE
+                or plan["input_sha256"] != LifecycleState.capture_input_digest(job)):
+            raise MemoryError("lifecycle_capture_intent_changed")
+
+    def save_capture(self, job: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Materialize a bounded, oldest-first prefix of the frozen dependency chain.
+
+        Saving an ancestor's canonical records does not invent its unknown outer
+        request ID or complete its lifecycle receipt. The original request can
+        acknowledge that effect later, including after an interrupted caller.
+        """
+        plans: list[dict[str, Any]] = []
+        with self.transaction() as connection:
+            plan = load_capture(connection, job["handle"])
+            if plan is None:
+                raise MemoryError("lifecycle_capture_plan_missing")
+            self.check_plan(job, plan, self.scope(connection, job["session_handle"]))
+            if plan["state"] == "saved":
+                plans.append(plan)
+            else:
+                seen: set[str] = set()
+                while plan is not None and plan["state"] == "pending":
+                    if plan["job_key"] in seen or len(plans) >= MAX_PENDING_TURNS:
+                        raise MemoryError("lifecycle_capture_dependency_limit")
+                    seen.add(plan["job_key"])
+                    turn = self.turn(connection, plan["job_key"])
+                    if turn["phase"] != "committing":
+                        raise MemoryError("lifecycle_capture_state_conflict")
+                    self.check_plan(turn, plan, self.scope(connection, turn["session_handle"]))
+                    plans.append(plan)
+                    predecessor = plan["predecessor_job_key"]
+                    if predecessor is None:
+                        break
+                    previous = load_capture(connection, predecessor)
+                    if (previous is None or previous["scope_key"] != plan["scope_key"]
+                            or previous["accepted_sequence"] + 1 != plan["accepted_sequence"]
+                            or previous["continuity_id"] != plan["previous_continuity_id"]):
+                        raise MemoryError("lifecycle_capture_predecessor_changed")
+                    reference = next(item for item in previous["record_refs"] if item["memory_id"] == previous["continuity_id"])
+                    if reference["record_sha256"] != plan["previous_record_sha256"]:
+                        raise MemoryError("lifecycle_capture_predecessor_changed")
+                    plan = previous
+        requested: Mapping[str, Any] | None = None
+        for plan in list(reversed(plans))[:MAX_CAPTURE_WRITES]:
+            current = ClientConfig.load(self.config.path)
+            if current.vault_path != self.config.vault_path or not current.capture_visible_turns:
+                raise MemoryError("capture_not_enabled")
+            response = save_turn_projection(current, plan)
+            if not response.get("ok"):
+                return response
+            with self.transaction() as connection:
+                retained = load_capture(connection, plan["job_key"])
+                if retained is None or retained["projection_sha256"] != plan["projection_sha256"]:
+                    raise MemoryError("lifecycle_capture_intent_changed")
+                mark_capture_saved(connection, plan["job_key"])
+            if plan["job_key"] == job["handle"]:
+                requested = response
+        if requested is None:
+            raise MemoryError("lifecycle_capture_dependency_pending", retryable=True)
+        return requested
 
     def commit(self, request: Mapping[str, Any], job: Mapping[str, Any]) -> Mapping[str, Any]:
         try:
-            stored = observe_turn(
-                self.config, request_id=_request_id(request["request_id"], "lifecycle-commit-v1"),
-                user=job["user_text"], assistant=job["assistant_text"], continuity=job["continuity_text"],
-                caller_source="lifecycle-caller-reported",
-            )
+            if "capture_plan" in job:
+                stored = self.save_capture(job)
+            else:
+                # A pre-v2 accepted turn may already have one or both original
+                # core effects. Keep its exact legacy IDs, timestamps and keys.
+                stored = observe_turn(
+                    self.config, request_id=_request_id(request["request_id"], "lifecycle-commit-v1"),
+                    user=job["user_text"], assistant=job["assistant_text"], continuity=job["continuity_text"],
+                    caller_source="lifecycle-caller-reported",
+                )
             if not stored.get("ok"):
                 problem = stored.get("error", {})
                 response = _error(problem.get("code", "lifecycle_commit_unconfirmed"), request=request, retryable=problem.get("retryable", False))
@@ -430,14 +590,14 @@ class LifecycleState:
         return response
 
 
-def handle(config_path: Path, value: Any) -> Mapping[str, Any]:
+def handle(config_path: Path, value: Any, *, capture_scope: str | None = None) -> Mapping[str, Any]:
     request: dict[str, Any] | None = None
     try:
         request = _validate(value)
         if request["op"] == "capabilities":
             return capabilities(request.get("request_id"))
         config = ClientConfig.load(config_path)
-        state = LifecycleState(config)
+        state = LifecycleState(config, capture_scope=capture_scope)
         may_mutate = config.capture_visible_turns or request["op"] in {"turn.abort", "session.close"}
         try:
             prior = state.completed_receipt(request)

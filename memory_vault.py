@@ -72,6 +72,29 @@ HASH_PROFILE = "canonical-json+sha256/v1"
 ATTESTATION_SCHEMA = "universal-memory-attestation/v1"
 ADMISSION_STATES = frozenset({"local_unsigned", "accepted_unsigned", "verified", "quarantined"})
 
+# Optional derived-dependency cache invalidation, not a canonical schema change.
+# SQL triggers cover older writers too; no Python/SQL extension function is
+# needed with trusted_schema=OFF. New independent records do not invalidate a
+# certified immutable ancestor closure. Replacing an existing row does.
+DEPENDENCY_EPOCH_PROFILE = "universal-memory-dependency-epoch/v1"
+_DEPENDENCY_EPOCH_STEP = (
+    "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM metadata WHERE key='dependency_epoch' "
+    "AND CAST(value AS INTEGER)>=0 AND CAST(value AS INTEGER)<9223372036854775807) "
+    "THEN RAISE(ABORT,'dependency epoch unavailable') END; "
+    "UPDATE metadata SET value=CAST(value AS INTEGER)+1 WHERE key='dependency_epoch'; "
+)
+DEPENDENCY_EPOCH_TRIGGER_SQL = {
+    name: "CREATE TRIGGER " + name + " " + event + " BEGIN " + _DEPENDENCY_EPOCH_STEP + "END"
+    for name, event in (
+        ("dependency_admission_update", "AFTER UPDATE ON record_admissions"),
+        ("dependency_admission_delete", "AFTER DELETE ON record_admissions"),
+        ("dependency_admission_replace", "BEFORE INSERT ON record_admissions WHEN EXISTS(SELECT 1 FROM record_admissions WHERE memory_id=NEW.memory_id)"),
+        ("dependency_memory_update", "AFTER UPDATE ON memories"),
+        ("dependency_memory_delete", "AFTER DELETE ON memories"),
+        ("dependency_memory_replace", "BEFORE INSERT ON memories WHEN EXISTS(SELECT 1 FROM memories WHERE memory_id=NEW.memory_id OR record_sha256=NEW.record_sha256)"),
+    )
+}
+
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_TEXT_BYTES = 1024 * 1024
@@ -994,6 +1017,7 @@ class Vault:
                 raise MemoryError("unsupported_database_schema")
             if allow_upgrade:
                 Vault.ensure_retrieval_tables(connection)
+                Vault.ensure_dependency_epoch(connection)
             return
         if not allow_upgrade:
             raise MemoryError("not_initialized")
@@ -1052,6 +1076,7 @@ class Vault:
         connection.execute(f"PRAGMA user_version={DATABASE_WRITER}")
         Vault._initialize_admissions(connection)
         Vault.ensure_retrieval_tables(connection)
+        Vault.ensure_dependency_epoch(connection)
         connection.commit()
         metadata = {
             str(row["key"]): str(row["value"])
@@ -1065,6 +1090,65 @@ class Vault:
             "min_writer": str(DATABASE_WRITER),
         }:
             raise MemoryError("unsupported_database_schema")
+
+    @staticmethod
+    def dependency_epoch(connection: sqlite3.Connection) -> str | None:
+        """Read a trustworthy invalidation stamp, or disable derived reuse.
+
+        Exact trigger bodies matter: a similarly named no-op is not a cache
+        guarantee. Absence remains compatible with older read-only v2 Vaults.
+        """
+        names = tuple(DEPENDENCY_EPOCH_TRIGGER_SQL)
+        observed = {str(row[0]): str(row[1]) for row in connection.execute(
+            "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN ("
+            + ",".join("?" for _ in names) + ")", names,
+        )}
+        if observed != DEPENDENCY_EPOCH_TRIGGER_SQL:
+            return None
+        metadata = {str(row[0]): str(row[1]) for row in connection.execute(
+            "SELECT key,value FROM metadata WHERE key IN ('store_id','dependency_epoch','dependency_epoch_nonce')"
+        )}
+        counter, nonce, store = (metadata.get(name, "") for name in
+                                 ("dependency_epoch", "dependency_epoch_nonce", "store_id"))
+        if (re.fullmatch(r"0|[1-9][0-9]{0,18}", counter) is None or int(counter) >= 2**63
+                or re.fullmatch(r"[0-9a-f]{32}", nonce) is None
+                or re.fullmatch(r"store_[0-9a-f]{32}", store) is None):
+            return None
+        return store + ":" + nonce + ":" + counter
+
+    @staticmethod
+    def ensure_dependency_epoch(connection: sqlite3.Connection) -> None:
+        """Install additive known SQL triggers within the writer's transaction.
+
+        A missing/partial extension receives a fresh nonce, so an old cache can
+        never become valid merely because a counter restarts. Unknown trigger
+        definitions are rejected rather than executed or silently replaced.
+        """
+        if Vault.dependency_epoch(connection) is not None:
+            return
+        names = tuple(DEPENDENCY_EPOCH_TRIGGER_SQL)
+        observed = {str(row[0]): str(row[1]) for row in connection.execute(
+            "SELECT name,sql FROM sqlite_master WHERE name IN (" + ",".join("?" for _ in names) + ")", names,
+        )}
+        if any(DEPENDENCY_EPOCH_TRIGGER_SQL[name] != value for name, value in observed.items()):
+            raise MemoryError("unsupported_dependency_epoch")
+        owns_transaction = not connection.in_transaction
+        if owns_transaction:
+            connection.execute("BEGIN IMMEDIATE")
+        try:
+            connection.executemany(
+                "INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (("dependency_epoch", "0"), ("dependency_epoch_nonce", os.urandom(16).hex())),
+            )
+            for name, statement in DEPENDENCY_EPOCH_TRIGGER_SQL.items():
+                if name not in observed:
+                    connection.execute(statement)
+            if owns_transaction:
+                connection.commit()
+        except Exception:
+            if owns_transaction:
+                connection.rollback()
+            raise
 
     @staticmethod
     def _initialize_admissions(connection: sqlite3.Connection) -> None:
@@ -2351,6 +2435,7 @@ class Vault:
         self, connection: sqlite3.Connection, *, after: int = 0, limit: int = 100,
         maximum_bytes: int = 256 * 1024, store_id: str | None = None, require_verified: bool = False,
         _complete_closure: bool = False, _record_limit: int = 1024,
+        _dependency_boundary: Any = None,
     ) -> Mapping[str, Any]:
         if not isinstance(after, int) or isinstance(after, bool) or after < 0:
             raise MemoryError("invalid_cursor")
@@ -2383,6 +2468,11 @@ class Vault:
         # fixed bound and is never smuggled into a 4 MiB JSON response.
         used = 0 if _complete_closure else 1024
         cursor = after
+        external_dependencies: set[str] = set()
+        if _dependency_boundary is not None:
+            if not _complete_closure:
+                raise MemoryError("invalid_dependency_boundary")
+            _dependency_boundary.begin(connection)
         more = len(rows) > limit
         for row in rows[:limit]:
             additions: dict[str, Mapping[str, Any]] = {}
@@ -2392,16 +2482,25 @@ class Vault:
             blocked_reason = None
             while pending:
                 memory_id = pending.pop()
-                if memory_id in records or memory_id in additions:
+                if (memory_id in records or memory_id in additions
+                        or (_dependency_boundary is not None and memory_id != str(row["memory_id"])
+                            and memory_id in external_dependencies)):
                     continue
                 if len(additions) >= record_limit:
                     blocked_reason = "dependency_budget_exceeded"
                     break
-                dependency = connection.execute(
-                    "SELECT m.*,a.attestation_json,vault_admitted(a.state,a.signer_key_id) AS admission_rank FROM memories m "
-                    "JOIN record_admissions a ON a.memory_id=m.memory_id "
-                    "WHERE m.memory_id=? AND vault_admitted(a.state,a.signer_key_id)>0", (memory_id,)
-                ).fetchone()
+                try:
+                    dependency = (_dependency_boundary.export_row(connection, memory_id)
+                                  if _dependency_boundary is not None else connection.execute(
+                        "SELECT m.*,a.attestation_json,vault_admitted(a.state,a.signer_key_id) AS admission_rank FROM memories m "
+                        "JOIN record_admissions a ON a.memory_id=m.memory_id "
+                        "WHERE m.memory_id=? AND vault_admitted(a.state,a.signer_key_id)>0", (memory_id,)
+                    ).fetchone())
+                except MemoryError as exc:
+                    if _dependency_boundary is None or exc.code != "dependency_revalidation_required":
+                        raise
+                    blocked_reason = exc.code
+                    break
                 if dependency is None:
                     blocked_reason = "dependency_not_admitted"
                     break
@@ -2409,6 +2508,21 @@ class Vault:
                     blocked_reason = "unsigned_dependency"
                     break
                 record = self._record_from_row(dependency)
+                if _dependency_boundary is not None:
+                    # A delivery root (including explicit requeue/re-admission)
+                    # must never disappear just because it was sent before.
+                    try:
+                        _dependency_boundary.touch(record)
+                        omit = (memory_id != str(row["memory_id"])
+                                and _dependency_boundary.can_omit(connection, record))
+                    except MemoryError as exc:
+                        if exc.code not in {"dependency_not_admitted", "unsigned_dependency", "dependency_revalidation_required"}:
+                            raise
+                        blocked_reason = exc.code
+                        break
+                    if omit:
+                        external_dependencies.add(memory_id)
+                        continue
                 ingest_order[memory_id] = int(dependency["ingest_seq"])
                 additions[memory_id] = record
                 added_bytes += len(canonical_bytes(record)) + (0 if _complete_closure else 256)
@@ -2424,13 +2538,16 @@ class Vault:
                     break
                 pending.extend(str(relation["target"]) for relation in record["relations"])
             if blocked_reason is not None:
-                if _complete_closure and blocked_reason == "dependency_budget_exceeded":
+                if _complete_closure and blocked_reason in {"dependency_budget_exceeded", "dependency_revalidation_required"}:
                     if records:
+                        # Probing the next root may exhaust the shared read or
+                        # verification budget. Return only the complete prefix;
+                        # the final validator below must still certify it.
                         more = True
                         break
                     # No cursor can be signed past an incomplete closure. A
                     # larger-than-atomic-import graph stays explicitly pending.
-                    raise MemoryError("dependency_budget_exceeded")
+                    raise MemoryError(blocked_reason, retryable=blocked_reason == "dependency_revalidation_required")
                 disposition = {"memory_id": str(row["memory_id"]), "sequence": int(row["sequence"]), "reason": blocked_reason}
                 cost = 0 if _complete_closure else len(canonical_bytes(disposition)) + 32
                 if used + cost > maximum_bytes:
@@ -2449,17 +2566,24 @@ class Vault:
             cursor = int(row["sequence"])
         if not more:
             cursor = head  # Advance over quarantined records without sending them.
+        if _dependency_boundary is not None:
+            _dependency_boundary.require(connection, list(records))
+            _dependency_boundary.finish(connection)
+            external_dependencies = {relation["target"] for record in records.values()
+                                     for relation in record["relations"] if relation["target"] not in records}
         return {
             "store_id": actual_store, "after": after, "cursor": cursor,
             "has_more": more, "records": [records[key] for key in sorted(records, key=lambda key: (ingest_order[key], key))], "attestations": proofs,
             "blocked": blocked,
-            "dependency_closure_included": True, "network_accessed": False,
+            "dependency_closure_included": not external_dependencies, "network_accessed": False,
+            **({"external_dependency_count": len(external_dependencies)} if _dependency_boundary is not None else {}),
         }
 
     def transfer_changes(
         self, *, after: int = 0, store_id: str | None = None, limit: int = 100,
         maximum_bytes: int = MAX_BUNDLE_BYTES, maximum_records: int = MAX_BUNDLE_RECORDS,
         require_verified: bool = True,
+        dependency_boundary: Any = None,
     ) -> Mapping[str, Any]:
         """Complete bounded closure for an authorized local group transport.
 
@@ -2467,6 +2591,9 @@ class Vault:
         The byte bound applies to canonical records (the atomic importer bound);
         attestations add at most 1024 bytes per record. An oversized individual
         closure raises without returning a cursor that could skip it.
+        Only the signed integration may supply a dependency_boundary, which
+        replaces included ancestors with currently validated, actually published
+        same-stream members. Public JSON changes never supplies this boundary.
         """
         with contextlib.closing(self._connect(writable=False)) as connection, connection:
             connection.execute("BEGIN")
@@ -2474,6 +2601,7 @@ class Vault:
                 connection, after=after, store_id=store_id, limit=limit,
                 maximum_bytes=maximum_bytes, require_verified=require_verified,
                 _complete_closure=True, _record_limit=maximum_records,
+                _dependency_boundary=dependency_boundary,
             ))
             result["canonical_record_bytes"] = sum(len(canonical_bytes(record)) for record in result["records"])
             result["maximum_attestation_bytes_per_record"] = 1024
@@ -2483,6 +2611,8 @@ class Vault:
         self, records: Iterable[Mapping[str, Any]], *, admission: str = "quarantined",
         attestations: Mapping[str, Mapping[str, Any]] | None = None,
         transfer_id: str | None = None, payload_sha256: str | None = None,
+        expected_previous_payload_sha256: str | None = None,
+        dependency_validator: Callable[[sqlite3.Connection, Mapping[str, Mapping[str, Any]], Mapping[str, Mapping[str, Any]]], None] | None = None,
     ) -> Mapping[str, Any]:
         """Trusted in-process admission API, not exposed through request JSON.
 
@@ -2513,6 +2643,12 @@ class Vault:
             or not isinstance(payload_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", payload_sha256) is None
         ):
             raise MemoryError("invalid_transfer_receipt")
+        if expected_previous_payload_sha256 is not None and (
+            not isinstance(expected_previous_payload_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_previous_payload_sha256) is None
+            or transfer_id is None or admission != "verified" or dependency_validator is None
+        ):
+            raise MemoryError("invalid_dependency_boundary")
         with contextlib.closing(self._connect()) as connection, connection:
             connection.execute("BEGIN IMMEDIATE")
             if transfer_id is not None:
@@ -2524,6 +2660,13 @@ class Vault:
                     replay["records_added"] = 0
                     replay["receipt_replayed"] = True
                     return replay
+            if expected_previous_payload_sha256 is not None:
+                previous = connection.execute(
+                    "SELECT payload_sha256 FROM transfer_receipts WHERE transfer_id=?",
+                    ("xfer_" + expected_previous_payload_sha256,),
+                ).fetchone()
+                if previous is None or previous[0] != expected_previous_payload_sha256:
+                    raise MemoryError("dependency_base_receipt_missing")
             added = 0
             upgraded: set[str] = set()
             for record in prepared.values():
@@ -2531,6 +2674,10 @@ class Vault:
                 if self._set_admission(connection, record, admission, proofs.get(str(record["memory_id"]))):
                     upgraded.add(str(record["memory_id"]))
                 added += int(inserted)
+            if dependency_validator is not None:
+                # Includes newly inserted admissions and uses this same writer
+                # transaction. No frontier or FK-only existence grants trust.
+                dependency_validator(connection, prepared, proofs)
             self._requeue_dependents(connection, upgraded)
             result = {"state": "imported", "records_seen": len(prepared), "records_added": added, "admission": admission}
             if transfer_id is not None:

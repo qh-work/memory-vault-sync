@@ -259,7 +259,7 @@ class ClientRecoveryTests(RecoveryFixture):
                                                   "session_handle": session, "user": "Synthetic pending input"})["result"]["turn_handle"]
         request = {"schema_version": lifecycle.REQUEST_SCHEMA, "op": "turn.commit", "request_id": "req_synthetic_commit",
                    "turn_handle": turn, "assistant": "Synthetic frozen output"}
-        with mock.patch.object(lifecycle, "observe_turn", return_value=failure("synthetic_retry", retryable=True)):
+        with mock.patch.object(lifecycle, "save_turn_projection", return_value=failure("synthetic_retry", retryable=True)):
             failed = lifecycle.handle(self.config_path, request)
         self.assertTrue(failed["resume_same_request"])
         self.restore(("lifecycle",))
@@ -296,7 +296,7 @@ class ClientRecoveryTests(RecoveryFixture):
         self.assertTrue(opened["ok"], opened)
         staged = hosts.handle(self.config(), "generic", "turn.input", {**native, "user": "Synthetic host input"})
         self.assertTrue(staged["ok"], staged)
-        with mock.patch.object(lifecycle, "observe_turn", return_value=failure("synthetic_retry", retryable=True)):
+        with mock.patch.object(lifecycle, "save_turn_projection", return_value=failure("synthetic_retry", retryable=True)):
             final = hosts.handle(self.config(), "generic", "turn.commit", {**native, "assistant": "Synthetic host output"})
         self.assertFalse(final["ok"])
         session_key = _digest([hosts.PROFILE, "generic", native["session_id"]])

@@ -51,6 +51,7 @@ _V025_RUNTIME = {
     "memory_vault_metadata.py", "memory_vault_storage.py", "memory_vault_sharing.py",
     "memory_vault_crypto.py", "memory_vault_device_trust.py", "memory_vault_encrypted_replication.py",
     "memory_vault_migrate.py",
+    "memory_vault_capture.py", "memory_vault_dependency.py",
 }
 
 

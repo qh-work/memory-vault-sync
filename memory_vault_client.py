@@ -19,18 +19,22 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import sqlite3
 import stat
 import sys
 from typing import Any, Mapping, Sequence
 
 from memory_vault import (
     KINDS,
+    AUTHORITY,
+    RESULT_SCHEMA as CORE_RESULT_SCHEMA,
     MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES,
     MemoryError,
     RELATIONS,
     VERSION,
     Vault,
+    build_record,
     capability_response,
     canonical_bytes,
     default_vault_path,
@@ -38,12 +42,16 @@ from memory_vault import (
     read_request,
     strict_json_loads,
     success,
+    utc_now,
+    validate_record,
     write_response,
 )
 
 
 CONFIG_SCHEMA = "memory-vault-client-config/v1"
 STATE_SCHEMA = "memory-vault-client-state/v1"
+CHAIN_STATE_SCHEMA = "memory-vault-client-state/v2"
+HOOK_CAPTURE_PROFILE = "codex-visible-turn+continues/v1"
 MCP_PROTOCOL = "2025-06-18"
 MAX_CONFIG_BYTES = 16 * 1024
 MAX_STATE_BYTES = 2 * MAX_REQUEST_BYTES
@@ -412,6 +420,138 @@ def observe_turn(
     })
 
 
+def build_turn_projection(
+    user: str, assistant: str, continuity: str | None, *, created_at: str,
+    host_visible: bool = False, caller_source: str = "lifecycle-caller-reported",
+    predecessor: Mapping[str, str] | None = None,
+) -> tuple[list[dict[str, Any]], str, str]:
+    """Build one new frozen visible turn; no files, clocks, keys or writes."""
+    user = _text(user, maximum=MAX_TURN_PART_BYTES)
+    assistant = _text(assistant, maximum=MAX_TURN_PART_BYTES)
+    context = _text(continuity, maximum=32 * 1024) if continuity is not None else _continuity(user, assistant, host_visible=host_visible)
+    if caller_source not in {"mcp-caller-reported", "lifecycle-caller-reported"} or type(host_visible) is not bool:
+        raise MemoryError("invalid_capture_source")
+    source = {"source_ref": "codex-visible-hook" if host_visible else caller_source}
+    episode = build_record(
+        kind="episode", text="User:\n" + user + "\n\nAssistant:\n" + assistant,
+        provenance={**source, "source_type": "visible_turn" if host_visible else "agent_supplied",
+                    "confidence": "observed" if host_visible else "assistant_inferred"},
+        created_at=created_at,
+    )
+    relations = [{"type": "derived_from", "target": episode["memory_id"]}]
+    if predecessor is not None:
+        if (not isinstance(predecessor, dict) or set(predecessor) != {"memory_id", "record_sha256"}
+                or not isinstance(predecessor["memory_id"], str) or _MEMORY.fullmatch(predecessor["memory_id"]) is None
+                or not isinstance(predecessor["record_sha256"], str) or _KEY.fullmatch(predecessor["record_sha256"]) is None
+                or predecessor["memory_id"] != "mem_" + predecessor["record_sha256"][:40]):
+            raise MemoryError("invalid_capture_predecessor")
+        relations.append({"type": "continues", "target": predecessor["memory_id"]})
+    continued = build_record(
+        kind="continuity", text=context, relations=relations,
+        provenance={**source, "source_type": "agent_supplied", "confidence": "assistant_inferred"},
+        created_at=created_at,
+    )
+    return [episode, continued], episode["memory_id"], continued["memory_id"]
+
+
+def save_turn_projection(config: ClientConfig, plan: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Atomically save a frozen client projection and its exact core receipt.
+
+    This is an internal authorized-capture path, not a new JSON permission or
+    an unsigned-import shortcut. Existing records are rechecked, never re-signed
+    or re-admitted simply because a local retry marker says they were saved.
+    """
+    from memory_vault_capture import CAPTURE_COLUMNS, capture_digest, validate_capture_header, validate_capture_projection
+    header = validate_capture_header({key: plan[key] for key in CAPTURE_COLUMNS["capture_jobs"]})
+    current = ClientConfig.load(config.path)
+    if current.vault_path != config.vault_path:
+        raise MemoryError("capture_vault_changed")
+    if not current.capture_visible_turns:
+        raise MemoryError("capture_not_enabled")
+    vault = current.vault(writing=True)
+    request_id = header["canonical_request_id"]
+    _request_id(request_id, "validate-only")
+    with contextlib.closing(vault._connect()) as connection, connection:
+        connection.execute("BEGIN IMMEDIATE")
+
+        def existing_record(memory_id: str, digest: str | None = None) -> dict[str, Any]:
+            row = connection.execute("SELECT * FROM memories WHERE memory_id=?", (memory_id,)).fetchone()
+            if row is None:
+                raise MemoryError("capture_dependency_pending", retryable=True)
+            record = vault._record_from_row(row)
+            if row["record_sha256"] != record["record_sha256"] or (digest is not None and record["record_sha256"] != digest):
+                raise MemoryError("capture_projection_changed")
+            if not vault._verification(connection, memory_id)["eligible_for_context"]:
+                raise MemoryError("capture_dependency_not_admitted")
+            return record
+
+        records = plan.get("records")
+        if not isinstance(records, list):
+            raise MemoryError("invalid_capture_projection")
+        if not records:
+            if header["state"] != "saved" or not isinstance(plan.get("record_refs"), list):
+                raise MemoryError("invalid_capture_projection")
+            records = [existing_record(reference["memory_id"], reference["record_sha256"]) for reference in plan["record_refs"]]
+        records = validate_capture_projection(header, records)
+        # Client plans have exactly this simple pair. Compatibility's fragment
+        # projection uses its separately versioned, pre-existing atomic writer.
+        if len(records) != 2 or any(record["entities"] for record in records):
+            raise MemoryError("invalid_client_capture_projection")
+        episode = next(record for record in records if record["memory_id"] == header["episode_id"])
+        if episode["relations"]:
+            raise MemoryError("invalid_client_capture_projection")
+        if header["previous_continuity_id"] is not None:
+            previous = existing_record(header["previous_continuity_id"], header["previous_record_sha256"])
+            if previous["kind"] != "continuity":
+                raise MemoryError("invalid_capture_predecessor")
+        host_visible = episode["provenance"].get("source_type") == "visible_turn"
+        result = {
+            "state": "saved_local", "episode_id": header["episode_id"],
+            "continuity_id": header["continuity_id"],
+            "capture_basis": "host_event_fields" if host_visible else "caller_reported",
+            "host_attestation": False, "network_accessed": False,
+        }
+        response = success(result, request_id=request_id)
+        digest = _digest({"profile": "memory-vault-client-capture-receipt/v1", "projection_sha256": capture_digest(header, records)})
+        prior = connection.execute("SELECT request_sha256,response_json FROM receipts WHERE request_id=?", (request_id,)).fetchone()
+        if prior is not None:
+            saved = strict_json_loads(prior["response_json"])
+            if prior["request_sha256"] != digest:
+                raise MemoryError("request_id_conflict")
+            if (not isinstance(saved, dict) or set(saved) != {"schema_version", "ok", "authority", "result", "request_id"}
+                    or saved["schema_version"] != CORE_RESULT_SCHEMA or saved["ok"] is not True
+                    or saved["authority"] != dict(AUTHORITY) or saved["request_id"] != request_id
+                    or saved["result"] != result):
+                raise MemoryError("invalid_capture_receipt")
+            for record in records:
+                if existing_record(record["memory_id"], record["record_sha256"]) != record:
+                    raise MemoryError("capture_projection_changed")
+            return response
+        if header["state"] == "saved":
+            raise MemoryError("capture_receipt_missing")
+        changed = []
+        for record in records:
+            present = connection.execute("SELECT 1 FROM memories WHERE memory_id=?", (record["memory_id"],)).fetchone()
+            if present is not None:
+                if existing_record(record["memory_id"], record["record_sha256"]) != record:
+                    raise MemoryError("capture_projection_changed")
+                continue
+            proof = vault.signer(record) if vault.signer is not None else None
+            if vault.signer is not None and not isinstance(proof, Mapping):
+                raise MemoryError("signer_did_not_attest")
+            memory_id, inserted = vault._insert_record(connection, record)
+            if not inserted:
+                raise MemoryError("capture_projection_changed")
+            if vault._set_admission(connection, record, "verified" if proof is not None else "local_unsigned", proof):
+                changed.append(memory_id)
+        if changed:
+            vault._requeue_dependents(connection, changed)
+        connection.execute("INSERT INTO receipts(request_id,request_sha256,response_json,created_at) VALUES(?,?,?,?)",
+                           (request_id, digest, canonical_bytes(response).decode("utf-8"), utc_now()))
+        connection.commit()
+        return response
+
+
 class HookState:
     """Local correlation only. Session and turn IDs never enter memory records."""
 
@@ -428,12 +568,41 @@ class HookState:
             value = _read_json(self.path(group, key))
         except FileNotFoundError:
             return None
-        if not isinstance(value, dict) or value.get("schema_version") != STATE_SCHEMA:
+        return self.validate(group, value)
+
+    @staticmethod
+    def validate(group: str, value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict) or value.get("schema_version") not in {STATE_SCHEMA, CHAIN_STATE_SCHEMA}:
             raise MemoryError("invalid_hook_state")
-        return value
+        fields = {
+            "prompts": {"schema_version", "user"},
+            "outbox": {"schema_version", "user", "assistant"},
+            "done": {"schema_version", "episode_id", "continuity_id", "user_sha256", "assistant_sha256"},
+            "conflicts": {"schema_version", "reason"},
+        }.get(group)
+        if fields is None:
+            raise MemoryError("invalid_hook_state")
+        if value["schema_version"] == CHAIN_STATE_SCHEMA and group in {"prompts", "outbox"}:
+            fields = fields | {"scope_key"}
+            if not isinstance(value.get("scope_key"), str) or _KEY.fullmatch(value["scope_key"]) is None:
+                raise MemoryError("invalid_hook_state")
+        if set(value) != fields:
+            raise MemoryError("invalid_hook_state")
+        for name in ("user", "assistant"):
+            if name in value:
+                _text(value[name], maximum=MAX_TURN_PART_BYTES)
+        if group == "done":
+            if any(not isinstance(value[name], str) or _MEMORY.fullmatch(value[name]) is None
+                   for name in ("episode_id", "continuity_id")) or any(
+                    not isinstance(value[name], str) or _KEY.fullmatch(value[name]) is None
+                    for name in ("user_sha256", "assistant_sha256")):
+                raise MemoryError("invalid_hook_state")
+        if group == "conflicts" and value["reason"] != "different_prompts_for_same_turn":
+            raise MemoryError("invalid_hook_state")
+        return dict(value)
 
     def once(self, group: str, key: str, value: Mapping[str, Any]) -> None:
-        payload = {"schema_version": STATE_SCHEMA, **value}
+        payload = self.validate(group, {"schema_version": STATE_SCHEMA, **value})
         _private_directory(self.root)
         try:
             _write_once(self.path(group, key), payload)
@@ -441,25 +610,44 @@ class HookState:
             if self.read(group, key) != payload:
                 raise MemoryError("hook_event_conflict") from None
 
-    def prompt(self, key: str, prompt: str) -> None:
+    def prompt(self, key: str, prompt: str, *, scope_key: str | None = None) -> None:
         done = self.read("done", key)
         if done is not None:
             if done.get("user_sha256") != _digest(prompt):
                 raise MemoryError("hook_event_conflict")
             return
         try:
-            self.once("prompts", key, {"user": prompt})
+            existing = self.read("prompts", key)
+            if existing is not None:
+                if existing["user"] != prompt or (scope_key is not None and existing.get("scope_key", scope_key) != scope_key):
+                    raise MemoryError("hook_event_conflict")
+                return
+            self.once("prompts", key, {"user": prompt, **(
+                {"schema_version": CHAIN_STATE_SCHEMA, "scope_key": scope_key} if scope_key is not None else {}
+            )})
         except MemoryError as exc:
             if exc.code == "hook_event_conflict":
                 self.once("conflicts", key, {"reason": "different_prompts_for_same_turn"})
             raise
 
-    def finish(self, key: str, result: Mapping[str, Any], user: str, assistant: str) -> None:
+    def finish(self, key: str, result: Mapping[str, Any], user: str, assistant: str, *, schema_version: str = STATE_SCHEMA) -> None:
+        self.finish_hashes(key, result, _digest(user), _digest(assistant), schema_version=schema_version)
+
+    def finish_hashes(self, key: str, result: Mapping[str, Any], user_sha256: str, assistant_sha256: str, *, schema_version: str) -> None:
+        # Verify remaining staging inputs before clearing exactly named files.
+        # A durable done receipt can finish a crash between publication and
+        # journal acknowledgement without reconstructing source text.
+        for group in ("prompts", "outbox"):
+            existing = self.read(group, key)
+            if existing is not None and (_digest(existing["user"]) != user_sha256 or (
+                    group == "outbox" and _digest(existing["assistant"]) != assistant_sha256)):
+                raise MemoryError("hook_event_conflict")
         self.once("done", key, {
+            "schema_version": schema_version,
             "episode_id": result["episode_id"],
             "continuity_id": result["continuity_id"],
-            "user_sha256": _digest(user),
-            "assistant_sha256": _digest(assistant),
+            "user_sha256": user_sha256,
+            "assistant_sha256": assistant_sha256,
         })
         # Only these successfully persisted, exactly named local staging files
         # are removed. No transcripts, canonical memories, or logs are touched.
@@ -472,6 +660,14 @@ def _turn_key(event: Mapping[str, Any]) -> str:
     session = _text(event.get("session_id"), maximum=512)
     turn = _text(event.get("turn_id"), maximum=512)
     return _digest(["codex-visible-turn", session, turn])
+
+
+def _hook_scope(event: Mapping[str, Any]) -> str:
+    return _digest(["codex-visible-capture/v1", _text(event.get("session_id"), maximum=512)])
+
+
+def _hook_input_digest(user_sha256: str, assistant_sha256: str) -> str:
+    return _digest({"user_sha256": user_sha256, "assistant_sha256": assistant_sha256})
 
 
 def _read_operation(config: ClientConfig, request: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -510,23 +706,147 @@ def _hook_recall(config: ClientConfig, event_name: str, query: str) -> dict[str,
     }}
 
 
-def _persist_job(config: ClientConfig, state: HookState, key: str, job: Mapping[str, Any]) -> Mapping[str, Any]:
-    value = _object(job, required={"schema_version", "user", "assistant"})
-    if value["schema_version"] != STATE_SCHEMA or state.read("conflicts", key) is not None:
+def validate_hook_capture(plan: Mapping[str, Any], *, job: Mapping[str, Any] | None = None,
+                          done: Mapping[str, Any] | None = None) -> tuple[str, str]:
+    """Bind a frozen plan to exact source hashes, not a guessed latest turn."""
+    if (not isinstance(plan.get("job_key"), str) or _KEY.fullmatch(plan["job_key"]) is None
+            or not isinstance(plan.get("scope_key"), str) or _KEY.fullmatch(plan["scope_key"]) is None
+            or plan.get("builder_profile") != HOOK_CAPTURE_PROFILE
+            or plan.get("canonical_request_id") != "req_hook_capture_" + plan["job_key"]):
+        raise MemoryError("invalid_hook_capture_plan")
+    hashes = None
+    if job is not None:
+        value = HookState.validate("outbox", job)
+        if value["schema_version"] != CHAIN_STATE_SCHEMA or value["scope_key"] != plan["scope_key"]:
+            raise MemoryError("hook_capture_input_changed")
+        hashes = (_digest(value["user"]), _digest(value["assistant"]))
+    if done is not None:
+        value = HookState.validate("done", done)
+        completed = (value["user_sha256"], value["assistant_sha256"])
+        if (value["schema_version"] != CHAIN_STATE_SCHEMA
+                or any(value[name] != plan[name] for name in ("episode_id", "continuity_id"))
+                or (hashes is not None and hashes != completed)):
+            raise MemoryError("hook_capture_input_changed")
+        hashes = completed
+    if hashes is None:
+        raise MemoryError("capture_pending_source_missing", retryable=True)
+    if _hook_input_digest(*hashes) != plan.get("input_sha256"):
+        raise MemoryError("hook_capture_input_changed")
+    return hashes
+
+
+def _complete_hook_capture(config: ClientConfig, state: HookState, connection: sqlite3.Connection,
+                           plan: Mapping[str, Any], completed: list[str]) -> Mapping[str, Any]:
+    from memory_vault_capture import mark_capture_saved
+    key = plan["job_key"]
+    if state.read("conflicts", key) is not None:
         raise MemoryError("hook_event_conflict")
-    response = observe_turn(
-        config, request_id="req_hook_" + key,
-        user=value["user"], assistant=value["assistant"], host_visible=True,
-    )
+    hashes = validate_hook_capture(plan, job=state.read("outbox", key), done=state.read("done", key))
+    response = save_turn_projection(config, plan)
     if response.get("ok"):
-        state.finish(key, response["result"], value["user"], value["assistant"])
-        notify_sync(config, "turn-commit")
+        completed.append(key)
+        state.finish_hashes(key, response["result"], *hashes, schema_version=CHAIN_STATE_SCHEMA)
+        # The complete canonical receipt and the content-free done file are
+        # durable before duplicate staging bodies are cleared in this journal.
+        mark_capture_saved(connection, key)
     return response
+
+
+def _drain_hook_capture(config: ClientConfig, state: HookState, key: str, *, limit: int) -> Mapping[str, Any]:
+    from memory_vault_capture import HookCaptureJournal, load_capture
+    current = ClientConfig.load(config.path)
+    if current.vault_path != config.vault_path:
+        raise MemoryError("hook_capture_vault_changed")
+    if not current.capture_visible_turns:
+        raise MemoryError("automatic_capture_disabled")
+    config = current
+    journal = HookCaptureJournal(config.state_path, config.vault_path)
+    completed: list[str] = []
+    try:
+        with journal.transaction() as connection:
+            assert connection is not None
+            target = load_capture(connection, key)
+            if target is None:
+                raise MemoryError("unknown_capture_job")
+            if target["state"] == "saved":
+                response = _complete_hook_capture(config, state, connection, target, completed)
+            else:
+                response = failure("capture_dependency_pending", retryable=True)
+                keys = [row[0] for row in connection.execute(
+                    "SELECT job_key FROM capture_jobs WHERE state='pending' AND scope_key=? AND accepted_sequence<=? ORDER BY accepted_sequence LIMIT ?",
+                    (target["scope_key"], target["accepted_sequence"], limit),
+                )]
+                for pending_key in keys:
+                    plan = load_capture(connection, pending_key)
+                    assert plan is not None
+                    item_response = _complete_hook_capture(config, state, connection, plan, completed)
+                    if not item_response.get("ok"):
+                        response = item_response
+                        break
+                    if pending_key == key:
+                        response = item_response
+    finally:
+        # Earlier canonical commits survive even when the bounded target is
+        # still pending or its later staging cleanup fails. Notify once for
+        # that actual progress, without claiming the target itself completed.
+        if completed:
+            with contextlib.suppress(Exception):
+                notify_sync(config, "turn-commit")
+    return response
+
+
+def _persist_job(config: ClientConfig, state: HookState, key: str, job: Mapping[str, Any], *, drain_limit: int = 4) -> Mapping[str, Any]:
+    current = ClientConfig.load(config.path)
+    if current.vault_path != config.vault_path:
+        raise MemoryError("hook_capture_vault_changed")
+    if not current.capture_visible_turns:
+        raise MemoryError("automatic_capture_disabled")
+    config = current
+    value = HookState.validate("outbox", job)
+    if state.read("conflicts", key) is not None:
+        raise MemoryError("hook_event_conflict")
+    if value["schema_version"] == STATE_SCHEMA:
+        # Already accepted old outboxes retain their two-write request domains
+        # and original partial-retry behavior. Never fabricate a predecessor.
+        from memory_vault_capture import HookCaptureJournal, load_capture
+        journal = HookCaptureJournal(config.state_path, config.vault_path)
+        with journal.transaction(writable=journal.path.exists()) as connection:
+            if connection is not None and load_capture(connection, key) is not None:
+                raise MemoryError("hook_capture_input_changed")
+        response = observe_turn(config, request_id="req_hook_" + key,
+                                user=value["user"], assistant=value["assistant"], host_visible=True)
+        if response.get("ok"):
+            state.finish(key, response["result"], value["user"], value["assistant"])
+            notify_sync(config, "turn-commit")
+        return response
+    if state.read("outbox", key) != value:
+        raise MemoryError("hook_capture_input_changed")
+    from memory_vault_capture import HookCaptureJournal, freeze_capture
+    journal = HookCaptureJournal(current.state_path, current.vault_path)
+    with journal.transaction() as connection:
+        assert connection is not None
+        freeze_capture(
+            connection, scope_key=value["scope_key"], job_key=key,
+            input_sha256=_hook_input_digest(_digest(value["user"]), _digest(value["assistant"])),
+            builder_profile=HOOK_CAPTURE_PROFILE, canonical_request_id="req_hook_capture_" + key,
+            build_projection=lambda created_at, previous: build_turn_projection(
+                value["user"], value["assistant"], None, created_at=created_at,
+                host_visible=True, predecessor=previous,
+            ),
+        )
+    # Acceptance is now durable, before any canonical write. A bounded drain
+    # finishes earlier accepted turns first, without opening a second journal
+    # connection while holding its write lock or recursively walking history.
+    return _drain_hook_capture(current, state, key, limit=drain_limit)
 
 
 def handle_hook(config: ClientConfig, action: str, value: Any) -> Mapping[str, Any]:
     if not isinstance(value, dict) or value.get("hook_event_name") != _EVENTS[action]:
         raise MemoryError("invalid_hook_event")
+    current = ClientConfig.load(config.path)
+    if current.vault_path != config.vault_path:
+        raise MemoryError("hook_capture_vault_changed")
+    config = current
     # Ignore all unrelated event fields, especially transcript_path, cwd,
     # permission_mode and arbitrary extension fields. They are not authority.
     if action == "session-start":
@@ -552,7 +872,7 @@ def handle_hook(config: ClientConfig, action: str, value: Any) -> Mapping[str, A
     state = HookState(config)
     if action == "user-prompt-submit":
         prompt = _text(value.get("prompt"), maximum=MAX_TURN_PART_BYTES)
-        state.prompt(key, prompt)
+        state.prompt(key, prompt, scope_key=_hook_scope(value))
         return _hook_recall(config, "UserPromptSubmit", _excerpt(prompt, MAX_QUERY_BYTES - 128))
     if not isinstance(value.get("stop_hook_active", False), bool):
         raise MemoryError("invalid_hook_event")
@@ -570,8 +890,16 @@ def handle_hook(config: ClientConfig, action: str, value: Any) -> Mapping[str, A
         # different turn. A host without these fields must use explicit MCP.
         return _notice("matching_prompt_missing_no_turn_saved")
     user = _text(prompt.get("user"), maximum=MAX_TURN_PART_BYTES)
-    state.once("outbox", key, {"user": user, "assistant": assistant})
-    response = _persist_job(config, state, key, {"schema_version": STATE_SCHEMA, "user": user, "assistant": assistant})
+    scope_key = _hook_scope(value)
+    if prompt.get("scope_key", scope_key) != scope_key:
+        raise MemoryError("hook_event_conflict")
+    job = state.read("outbox", key)
+    if job is None:
+        job = {"schema_version": CHAIN_STATE_SCHEMA, "user": user, "assistant": assistant, "scope_key": scope_key}
+        state.once("outbox", key, job)
+    elif job["user"] != user or job["assistant"] != assistant or job.get("scope_key", scope_key) != scope_key:
+        raise MemoryError("hook_event_conflict")
+    response = _persist_job(config, state, key, job)
     if response.get("ok"):
         return _notice("visible_turn_and_continuity_saved_local")
     code = response.get("error", {}).get("code", "unavailable")
@@ -579,21 +907,43 @@ def handle_hook(config: ClientConfig, action: str, value: Any) -> Mapping[str, A
 
 
 def retry_pending(config: ClientConfig, *, limit: int = 16) -> Mapping[str, Any]:
+    if type(limit) is not int or not 1 <= limit <= 64:
+        raise MemoryError("invalid_retry_limit")
+    current = ClientConfig.load(config.path)
+    if current.vault_path != config.vault_path:
+        raise MemoryError("hook_capture_vault_changed")
+    config = current
     if not config.capture_visible_turns:
         raise MemoryError("automatic_capture_disabled")
     state = HookState(config)
     directory = _absolute(state.root / "outbox")
-    if not directory.exists():
-        return success({"processed": 0, "saved": 0, "failed": 0, "network_accessed": False})
+    from memory_vault_capture import HookCaptureJournal
+    journal = HookCaptureJournal(config.state_path, config.vault_path)
+    keys: list[str] = []
+    # This is an authorized recovery operation, unlike status/doctor. Opening
+    # an existing journal writable lets SQLite roll back an interrupted local
+    # transaction; mode=ro alone cannot recover its hot rollback journal. An
+    # absent journal is never created just to discover that there is no work.
+    with journal.transaction(writable=journal.path.exists()) as connection:
+        if connection is not None:
+            keys = [row[0] for row in connection.execute(
+                "SELECT job_key FROM capture_jobs WHERE state='pending' ORDER BY scope_key,accepted_sequence LIMIT ?", (limit,),
+            )]
+    selected = set(keys)
+    if directory.exists() and len(keys) < limit:
+        for path in directory.iterdir():
+            if path.suffix == ".json" and _KEY.fullmatch(path.stem) is not None and path.stem not in selected:
+                keys.append(path.stem)
+                selected.add(path.stem)
+                if len(keys) == limit:
+                    break
     processed = saved = failed = 0
-    for path in directory.iterdir():
-        if processed >= limit:
-            break
-        if path.suffix != ".json" or _KEY.fullmatch(path.stem) is None:
-            continue
+    for key in keys:
         processed += 1
         try:
-            response = _persist_job(config, state, path.stem, state.read("outbox", path.stem))
+            job = state.read("outbox", key)
+            response = (_persist_job(config, state, key, job, drain_limit=1) if job is not None
+                        else _drain_hook_capture(config, state, key, limit=1))
             if response.get("ok"):
                 saved += 1
             else:

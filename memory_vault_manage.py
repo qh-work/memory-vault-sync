@@ -152,22 +152,47 @@ def _lifecycle_status(config: Any) -> Mapping[str, Any]:
     if not path.exists():
         return {"exists": False, "pending_turns": 0, "contents_read": False}
     from memory_vault_backup import readonly_database
+    from memory_vault_lifecycle import STATE_SCHEMAS
     deadline = time.monotonic() + MAX_DIAGNOSIS_SECONDS
     with readonly_database(path, deadline) as connection:
-        if connection.execute("PRAGMA user_version").fetchone()[0] != 1:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if version not in STATE_SCHEMAS:
             raise MemoryError("unsupported_lifecycle_state")
         meta = dict(connection.execute("SELECT key,value FROM meta"))
         from memory_vault_client import _digest
-        if meta.get("schema_version") != "universal-memory-lifecycle-state/v1" or meta.get("vault_path_sha256") != _digest(str(config.vault_path)):
+        if meta.get("schema_version") != STATE_SCHEMAS[version] or meta.get("vault_path_sha256") != _digest(str(config.vault_path)):
             raise MemoryError("lifecycle_vault_changed")
         sessions = {str(row[0]): int(row[1]) for row in connection.execute("SELECT state,COUNT(*) FROM sessions GROUP BY state")}
         turns = {str(row[0]): int(row[1]) for row in connection.execute("SELECT phase,COUNT(*) FROM turns GROUP BY phase")}
         if set(sessions) - {"open", "closed"} or set(turns) - {"staged", "committing", "committed", "aborted"}:
             raise MemoryError("invalid_lifecycle_state")
-        return {"exists": True, "sessions": sessions, "turns": turns,
+        captures = ({str(row[0]): int(row[1]) for row in connection.execute("SELECT state,COUNT(*) FROM capture_jobs GROUP BY state")}
+                    if version == 2 else {})
+        return {"exists": True, "sessions": sessions, "turns": turns, "capture_plans": captures,
                 "pending_turns": turns.get("staged", 0) + turns.get("committing", 0),
                 "unfinished_commit_receipts": int(connection.execute("SELECT COUNT(*) FROM requests WHERE response_json IS NULL").fetchone()[0]),
                 "recovery": "retry_exact_original_commit_or_explicit_abort_before_commit",
+                "contents_read": False}
+
+
+def _hook_capture_status(config: Any) -> Mapping[str, Any]:
+    from memory_vault_backup import readonly_database
+    from memory_vault_capture import HOOK_CAPTURE_FILENAME, HOOK_CAPTURE_SCHEMA
+    from memory_vault_client import _digest
+    path = _path(config.state_path / HOOK_CAPTURE_FILENAME)
+    if not path.exists():
+        return {"exists": False, "capture_plans": {}, "contents_read": False}
+    with readonly_database(path, time.monotonic() + MAX_DIAGNOSIS_SECONDS) as connection:
+        metadata = dict(connection.execute("SELECT key,value FROM meta"))
+        if (connection.execute("PRAGMA user_version").fetchone()[0] != 1
+                or metadata.get("schema_version") != HOOK_CAPTURE_SCHEMA
+                or metadata.get("vault_path_sha256") != _digest(str(config.vault_path))):
+            raise MemoryError("unsupported_hook_capture_state")
+        captures = {str(row[0]): int(row[1]) for row in connection.execute("SELECT state,COUNT(*) FROM capture_jobs GROUP BY state")}
+        if set(captures) - {"pending", "saved"}:
+            raise MemoryError("invalid_hook_capture_state")
+        return {"exists": True, "capture_plans": captures,
+                "source_scopes": int(connection.execute("SELECT COUNT(*) FROM capture_heads").fetchone()[0]),
                 "contents_read": False}
 
 
@@ -238,7 +263,8 @@ def doctor(config_path: Path) -> Mapping[str, Any]:
     result["configuration"] = {"loaded": True, "capture_visible_turns": config.capture_visible_turns,
                                "signing_configured": config.identity_path is not None,
                                "trust_configured": config.trust_path is not None}
-    for component, operation in (("database", _database_status), ("signing", _trust_status), ("lifecycle", _lifecycle_status)):
+    for component, operation in (("database", _database_status), ("signing", _trust_status),
+                                 ("lifecycle", _lifecycle_status), ("hook_capture", _hook_capture_status)):
         try:
             result[component] = operation(config)
         except (MemoryError, OSError, sqlite3.Error, ValueError) as exc:

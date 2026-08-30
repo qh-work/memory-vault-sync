@@ -33,8 +33,10 @@ from memory_vault import (
 PROTOCOL_VERSION = "1.0"
 REQUEST_SCHEMA = "memory-vault-host-request/v1"
 RESPONSE_SCHEMA = "memory-vault-host-response/v1"
-STATE_SCHEMA = "memory-vault-host-compat-state/v1"
+LEGACY_STATE_SCHEMA = "memory-vault-host-compat-state/v1"
+STATE_SCHEMA = "memory-vault-host-compat-state/v2"
 ALIAS_PROFILE = "memory-vault-v021-canonical-alias/v1"
+CAPTURE_PROFILE = "compat-visible-turn+continues/v1"
 MAX_REQUEST_BYTES = 3 * 1024 * 1024
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_VISIBLE_BYTES = 2 * 1024 * 1024
@@ -327,7 +329,9 @@ class CompatState:
 
     def _bind(self, connection: sqlite3.Connection, *, writable: bool) -> None:
         metadata = dict(connection.execute("SELECT key,value FROM meta"))
-        if metadata.get("schema_version") != STATE_SCHEMA or metadata.get("vault_path_sha256") != sha256(str(self.config.vault_path).encode("utf-8")):
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        expected_schema = {1: LEGACY_STATE_SCHEMA, 2: STATE_SCHEMA}.get(version)
+        if expected_schema is None or metadata.get("schema_version") != expected_schema or metadata.get("vault_path_sha256") != sha256(str(self.config.vault_path).encode("utf-8")):
             raise MemoryError("host_vault_changed")
         if not self.config.vault_path.exists():
             if metadata.get("store_id"):
@@ -400,15 +404,24 @@ class CompatState:
                 ):
                     connection.execute(statement)
                 connection.executemany("INSERT INTO meta(key,value) VALUES(?,?)", (
-                    ("schema_version", STATE_SCHEMA), ("vault_path_sha256", sha256(str(self.config.vault_path).encode("utf-8"))), ("store_id", ""),
+                    ("schema_version", LEGACY_STATE_SCHEMA), ("vault_path_sha256", sha256(str(self.config.vault_path).encode("utf-8"))), ("store_id", ""),
                 ))
                 connection.execute("PRAGMA user_version=1")
-            elif version != 1:
+                version = 1
+            elif version not in {1, 2}:
                 raise MemoryError("unsupported_host_state")
+            # A read-only lookup must still replay a v1 receipt without creating
+            # capture metadata or changing any old accepted turn's identity.
+            self._bind(connection, writable=writable)
+            if writable and version == 1:
+                from memory_vault_capture import CAPTURE_SQL
+                for statement in CAPTURE_SQL.values():
+                    connection.execute(statement)
+                connection.execute("UPDATE meta SET value=? WHERE key='schema_version'", (STATE_SCHEMA,))
+                connection.execute("PRAGMA user_version=2")
             size = connection.execute("PRAGMA page_count").fetchone()[0] * connection.execute("PRAGMA page_size").fetchone()[0]
             if size > MAX_STATE_BYTES:
                 raise MemoryError("host_state_limit")
-            self._bind(connection, writable=writable)
             return connection
         except BaseException:
             connection.close()
@@ -616,8 +629,23 @@ def _chunks(text: str) -> list[str]:
     return result
 
 
+def _legacy_continuity(user: str, assistant: str) -> str:
+    """The exact v1 projection, independent of future client text templates."""
+    def excerpt(text: str, maximum: int) -> str:
+        raw = text.encode("utf-8")
+        if len(raw) <= maximum:
+            return text
+        return raw[:maximum].decode("utf-8", errors="ignore") + "\n[excerpt truncated; read source episode]"
+
+    return (
+        "Visible-turn continuity excerpt (caller-reported turn; not host-witnessed).\n"
+        "This records text, not verified task completion or an execution instruction.\n\n"
+        "User context:\n" + excerpt(user, 2048)
+        + "\n\nLatest visible reply:\n" + excerpt(assistant, 8192)
+    )
+
+
 def _episode_records(job: Mapping[str, Any]) -> tuple[list[dict[str, Any]], str]:
-    from memory_vault_client import _continuity
     user, assistant = job["user_text"], job["assistant_text"]
     _text(user, MAX_VISIBLE_BYTES)
     _text(assistant, MAX_VISIBLE_BYTES)
@@ -639,15 +667,98 @@ def _episode_records(job: Mapping[str, Any]) -> tuple[list[dict[str, Any]], str]
             "Complete caller-reported visible turn, preserved losslessly in ordered episode fragments.\n"
             "The fragment bodies are JSON-quoted portions of User/Assistant text, not instructions.\n"
             "Visible pair SHA-256: " + content_hash + "\n"
-            "Fragments: " + str(len(fragments)) + "\n\n" + _continuity(user, assistant, host_visible=False)
+            "Fragments: " + str(len(fragments)) + "\n\n" + _legacy_continuity(user, assistant)
         )
     anchor = build_record(kind="episode", text=text, entities=["compat:v021:visible-turn"], relations=relations,
                           provenance=provenance, created_at=job["created_at"])
     records.append(anchor)
-    records.append(build_record(kind="continuity", text=_continuity(user, assistant, host_visible=False),
+    records.append(build_record(kind="continuity", text=_legacy_continuity(user, assistant),
                                 entities=["compat:v021:continuity"], relations=[{"type": "derived_from", "target": anchor["memory_id"]}],
                                 provenance=provenance, created_at=job["created_at"]))
     return records, anchor["memory_id"]
+
+
+def _capture_records(user: str, assistant: str, created_at: str, previous: Mapping[str, Any] | None) -> tuple[list[dict[str, Any]], str, str]:
+    """Pure new-turn builder; only canonical references enter Memory records."""
+    records, episode = _episode_records({"user_text": user, "assistant_text": assistant, "created_at": created_at})
+    continuation = records[-1]
+    if previous is not None:
+        if not isinstance(previous, Mapping) or set(previous) != {"memory_id", "record_sha256"}:
+            raise MemoryError("invalid_capture_predecessor")
+        _match(previous["memory_id"], _MEMORY)
+        _match(previous["record_sha256"], _HASH)
+        continuation = build_record(
+            kind="continuity", text=continuation["text"], entities=continuation["entities"],
+            relations=[*continuation["relations"], {"type": "continues", "target": previous["memory_id"]}],
+            provenance=continuation["provenance"], created_at=created_at,
+        )
+        records[-1] = continuation
+    return records, episode, continuation["memory_id"]
+
+
+def validate_capture_turn(row: Mapping[str, Any], plan: Mapping[str, Any]) -> None:
+    """Pure linkage check for live retry and explicit client-state recovery.
+
+    Saved rows deliberately contain no visible text. Their retained input
+    digest is historical evidence, not authorization; callers must hydrate
+    every saved record reference from the selected Vault and check its current
+    admission before using the projection. No store, keys or configuration are
+    opened by this function.
+    """
+    from memory_vault_capture import CAPTURE_COLUMNS, validate_capture_header, validate_capture_projection
+    turn = dict(row)
+    required = {"handle", "session_handle", "phase", "created_at", "receipt_id", "user_text",
+                "assistant_text", "user_sha256", "assistant_sha256", "memory_id"}
+    if (required - set(turn) or not isinstance(plan, Mapping)
+            or set(CAPTURE_COLUMNS["capture_jobs"]) - set(plan)
+            or "records" not in plan or "record_refs" not in plan):
+        raise MemoryError("invalid_capture_turn")
+    header = validate_capture_header({key: plan[key] for key in CAPTURE_COLUMNS["capture_jobs"]})
+    _match(turn["handle"], _TURN)
+    _match(turn["session_handle"], _CONTINUITY)
+    _match(turn["user_sha256"], _HASH)
+    _match(turn["assistant_sha256"], _HASH)
+    if (not isinstance(turn["receipt_id"], str) or re.fullmatch(r"mvrturn_[0-9a-f]{64}", turn["receipt_id"]) is None
+            or header["job_key"] != turn["handle"] or header["scope_key"] != turn["session_handle"]
+            or header["builder_profile"] != CAPTURE_PROFILE or header["created_at"] != turn["created_at"]
+            or header["canonical_request_id"] != "req_compat_turn_" + turn["receipt_id"].split("_", 1)[1]):
+        raise MemoryError("invalid_capture_turn")
+    references = plan["record_refs"]
+    if not isinstance(references, list) or len(references) != header["record_count"]:
+        raise MemoryError("invalid_capture_projection")
+    for reference in references:
+        if not isinstance(reference, dict) or set(reference) != {"memory_id", "record_sha256"}:
+            raise MemoryError("invalid_capture_projection")
+        _match(reference["memory_id"], _MEMORY)
+        _match(reference["record_sha256"], _HASH)
+        if reference["memory_id"] != "mem_" + reference["record_sha256"][:40]:
+            raise MemoryError("invalid_capture_projection")
+    identifiers = {reference["memory_id"] for reference in references}
+    if len(identifiers) != len(references) or {header["episode_id"], header["continuity_id"]} - identifiers:
+        raise MemoryError("invalid_capture_projection")
+    records = plan["records"]
+    if not isinstance(records, list):
+        raise MemoryError("invalid_capture_projection")
+    if turn["phase"] == "pending":
+        if header["state"] != "pending" or turn["memory_id"] is not None or not records:
+            raise MemoryError("invalid_capture_turn")
+        user = _text(turn["user_text"], MAX_VISIBLE_BYTES)
+        assistant = _text(turn["assistant_text"], MAX_VISIBLE_BYTES)
+        assert user is not None and assistant is not None
+        if (sha256(user.encode("utf-8")) != turn["user_sha256"]
+                or sha256(assistant.encode("utf-8")) != turn["assistant_sha256"]
+                or sha256(canonical_bytes({"user": user, "assistant": assistant})) != header["input_sha256"]):
+            raise MemoryError("host_intent_changed")
+    elif turn["phase"] == "done":
+        if (header["state"] != "saved" or turn["memory_id"] != header["episode_id"]
+                or turn["user_text"] is not None or turn["assistant_text"] is not None):
+            raise MemoryError("invalid_capture_turn")
+    else:
+        raise MemoryError("invalid_capture_turn")
+    if records:
+        prepared = validate_capture_projection(header, records)
+        if references != [{"memory_id": record["memory_id"], "record_sha256": record["record_sha256"]} for record in prepared]:
+            raise MemoryError("capture_projection_changed")
 
 
 def _projection(records: Sequence[Mapping[str, Any]], anchor: str | None) -> list[dict[str, Any]]:
@@ -704,6 +815,7 @@ def _store_records(
     config: Any, records: Sequence[Mapping[str, Any]] = (), *, request_id: str, anchor: str | None = None,
     semantic_factory: Callable[[str], tuple[Sequence[Mapping[str, Any]], str]] | None = None,
     evidence_records: Sequence[Mapping[str, Any]] = (), expected_anchor: str | None = None,
+    frozen_capture: bool = False, previous_ref: Mapping[str, Any] | None = None,
 ) -> Mapping[str, Any]:
     """Trusted, local atomic writer using the SAME core signer/admission/receipts.
 
@@ -716,6 +828,14 @@ def _store_records(
     existing, fully revalidated projection. Client-local attempt times cannot
     change canonical identity. No new receipt fields or tables are required.
     """
+    if (type(frozen_capture) is not bool or (frozen_capture and semantic_factory is not None)
+            or (previous_ref is not None and not frozen_capture)):
+        raise MemoryError("invalid_compat_projection")
+    if previous_ref is not None:
+        if not isinstance(previous_ref, Mapping) or set(previous_ref) != {"memory_id", "record_sha256"}:
+            raise MemoryError("invalid_capture_predecessor")
+        _match(previous_ref["memory_id"], _MEMORY)
+        _match(previous_ref["record_sha256"], _HASH)
     if semantic_factory is None:
         if evidence_records or expected_anchor is not None:
             raise MemoryError("invalid_compat_projection")
@@ -736,6 +856,12 @@ def _store_records(
     vault = config.vault(writing=True)
     with contextlib.closing(vault._connect()) as connection, connection:
         connection.execute("BEGIN IMMEDIATE")
+        if previous_ref is not None:
+            previous = _projection_record(vault, connection, previous_ref["memory_id"])
+            if previous["kind"] != "continuity" or previous["record_sha256"] != previous_ref["record_sha256"]:
+                raise MemoryError("capture_predecessor_changed")
+            if not vault._verification(connection, previous["memory_id"])["eligible_for_context"]:
+                raise MemoryError("evidence_not_admitted")
         prior = connection.execute("SELECT request_sha256,response_json FROM receipts WHERE request_id=?", (request_id,)).fetchone()
         response = None
         if semantic_factory is not None:
@@ -765,7 +891,11 @@ def _store_records(
         if prior is not None:
             if prior["request_sha256"] != digest:
                 raise MemoryError("conflict")
-            if semantic_factory is not None:
+            if semantic_factory is not None or frozen_capture:
+                if frozen_capture:
+                    response = _projection_receipt(prior["response_json"], request_id)
+                    if response["result"]["memory_id"] != anchor:
+                        raise MemoryError("invalid_compat_receipt")
                 assert response is not None
                 if response["result"]["kind"] != anchors[0]["kind"]:
                     raise MemoryError("invalid_compat_receipt")
@@ -784,6 +914,15 @@ def _store_records(
             return response
         changed: list[str] = []
         for record in prepared:
+            if frozen_capture and connection.execute("SELECT 1 FROM memories WHERE memory_id=?", (record["memory_id"],)).fetchone() is not None:
+                # An imported or previously saved record keeps its exact proof
+                # and admission. A local capture plan cannot re-grant trust to
+                # a quarantined record or silently replace another signer.
+                if _projection_record(vault, connection, record["memory_id"]) != record:
+                    raise MemoryError("invalid_compat_projection")
+                if not vault._verification(connection, record["memory_id"])["eligible_for_context"]:
+                    raise MemoryError("evidence_not_admitted")
+                continue
             proof = vault.signer(record) if vault.signer is not None else None
             if vault.signer is not None and not isinstance(proof, Mapping):
                 raise MemoryError("signer_did_not_attest")
@@ -810,18 +949,84 @@ def _materialize(config: Any, handle: str) -> bool:
         row = connection.execute("SELECT * FROM turns WHERE handle=?", (handle,)).fetchone()
         if row is None:
             raise MemoryError("unknown_turn_handle")
+        from memory_vault_capture import load_capture, mark_capture_saved
+        plan = load_capture(connection, handle)
+        if plan is not None:
+            validate_capture_turn(dict(row), plan)
         if row["phase"] == "done":
+            if plan is not None:
+                _verify_saved_capture(current, plan)
             return False
         if row["phase"] != "pending":
             raise MemoryError("turn_not_accepted")
         job = dict(row)
         if sha256(job["user_text"].encode("utf-8")) != job["user_sha256"] or sha256(job["assistant_text"].encode("utf-8")) != job["assistant_sha256"]:
             raise MemoryError("host_intent_changed")
-        records, anchor = _episode_records(job)
-        _store_records(current, records, request_id="req_compat_turn_" + job["receipt_id"].split("_", 1)[1], anchor=anchor)
+        if plan is None:
+            # Migrating v1 delivery metadata does not invent a predecessor,
+            # change the old timestamp or replace its canonical receipt domain.
+            records, anchor = _episode_records(job)
+            _store_records(current, records, request_id="req_compat_turn_" + job["receipt_id"].split("_", 1)[1], anchor=anchor)
+        else:
+            previous = None
+            if plan["predecessor_job_key"] is not None:
+                predecessor = load_capture(connection, plan["predecessor_job_key"])
+                if (predecessor is None or predecessor["scope_key"] != plan["scope_key"]
+                        or predecessor["accepted_sequence"] + 1 != plan["accepted_sequence"]
+                        or predecessor["continuity_id"] != plan["previous_continuity_id"]):
+                    raise MemoryError("invalid_capture_predecessor")
+                previous = {"memory_id": plan["previous_continuity_id"], "record_sha256": plan["previous_record_sha256"]}
+                if previous not in predecessor["record_refs"]:
+                    raise MemoryError("invalid_capture_predecessor")
+                parent_turn = connection.execute("SELECT * FROM turns WHERE handle=?", (predecessor["job_key"],)).fetchone()
+                if parent_turn is None:
+                    raise MemoryError("invalid_capture_predecessor")
+                validate_capture_turn(dict(parent_turn), predecessor)
+                if predecessor["state"] != "saved":
+                    # Never recurse while holding the same control-database
+                    # write lock. The finite flush walks ready dependencies.
+                    raise MemoryError("capture_predecessor_pending", retryable=True)
+            elif plan["accepted_sequence"] != 1:
+                raise MemoryError("invalid_capture_predecessor")
+            records, anchor = plan["records"], plan["episode_id"]
+            _store_records(current, records, request_id=plan["canonical_request_id"], anchor=anchor,
+                           frozen_capture=True, previous_ref=previous)
+            mark_capture_saved(connection, handle)
         state._bind(connection, writable=True)
         connection.execute("UPDATE turns SET phase='done',user_text=NULL,assistant_text=NULL,last_error=NULL,memory_id=? WHERE handle=?", (anchor, handle))
     return True
+
+
+def _verify_saved_capture(config: Any, plan: Mapping[str, Any]) -> None:
+    """A saved control receipt is not permission to recreate or readmit memory."""
+    from memory_vault_capture import validate_capture_projection
+    vault = config.vault()
+    with contextlib.closing(vault._connect(writable=False)) as connection:
+        connection.execute("BEGIN")
+        records = []
+        for reference in plan["record_refs"]:
+            record = _projection_record(vault, connection, reference["memory_id"])
+            if record["record_sha256"] != reference["record_sha256"]:
+                raise MemoryError("capture_projection_changed")
+            if not vault._verification(connection, record["memory_id"])["eligible_for_context"]:
+                raise MemoryError("evidence_not_admitted")
+            records.append(record)
+        validate_capture_projection(plan, records)
+        previous_id = plan["previous_continuity_id"]
+        if previous_id is not None:
+            previous = _projection_record(vault, connection, previous_id)
+            if previous["kind"] != "continuity" or previous["record_sha256"] != plan["previous_record_sha256"]:
+                raise MemoryError("capture_predecessor_changed")
+            if not vault._verification(connection, previous_id)["eligible_for_context"]:
+                raise MemoryError("evidence_not_admitted")
+        receipt = connection.execute("SELECT request_sha256,response_json FROM receipts WHERE request_id=?", (plan["canonical_request_id"],)).fetchone()
+        if receipt is None:
+            raise MemoryError("invalid_compat_receipt")
+        digest = sha256(canonical_bytes({"profile": ALIAS_PROFILE, "records": records, "anchor": plan["episode_id"]}))
+        response = _projection_receipt(receipt["response_json"], plan["canonical_request_id"])
+        if (receipt["request_sha256"] != digest or response["result"]["memory_id"] != plan["episode_id"]
+                or response["result"]["kind"] != "episode"):
+            raise MemoryError("invalid_compat_receipt")
 
 
 def flush_local(config_path: Path, *, limit: int = MAX_LOCAL_FLUSH) -> Mapping[str, Any]:
@@ -829,15 +1034,31 @@ def flush_local(config_path: Path, *, limit: int = MAX_LOCAL_FLUSH) -> Mapping[s
     _integer(limit, 1, 16)
     config = _config(config_path)
     state = CompatState(config)
-    connection = state.connect(writable=False)
-    if connection is None:
-        return {"saved": 0, "pending": 0, "errors": [], "network_accessed": False}
-    with contextlib.closing(connection):
-        handles = [row[0] for row in connection.execute("SELECT handle FROM turns WHERE phase='pending' ORDER BY created_at,handle LIMIT ?", (limit,))]
-        pending = int(connection.execute("SELECT COUNT(*) FROM turns WHERE phase='pending'").fetchone()[0])
     errors: list[str] = []
     saved = 0
-    for handle in handles:
+    pending = 0
+    for _ in range(limit):
+        connection = state.connect(writable=False)
+        if connection is None:
+            break
+        with contextlib.closing(connection):
+            pending = int(connection.execute("SELECT COUNT(*) FROM turns WHERE phase='pending'").fetchone()[0])
+            if not pending:
+                break
+            if connection.execute("PRAGMA user_version").fetchone()[0] == 1:
+                row = connection.execute("SELECT handle FROM turns WHERE phase='pending' ORDER BY created_at,handle LIMIT 1").fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT t.handle FROM turns t LEFT JOIN capture_jobs c ON c.job_key=t.handle "
+                    "LEFT JOIN capture_jobs p ON p.job_key=c.predecessor_job_key "
+                    "LEFT JOIN turns pt ON pt.handle=c.predecessor_job_key "
+                    "WHERE t.phase='pending' AND (c.job_key IS NULL OR c.predecessor_job_key IS NULL OR (p.state='saved' AND pt.phase='done')) "
+                    "ORDER BY (c.job_key IS NOT NULL),CASE WHEN c.job_key IS NULL THEN t.created_at ELSE '' END,c.scope_key,c.accepted_sequence,t.handle LIMIT 1"
+                ).fetchone()
+            handle = row[0] if row is not None else None
+        if handle is None:
+            errors.append("capture_predecessor_pending")
+            break
         try:
             saved += int(_materialize(config, handle))
         except (MemoryError, OSError, sqlite3.Error) as exc:
@@ -1010,9 +1231,19 @@ def _lifecycle(config: Any, request: Mapping[str, Any]) -> dict[str, Any]:
                     receipt_id, phase = "mvrturn_" + secrets.token_hex(32), "pending"
                     if new_turn:
                         turn = "mvt1_" + secrets.token_urlsafe(32)
-                        connection.execute("INSERT INTO turns(handle,session_handle,phase,user_text,assistant_text,user_sha256,assistant_sha256,created_at,receipt_id) VALUES(?,?,'pending',?,?,?,?,?,?)", (turn, session, user, assistant, sha256(user.encode("utf-8")), sha256(assistant.encode("utf-8")), utc_now(), receipt_id))
+                    from memory_vault_capture import freeze_capture
+                    plan = freeze_capture(
+                        connection, scope_key=session, job_key=turn,
+                        input_sha256=sha256(canonical_bytes({"user": user, "assistant": assistant})),
+                        builder_profile=CAPTURE_PROFILE,
+                        canonical_request_id="req_compat_turn_" + receipt_id.split("_", 1)[1],
+                        build_projection=lambda timestamp, previous: _capture_records(user, assistant, timestamp, previous),
+                        created_at=utc_now(),
+                    )
+                    if new_turn:
+                        connection.execute("INSERT INTO turns(handle,session_handle,phase,user_text,assistant_text,user_sha256,assistant_sha256,created_at,receipt_id) VALUES(?,?,'pending',?,?,?,?,?,?)", (turn, session, user, assistant, sha256(user.encode("utf-8")), sha256(assistant.encode("utf-8")), plan["created_at"], receipt_id))
                     else:
-                        connection.execute("UPDATE turns SET phase='pending',assistant_text=?,assistant_sha256=?,created_at=?,receipt_id=? WHERE handle=?", (assistant, sha256(assistant.encode("utf-8")), utc_now(), receipt_id, turn))
+                        connection.execute("UPDATE turns SET phase='pending',assistant_text=?,assistant_sha256=?,created_at=?,receipt_id=? WHERE handle=?", (assistant, sha256(assistant.encode("utf-8")), plan["created_at"], receipt_id, turn))
                 response = state.save_receipt(connection, request, {"continuity_handle": session, "turn_handle": turn, "outcome": "final",
                                               "receipt_id": receipt_id, "queue_state": "done" if phase == "done" else "pending", "network_accessed": False}, turn=turn)
     if operation == "turn.input":

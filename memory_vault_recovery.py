@@ -21,7 +21,12 @@ import stat
 import time
 from typing import Any, Iterator, Mapping, Sequence
 
-from memory_vault import AUTHORITY, MemoryError, Vault, canonical_bytes, sha256, strict_json_loads, utc_now
+from memory_vault import AUTHORITY, MAX_BUNDLE_LINE_BYTES, MemoryError, Vault, canonical_bytes, sha256, strict_json_loads, utc_now, validate_record
+from memory_vault_capture import (
+    CAPTURE_COLUMNS, CAPTURE_SQL, HOOK_CAPTURE_FILENAME, HOOK_CAPTURE_SCHEMA,
+    MAX_CAPTURE_JOBS, MAX_CAPTURE_RECORDS, load_capture, validate_capture_header,
+    validate_capture_projection, validate_capture_state,
+)
 import memory_vault_backup as database_backup
 import memory_vault_storage as protected_storage
 
@@ -60,7 +65,7 @@ _EXCLUDED = ("private_keys", "credentials", "trust_registry", "original_client_a
 
 # Closed schemas are recreated from these literals, never from SQLite programs
 # supplied by an archive. Optional indexes in the canonical memory DB are owned
-# by memory_vault_backup; these are only the two client correlation databases.
+# by memory_vault_backup; these are private client correlation/capture databases.
 _CONTROL_SQL = {
     "lifecycle": {
         "meta": "CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)",
@@ -80,7 +85,7 @@ _CONTROL_SQL = {
         "aliases": "CREATE TABLE aliases(legacy_id TEXT PRIMARY KEY,memory_id TEXT NOT NULL,record_sha256 TEXT NOT NULL,source_id TEXT,evidence_anchor_sha256 TEXT)",
     },
 }
-_DATABASE_NAMES = {"lifecycle": "lifecycle-v1.sqlite3", "compat": "host-protocol-v1.sqlite3"}
+_DATABASE_NAMES = {"lifecycle": "lifecycle-v1.sqlite3", "compat": "host-protocol-v1.sqlite3", "hooks": HOOK_CAPTURE_FILENAME}
 _CONTROL_COLUMNS = {
     "lifecycle": {
         "meta": ("key", "value"), "sessions": ("handle", "state"),
@@ -96,6 +101,40 @@ _CONTROL_COLUMNS = {
         "aliases": ("legacy_id", "memory_id", "record_sha256", "source_id", "evidence_anchor_sha256"),
     },
 }
+_CONTROL_SQL["hooks"] = {"meta": "CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)", **CAPTURE_SQL}
+_CONTROL_COLUMNS["hooks"] = {"meta": ("key", "value"), **CAPTURE_COLUMNS}
+_CONTROL_V2_SQL = {component: {**_CONTROL_SQL[component], **CAPTURE_SQL} for component in ("lifecycle", "compat")}
+_CONTROL_V2_COLUMNS = {component: {**_CONTROL_COLUMNS[component], **CAPTURE_COLUMNS} for component in ("lifecycle", "compat")}
+_CONTROL_V2_SQL["lifecycle"]["capture_sessions"] = "CREATE TABLE capture_sessions(session_handle TEXT PRIMARY KEY REFERENCES sessions(handle),scope_key TEXT NOT NULL)"
+_CONTROL_V2_COLUMNS["lifecycle"]["capture_sessions"] = ("session_handle", "scope_key")
+_CONTROL_SCHEMAS = {
+    "lifecycle": {1: "universal-memory-lifecycle-state/v1", 2: "universal-memory-lifecycle-state/v2"},
+    "compat": {1: "memory-vault-host-compat-state/v1", 2: "memory-vault-host-compat-state/v2"},
+    "hooks": {1: HOOK_CAPTURE_SCHEMA},
+}
+_CAPTURE_KEY = re.compile(r"[A-Za-z0-9._:@+\-]{1,256}")
+
+
+def _control_layout(component: str, version: int) -> tuple[str, Mapping[str, str], Mapping[str, tuple[str, ...]]]:
+    _require(component in _CONTROL_SCHEMAS and version in _CONTROL_SCHEMAS[component], "unsupported_client_control_schema")
+    statements = _CONTROL_V2_SQL[component] if version == 2 else _CONTROL_SQL[component]
+    columns = _CONTROL_V2_COLUMNS[component] if version == 2 else _CONTROL_COLUMNS[component]
+    return _CONTROL_SCHEMAS[component][version], statements, columns
+
+
+def _control_version(component: str, schema: Any) -> int:
+    for version, candidate in _CONTROL_SCHEMAS.get(component, {}).items():
+        if schema == candidate:
+            return version
+    raise MemoryError("unsupported_client_control_schema")
+
+
+def _control_count_limit(table: str) -> int:
+    if table == "capture_records":
+        return MAX_CAPTURE_JOBS * MAX_CAPTURE_RECORDS
+    if table in {"capture_heads", "capture_jobs"}:
+        return MAX_CAPTURE_JOBS
+    return MAX_CONTROL_ROWS
 
 
 def _require(value: bool, code: str = "invalid_client_recovery_state") -> None:
@@ -272,6 +311,9 @@ def _sync_kind(parts: tuple[str, ...], directory: bool) -> str | None:
             "json" if len(parts) == 3 and not directory and _NUMBER_RECEIPT.fullmatch(parts[2]) else None)
     if parts[0] == "transfer":
         if len(parts) == 2:
+            if not directory and parts[1] in {"dependency-index.sqlite3", "dependency-index.sqlite3-journal",
+                                              "dependency-index.sqlite3-wal", "dependency-index.sqlite3-shm"}:
+                return "monitor"
             if not directory and parts[1] in {"state.json", "publish.pending.json", "publish.started.json", "transfer.lock"}:
                 return "lock" if parts[1] == "transfer.lock" else "json"
             if directory and parts[1] in {"publication-reviews", "outgoing-groups", "incoming-groups", "group-copy-receipts", "received-capsules"}:
@@ -366,6 +408,11 @@ def _inventory(config: Any, selected: Sequence[str], sync: Any, deadline: float)
             elif kind == "lock":
                 observe(path)
                 locks.append(path)
+            elif kind == "monitor":
+                # Derived receiver-known indexes are not delivery authority.
+                # Observe their metadata for quiescence, but never archive or
+                # activate one as a trusted continuation of an old stream.
+                observe(path)
             else:
                 add(path, component, prefix + "/" + name, kind)
 
@@ -381,6 +428,10 @@ def _inventory(config: Any, selected: Sequence[str], sync: Any, deadline: float)
             for group in sorted(_HOOK_GROUPS):
                 scan(config.state_path / group, component, "control/hooks/" + group,
                      lambda parts, directory: "json" if len(parts) == 1 and not directory and _QUEUE.fullmatch(parts[0]) else None)
+            path = config.state_path / HOOK_CAPTURE_FILENAME
+            add(path, component, "control/hooks/" + path.name, "sqlite")
+            for suffix in ("-journal", "-wal", "-shm"):
+                add(Path(str(path) + suffix), component, None, "monitor")
         elif component in _DATABASE_NAMES:
             path = config.state_path / _DATABASE_NAMES[component]
             add(path, component, "control/" + component + "/" + path.name, "sqlite")
@@ -409,7 +460,8 @@ def _quiescent_locks(paths: Sequence[Path], sync: Any) -> Iterator[None]:
 def _control_summary(connection: sqlite3.Connection, component: str, source: Mapping[str, Any]) -> dict[str, Any]:
     if hasattr(connection, "setlimit"):
         connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 8 * 1024 * 1024)
-    expected = _CONTROL_SQL[component]
+    version = connection.execute("PRAGMA user_version").fetchone()[0]
+    schema, expected, expected_columns = _control_layout(component, version)
     seen: set[str] = set()
     for row in connection.execute("SELECT type,name,tbl_name,sql FROM sqlite_master"):
         if row["type"] == "index" and row["sql"] is None and row["name"].startswith("sqlite_autoindex_") and row["tbl_name"] in expected:
@@ -418,11 +470,9 @@ def _control_summary(connection: sqlite3.Connection, component: str, source: Map
         _require(name in expected and isinstance(row["sql"], str)
                  and database_backup._sql(row["sql"]) == database_backup._sql(expected[name]), "unsupported_client_control_schema")
         seen.add(name)
-    _require(seen == set(expected) and connection.execute("PRAGMA user_version").fetchone()[0] == 1,
-             "unsupported_client_control_schema")
+    _require(seen == set(expected), "unsupported_client_control_schema")
     metadata = dict(connection.execute("SELECT key,value FROM meta"))
-    schema = "universal-memory-lifecycle-state/v1" if component == "lifecycle" else "memory-vault-host-compat-state/v1"
-    binding = source["vault_path_sha256"] if component == "lifecycle" else source["compat_vault_path_sha256"]
+    binding = source["compat_vault_path_sha256"] if component == "compat" else source["vault_path_sha256"]
     _require(set(metadata) == ({"schema_version", "vault_path_sha256"} | ({"store_id"} if component == "compat" else set()))
              and metadata["schema_version"] == schema and metadata["vault_path_sha256"] == binding,
              "client_control_source_binding_changed")
@@ -431,18 +481,22 @@ def _control_summary(connection: sqlite3.Connection, component: str, source: Map
     logical_bytes = connection.execute("PRAGMA page_count").fetchone()[0] * connection.execute("PRAGMA page_size").fetchone()[0]
     _require(0 < logical_bytes <= (256 * 1024 * 1024 if component == "compat" else MAX_CONTROL_DATABASE_BYTES),
              "client_control_database_limit")
-    for table, columns in _CONTROL_COLUMNS[component].items():
+    for table, columns in expected_columns.items():
         _require(tuple(row["name"] for row in connection.execute("PRAGMA table_info(" + table + ")")) == columns,
                  "unsupported_client_control_schema")
     counts = {name: int(connection.execute("SELECT COUNT(*) FROM " + name).fetchone()[0])
               for name, sql in expected.items() if sql.startswith("CREATE TABLE")}
-    _require(all(count <= MAX_CONTROL_ROWS for count in counts.values()), "client_control_row_limit")
+    _require(all(count <= _control_count_limit(name) for name, count in counts.items()), "client_control_row_limit")
     database_backup._integrity(connection)
-    phases = {str(row[0]): int(row[1]) for row in connection.execute("SELECT phase,COUNT(*) FROM turns GROUP BY phase")}
-    pending = ("staged", "committing") if component == "lifecycle" else ("staged", "pending")
-    _require(sum(phases.get(phase, 0) for phase in pending) <= 256
-             and connection.execute("SELECT COUNT(*) FROM sessions WHERE state='open'").fetchone()[0] <= 128,
-             "client_control_pending_limit")
+    phases = {}
+    if component != "hooks":
+        phases = {str(row[0]): int(row[1]) for row in connection.execute("SELECT phase,COUNT(*) FROM turns GROUP BY phase")}
+        pending = ("staged", "committing") if component == "lifecycle" else ("staged", "pending")
+        _require(sum(phases.get(phase, 0) for phase in pending) <= 256
+                 and connection.execute("SELECT COUNT(*) FROM sessions WHERE state='open'").fetchone()[0] <= 128,
+                 "client_control_pending_limit")
+    if "capture_jobs" in expected:
+        validate_capture_state(connection)
     if component == "compat":
         from memory_vault_compat import MAX_ALIAS_ROWS, MAX_CONTROL_ROWS as COMPAT_CONTROL_ROWS
         _require(counts["aliases"] <= MAX_ALIAS_ROWS and counts["requests"] <= COMPAT_CONTROL_ROWS,
@@ -682,13 +736,18 @@ def _manifest(root: Path, deadline: float) -> tuple[dict[str, Any], str]:
     _require(isinstance(value["control_summaries"], dict) and not set(value["control_summaries"]) - (set(selected) & set(_DATABASE_NAMES))
              and value["excluded"] == list(_EXCLUDED), "invalid_client_backup_manifest")
     for component, summary in value["control_summaries"].items():
-        expected_tables = set(_CONTROL_COLUMNS[component])
+        _require(isinstance(summary, dict), "invalid_client_backup_manifest")
+        version = _control_version(component, summary.get("schema_version"))
+        schema, _, columns = _control_layout(component, version)
+        expected_tables = set(columns)
+        allowed_phases = (set() if component == "hooks" else {"staged", "committing", "committed", "aborted"}
+                          if component == "lifecycle" else {"staged", "pending", "done", "aborted"})
         _require(isinstance(summary, dict) and set(summary) == {"schema_version", "counts", "turn_phases"}
-                 and summary["schema_version"] == ("universal-memory-lifecycle-state/v1" if component == "lifecycle" else "memory-vault-host-compat-state/v1")
+                 and summary["schema_version"] == schema
                  and isinstance(summary["counts"], dict) and set(summary["counts"]) == expected_tables
-                 and all(type(count) is int and 0 <= count <= MAX_CONTROL_ROWS for count in summary["counts"].values())
+                 and all(type(count) is int and 0 <= count <= _control_count_limit(name) for name, count in summary["counts"].items())
                  and isinstance(summary["turn_phases"], dict)
-                 and not set(summary["turn_phases"]) - ({"staged", "committing", "committed", "aborted"} if component == "lifecycle" else {"staged", "pending", "done", "aborted"})
+                 and not set(summary["turn_phases"]) - allowed_phases
                  and all(type(count) is int and 0 <= count <= MAX_CONTROL_ROWS for count in summary["turn_phases"].values()),
                  "invalid_client_backup_manifest")
     _check_archive_tree(root, entries, deadline)
@@ -907,6 +966,31 @@ def _compat_response(value: Any) -> dict[str, Any]:
 
 
 def _validate_control_row(component: str, table: str, row: dict[str, Any], memory: sqlite3.Connection) -> dict[str, Any]:
+    if table == "capture_sessions":
+        _require(set(row) == {"session_handle", "scope_key"})
+        _match(row["session_handle"], re.compile(r"ses_[0-9a-f]{32}"))
+        _match(row["scope_key"], _CAPTURE_KEY)
+        return row
+    if table in CAPTURE_COLUMNS:
+        _require(set(row) == set(CAPTURE_COLUMNS[table]))
+        if table == "capture_jobs":
+            return validate_capture_header(row)
+        if table == "capture_heads":
+            _match(row["scope_key"], _CAPTURE_KEY)
+            _match(row["last_job_key"], _CAPTURE_KEY, nullable=True)
+            _require(type(row["accepted_sequence"]) is int and 0 <= row["accepted_sequence"] <= 2**63 - 1)
+        else:
+            _match(row["job_key"], _CAPTURE_KEY)
+            _match(row["memory_id"], _MEMORY)
+            _match(row["record_sha256"], _HASH)
+            _require(type(row["ordinal"]) is int and 0 <= row["ordinal"] < MAX_CAPTURE_RECORDS
+                     and row["memory_id"] == "mem_" + row["record_sha256"][:40])
+            if row["record_json"] is not None:
+                _require(isinstance(row["record_json"], str)
+                         and len(row["record_json"].encode("utf-8")) <= MAX_BUNDLE_LINE_BYTES)
+                record = validate_record(strict_json_loads(row["record_json"]))
+                _require(record["memory_id"] == row["memory_id"] and record["record_sha256"] == row["record_sha256"])
+        return row
     from memory_vault_client import _digest
     from memory_vault_lifecycle import _SESSION, _TURN
     from memory_vault_compat import _CONTINUITY, _TURN as COMPAT_TURN
@@ -977,11 +1061,102 @@ def _validate_control_row(component: str, table: str, row: dict[str, Any], memor
     return row
 
 
+def _validate_capture_control(connection: sqlite3.Connection, component: str,
+                              memory: sqlite3.Connection, deadline: float) -> None:
+    """Verify local correlations and hydrate saved plans from actual canonical facts.
+
+    Pending predecessors can refer to another accepted plan, not yet a Vault
+    row. Saved metadata must instead resolve every full hash. Neither case is a
+    signature/admission decision or authorization to run a restored request.
+    """
+    validate_capture_state(connection)
+    for original in connection.execute("SELECT job_key FROM capture_jobs ORDER BY scope_key,accepted_sequence"):
+        database_backup._check_time(deadline)
+        plan = load_capture(connection, original[0])
+        _require(plan is not None)
+        records = []
+        for reference in plan["record_refs"]:
+            database_backup._check_time(deadline)
+            canonical = memory.execute("SELECT record_json,record_sha256 FROM memories WHERE memory_id=?", (reference["memory_id"],)).fetchone()
+            if canonical is None:
+                _require(plan["state"] == "pending", "restored_control_memory_reference_missing")
+                continue
+            record = validate_record(strict_json_loads(canonical["record_json"]))
+            _require(record["memory_id"] == reference["memory_id"]
+                     and record["record_sha256"] == canonical["record_sha256"] == reference["record_sha256"],
+                     "restored_control_memory_reference_missing")
+            records.append(record)
+        if plan["state"] == "saved":
+            validate_capture_projection(plan, records)
+        if component in {"lifecycle", "hooks"}:
+            from memory_vault import RESULT_SCHEMA as CORE_RESULT_SCHEMA
+            from memory_vault_client import _digest
+            core_receipt = memory.execute("SELECT request_sha256,response_json FROM receipts WHERE request_id=?", (plan["canonical_request_id"],)).fetchone()
+            if core_receipt is None:
+                _require(plan["state"] == "pending", "capture_receipt_missing")
+            else:
+                _require(len(records) == plan["record_count"], "restored_control_memory_reference_missing")
+                validate_capture_projection(plan, records)
+                episode = next(record for record in records if record["memory_id"] == plan["episode_id"])
+                expected_result = {
+                    "state": "saved_local", "episode_id": plan["episode_id"], "continuity_id": plan["continuity_id"],
+                    "capture_basis": "host_event_fields" if episode["provenance"].get("source_type") == "visible_turn" else "caller_reported",
+                    "host_attestation": False, "network_accessed": False,
+                }
+                expected_response = {"schema_version": CORE_RESULT_SCHEMA, "ok": True, "authority": dict(AUTHORITY),
+                                     "result": expected_result, "request_id": plan["canonical_request_id"]}
+                _require(core_receipt["request_sha256"] == _digest({"profile": "memory-vault-client-capture-receipt/v1",
+                                                                    "projection_sha256": plan["projection_sha256"]})
+                         and strict_json_loads(core_receipt["response_json"]) == expected_response, "invalid_capture_receipt")
+        if component == "lifecycle":
+            from memory_vault_lifecycle import CAPTURE_PROFILE, LifecycleState
+            turn = connection.execute("SELECT * FROM turns WHERE handle=?", (plan["job_key"],)).fetchone()
+            _require(turn is not None and turn["phase"] in {"committing", "committed"}
+                     and plan["builder_profile"] == CAPTURE_PROFILE)
+            scope = connection.execute("SELECT scope_key FROM capture_sessions WHERE session_handle=?", (turn["session_handle"],)).fetchone()
+            _require(scope is not None and scope[0] == plan["scope_key"])
+            if turn["phase"] == "committing":
+                LifecycleState.check_plan(turn, plan, scope[0])
+            else:
+                _require(plan["state"] == "saved")
+                receipt = connection.execute("SELECT response_json FROM requests WHERE request_key=?", (turn["commit_request"],)).fetchone()
+                _require(receipt is not None and receipt[0] is not None)
+                response = _lifecycle_response(strict_json_loads(receipt[0]), memory)
+                _require(response["op"] == "turn.commit" and response["result"]["turn_handle"] == plan["job_key"]
+                         and response["result"]["episode_id"] == plan["episode_id"]
+                         and response["result"]["continuity_id"] == plan["continuity_id"])
+                from memory_vault_client import _request_id
+                _require(plan["canonical_request_id"] == _request_id(response["request_id"], "lifecycle-capture-v2"))
+        elif component == "compat":
+            from memory_vault_compat import ALIAS_PROFILE, _projection_receipt, validate_capture_turn
+            turn = connection.execute("SELECT * FROM turns WHERE handle=?", (plan["job_key"],)).fetchone()
+            _require(turn is not None)
+            validate_capture_turn(dict(turn), plan)
+            core_receipt = memory.execute("SELECT request_sha256,response_json FROM receipts WHERE request_id=?", (plan["canonical_request_id"],)).fetchone()
+            if core_receipt is None:
+                _require(plan["state"] == "pending", "capture_receipt_missing")
+            else:
+                _require(len(records) == plan["record_count"], "restored_control_memory_reference_missing")
+                validate_capture_projection(plan, records)
+                response = _projection_receipt(core_receipt["response_json"], plan["canonical_request_id"])
+                _require(core_receipt["request_sha256"] == sha256(canonical_bytes({"profile": ALIAS_PROFILE, "records": records,
+                                                                                 "anchor": plan["episode_id"]}))
+                         and response["result"]["memory_id"] == plan["episode_id"]
+                         and response["result"]["kind"] == "episode", "invalid_capture_receipt")
+        else:
+            _match(plan["job_key"], _HASH)
+            _match(plan["scope_key"], _HASH)
+            _require(plan["builder_profile"] == "codex-visible-turn+continues/v1"
+                     and plan["canonical_request_id"] == "req_hook_capture_" + plan["job_key"])
+
+
 def _rebuild_control(source: Path, destination: Path, component: str, old_source: Mapping[str, Any],
                      new_vault: Path, new_store: str, memory: sqlite3.Connection, deadline: float) -> Mapping[str, Any]:
     from memory_vault_client import _digest
     with database_backup.readonly_database(source, deadline, immutable=True) as original:
         summary = _control_summary(original, component, old_source)
+        version = _control_version(component, summary["schema_version"])
+        _, statements, _ = _control_layout(component, version)
         temporary = database_backup._new_temporary(destination.parent)
         try:
             with contextlib.closing(sqlite3.connect(temporary)) as rebuilt, rebuilt:
@@ -992,9 +1167,9 @@ def _rebuild_control(source: Path, destination: Path, component: str, old_source
                 rebuilt.execute("PRAGMA synchronous=FULL")
                 rebuilt.execute("PRAGMA secure_delete=ON")
                 rebuilt.execute("BEGIN IMMEDIATE")
-                for statement in _CONTROL_SQL[component].values():
+                for statement in statements.values():
                     rebuilt.execute(statement)
-                for table, statement in _CONTROL_SQL[component].items():
+                for table, statement in statements.items():
                     if not statement.startswith("CREATE TABLE"):
                         continue
                     for raw in original.execute("SELECT * FROM " + table):
@@ -1002,14 +1177,14 @@ def _rebuild_control(source: Path, destination: Path, component: str, old_source
                         row = dict(raw)
                         if table == "meta":
                             if row["key"] == "vault_path_sha256":
-                                row["value"] = _digest(str(new_vault)) if component == "lifecycle" else sha256(str(new_vault).encode("utf-8"))
+                                row["value"] = sha256(str(new_vault).encode("utf-8")) if component == "compat" else _digest(str(new_vault))
                             elif row["key"] == "store_id":
                                 row["value"] = new_store
                         else:
                             row = _validate_control_row(component, table, row, memory)
                         columns = list(row)
                         rebuilt.execute("INSERT INTO " + table + "(" + ",".join(columns) + ") VALUES(" + ",".join("?" for _ in columns) + ")", tuple(row[name] for name in columns))
-                rebuilt.execute("PRAGMA user_version=1")
+                rebuilt.execute("PRAGMA user_version=" + str(version))
                 if component == "lifecycle":
                     # A NULL receipt is only an exact frozen turn.commit job.
                     invalid = rebuilt.execute(
@@ -1020,6 +1195,9 @@ def _rebuild_control(source: Path, destination: Path, component: str, old_source
                         "SELECT 1 FROM turns t LEFT JOIN requests r ON r.request_key=t.commit_request WHERE t.phase='committing' "
                         "AND (r.request_key IS NULL OR r.turn_handle!=t.handle OR r.response_json IS NOT NULL) LIMIT 1").fetchone()
                     _require(orphan is None)
+                if "capture_jobs" in statements:
+                    rebuilt.row_factory = sqlite3.Row
+                    _validate_capture_control(rebuilt, component, memory, deadline)
                 database_backup._integrity(rebuilt)
             database_backup._publish_file(temporary, destination)
         finally:
@@ -1027,12 +1205,12 @@ def _rebuild_control(source: Path, destination: Path, component: str, old_source
     return summary
 
 
-def _hook_document(value: Any, group: str, memory: sqlite3.Connection) -> dict[str, Any]:
-    from memory_vault_client import STATE_SCHEMA
-    fields = {"prompts": {"user"}, "outbox": {"user", "assistant"},
-              "done": {"episode_id", "continuity_id", "user_sha256", "assistant_sha256"}, "conflicts": {"reason"}}
-    result = _object(value, {"schema_version"} | fields[group])
-    _require(result["schema_version"] == STATE_SCHEMA)
+def _hook_document(value: Any, group: str, memory: sqlite3.Connection, *, key: str | None = None,
+                   capture: sqlite3.Connection | None = None) -> dict[str, Any]:
+    from memory_vault_client import HookState
+    # Reuse the fixed, closed v1/v2 schemas, not an archive-supplied validator.
+    # In v2 prompts/outbox carry a scope; done keeps only hashes and record IDs.
+    result = HookState.validate(group, value)
     for field in ("user", "assistant"):
         if field in result:
             _text(result[field], 480 * 1024)
@@ -1043,7 +1221,35 @@ def _hook_document(value: Any, group: str, memory: sqlite3.Connection) -> dict[s
         _match(result["assistant_sha256"], _HASH)
     if group == "conflicts":
         _require(result["reason"] == "different_prompts_for_same_turn")
+    if key is not None and capture is not None and group in {"outbox", "done"}:
+        plan = load_capture(capture, key)
+        if plan is not None:
+            _validate_hook_plan_document(plan, result, group)
     return result
+
+
+def _validate_hook_plan_document(plan: Mapping[str, Any], value: Mapping[str, Any], group: str) -> None:
+    from memory_vault_client import validate_hook_capture
+    validate_hook_capture(plan, job=value if group == "outbox" else None, done=value if group == "done" else None)
+
+
+def _validate_hook_capture_files(connection: sqlite3.Connection, state: Path,
+                                  memory: sqlite3.Connection, deadline: float) -> None:
+    for original in connection.execute("SELECT job_key FROM capture_jobs"):
+        database_backup._check_time(deadline)
+        plan = load_capture(connection, original[0])
+        _require(plan is not None)
+        matched = False
+        for group in ("outbox", "done"):
+            path = state / group / (plan["job_key"] + ".json")
+            if path.exists():
+                value = _hook_document(_read_json(path, deadline), group, memory, key=plan["job_key"], capture=connection)
+                _validate_hook_plan_document(plan, value, group)
+                matched = True
+        # Canonical save -> durable done -> clear outbox -> mark saved can be
+        # interrupted between any steps. A matching done is sufficient even
+        # while the retained immutable plan still says pending.
+        _require(matched, "hook_recovery_capture_evidence_missing")
 
 
 def _host_document(value: Any, parts: tuple[str, ...], old_source: Mapping[str, Any], new_vault: Path,
@@ -1102,6 +1308,28 @@ def _host_document(value: Any, parts: tuple[str, ...], old_source: Mapping[str, 
         if result.get(field) is not None:
             _require(lifecycle.execute("SELECT 1 FROM " + table + " WHERE handle=?", (result[field],)).fetchone() is not None,
                      "host_recovery_handle_missing")
+    if lifecycle.execute("PRAGMA user_version").fetchone()[0] == 2:
+        # A restored native session must retain its original source scope even
+        # across lifecycle generations. The path hash never becomes authority.
+        session_handle = result.get("session_handle")
+        if group == "pending":
+            request = result["request"]
+            session_handle = request.get("session_handle")
+            if session_handle is None:
+                turn = lifecycle.execute("SELECT session_handle FROM turns WHERE handle=?", (request["turn_handle"],)).fetchone()
+                session_handle = turn[0] if turn is not None else None
+            if request["op"] == "turn.commit":
+                plan = load_capture(lifecycle, request["turn_handle"])
+                if plan is not None:
+                    from memory_vault_client import _request_id
+                    _require(plan["canonical_request_id"] == _request_id(request["request_id"], "lifecycle-capture-v2"))
+        elif group == "receipts":
+            session_handle = result["response"]["result"]["session_handle"]
+        if session_handle is not None:
+            scope = lifecycle.execute("SELECT scope_key FROM capture_sessions WHERE session_handle=?", (session_handle,)).fetchone()
+            if scope is not None:
+                _require(scope[0] == "hst_" + _digest(["native-visible-capture/v1", parts[0], parts[1]]),
+                         "host_recovery_capture_scope_changed")
     result["vault_path_sha256"] = _digest(str(new_vault))
     return result
 
@@ -1145,31 +1373,37 @@ def activate_recovery(recovery: Path, output_config: Path, *, include: Sequence[
     summaries: dict[str, Any] = {}
     with database_backup.readonly_database(proposed.vault_path, deadline) as memory:
         _require(database_backup.database_summary(memory)["store_id"] == receipt["new_store_id"], "client_recovery_binding_changed")
-        for component in ("lifecycle", "compat"):
+        for component in ("lifecycle", "compat", "hooks"):
             if component in by_component:
                 entry = by_component[component]
                 path = _checked_entry(evidence, entry, deadline)
                 summaries[component] = _rebuild_control(path, state / _DATABASE_NAMES[component], component,
                                                         manifest["source"], proposed.vault_path, receipt["new_store_id"], memory, deadline)
+                _require(summaries[component] == manifest["control_summaries"].get(component), "client_control_summary_changed")
         with contextlib.ExitStack() as stack:
             lifecycle = None
+            hook_capture = None
             if "hosts" in selected and any(entry["component"] == "hosts" for entry in entries):
                 _require("lifecycle" in by_component, "host_recovery_requires_lifecycle_database")
                 lifecycle = stack.enter_context(database_backup.readonly_database(state / _DATABASE_NAMES["lifecycle"], deadline, immutable=True))
+            if "hooks" in by_component:
+                hook_capture = stack.enter_context(database_backup.readonly_database(state / HOOK_CAPTURE_FILENAME, deadline, immutable=True))
             for entry in entries:
-                if entry["component"] not in {"hooks", "hosts"}:
+                if entry["component"] not in {"hooks", "hosts"} or entry["kind"] == "sqlite":
                     continue
                 path = _checked_entry(evidence, entry, deadline)
                 value = _read_json(path, deadline)
                 parts = PurePosixPath(entry["path"]).parts
                 if entry["component"] == "hooks":
-                    value = _hook_document(value, parts[2], memory)
+                    value = _hook_document(value, parts[2], memory, key=Path(parts[3]).stem, capture=hook_capture)
                     target = state / parts[2] / parts[3]
                 else:
                     assert lifecycle is not None
                     value = _host_document(value, parts[2:], manifest["source"], proposed.vault_path, lifecycle, memory)
                     target = state.joinpath("hosts-v1", *parts[2:])
                 _write_json(target, value, maximum=MAX_CONTROL_BYTES)
+            if hook_capture is not None:
+                _validate_hook_capture_files(hook_capture, state, memory, deadline)
     config: dict[str, Any] = {"schema_version": CONFIG_SCHEMA, "vault_path": str(proposed.vault_path), "capture_visible_turns": True}
     if signer is not None:
         config["identity_path"] = str(signer)
@@ -1258,8 +1492,10 @@ def import_recovery(recovery: Path, *, entry_id: str, trust_store: Path, authori
         endpoint.trust.require_trusted(proof["key_id"])
     database_backup._check_time(deadline)
     identifier = sha256(canonical_bytes(["recovery-memory-import/v1", receipt["evidence_manifest_sha256"], entry_id]))
-    result = endpoint.vault.ingest_records(records, admission="verified", attestations=proofs,
-                                            transfer_id="xfer_" + identifier, payload_sha256=digest)
+    from memory_vault_dependency import ingest_verified
+    result = ingest_verified(endpoint.vault, endpoint.trust, records, proofs,
+                             transfer_id="xfer_" + identifier, payload_sha256=digest,
+                             previous_payload_sha256=None, index=None)
     return {"state": "archived_signed_memory_imported", "entry_id": entry_id, "batch_sha256": digest,
             "memory": result, "current_signatures_verified": True, "old_cursors_restored": False,
             "old_publication_permissions_restored": False, "delivery_stream_identity_changed": False,

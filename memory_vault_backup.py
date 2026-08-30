@@ -22,8 +22,8 @@ from typing import Any, Iterator, Mapping
 
 from memory_vault import (
     ADMISSION_STATES, AUTHORITY, DATABASE_READER, DATABASE_SCHEMA,
-    DATABASE_WRITER, MAX_BUNDLE_LINE_BYTES, MemoryError, RESULT_SCHEMA, Vault,
-    canonical_bytes, normalize_text, strict_json_loads, utc_now,
+    DATABASE_WRITER, DEPENDENCY_EPOCH_TRIGGER_SQL, MAX_BUNDLE_LINE_BYTES, MemoryError, RESULT_SCHEMA, Vault,
+    canonical_bytes, normalize_text, sha256, strict_json_loads, utc_now,
     validate_record,
 )
 
@@ -187,7 +187,8 @@ def database_summary(connection: sqlite3.Connection) -> dict[str, Any]:
                 **{name: ("trigger", sql) for name, sql in _TRIGGER_SQL.items()}}
     derived = {**{name: ("table", sql) for name, sql in _DERIVED_TABLE_SQL.items()},
                **{name: ("index", sql) for name, sql in _DERIVED_INDEX_SQL.items()}}
-    allowed = {**expected, **derived}
+    epoch = {name: ("trigger", sql) for name, sql in DEPENDENCY_EPOCH_TRIGGER_SQL.items()}
+    allowed = {**expected, **derived, **epoch}
     seen: set[str] = set()
     for row in connection.execute("SELECT type,name,tbl_name,sql FROM sqlite_master"):
         name = str(row["name"])
@@ -196,8 +197,16 @@ def database_summary(connection: sqlite3.Connection) -> dict[str, Any]:
         if name not in allowed or row["type"] != allowed[name][0] or not isinstance(row["sql"], str) or _sql(row["sql"]) != _sql(allowed[name][1]):
             raise MemoryError("unsupported_backup_database_schema")
         seen.add(name)
-    if seen not in (set(expected), set(allowed)):
+    if (not set(expected).issubset(seen)
+            or (seen & set(derived) and not set(derived).issubset(seen))
+            or (seen & set(epoch) and not set(epoch).issubset(seen))):
         raise MemoryError("unsupported_backup_database_schema")
+    epoch_metadata = dict(connection.execute("SELECT key,value FROM metadata WHERE key IN ('dependency_epoch','dependency_epoch_nonce')"))
+    if set(epoch).issubset(seen):
+        if Vault.dependency_epoch(connection) is None:
+            raise MemoryError("unsupported_backup_dependency_epoch")
+    elif epoch_metadata:
+        raise MemoryError("unsupported_backup_dependency_epoch")
     metadata = dict(connection.execute("SELECT key,value FROM metadata WHERE key IN ('schema','min_reader','min_writer','store_id')"))
     if (metadata.get("schema") != DATABASE_SCHEMA or metadata.get("min_reader") != str(DATABASE_READER)
             or metadata.get("min_writer") != str(DATABASE_WRITER)
@@ -220,6 +229,7 @@ def database_summary(connection: sqlite3.Connection) -> dict[str, Any]:
             "logical_bytes": pages * page_size, "page_size": page_size,
             "counts": counts, "admissions": admissions,
             "extended_retrieval_index_present": set(derived).issubset(seen),
+            "dependency_epoch_present": set(epoch).issubset(seen),
             "attestations": int(connection.execute("SELECT COUNT(*) FROM record_admissions WHERE attestation_json IS NOT NULL").fetchone()[0])}
 
 
@@ -400,6 +410,59 @@ def _manifest(directory: Path) -> tuple[dict[str, Any], Path]:
     return value, snapshot
 
 
+def _validate_capture_write_receipt(connection: sqlite3.Connection, row: sqlite3.Row, result: Mapping[str, Any]) -> None:
+    """A retained local capture receipt must still describe its exact pair.
+
+    This validates historical idempotency only. It neither imports admission
+    decisions nor treats host-delivered fields as a cryptographic attestation.
+    """
+    fields = {"state", "episode_id", "continuity_id", "capture_basis", "host_attestation", "network_accessed"}
+    if (set(result) != fields or result["capture_basis"] not in {"host_event_fields", "caller_reported"}
+            or result["host_attestation"] is not False or result["network_accessed"] is not False
+            or any(not isinstance(result[name], str) or re.fullmatch(r"mem_[0-9a-f]{40}", result[name]) is None
+                   for name in ("episode_id", "continuity_id"))):
+        raise MemoryError("invalid_backup_write_receipt")
+    records = []
+    for field, kind in (("episode_id", "episode"), ("continuity_id", "continuity")):
+        found = connection.execute("SELECT * FROM memories WHERE memory_id=?", (result[field],)).fetchone()
+        if found is None:
+            raise MemoryError("invalid_backup_write_receipt")
+        record = Vault._record_from_row(found)
+        if record["record_sha256"] != found["record_sha256"] or record["kind"] != kind or record["entities"]:
+            raise MemoryError("invalid_backup_write_receipt")
+        records.append(record)
+    episode, continuity = records
+    expected = [{"type": "derived_from", "target": episode["memory_id"]}]
+    previous = [edge["target"] for edge in continuity["relations"] if edge["type"] == "continues"]
+    previous_hash = None
+    if previous:
+        if len(previous) != 1:
+            raise MemoryError("invalid_backup_write_receipt")
+        found = connection.execute("SELECT * FROM memories WHERE memory_id=?", (previous[0],)).fetchone()
+        if found is None:
+            raise MemoryError("invalid_backup_write_receipt")
+        predecessor = Vault._record_from_row(found)
+        if predecessor["kind"] != "continuity" or predecessor["record_sha256"] != found["record_sha256"]:
+            raise MemoryError("invalid_backup_write_receipt")
+        previous_hash = predecessor["record_sha256"]
+        expected.append({"type": "continues", "target": previous[0]})
+    host_visible = episode["provenance"].get("source_type") == "visible_turn"
+    if (episode["relations"] or episode["created_at"] != continuity["created_at"]
+            or (result["capture_basis"] == "host_event_fields") != host_visible
+            or {(edge["type"], edge["target"]) for edge in continuity["relations"]}
+            != {(edge["type"], edge["target"]) for edge in expected}):
+        raise MemoryError("invalid_backup_write_receipt")
+    from memory_vault_capture import capture_digest
+    projection_sha256 = capture_digest({
+        "builder_profile": "codex-visible-turn+continues/v1" if host_visible else "lifecycle-visible-turn+continues/v1",
+        "created_at": episode["created_at"], "previous_continuity_id": previous[0] if previous else None,
+        "previous_record_sha256": previous_hash, "episode_id": episode["memory_id"], "continuity_id": continuity["memory_id"],
+    }, records)
+    if row["request_sha256"] != sha256(canonical_bytes({
+            "profile": "memory-vault-client-capture-receipt/v1", "projection_sha256": projection_sha256})):
+        raise MemoryError("invalid_backup_write_receipt")
+
+
 def _validate_write_receipts(connection: sqlite3.Connection, deadline: float) -> None:
     if connection.execute("SELECT 1 FROM receipts WHERE length(CAST(response_json AS BLOB))>65536 LIMIT 1").fetchone():
         raise MemoryError("invalid_backup_write_receipt")
@@ -413,6 +476,9 @@ def _validate_write_receipts(connection: sqlite3.Connection, deadline: float) ->
                 or value["authority"] != dict(AUTHORITY) or value["request_id"] != row["request_id"]):
             raise MemoryError("invalid_backup_write_receipt")
         result = value["result"]
+        if isinstance(result, dict) and result.get("state") == "saved_local":
+            _validate_capture_write_receipt(connection, row, result)
+            continue
         if isinstance(result, dict) and result.get("state") == "requeued":
             if (set(result) != {"state", "records", "network_accessed"}
                     or type(result["records"]) is not int or not 1 <= result["records"] <= 256
@@ -453,6 +519,12 @@ def _rebuild_restored_copy(connection: sqlite3.Connection, deadline: float, *, t
         raise MemoryError("backup_attestation_too_large")
     _validate_write_receipts(connection, deadline)
     connection.execute("BEGIN IMMEDIATE")
+    Vault.ensure_dependency_epoch(connection)
+    # A restored independent store cannot reuse a source cache certificate,
+    # even if its records and eventual admission states happen to be equal.
+    connection.executemany("UPDATE metadata SET value=? WHERE key=?", (
+        ("0", "dependency_epoch"), (os.urandom(16).hex(), "dependency_epoch_nonce"),
+    ))
     Vault.ensure_retrieval_tables(connection)
     connection.execute("DELETE FROM terms")
     connection.execute("DELETE FROM memory_entities")

@@ -23,6 +23,7 @@ ALLOWED_MODULES = {
     "memory_vault_compat.py",
     "memory_vault_recovery.py", "memory_vault_legacy_pack.py", "memory_vault_metadata.py", "memory_vault_storage.py",
     "memory_vault_sharing.py", "memory_vault_crypto.py", "memory_vault_device_trust.py", "memory_vault_encrypted_replication.py",
+    "memory_vault_capture.py", "memory_vault_dependency.py",
 }
 REQUIRED_MODULES = ALLOWED_MODULES
 MAX_MODULE_BYTES = 1024 * 1024

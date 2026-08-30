@@ -210,6 +210,7 @@ class HostSession:
         self.config = config
         self.host = host
         self.key = _key(session_key)
+        self.capture_scope = "hst_" + _digest(["native-visible-capture/v1", host, self.key])
         self.root = _absolute(config.state_path / "hosts-v1" / host / self.key)
         self.binding = _digest(str(config.vault_path))
 
@@ -340,7 +341,7 @@ class HostSession:
         if not current.capture_visible_turns:
             # No newly staged plaintext on a concurrent opt-out. Lifecycle
             # permits only completed receipts and explicit abort/close cleanup.
-            return lifecycle_handle(current.path, request)
+            return lifecycle_handle(current.path, request, capture_scope=self.capture_scope)
         key = _digest(request["request_id"])
         receipt_path = self.path("receipts", key)
         pending_path = self.path("pending", key)
@@ -352,7 +353,7 @@ class HostSession:
                 raise MemoryError("host_event_conflict")
             # Lifecycle replays are read-only and refresh local current_state.
             # They never claim current signature trust or remote delivery.
-            response = lifecycle_handle(current.path, request)
+            response = lifecycle_handle(current.path, request, capture_scope=self.capture_scope)
             if response.get("ok"):
                 self.remove(pending_path)
             return response
@@ -364,7 +365,7 @@ class HostSession:
                 raise MemoryError("host_pending_limit")
         if queued:
             self.once(pending_path, job)
-        response = lifecycle_handle(current.path, request)
+        response = lifecycle_handle(current.path, request, capture_scope=self.capture_scope)
         if response.get("schema_version") != LIFECYCLE_RESULT_SCHEMA:
             raise MemoryError("invalid_host_lifecycle_response")
         if response.get("ok"):
@@ -554,7 +555,7 @@ class HostSession:
         if _digest(str(current.vault_path)) != self.binding:
             raise MemoryError("host_vault_changed")
         request = _request("turn.abort", key, turn_handle=handle)
-        receipt = LifecycleState(current).completed_receipt(request)
+        receipt = LifecycleState(current, capture_scope=self.capture_scope).completed_receipt(request)
         if receipt is None:
             return False
         result = receipt.get("result")
@@ -717,7 +718,7 @@ class HostSession:
         if _digest(str(current.vault_path)) != self.binding or current.capture_visible_turns:
             # A concurrent config change requires a fresh event invocation.
             return _error("host_config_changed_retry")
-        return lifecycle_handle(current.path, request)
+        return lifecycle_handle(current.path, request, capture_scope=self.capture_scope)
 
 
 def _context(config: ClientConfig, query: str) -> tuple[str | None, str | None]:

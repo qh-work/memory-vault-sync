@@ -21,10 +21,13 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 from memory_vault import MAX_BUNDLE_BYTES, MAX_BUNDLE_RECORDS, MemoryError, Vault, canonical_bytes, failure, sha256, strict_json_loads, success, validate_record, write_response
 from memory_vault_trust import Identity, TrustError, TrustStore
 import memory_vault_storage as protected_storage
+from memory_vault_dependency import DependencyIndex, incremental_changes, ingest_verified, validate_outgoing
 
 
 DELTA_SCHEMA = "universal-memory-delta/v1"
 CHAINED_DELTA_SCHEMA = "universal-memory-delta/v2"
+INCREMENTAL_DELTA_SCHEMA = "universal-memory-delta/v3"
+_CHAINED_SCHEMAS = frozenset({CHAINED_DELTA_SCHEMA, INCREMENTAL_DELTA_SCHEMA})
 STATE_SCHEMA = "universal-memory-transfer-state/v1"
 REVIEW_SCHEMA = "universal-memory-publication-review/v1"
 DECISION_SCHEMA = "universal-memory-publication-decision/v1"
@@ -356,11 +359,15 @@ class DirectoryTransfer:
         if set(capsule) != {"payload", "proof"} or not isinstance(capsule["payload"], Mapping):
             raise MemoryError("invalid_transfer_envelope")
         payload = dict(capsule["payload"])
+        if not isinstance(payload.get("schema_version"), str):
+            raise MemoryError("unsupported_transfer_schema")
         fields = {"schema_version", "source_store_id", "sender_key_id", "after", "cursor", "records", "attestations", "blocked"}
-        if payload.get("schema_version") == CHAINED_DELTA_SCHEMA:
+        if payload.get("schema_version") in _CHAINED_SCHEMAS:
             fields |= {"previous_batch_sha256", "publication_review", "group"}
         elif payload.get("schema_version") != DELTA_SCHEMA:
             raise MemoryError("unsupported_transfer_schema")
+        if payload.get("schema_version") == INCREMENTAL_DELTA_SCHEMA:
+            fields.add("dependency_mode")
         if set(payload) != fields:
             raise MemoryError("invalid_transfer_payload")
         store_id, sender = payload["source_store_id"], payload["sender_key_id"]
@@ -368,18 +375,25 @@ class DirectoryTransfer:
             raise MemoryError("invalid_transfer_source")
         if _cursor(payload["cursor"]) <= _cursor(payload["after"]):
             raise MemoryError("invalid_transfer_cursor")
-        if payload["schema_version"] == CHAINED_DELTA_SCHEMA:
+        if payload["schema_version"] in _CHAINED_SCHEMAS:
             previous = payload["previous_batch_sha256"]
             if ((payload["after"] == 0 and previous is not None)
                     or (payload["after"] > 0 and (not isinstance(previous, str) or not _HASH.fullmatch(previous)))):
                 raise MemoryError("invalid_transfer_history")
+        if payload["schema_version"] == INCREMENTAL_DELTA_SCHEMA:
+            if (not isinstance(payload["dependency_mode"], str)
+                    or payload["dependency_mode"] not in {"closure", "prior_stream"}
+                    or (payload["after"] == 0 and payload["dependency_mode"] != "closure")):
+                raise MemoryError("invalid_dependency_mode")
         if self.trust.verify_message(payload, capsule["proof"]) != sender:
             raise MemoryError("transfer_signer_mismatch")
         blocked = payload["blocked"]
-        if not isinstance(blocked, list) or len(blocked) > (MAX_DISPOSITIONS if payload["schema_version"] == CHAINED_DELTA_SCHEMA else 256):
+        if not isinstance(blocked, list) or len(blocked) > (MAX_DISPOSITIONS if payload["schema_version"] in _CHAINED_SCHEMAS else 256):
             raise MemoryError("invalid_transfer_disposition")
         reasons = {"dependency_not_admitted", "dependency_budget_exceeded", "unsigned_dependency"}
-        if payload["schema_version"] == CHAINED_DELTA_SCHEMA:
+        if payload["schema_version"] == INCREMENTAL_DELTA_SCHEMA:
+            reasons.remove("dependency_budget_exceeded")
+        if payload["schema_version"] in _CHAINED_SCHEMAS:
             reasons.add("operator_excluded")
         sequences: set[int] = set()
         for item in blocked:
@@ -408,7 +422,7 @@ class DirectoryTransfer:
                 self.trust.verify_record(record, proof)
         if set(payload["attestations"]) != identifiers:
             raise MemoryError("unexpected_attestation")
-        if payload["schema_version"] == CHAINED_DELTA_SCHEMA:
+        if payload["schema_version"] in _CHAINED_SCHEMAS:
             group = _group(payload["group"]) if payload["group"] is not None else None
             if group is not None and (identifiers or payload["attestations"]):
                 raise MemoryError("mixed_group_and_inline_records")
@@ -427,6 +441,10 @@ class DirectoryTransfer:
                     raise MemoryError("invalid_publication_review")
             elif any(item["reason"] == "operator_excluded" for item in blocked):
                 raise MemoryError("missing_publication_review")
+            if (payload["schema_version"] == INCREMENTAL_DELTA_SCHEMA and payload["dependency_mode"] == "closure"
+                    and group is None and any(relation["target"] not in identifiers
+                                               for record in payload["records"] for relation in record["relations"])):
+                raise MemoryError("incomplete_transfer_closure")
         return payload, sha256(canonical_bytes(payload))
 
     @staticmethod
@@ -441,7 +459,7 @@ class DirectoryTransfer:
     def _check_chain(state: Mapping[str, Any], payload: Mapping[str, Any]) -> None:
         peer = payload["sender_key_id"] + "/" + payload["source_store_id"]
         head = state["received_heads"].get(peer)
-        if payload["schema_version"] != CHAINED_DELTA_SCHEMA:
+        if payload["schema_version"] not in _CHAINED_SCHEMAS:
             if head is not None and head.get("chained"):
                 raise MemoryError("transfer_history_downgrade")
             return
@@ -457,7 +475,44 @@ class DirectoryTransfer:
         peer = payload["sender_key_id"] + "/" + payload["source_store_id"]
         state["received"][peer] = payload["cursor"]
         state["received_heads"][peer] = {"after": payload["after"], "cursor": payload["cursor"], "batch_sha256": digest,
-                                         "chained": payload["schema_version"] == CHAINED_DELTA_SCHEMA}
+                                         "chained": payload["schema_version"] in _CHAINED_SCHEMAS}
+
+    def _dependency_index(self, *, create_vault: bool = False) -> DependencyIndex:
+        # Receiver initialization is already an explicitly authorized admission
+        # operation. No read-only review/status path invokes this helper.
+        with contextlib.closing(self.vault._connect(writable=create_vault)) as connection:
+            store = str(connection.execute("SELECT value FROM metadata WHERE key='store_id'").fetchone()[0])
+        return DependencyIndex(self.state_directory / "dependency-index.sqlite3", store_id=store,
+                               destination=str(self.exchange))
+
+    def validate_outgoing_payload(self, payload: Mapping[str, Any]) -> None:
+        if payload["schema_version"] == INCREMENTAL_DELTA_SCHEMA:
+            records, _ = self.records_for_payload(payload)
+            validate_outgoing(self.vault, self.trust, self._dependency_index(), records)
+
+    def _dependency_history(self, payload: Mapping[str, Any]) -> None:
+        if not payload["after"]:
+            return
+        previous = payload["previous_batch_sha256"]
+        try:
+            capsule = _read(self.state_directory / "received-capsules" / (previous + ".json"), private=True)
+        except FileNotFoundError:
+            raise MemoryError("dependency_base_evidence_missing") from None
+        historical, digest = self._verify_capsule(capsule, verify_records=False)
+        if (digest != previous or historical["sender_key_id"] != payload["sender_key_id"]
+                or historical["source_store_id"] != payload["source_store_id"]
+                or historical["cursor"] != payload["after"]):
+            raise MemoryError("dependency_base_evidence_mismatch")
+
+    def _record_published(self, capsule: Mapping[str, Any], digest: str) -> None:
+        payload = capsule["payload"]
+        output = self.exchange / payload["sender_key_id"] / payload["source_store_id"] / (
+            f"{payload['after']:020d}-{payload['cursor']:020d}-{digest}.json")
+        if canonical_bytes(_read(_path(output))) != canonical_bytes(capsule):
+            raise MemoryError("transfer_output_conflict")
+        records, _ = self.records_for_payload(payload, verify_signatures=False)
+        with self._dependency_index().connect() as cache:
+            DependencyIndex.published(cache, payload, digest, records)
 
     def _group_directory(self, group: Mapping[str, Any], *, incoming: bool = False) -> Path:
         return _path(self.state_directory / ("incoming-groups" if incoming else "outgoing-groups") / group["group_id"])
@@ -656,6 +711,21 @@ class DirectoryTransfer:
 
     def _admit_payload(self, payload: Mapping[str, Any], digest: str) -> Mapping[str, Any]:
         records, proofs = self.records_for_payload(payload, incoming=True)
+        identifiers = {record["memory_id"] for record in records}
+        closed = all(relation["target"] in identifiers for record in records for relation in record["relations"])
+        if payload["schema_version"] == INCREMENTAL_DELTA_SCHEMA:
+            if payload["dependency_mode"] == "closure" and not closed:
+                raise MemoryError("incomplete_transfer_closure")
+            self._dependency_history(payload)
+            return ingest_verified(self.vault, self.trust, records, proofs, transfer_id="xfer_" + digest,
+                                   payload_sha256=digest,
+                                   previous_payload_sha256=payload["previous_batch_sha256"] if payload["after"] else None,
+                                   index=self._dependency_index(create_vault=True))
+        if closed:
+            # Self-contained old batches seed current positive validation too,
+            # so the first v3 continuation need not rescan a maximum-size base.
+            return ingest_verified(self.vault, self.trust, records, proofs, transfer_id="xfer_" + digest,
+                                   payload_sha256=digest, index=self._dependency_index(create_vault=True))
         # Core bounds, closure validation, current trust and idempotent receipt
         # all apply once to the complete group. No fragment is a partial import.
         return self.vault.ingest_records(records, admission="verified", attestations=proofs,
@@ -879,7 +949,8 @@ class DirectoryTransfer:
                 all_excluded = excluded | set(previous_decision.get("excluded_memory_ids", []))
                 if len(all_excluded | retained) > MAX_REVIEW_RECORDS or all_excluded & retained:
                     raise MemoryError("publication_review_limit")
-                replacement_payload = {**payload, "schema_version": CHAINED_DELTA_SCHEMA,
+                replacement_payload = {**payload, "schema_version": (INCREMENTAL_DELTA_SCHEMA
+                    if payload["schema_version"] == INCREMENTAL_DELTA_SCHEMA else CHAINED_DELTA_SCHEMA),
                     "previous_batch_sha256": state["last_published"],
                     "records": kept_records, "attestations": {key: original_proofs[key] for key in sorted(retained)},
                     "blocked": [dispositions[key] for key in sorted(dispositions)],
@@ -949,6 +1020,7 @@ class DirectoryTransfer:
                         started = _read(self.started_path, private=True)
                         if started != {"batch_sha256": digest, "cursor": payload["cursor"]}:
                             raise MemoryError("publication_state_incomplete")
+                    self._record_published(capsule, digest)
                     self.pending_path.unlink()  # Already durable; only the redundant pending copy.
                     if self.started_path.exists():
                         self.started_path.unlink()
@@ -966,17 +1038,20 @@ class DirectoryTransfer:
                     with os.scandir(directory) as existing:
                         if any(_CAPSULE_NAME.fullmatch(entry.name) for entry in existing):
                             raise MemoryError("publisher_state_missing")
-                result = self.vault.handle({"op": "changes", "after": state["published_cursor"], "store_id": state["vault_store_id"],
-                                            "limit": limit, "maximum_bytes": maximum_bytes, "require_verified": not attest_unsigned})
-                if not result["ok"]:
-                    raise MemoryError(str(result["error"]["code"]))
-                delta = result["result"]
-                if any(item["reason"] == "dependency_budget_exceeded" for item in delta["blocked"]):
-                    # Never advance over a size-only omission. The complete
-                    # in-process export uses the core's atomic import bounds,
-                    # then freezes the closure into resumable fragments.
-                    delta = self.vault.transfer_changes(after=state["published_cursor"], store_id=state["vault_store_id"],
-                                                        limit=limit, require_verified=not attest_unsigned)
+                if not attest_unsigned:
+                    delta = incremental_changes(self.vault, self.trust, self._dependency_index(),
+                                                sender_key_id=self.identity.key_id, store_id=state["vault_store_id"],
+                                                after=state["published_cursor"], previous_digest=state["last_published"],
+                                                limit=limit, maximum_bytes=maximum_bytes)
+                else:
+                    result = self.vault.handle({"op": "changes", "after": state["published_cursor"], "store_id": state["vault_store_id"],
+                                                "limit": limit, "maximum_bytes": maximum_bytes, "require_verified": False})
+                    if not result["ok"]:
+                        raise MemoryError(str(result["error"]["code"]))
+                    delta = result["result"]
+                    if any(item["reason"] == "dependency_budget_exceeded" for item in delta["blocked"]):
+                        delta = self.vault.transfer_changes(after=state["published_cursor"], store_id=state["vault_store_id"],
+                                                            limit=limit, require_verified=False)
                 if delta["cursor"] == delta["after"]:
                     _write(self.state_path, state, replace=True)
                     return {"state": "up_to_date", "records": 0, "network_accessed": False}
@@ -991,6 +1066,8 @@ class DirectoryTransfer:
                 payload = {"schema_version": CHAINED_DELTA_SCHEMA, "source_store_id": delta["store_id"], "sender_key_id": self.identity.key_id,
                            "after": delta["after"], "cursor": delta["cursor"], "records": delta["records"], "attestations": proofs,
                            "blocked": delta["blocked"], "previous_batch_sha256": state["last_published"], "publication_review": None, "group": None}
+                if not delta["dependency_closure_included"]:
+                    payload.update(schema_version=INCREMENTAL_DELTA_SCHEMA, dependency_mode="prior_stream")
                 if len(payload["records"]) > 1024 or len(canonical_bytes(payload)) > MAX_CAPSULE_BYTES - 4096:
                     payload["group"] = self._make_group(payload["records"], proofs)
                     payload["records"], payload["attestations"] = [], {}
@@ -1002,6 +1079,7 @@ class DirectoryTransfer:
             # A full client can enforce an outbound privacy policy without
             # turning local memory storage into a publication permission.
             # Keep exact pending bytes and the old cursor if review blocks it.
+            self.validate_outgoing_payload(payload)
             if payload.get("publication_review") is not None:
                 self.local_path_approvals(payload)  # Incomplete operator decisions cannot escape.
             if capsule_guard is not None:
@@ -1029,6 +1107,7 @@ class DirectoryTransfer:
                 directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             destination = directory / f"{payload['after']:020d}-{payload['cursor']:020d}-{digest}.json"
             _write(destination, capsule, replace=False)
+            self._record_published(capsule, digest)
             state["published_cursor"] = payload["cursor"]
             state["last_published"] = digest
             _write(self.state_path, state, replace=True)
@@ -1114,6 +1193,7 @@ class DirectoryTransfer:
             destination = directory / f"{payload['after']:020d}-{payload['cursor']:020d}-{digest}.json"
             if canonical_bytes(_read(destination)) != canonical_bytes(capsule):
                 raise MemoryError("transfer_output_conflict")
+            self._record_published(capsule, digest)
             if self.started_path.exists():
                 started = _read(self.started_path, private=True)
                 if started != {"batch_sha256": digest, "cursor": payload["cursor"]}:
@@ -1145,9 +1225,10 @@ class DirectoryTransfer:
                 row = connection.execute("SELECT payload_sha256 FROM transfer_receipts WHERE transfer_id=?", ("xfer_" + digest,)).fetchone()
             if row is None or row[0] != digest:
                 raise MemoryError("history_anchor_receipt_missing")
+            self._received_evidence(capsule, digest)
             old = state["received_heads"].get(peer)
             new = {"after": payload["after"], "cursor": payload["cursor"], "batch_sha256": digest,
-                   "chained": payload["schema_version"] == CHAINED_DELTA_SCHEMA}
+                   "chained": payload["schema_version"] in _CHAINED_SCHEMAS}
             if old is not None and old != new:
                 raise MemoryError("history_anchor_conflict")
             state["received_heads"][peer] = new
