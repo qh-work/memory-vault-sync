@@ -19,7 +19,7 @@ import stat
 import struct
 import tempfile
 import time
-from typing import Any, Iterator, Mapping, Protocol
+from typing import Any, Iterator, Mapping, Protocol, Sequence
 
 from memory_vault import MemoryError, canonical_bytes, sha256, strict_json_loads
 from memory_vault_client import _absolute, _private_directory
@@ -28,6 +28,8 @@ from memory_vault_sharing import MAX_SHARE_BYTES, ShareSummary, _named_matches, 
 
 ENVELOPE_SCHEMA = "universal-memory-share-envelope/v1"
 ENVELOPE_MAGIC = b"universal-memory-share-envelope/v1\n"
+LEGACY_ENVELOPE_SCHEMA = "memory-share-envelope/v1"
+LEGACY_ENVELOPE_MAGIC = b"memory-share-envelope/v1\n"
 MAX_HEADER_BYTES = 16 * 1024
 MAX_ENVELOPE_BYTES = MAX_SHARE_BYTES + 16 * 1024 * 1024
 _SHA = re.compile(r"[0-9a-f]{64}")
@@ -199,6 +201,65 @@ def read_envelope(path: Path, *, deadline: float | None = None) -> tuple[dict[st
         return header, header["key_epoch"]
 
 
+def read_legacy_envelope(path: Path, *, deadline: float | None = None) -> tuple[dict[str, Any], int]:
+    """Inspect the real v0.21 framing only; never feed it to current decryption.
+
+    Old headers have no authenticated plaintext binding. Byte/hash validity is
+    not evidence that a cipher was used, a recipient owns a key, or a claim is
+    trusted. Preserve the old zero-size/zero-epoch metadata range for reading.
+    """
+    with _read(path, MAX_SHARE_BYTES + MAX_HEADER_BYTES + len(LEGACY_ENVELOPE_MAGIC) + 4) as stream:
+        if stream.read(len(LEGACY_ENVELOPE_MAGIC)) != LEGACY_ENVELOPE_MAGIC:
+            raise CryptoError("unsupported_legacy_share_envelope")
+        raw_length = stream.read(4)
+        if len(raw_length) != 4:
+            raise CryptoError("invalid_legacy_envelope_header")
+        length = struct.unpack(">I", raw_length)[0]
+        if not 1 <= length <= MAX_HEADER_BYTES:
+            raise CryptoError("invalid_legacy_envelope_header")
+        raw = stream.read(length)
+        value = strict_json_loads(raw)
+        fields = {"schema_version", "crypto_profile", "provider_version", "recipient_fingerprint",
+                  "key_epoch", "capability_scope_sha256", "ciphertext_sha256", "ciphertext_bytes"}
+        if (len(raw) != length or not isinstance(value, dict) or set(value) != fields
+                or value["schema_version"] != LEGACY_ENVELOPE_SCHEMA):
+            raise CryptoError("invalid_legacy_envelope_header")
+        for name in ("crypto_profile", "provider_version", "recipient_fingerprint"):
+            text = _opaque(value[name])
+            if any(token in text for token in ("task", "conversation", "owner", "local_path")):
+                raise CryptoError("invalid_legacy_envelope_identity")
+        _hash(value["ciphertext_sha256"])
+        _hash(value["capability_scope_sha256"])
+        if type(value["key_epoch"]) is not int or not 0 <= value["key_epoch"] <= 2**63 - 1:
+            raise CryptoError("invalid_legacy_envelope_epoch")
+        if type(value["ciphertext_bytes"]) is not int or not 0 <= value["ciphertext_bytes"] <= MAX_SHARE_BYTES:
+            raise CryptoError("invalid_legacy_envelope_size")
+        digest, size = _stream_digest(stream, MAX_SHARE_BYTES, deadline=deadline)
+        if size != value["ciphertext_bytes"] or digest != value["ciphertext_sha256"]:
+            raise CryptoError("legacy_envelope_ciphertext_mismatch")
+        return value, value["key_epoch"]
+
+
+def verify_envelope(path: Path, *, legacy_v021: bool = False,
+                    maximum_seconds: int = 300) -> Mapping[str, Any]:
+    """A usable operator inspection endpoint, without configuration or secrets."""
+    if type(legacy_v021) is not bool or type(maximum_seconds) is not int or not 1 <= maximum_seconds <= 300:
+        raise CryptoError("invalid_envelope_inspection_option")
+    reader = read_legacy_envelope if legacy_v021 else read_envelope
+    header, epoch = reader(path, deadline=time.monotonic() + maximum_seconds)
+    return {
+        "schema_version": "universal-memory-envelope-inspection/v1",
+        "envelope_schema": header["schema_version"], "valid": True,
+        "crypto_profile": header["crypto_profile"], "provider_version": header["provider_version"],
+        "recipient_fingerprint": header["recipient_fingerprint"], "key_epoch": epoch,
+        "ciphertext_bytes": header["ciphertext_bytes"], "ciphertext_sha256": header["ciphertext_sha256"],
+        "capability_scope_sha256": header["capability_scope_sha256"],
+        "plaintext_binding_present": not legacy_v021, "ciphertext_identity_checked": True,
+        "authenticated": False, "plaintext_opened": False, "provider_invoked": False,
+        "memory_changed": False, "keys_enrolled": False, "network_accessed": False,
+    }
+
+
 def seal_with_provider(plaintext: Path, output: Path, provider: CryptoProvider, *,
                        capability_scope_sha256: str, key_epoch: int) -> EnvelopeSummary:
     """Seal a verified share using explicitly provided, independently trusted code.
@@ -281,6 +342,35 @@ def open_with_provider(envelope: Path, output_plaintext: Path, provider: CryptoP
 
 def capabilities() -> Mapping[str, Any]:
     return {"envelope_schema": ENVELOPE_SCHEMA, "provider_configured_by_default": False,
+            "metadata_inspection_schemas": [ENVELOPE_SCHEMA, LEGACY_ENVELOPE_SCHEMA],
+            "decryption_envelope_schemas": [ENVELOPE_SCHEMA],
             "requires_audited_authenticated_encryption_provider": True,
             "associated_data_required": True, "memory_can_select_provider": False,
             "encryption_is_authorization": False, "production_key_ceremony_verified": False}
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    import argparse
+    from memory_vault import failure, success, write_response
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="action", required=True)
+    commands.add_parser("capabilities", help="describe optional contracts without reading a file or configuring a provider")
+    inspect = commands.add_parser("verify", help="check an explicit envelope's framing/hash, not encryption authenticity")
+    inspect.add_argument("--source", type=Path, required=True)
+    inspect.add_argument("--legacy-v021", action="store_true", help="inspect the separate old framing; never treat it as new authenticated data")
+    inspect.add_argument("--maximum-seconds", type=int, default=300)
+    args = parser.parse_args(argv)
+    try:
+        result = capabilities() if args.action == "capabilities" else verify_envelope(
+            args.source, legacy_v021=args.legacy_v021, maximum_seconds=args.maximum_seconds)
+        write_response(success(result))
+        return 0
+    except MemoryError as exc:
+        write_response(failure(exc.code, retryable=exc.retryable))
+    except (OSError, ValueError):
+        write_response(failure("envelope_inspection_unavailable"))
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -25,6 +25,7 @@ changed by adding these source files.
 | `memory_vault_client.py manage` | Explicit operator command | Read-only diagnosis, bounded replay, snapshot and restore-to-new-path |
 | `memory_vault_client.py pack` / `legacy-pack` | Explicit operator command | Compressed file packs / real old pack, ZIP and checkpoint compatibility |
 | `memory_vault_client.py share` | Explicit operator command | Review and exchange a selected complete subgraph, with optional original proofs |
+| `memory_vault_client.py device-trust` / `envelope` | Explicit operator command | Initialize/inspect a named private device metadata file; inspect new or explicitly selected old ciphertext framing without keys or decryption |
 | `memory_vault_client.py update` / `install` | Explicit operator command | Independent publisher verification, staging / isolated activation, rollback and separately opted-in updates |
 | Optional Codex hooks | Reviewed/trusted host lifecycle events, plus capture opt-in | Stage the visible prompt, recall locally, save the visible final pair |
 | Work MCP entry point | Work installations that support the packaged local MCP server | Explicit tool calls; automatic Work lifecycle capture is **not established** |
@@ -80,6 +81,17 @@ otherwise it reads `client.json` under:
 
 The client does not discover all old plugins or conversations and does not
 silently migrate another Vault. Use the explicit migration workflow separately.
+
+Default configuration is resolved only for operations that actually need it.
+Core/protocol capability discovery and MCP initialization/listing/capabilities
+do not open a Vault or read a client configuration. MCP and a configured protocol
+stream pin their default configuration path at the first memory operation,
+then reload that same configuration and current trust for each subsequent
+operation; an invalid configured path is never replaced with another Vault.
+Independent restore/recovery review, pack verification/conversion, update/install
+and [metadata inspection](ENCRYPTION.md) remain available without an old client
+configuration. Commands that do need one, such as sharing import/export or old
+alias registration, retain the normal explicit-or-default configuration rules.
 
 ### Add automatic sharing without waiting for the network
 

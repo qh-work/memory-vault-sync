@@ -10,8 +10,10 @@ real recovery ceremony before it can claim production device trust.
 from __future__ import annotations
 
 import dataclasses
+import os
+from pathlib import Path
 import re
-from typing import Any, Mapping, Protocol
+from typing import Any, Mapping, Protocol, Sequence
 
 from memory_vault_metadata import jcs_json_bytes, sha256_bytes
 
@@ -21,6 +23,7 @@ TRANSITION_SCHEMA = "memory-device-trust-transition/v1"
 RECOVERY_DESCRIPTOR_SCHEMA = "memory-device-recovery-descriptor/v1"
 MAX_PROOF_BYTES = 64 * 1024
 MAX_DEVICES = 1024
+MAX_STATE_BYTES = 1024 * 1024
 _OPAQUE = re.compile(r"^[a-z0-9][a-z0-9._:-]{0,127}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _FORBIDDEN_TOKENS = (
@@ -443,3 +446,108 @@ def validate_recovery_descriptor(value: Any, state: TrustState) -> dict[str, Any
     if isinstance(descriptor["encrypted_package_bytes"], bool) or not isinstance(descriptor["encrypted_package_bytes"], int) or not 1 <= descriptor["encrypted_package_bytes"] <= 2 * 1024 * 1024 * 1024:
         raise DeviceTrustError("encrypted recovery package size is invalid")
     return descriptor
+
+
+def _state_summary(state: TrustState, path: Path, *, created: bool) -> dict[str, Any]:
+    """Opaque transport metadata, never a proof of key possession or authority."""
+    return {
+        "schema_version": "memory-device-trust-status/v1",
+        "state_path": str(path), "state_sha256": state.sha256,
+        "installation_fingerprint": state.installation_fingerprint,
+        "generation": state.generation, "key_epoch": state.key_epoch,
+        "recovery_epoch": state.recovery_epoch,
+        "recovery_threshold": state.recovery_threshold,
+        "device_count": len(state.devices),
+        "active_device_count": sum(item.status == "active" for item in state.devices),
+        "revoked_device_count": sum(item.status == "revoked" for item in state.devices),
+        "device_fingerprints": [item.device_fingerprint for item in state.devices],
+        "created": created, "external_authority_configured": False,
+        "private_keys_present": False, "key_possession_verified": False,
+        "record_signing_registry_changed": False, "memory_changed": False,
+        "network_accessed": False, "execution_authority_granted": False,
+    }
+
+
+def initialize_state(path: Path, *, installation_fingerprint: str,
+                     device_fingerprint: str, public_key_fingerprint: str,
+                     key_epoch: int = 1) -> Mapping[str, Any]:
+    """Explicitly bootstrap one NEW private transport-metadata file.
+
+    This restores v0.21's operator initialization without a plugin-owned data
+    root. It creates no key, enrolls no record signer and grants no host or
+    device authority. Existing state is never overwritten, including on retry.
+    """
+    from memory_vault_storage import atomic_write, validate_path
+    selected = validate_path(path)
+    state = new_trust_state(installation_fingerprint, device_fingerprint,
+                            public_key_fingerprint, key_epoch=key_epoch)
+    encoded = jcs_json_bytes(state.as_dict()) + b"\n"
+    if len(encoded) > MAX_STATE_BYTES:
+        raise DeviceTrustError("device trust state exceeds the local byte bound")
+    if os.path.lexists(selected):
+        raise DeviceTrustError("device trust state already exists")
+    atomic_write(selected, encoded, replace=False)
+    return _state_summary(state, selected, created=True)
+
+
+def status(path: Path) -> Mapping[str, Any]:
+    """Validate one explicit private state file without creating anything."""
+    from memory_vault import strict_json_loads
+    from memory_vault_storage import check_private_directory, open_file, validate_path
+    selected = validate_path(path)
+    check_private_directory(selected.parent)
+    descriptor = open_file(selected, os.O_RDONLY, private=True)
+    with os.fdopen(descriptor, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not 1 <= before.st_size <= MAX_STATE_BYTES:
+            raise DeviceTrustError("device trust state exceeds the local byte bound")
+        raw = stream.read(MAX_STATE_BYTES + 1)
+        after, named = os.fstat(stream.fileno()), selected.lstat()
+        def fingerprint(item: os.stat_result) -> tuple[int, int, int, int, int]:
+            return item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns
+
+        # Native open_file already pins/checks the Windows path. CRT fstat
+        # timestamps can differ from path stat, so compare its full fingerprint
+        # with itself before/after, and the named file's identity and size only.
+        named_matches = (fingerprint(after)[:3] == fingerprint(named)[:3] if os.name == "nt"
+                         else fingerprint(after) == fingerprint(named))
+        if (len(raw) != before.st_size or fingerprint(before) != fingerprint(after)
+                or not named_matches):
+            raise DeviceTrustError("device trust state changed while reading")
+    state = TrustState.from_value(strict_json_loads(raw))
+    return _state_summary(state, selected, created=False)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Operator-only metadata commands; never infer a path from a Vault/config."""
+    import argparse
+    from memory_vault import MemoryError, failure, success, write_response
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="action", required=True)
+    initialize = commands.add_parser("init", help="create new opaque device metadata; no key or permission creation")
+    initialize.add_argument("--state", type=Path, required=True)
+    initialize.add_argument("--installation-fingerprint", required=True)
+    initialize.add_argument("--device-fingerprint", required=True)
+    initialize.add_argument("--public-key-fingerprint", required=True)
+    initialize.add_argument("--key-epoch", type=int, default=1)
+    inspect = commands.add_parser("status", help="validate and summarize one explicit private state file")
+    inspect.add_argument("--state", type=Path, required=True)
+    args = parser.parse_args(argv)
+    try:
+        result = status(args.state) if args.action == "status" else initialize_state(
+            args.state, installation_fingerprint=args.installation_fingerprint,
+            device_fingerprint=args.device_fingerprint,
+            public_key_fingerprint=args.public_key_fingerprint, key_epoch=args.key_epoch)
+        write_response(success(result))
+        return 0
+    except DeviceTrustError:
+        write_response(failure("invalid_device_trust_metadata"))
+    except MemoryError as exc:
+        write_response(failure(exc.code, retryable=exc.retryable))
+    except OSError:
+        write_response(failure("device_trust_state_unavailable"))
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

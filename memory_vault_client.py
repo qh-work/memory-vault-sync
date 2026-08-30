@@ -32,7 +32,7 @@ from memory_vault import (
     RELATIONS,
     VERSION,
     Vault,
-    capability_result,
+    capability_response,
     canonical_bytes,
     default_vault_path,
     failure,
@@ -760,8 +760,11 @@ def _validate_arguments(value: Any, schema: Mapping[str, Any]) -> None:
 
 
 class MCPServer:
-    def __init__(self, config_path: Path):
-        self.config_path = _absolute(config_path)
+    def __init__(self, config_path: Path | None = None):
+        # Discovery/listing/initialization need neither an existing config nor
+        # a valid unrelated default. Resolve and pin the path on first use of
+        # a memory operation; content and current trust are still reloaded.
+        self.config_path = config_path
         self.initialized = False
         self.ready = False
         self.tools = {tool["name"]: tool for tool in tool_definitions()}
@@ -775,7 +778,7 @@ class MCPServer:
         if name == "memory_capabilities":
             # Discovery must not resolve a default Vault or inspect unrelated
             # environment paths, let alone load client state or signing keys.
-            response = success(capability_result())
+            response = dict(capability_response({"op": "capabilities"}))
             response["client"] = {
                 "mcp_protocol": MCP_PROTOCOL, "transport": "stdio",
                 "automatic_capture_default": False, "network_accessed": False,
@@ -792,6 +795,8 @@ class MCPServer:
                 },
             }
             return response
+        if self.config_path is None:
+            self.config_path = default_config_path()
         config = ClientConfig.load(self.config_path)
         operation = name.removeprefix("memory_")
         if operation == "observe":
@@ -989,29 +994,31 @@ def configure(args: argparse.Namespace, path: Path) -> Mapping[str, Any]:
     })
 
 
-def protocol_request(config_path: Path, request: Any) -> Mapping[str, Any]:
+def protocol_request(config_path: Path | None, request: Any) -> Mapping[str, Any]:
     """Pass the core wire protocol through the selected client's trust boundary.
 
     Unlike MCP memory_observe, core observe is exactly one episode write. The
     lifecycle and MCP pair adapters are explicit higher-level conveniences.
     """
-    if isinstance(request, dict) and request.get("op") == "capabilities":
-        return Vault().handle(request)
-    config = ClientConfig.load(config_path)
-    writing = isinstance(request, dict) and request.get("op") in {"remember", "observe"}
+    if isinstance(request, Mapping) and request.get("op") == "capabilities":
+        return capability_response(request)
+    selected = config_path if config_path is not None else default_config_path()
+    config = ClientConfig.load(selected)
+    writing = isinstance(request, Mapping) and request.get("op") in {"remember", "observe"}
     response = config.vault(writing=writing).handle(request)
     if writing and response.get("ok"):
         notify_sync(config, "memory-write")
     return response
 
 
-def run_protocol(args: argparse.Namespace, config_path: Path) -> int:
+def run_protocol(args: argparse.Namespace, config_path: Path | None) -> int:
     if args.accept_unsigned and args.import_path is None:
         raise MemoryError("accept_unsigned_requires_import")
     if args.export_path is not None or args.import_path is not None:
         # Bundles contain original records, not new assertions by the importer.
         # Do not load a private key or silently re-sign another author's bytes.
-        config = ClientConfig.load(config_path)
+        selected = config_path if config_path is not None else default_config_path()
+        config = ClientConfig.load(selected)
         vault = config.vault(storage_write=args.import_path is not None)
         if args.export_path is not None:
             result = vault.export_bundle(_absolute(args.export_path))
@@ -1032,7 +1039,12 @@ def run_protocol(args: argparse.Namespace, config_path: Path) -> int:
             write_response(failure("invalid_frame"))
             return 1
         try:
-            response = protocol_request(config_path, strict_json_loads(line))
+            request = strict_json_loads(line)
+            if config_path is None and not (isinstance(request, Mapping) and request.get("op") == "capabilities"):
+                # Pin one default selection for this stream once memory is
+                # actually requested. Never switch stores between requests.
+                config_path = default_config_path()
+            response = protocol_request(config_path, request)
         except MemoryError as exc:
             response = failure(exc.code, retryable=exc.retryable)
         except Exception:
@@ -1074,6 +1086,8 @@ def build_parser() -> argparse.ArgumentParser:
         "share": "review, export, verify or explicitly import a content-selected evidence subgraph",
         "legacy-pack": "verify or convert original v0.21 memory packs and checkpoints offline",
         "pack": "explicit compressed chunk packing, resumable copy and unpack",
+        "device-trust": "explicit independent device trust initialization and status",
+        "envelope": "inspect an encrypted envelope without client configuration or decryption",
     }.items():
         sub.add_parser(name, help=description, add_help=False)
     return parser
@@ -1082,30 +1096,23 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args, remaining = parser.parse_known_args(argv)
-    forwarded = {"sync", "manage", "host", "compat", "update", "install", "pack", "share", "legacy-pack"}
+    forwarded = {"sync", "manage", "host", "compat", "update", "install", "pack", "share", "legacy-pack", "device-trust", "envelope"}
     if remaining and args.command not in forwarded:
         parser.error("unrecognized arguments: " + " ".join(remaining))
     try:
-        path = _absolute(args.config) if args.config is not None else default_config_path()
         if args.command == "mcp":
-            return MCPServer(path).serve()
-        if args.command == "configure":
-            _emit(configure(args, path))
-            return 0
+            return MCPServer(args.config).serve()
         if args.command == "protocol":
-            return run_protocol(args, path)
-        if args.command == "lifecycle":
-            from memory_vault_lifecycle import run_stream
-            return run_stream(path, serve=args.serve)
+            return run_protocol(args, args.config)
         if args.command == "manage":
             from memory_vault_manage import main as manage_main
-            return manage_main(remaining, config_path=path)
+            return manage_main(remaining, config_path=args.config)
         if args.command == "host":
             from memory_vault_hosts import main as hosts_main
-            return hosts_main(remaining, config_path=path)
+            return hosts_main(remaining, config_path=args.config)
         if args.command == "compat":
             from memory_vault_compat import main as compat_main
-            return compat_main(remaining, config_path=path)
+            return compat_main(remaining, config_path=args.config)
         if args.command == "update":
             from memory_vault_update import main as update_main
             return update_main(remaining)
@@ -1114,13 +1121,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             return install_main(remaining)
         if args.command == "share":
             from memory_vault_sharing import main as share_main
-            return share_main(remaining, config_path=path)
+            return share_main(remaining, config_path=args.config)
         if args.command == "legacy-pack":
             from memory_vault_legacy_pack import main as legacy_pack_main
-            return legacy_pack_main(remaining, config_path=path)
+            return legacy_pack_main(remaining, config_path=args.config)
         if args.command == "pack":
             from memory_vault_pack import main as pack_main
             return pack_main(remaining)
+        if args.command == "device-trust":
+            from memory_vault_device_trust import main as device_trust_main
+            return device_trust_main(remaining)
+        if args.command == "envelope":
+            from memory_vault_crypto import main as envelope_main
+            return envelope_main(remaining)
+        path = _absolute(args.config) if args.config is not None else default_config_path()
+        if args.command == "configure":
+            _emit(configure(args, path))
+            return 0
+        if args.command == "lifecycle":
+            from memory_vault_lifecycle import run_stream
+            return run_stream(path, serve=args.serve)
         config = ClientConfig.load(path)
         if args.command == "sync":
             from memory_vault_sync import main as sync_main

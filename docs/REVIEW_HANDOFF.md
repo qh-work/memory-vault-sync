@@ -107,6 +107,7 @@ core/client regressions too. Asserting a size constant is not a scale trial.
 | `test_v025_retrieval_views.py` | Bilingual/BM25/fragments, claim timelines, trust-aware edges, graph bounds, reindex/requeue |
 | `test_v025_index_state.py` | One index-completeness check per views request; no stale cross-request cache |
 | `test_v025_mcp_bounds.py` | Transport-specific graph/view bounds, schema agreement and complete bounded MCP responses |
+| `test_v025_configuration_independence.py` | Strict stateless discovery; deferred/default configuration pinning; independent recovery/pack/operator routing without a lost old config |
 | `test_v025_sync_review.py` | Privacy review, explicit dispositions, chained streams, groups and interruption |
 | `test_v025_legacy_pack.py` | Old wire fixtures, checkpoints, exact evidence, ordered parts and aliases |
 | `test_v025_legacy_pack_edges.py` | Escaped secrets, same-kind alias misdirection, cycles/missing targets, cross-part replay |
@@ -116,6 +117,7 @@ core/client regressions too. Asserting a size constant is not a scale trial.
 | `test_v025_update_edges.py` | Activation expiry, complete runtime inventory, external bytecode paths and physical-key quorum uniqueness |
 | `test_v025_sharing.py` | Selection closure, atomic import, original proofs, current trust, large-share bounds |
 | `test_v025_device_trust.py` | Externally authorized enrollment/revocation/epochs/recovery transitions |
+| `test_v025_operator_metadata.py` | Explicit new-state init/status, no overwrite/default Vault dependency, new/old envelope inspection and no automatic decryption |
 | `test_v025_encryption.py` | Provider framing, authenticated-data bindings, ciphertext catalogs |
 | `test_v025_storage.py` | Pure ACL/path policy and separately gated native file/lock/publication |
 | `test_v025_portable_packs.py` | Resumable packs, small-ZIP interface and native protected publication |
@@ -235,6 +237,14 @@ independent current trust store: backup-time admission/cached receipts are not
 current trust. Bad SQL/schema/path/checksum or missing references must stop
 usable activation.
 
+Remove only the fixture's old config, or set an invalid fixture default path.
+Independent recovery inspection/restore and pack/envelope verification must
+still be reachable through the full client. Stateless capabilities must retain
+strict envelope validation and valid request-ID echo without opening storage.
+Actual memory operations must fail for a bad selected configuration, not fall
+back to another Vault; a running MCP/protocol stream must not follow a changed
+default path after selecting its first store.
+
 Use `review-recovery`, then separately authorize `activate-recovery` with new
 config/state paths; activation alone replays nothing. Retry one explicit scope
 from [OPERATIONS.md](OPERATIONS.md), preserving exact requests/evidence. A
@@ -256,6 +266,15 @@ need separate approval. Automatic mode requires independent opt-in and
 configured publisher trust; no production signing channel is implied. Reject
 incomplete runtime inventories and external bytecode-cache paths; expiry before
 activation must not be confused with replaying an already-completed receipt.
+
+Before supplying providers, exercise the operator metadata paths using only a
+new private fixture directory and opaque synthetic bytes. Device `init` cannot
+replace a file or enroll keys; `status` cannot create missing files or alter
+bytes/permissions. `envelope verify` checks framing/hash only and reports no
+authentication, decryption, admission or provider call. Both valid framing and
+tampered/trailing/truncated bytes need coverage. Actual old eight-field frames,
+including epoch zero and the old upper integer bound, are accepted only by
+explicit `--legacy-v021` inspection, never the new decrypt/catalog reader.
 
 For selected sharing, test dependency closure, whole-transaction rejection and
 current trust on replay. For encryption/device/catalog APIs, first confirm the

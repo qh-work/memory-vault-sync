@@ -770,6 +770,45 @@ def capability_result() -> dict[str, Any]:
     }
 
 
+def _response_request_id(value: Any) -> str | None:
+    candidate = value.get("request_id") if isinstance(value, Mapping) else None
+    return candidate if isinstance(candidate, str) and _REQUEST_ID.fullmatch(candidate) is not None else None
+
+
+def _validated_request_envelope(value: Any) -> tuple[dict[str, Any], str | None, str]:
+    """Shared pre-storage checks; discovery must not bypass the wire contract."""
+    if not isinstance(value, Mapping):
+        raise MemoryError("invalid_object")
+    request = dict(value)
+    request_id = request.get("request_id")
+    if request_id is not None and (
+        not isinstance(request_id, str) or _REQUEST_ID.fullmatch(request_id) is None
+    ):
+        raise MemoryError("invalid_request_id")
+    _validate_tree(request)
+    return request, request_id, sha256(canonical_bytes(request))
+
+
+def capability_response(value: Any) -> Mapping[str, Any]:
+    """Validate and answer a core capability request without choosing a Vault.
+
+    This is not an unchecked replacement for ``Vault.handle``: it shares that
+    entry point's identifier, JSON tree and canonical encoding checks, then
+    enforces the capability operation's exact fields and protocol version.
+    """
+    request_id = _response_request_id(value)
+    try:
+        request, request_id, _digest = _validated_request_envelope(value)
+        _exact_object(request, required={"op"}, optional={"schema_version", "request_id"})
+        if request.get("op") != "capabilities":
+            raise MemoryError("invalid_operation")
+        if request.get("schema_version", REQUEST_SCHEMA) != REQUEST_SCHEMA:
+            raise MemoryError("unsupported_request_schema")
+        return success(capability_result(), request_id=request_id)
+    except MemoryError as exc:
+        return failure(exc.code, retryable=exc.retryable, request_id=request_id)
+
+
 class Vault:
     """One append-only taskless Vault usable by unrelated AI processes."""
 
@@ -2463,35 +2502,13 @@ class Vault:
             return result
 
     def handle(self, value: Any) -> Mapping[str, Any]:
-        if not isinstance(value, Mapping):
-            return failure("invalid_object")
-        request = dict(value)
-        request_id = request.get("request_id")
-        if request_id is not None and (
-            not isinstance(request_id, str) or _REQUEST_ID.fullmatch(request_id) is None
-        ):
-            return failure("invalid_request_id")
+        if isinstance(value, Mapping) and value.get("op") == "capabilities":
+            return capability_response(value)
+        request_id = _response_request_id(value)
         try:
-            _validate_tree(request)
-            request_digest = sha256(canonical_bytes(request))
+            request, request_id, request_digest = _validated_request_envelope(value)
         except MemoryError as exc:
             return failure(exc.code, retryable=exc.retryable, request_id=request_id)
-        if request.get("op") == "capabilities":
-            try:
-                _exact_object(
-                    request,
-                    required={"op"},
-                    optional={"schema_version", "request_id"},
-                )
-                if request.get("schema_version", REQUEST_SCHEMA) != REQUEST_SCHEMA:
-                    raise MemoryError("unsupported_request_schema")
-                # Capability discovery is deliberately zero-write and does not
-                # create the database or its parent directory.
-                return success(capability_result(), request_id=request_id)
-            except MemoryError as exc:
-                return failure(
-                    exc.code, retryable=exc.retryable, request_id=request_id
-                )
         try:
             mutating = request.get("op") in {"remember", "observe", "memory.reindex"}
             with contextlib.closing(self._connect(writable=mutating)) as connection, connection:
@@ -2836,7 +2853,8 @@ def write_response(value: Mapping[str, Any]) -> None:
     sys.stdout.buffer.flush()
 
 
-def serve(vault: Vault) -> int:
+def serve(vault: Vault | None = None, *, vault_path: Path | None = None) -> int:
+    """Serve discovery without storage; select a Vault on first data operation."""
     while True:
         line = sys.stdin.buffer.readline(MAX_REQUEST_BYTES + 1)
         if not line:
@@ -2846,7 +2864,12 @@ def serve(vault: Vault) -> int:
             return 0
         try:
             value = strict_json_loads(line)
-            response = vault.handle(value)
+            if isinstance(value, Mapping) and value.get("op") == "capabilities":
+                response = capability_response(value)
+            else:
+                if vault is None:
+                    vault = Vault(vault_path)
+                response = vault.handle(value)
         except MemoryError as exc:
             response = failure(exc.code, retryable=exc.retryable)
         except Exception:
@@ -2878,6 +2901,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.accept_unsigned and args.import_path is None:
         write_response(failure("accept_unsigned_requires_import"))
         return 0
+    if args.serve:
+        return serve(vault_path=args.vault)
+    request = None
+    if args.requeue is None and not args.upgrade and args.export_path is None and args.import_path is None:
+        try:
+            request = read_request()
+            if isinstance(request, Mapping) and request.get("op") == "capabilities":
+                write_response(capability_response(request))
+                return 0
+        except MemoryError as exc:
+            write_response(failure(exc.code, retryable=exc.retryable))
+            return 0
+        except Exception:
+            write_response(failure("unavailable", retryable=True))
+            return 0
     try:
         vault = Vault(args.vault)
     except MemoryError as exc:
@@ -2886,8 +2924,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception:
         write_response(failure("unavailable"))
         return 0
-    if args.serve:
-        return serve(vault)
     if args.requeue is not None:
         try:
             write_response(success(vault.requeue_records(args.requeue)))
@@ -2923,7 +2959,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_response(failure("unavailable"))
         return 0
     try:
-        request = read_request()
         response = vault.handle(request)
     except MemoryError as exc:
         response = failure(exc.code, retryable=exc.retryable)

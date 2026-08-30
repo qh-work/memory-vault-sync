@@ -1570,7 +1570,8 @@ def main(argv: Sequence[str] | None = None, *, config_path: Path | None = None) 
             elif args.command == "register-aliases":
                 selected = config_path or args.config
                 if selected is None:
-                    _fail("configuration_required")
+                    from memory_vault_client import default_config_path
+                    selected = default_config_path()
                 if config_path is not None and args.config is not None and _absolute(config_path) != _absolute(args.config):
                     _fail("selected_configuration_mismatch")
                 result = register_aliases(args.source, selected, part=args.part)

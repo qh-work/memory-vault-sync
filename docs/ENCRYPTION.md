@@ -5,7 +5,7 @@ provider, device authority, recovery ceremony or encrypted replication service
 is configured by default.** The normal canonical records and signed delta
 transfer work independently of these optional contracts.
 
-The modules are in-process APIs for an operator's reviewed integration:
+The provider boundaries are in-process APIs for an operator's reviewed integration:
 
 - memory_vault_crypto: authenticated file encryption/decryption boundary;
 - memory_vault_device_trust: enrollment, revocation, key epochs and recovery
@@ -17,6 +17,49 @@ They are not memory tools. There is no provider to import from a packet, code
 downloader, automatically generated production key or memory-based policy
 command. The integration supplies independently reviewed provider objects.
 Default unconfigured providers fail closed.
+
+## Explicit metadata commands
+
+The full client also restores v0.21's operator-facing trust initialization,
+trust status and envelope inspection. These commands are separate from MCP
+memory tools and do not resolve a client configuration or a default Vault:
+
+```bash
+python3 /absolute/path/memory-vault-sync/memory_vault_client.py device-trust init \
+  --state /absolute/private/device/state.json \
+  --installation-fingerprint lab-installation \
+  --device-fingerprint lab-device --public-key-fingerprint lab-public-key
+python3 /absolute/path/memory-vault-sync/memory_vault_client.py device-trust status \
+  --state /absolute/private/device/state.json
+python3 /absolute/path/memory-vault-sync/memory_vault_client.py envelope capabilities
+python3 /absolute/path/memory-vault-sync/memory_vault_client.py envelope verify \
+  --source /absolute/private/exchange/share.envelope
+python3 /absolute/path/memory-vault-sync/memory_vault_client.py envelope verify \
+  --source /absolute/private/exchange/old-share.envelope --legacy-v021
+```
+
+These are setup/review examples, not executed release evidence. `init` requires
+an explicit new private state path and opaque operator-supplied fingerprints;
+it never replaces existing state, generates a key, proves key possession,
+enrolls a record signer, configures a TrustAuthority or grants host permission.
+`status` validates the protected file and reports its state hash, generation,
+epochs and device counts without creating or changing any file. The local
+metadata file is bounded to 1 MiB. Neither command transfers memory.
+
+`verify` streams and checks the selected frame and complete ciphertext hash,
+not encryption authenticity. It invokes no provider and opens no plaintext.
+The result explicitly reports `authenticated: false`, `provider_invoked: false`
+and `memory_changed: false`. A valid frame alone does not show that it contains
+real encrypted data. `--maximum-seconds` bounds inspection to 1–300 seconds
+(300 by default); file/OS calls are not hard-real-time deadlines.
+
+Without `--legacy-v021`, only `universal-memory-share-envelope/v1` is accepted.
+The explicit old mode checks the actual eight-field `memory-share-envelope/v1`
+format, including its 2 GiB ciphertext bound and old zero-size/zero-epoch
+metadata range. Old envelopes have no authenticated plaintext binding; this
+compatibility reader is never used for new decryption or ciphertext-catalog
+admission. The legacy inspection preserves the old integer epoch range and is
+an operator result, not a canonical memory record.
 
 ## Authenticated encryption
 
@@ -40,8 +83,10 @@ it cannot establish encryption authenticity, recipient possession or truth.
 The retained capability_scope_sha256 name means **content selector hash**, not
 an execution capability, permission, Task owner or access-control list. This
 new envelope requires authenticated associated data. Old memory-share-envelope/v1
-providers are not silently treated as wire-compatible: explicitly decrypt and
-verify old shares, convert records, then reseal. v0.21's default production
+providers are not silently treated as wire-compatible. Beyond the metadata-only
+inspection above, a separately reviewed old integration must decrypt and verify
+old shares before explicit record conversion and resealing; the new provider API
+does not perform that migration. v0.21's default production
 provider was unconfigured; no deployed encryption service is invented here.
 
 ## Device trust and recovery

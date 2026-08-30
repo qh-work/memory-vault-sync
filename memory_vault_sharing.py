@@ -579,10 +579,11 @@ def main(argv: Sequence[str] | None = None, *, config_path: Path | None = None) 
         if config_path is not None and args.config is not None:
             raise MemoryError("use_client_selected_configuration")
         selected_config = config_path or args.config
+        if args.action != "verify" and selected_config is None:
+            from memory_vault_client import default_config_path
+            selected_config = default_config_path()
         if args.action == "verify":
             result = verify_share_bundle(args.source, maximum_seconds=args.maximum_seconds).as_dict()
-        elif selected_config is None:
-            raise MemoryError("share_client_configuration_required")
         elif args.action in {"review", "export"}:
             from memory_vault_update import read_file
             selector = parse_selector(read_file(args.selector, MAX_SELECTOR_BYTES))

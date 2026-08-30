@@ -65,7 +65,8 @@ The full client additionally includes:
 - Native portable chunks and v0.21 ZIP/pack/checkpoint verification/conversion,
   preserving original evidence and graph/alias mappings.
 - Content-selected sharing, independent trust lifecycle and fail-closed
-  externally provided encryption/catalog contracts.
+  externally provided encryption/catalog contracts; explicit device metadata
+  init/status and new/old envelope inspection without a configured Vault.
 - Controlled update staging, independently pinned publisher verification,
   isolated managed activation/rollback and separately opted-in finite updates.
 
