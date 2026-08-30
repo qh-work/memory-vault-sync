@@ -55,9 +55,11 @@ open until evidence is recorded; it is not shortened to match finished work.
   It did **not** automatically infer decisions and constraints from every turn;
   semantic claims were explicit proposals. Do not invent an old capability.
 - Its accepted host intent also froze the source sequence and preceding episode
-  reference. Current automatic capture has not restored that cross-turn edge.
-  Local control correlation may select a predecessor; it must not turn sessions
-  into memory owners or change a previously accepted projection on retry.
+  reference. New automatic capture restores that causal behavior with frozen
+  projections and a `continues` relation between continuity records. Local
+  correlation does not turn sessions into owners or change accepted bytes on
+  retry. Old pending records retain their original profile rather than having a
+  guessed predecessor appended retroactively.
 - v0.21 ordinary memory records were hash-addressed, not individually signed.
   v0.24 Ed25519 attestations are an additional capability to retain.
 - v0.21 optional encrypted sharing/device-recovery providers failed closed when
@@ -81,16 +83,16 @@ the development source, not the already published v0.24.1 artifact.
 
 | ID | Implementation / contract | Authored review evidence and remaining work |
 | --- | --- | --- |
-| P01 | `memory_vault.py`, `PROTOCOL.md`, `schemas/record.schema.json` | Four vector/unsigned core-client-MCP exchange cases passed in the initial scoped report. Automatic cross-turn continuity edges are still missing; independent implementation and full parity acceptance remain pending |
-| P02 | `memory_vault_client.py`, `memory_vault_lifecycle.py`, `memory_vault_hosts.py` | Selected publication and confirmed-cancellation cases passed in the recovery campaign, including one controlled child exit and disabled-capture cleanup. Automatic capture still lacks the v0.21 predecessor chain; live-host and complete crash/race evidence remain pending |
+| P01 | `memory_vault.py`, `PROTOCOL.md`, `schemas/record.schema.json`; shared canonical `continues` records | Earlier core/client cases and the latest selected source-local chain case have separate evidence. Source handles do not enter canonical records as owners; independent implementation and full parity acceptance remain pending |
+| P02 | `memory_vault_capture.py`, `memory_vault_client.py`, `memory_vault_lifecycle.py`, `memory_vault_hosts.py` | Latest capture campaign covers frozen retry, bounded ancestors, old partial identities and a real temporary hot-journal exit. Earlier publication/cancellation evidence remains source-pinned separately; live-host and complete crash/race coverage remain pending |
 | P03 | Core full-record terms, fragments, concept expansion and ranking; `docs/RETRIEVAL.md` | Two follow-up cases passed: unique direct-token retention against backup/archive/save distractors and seven large-record tail matches within existing budgets. The other retrieval/index/graph methods, comparative ranking and scale/performance acceptance remain pending |
 | P04 | Core `memory.views`, `memory.graph`, `memory.reindex`; `docs/GRAPH_VIEWS.md` | Bounded timelines/frontiers and repair cases in retrieval tests; runtime trust/pagination evidence pending |
-| P05 | `memory_vault_compat.py`, eleven-tool MCP, separate host schemas; stateless capability discovery with strict request validation | Selected unsigned MCP read/write and mocked lazy-configuration cases passed in the older campaign. Four follow-up cases passed for shared semantic retries, first-write fixture threads, injected post-commit interruption and receipt tampering. Complete eleven-tool, old-host and live-host acceptance remain pending |
-| P06 | `memory_vault_sync.py`, `memory_vault_transfer.py`, chained v2 streams | `test_v025_sync_review.py` plus existing delivery cases. The recursive dependency feed needs bounded receiver-known handling before automatic long continuity chains are added; process/concurrent-writer and interruption execution pending |
+| P05 | `memory_vault_compat.py`, eleven-tool MCP, separate host schemas; stateless capability discovery with strict request validation | Older unsigned MCP/lazy-config and semantic-retry campaigns remain separate. A latest compatibility case confirms frozen acceptance order despite clock rollback; complete eleven-tool, old-host and live-host acceptance remain pending |
+| P06 | `memory_vault_sync.py`, `memory_vault_transfer.py`, `memory_vault_dependency.py`; self-contained v2 plus stream-proven v3 | Four selected signed-directory cases passed for small paged chains, copied-head rejection, older-writer quarantine and ancestor revocation. First-use/invalidated closure budgets stay explicit; remote/group/large-scale/concurrent-writer and other interruption cases remain unrun |
 | P07 | Sync review/resolve/requeue and `memory_vault_privacy.py` | One core blocked-dependency/requeue regression passed; this is not the signed sync review/resolution campaign. No real content scanned or uploaded |
 | P08 | `memory_vault_remote.py`, signed fragment groups, `memory_vault_pack.py` | Review fixtures for directory/rclone/fragment recovery; real provider, near-limit and platform trials pending |
 | P09 | `memory_vault_legacy_pack.py`, required `memory_vault_migrate.py`, checked compat aliases | `test_v025_legacy_pack.py`, `test_v025_legacy_pack_edges.py`, `test_v025_portable_packs.py`; independent old-format/2 GiB scale run pending |
-| P10 | `memory_vault_recovery.py`, `memory_vault_backup.py`, `memory_vault_manage.py`; independent recovery commands do not require a lost old configuration | The earlier mocked routing case and later exact cancelled-host cleanup/unsigned hooks backup→restore→activate→retry have separate passing evidence. Other components, signed recovery and complete crash/concurrency/native acceptance remain pending |
+| P10 | `memory_vault_recovery.py`, `memory_vault_backup.py`, `memory_vault_manage.py`; v1/v2 control and frozen hook journal recovery | Latest unsigned chained hooks recovery passes the done-before-journal-ack window and preserves original evidence. Earlier routing/cancellation/legacy-hook reports remain separate; other components, signed recovery and complete crash/concurrency/native acceptance remain pending |
 | P11 | `memory_vault_update_trust.py`, `memory_vault_update.py`, `memory_vault_install.py`, pinned managed launcher | `test_v025_update_trust.py`, `test_v025_install.py`, `test_v025_update_edges.py`; no production publisher root or runtime verification performed |
 | P12 | `memory_vault_sharing.py`, `memory_vault_crypto.py`, `memory_vault_device_trust.py`, `memory_vault_encrypted_replication.py`; explicit `device-trust init/status` and `envelope verify` operator entries | Three explicit-path/legacy-frame/tamper metadata cases passed with synthetic opaque bytes; no author signatures, key possession, provider encryption or recovery ceremony was verified |
 | P13 | `memory_vault_storage.py` and configured client/transfer/recovery/pack/update consumers | Three focused publication cases passed on macOS, including a controlled child exit, no-clobber/alias checks and mocked unsupported-helper failure. Native Windows/Linux, actual unsupported filesystems and other independent hard-link publishers remain outside this verification; existing aliases are not auto-repaired |
@@ -115,7 +117,7 @@ minimal temporary-directory offline validation used for the campaigns above,
 without a one-time or 12-case limit. This was not permission for full-suite
 discovery, networking, installation, live hosts, cloud CI or release publication.
 Source, schema, package and archive inspection are still separate from tests.
-No live/private Vault, credential, signing key, host installation or remote
+No live/private Vault, real credential/signing key, host installation or remote
 account is used for development verification without separate authorization.
 
 Runtime verification is **partial and narrowly scoped**, not complete. Unrun

@@ -69,10 +69,12 @@ contains an original local pathname, account, private key or trust registry.
 This is a **memory-database snapshot**, not an atomic snapshot of every client
 process or the whole machine. A hook prompt/outbox and lifecycle control DB may
 change while the memory snapshot is taken. They are deliberately excluded rather
-than falsely represented as one consistent backup. An episode committed before
-its continuity record can therefore be present as a legitimate partial local
-save. Retain the original control queues separately when investigating a
-partial capture; never claim this snapshot contains them.
+than falsely represented as one consistent backup. Legacy pending captures and
+explicit MCP observation use a two-write path, so an episode without its
+continuity can be a legitimate partial save. New frozen automatic captures save
+their canonical pair atomically, but their outer control receipt may still be
+pending. Retain the original control queues separately when investigating either
+case; never claim a memory-only snapshot contains them.
 
 ## Restore only to a new database path
 
@@ -178,10 +180,10 @@ light record protocol or to the memory-only profile above.
 
 | Component | Preserved private evidence |
 | --- | --- |
-| `hooks` | Exact `prompts`, `outbox`, `done`, and `conflicts` JSON files |
-| `lifecycle` | Sessions, staged/frozen turns, exact request hashes and completed receipts |
+| `hooks` | Exact `prompts`, `outbox`, `done`, and `conflicts` JSON files; the frozen capture journal when present |
+| `lifecycle` | Sessions, staged/frozen turns, exact request hashes/receipts, accepted source order and canonical projections/references |
 | `hosts` | Generic/Claude/Gemini correlations, pending exact requests, receipts, final-message aliases; requires `lifecycle` |
-| `compat` | Protocol 1.0 intents/receipts, semantic-job markers, and old-ID aliases |
+| `compat` | Protocol 1.0 intents/receipts, semantic-job markers, old-ID aliases and new frozen capture plans/references |
 | `sync` | Worker/trigger metadata, cursors, pending/started publication capsules, review intents/decisions/original bytes, received signed capsules, incoming/outgoing fragments, copy/upload receipts, and documented private exchange staging |
 
 The selection is exact: no recursive catch-all copies of a home, account,
@@ -191,6 +193,9 @@ host approval state, code, and lock files are excluded. An external directory
 backend's exchange is not included. The private sync staging tree has a closed
 filename/layout allow-list. Unexpected entries in selected control layouts
 stop the operation for review instead of being silently copied.
+The derived `transfer/dependency-index.sqlite3` and its SQLite sidecars are
+excluded from archived payloads and activation; a copied cache cannot confer
+dependency admission or old-stream eligibility.
 
 These are **private, plaintext backups**, not release artifacts. Visible-text
 queues, original publication-review capsules, and rejected/pending memory can
@@ -233,6 +238,7 @@ client-001/
     memory.sqlite3
   control/
     hooks/{prompts,outbox,done,conflicts}/...
+    hooks/hook-capture-v1.sqlite3 # when the new capture journal exists
     lifecycle/lifecycle-v1.sqlite3
     hosts/<host>/<session-key>/...
     compat/host-protocol-v1.sqlite3
@@ -244,6 +250,31 @@ before the first successful canonical write is supported: an empty snapshot
 database is constructed in memory, `source.memory_database_present` is `false`,
 and its store ID is a snapshot placeholder. The source Vault is not initialized.
 Nothing invents an assistant reply for a prompt that never received one.
+
+### Frozen capture state is preserved, not reinterpreted
+
+Lifecycle and compatibility control schema v1/v2 and the hook capture journal
+have explicit closed recovery layouts. New plans retain their accepted order,
+timestamp, original request identity, predecessor continuity ID/full hash and
+record bytes (or saved references). Their local scopes are correlation metadata,
+not Task/Project ownership; the canonical `continues` relations remain ordinary
+Memory-to-Memory links. Recovery never chooses a new parent from the latest
+Vault record or changes existing canonical IDs.
+
+An old pending job without a frozen plan retains its original replay path;
+recovery does not invent a missing predecessor or convert a partial two-write
+save into a new operation. New plans can instead have canonical records already
+saved while an outer lifecycle receipt is still pending. Saved references and
+present canonical receipts are checked against the actual restored record bytes,
+not accepted as execution authority.
+
+For hooks, completion publishes `done` and clears the matching outbox before
+marking the journal plan saved. A matching `done` with **no raw outbox** and a
+still-pending journal plan is therefore a valid interrupted state. Recovery
+preserves it and checks the IDs/input hashes; an explicitly authorized retry
+can verify the saved canonical pair and finish bookkeeping without inventing
+text or duplicating records. Missing or inconsistent evidence is not silently
+treated as a completed capture. Activation itself performs no replay.
 
 ### Restore memory plus inert evidence
 
@@ -336,7 +367,10 @@ python3 /absolute/source/memory_vault_manage.py import-recovery \
 Only a selected signed capsule candidate is accepted. Its envelope and **every
 record attestation** are reverified against current independent trust; all
 manifest-listed fragment hashes, counts and whole-group digest must match.
-The core admits the complete group and an idempotency receipt in one transaction.
+The recovery import checks the full dependency closure against package records
+or actual currently admitted records in the restored Vault, without using a
+restored stream cursor or derived dependency cache. It admits the complete group
+and an idempotency receipt in one transaction.
 Missing fragments or unresolved record dependencies do not produce partial
 admission. Evidence stays intact for another attempt. Incomplete downloads
 require independently authorized retrieval of missing data; the backup cannot

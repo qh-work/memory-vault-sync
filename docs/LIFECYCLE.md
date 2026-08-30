@@ -14,22 +14,29 @@ This is a **new profile**, `universal-memory-lifecycle/v1`, with request schema
 with v0.21**: old envelope names, historical fields and Git/task runtime behavior
 are not accepted. Operation names and visible-turn meanings are retained.
 
-The implementation is supplied for review. Lifecycle-specific tests, runtime
-event sequences and host installation checks were not part of the
-[scoped smoke campaign](V0_25_SCOPED_SMOKE.md) and remain unrun. Publication is
-not evidence of successful capture in a particular client.
+The implementation is supplied for review. Consult the
+[source-pinned validation index](VALIDATION.md) for exact execution evidence;
+the presence of synthetic cases is not a passing result or live-host acceptance.
+Publication is not evidence of successful capture in a particular client.
 
 ## One store, optional local correlation
 
 The adapter calls the same `Vault` as the lightweight core, configured protocol
 and MCP client. A committed turn produces an `episode` and a `continuity` record
-linked by `derived_from`. It does not create a task or project parent. Temporary
-`session_handle` and `turn_handle` values never enter canonical records; closing
-a session cannot delete, hide or invalidate its long-term memories.
+linked by `derived_from`. Newly accepted turns also use `continues` from their
+continuity to the preceding accepted continuity in the same local source, when
+one exists. This is an ordinary Memory-to-Memory relation, not a task or project
+parent. Temporary `session_handle`, `turn_handle` and source-scope values never
+enter canonical records; closing a session cannot delete, hide or invalidate its
+long-term memories.
 
 The nearby lifecycle SQLite file is only private staging, state transitions and
 content-free retry receipts. It is not a copy of the memory database. A session
 is a local grouping of pending operations, not a memory ownership boundary.
+Direct lifecycle calls use their local session as the correlation scope. Native
+host adapters supply an internal stable host/session scope across lifecycle
+reopens; callers cannot supply that scope as a wire field. Neither route guesses
+a predecessor from the Vault's globally newest memory.
 Recall and current-state handoff remain dynamic core `recall` / `handoff` views,
 queried independently of any session handle through the configured `protocol`
 entry or MCP tools.
@@ -152,21 +159,34 @@ turn.input → staged → turn.commit → committing → committed
 ```
 
 Local SQLite transactions serialize the choice between `staged → committing`
-and `staged → aborted`. The committing marker and complete final payload become
-durable **before** any canonical write. The core then writes the episode and
-linked continuity using distinct stable idempotency receipts. These are two
-canonical transactions, not a fictitious distributed atomic transaction.
+and `staged → aborted`. For new accepts, the committing marker, request intent,
+source sequence, timestamp, predecessor ID/full hash and exact projected records
+become durable in **one local control transaction before** any canonical write.
+Concurrent accepts serialize against that source's last accepted plan, including
+one that is still pending. Exact retry does not rerun the projection builder or
+choose a new predecessor.
+
+The episode, continuity and canonical receipt are then committed in one Vault
+transaction. The later lifecycle receipt/cleanup is a separate transaction:
+this is not an atomic commit across both databases. Old v1 pending jobs retain
+their original two-write path, described below.
 
 - After both writes and the lifecycle completion receipt are durable, the
   response has `ok: true`, `result.state: committed`, `memory_saved: true`, and
   `episode_id` / `continuity_id`. A lost response can be recovered by resending
   the exact original commit request.
-- An interruption after the episode alone leaves the commit frozen. When
-  available, an error's `partial_result` identifies the saved episode; retrying
-  the same request resumes the continuity write without duplicating the episode.
-  `resume_same_request: true` means the original operation must be resumed, not
-  replaced with a fresh ID. A failure response never proves that no memory was
-  written.
+- An interruption after canonical commit but before the outer receipt leaves
+  the original operation resumable. Existing records and the canonical receipt
+  are checked and reused; they are not re-signed or granted new trust. An old v1
+  partial save may instead report `partial_result` for an episode awaiting its
+  continuity. In either case, `resume_same_request: true` requires the original
+  request, not a fresh ID. A failure never proves that no memory was written.
+- A call saves at most **four pending ancestor/target plans**, oldest first.
+  If the target is not reached, `lifecycle_capture_dependency_pending` requests
+  another exact retry. Saved ancestors keep their original outer requests
+  pending until those callers acknowledge them; the adapter does not fabricate
+  unknown request IDs or claim those outer operations completed. This replays
+  memory storage only, not actions described in the remembered text.
 - An abort that wins before the committing marker prevents that turn from
   being saved. Later commit attempts return `turn_aborted`.
 - Once commit starts, abort returns `commit_started_cannot_abort`, even if a
@@ -208,11 +228,24 @@ full synchronization and bounded local lock waits. The unsigned route can use
 the platform's ordinary filesystem access; protected Windows signing remains
 subject to the trust module's documented ACL limitation.
 
+The filename stays unchanged, but newly written control state uses schema v2.
+Completed receipts/status can read v1 or v2 without migration. An authorized
+write upgrades v1 by adding the frozen-plan/head/reference tables and local
+session-scope mapping; existing rows and canonical memory IDs are not rewritten.
+An already-committing v1 turn with no plan retains its old request keys, frozen
+text and partial-save behavior. It is not retroactively linked to a guessed
+predecessor; new source ordering starts with newly accepted plans.
+
 Only explicitly supplied visible text is staged. After commit or abort, its
 active staging fields are cleared and content-free receipts remain. This is
 normal documented state management, **not secure erasure of backups/snapshots**,
 and no host log is read, disabled or removed. Deleting this control file loses
 its handle/retry history; do not delete it while a commit is unresolved.
+Saved plans retain IDs/full hashes and order metadata, while their duplicate
+record bodies are cleared. An ancestor can already be canonically saved while
+its outer turn remains committing. [Full client-state recovery](BACKUP.md)
+preserves these distinct states and frozen predecessors; activation alone never
+replays them or restores signing keys, host permission or old sync authority.
 
 The state is bound to the configured canonical Vault path. Changing that path
 while reusing this state returns `lifecycle_vault_changed`; use a distinct
@@ -225,15 +258,20 @@ part is at most 480 KiB; an explicit continuity is at most 32 KiB. All sizes are
 UTF-8 bytes, not characters, and a frame's JSON escaping also counts toward its
 frame limit. There may be at most 128 open sessions, 256 staged/committing turns
 and 32 MiB of pending text. Resolve or explicitly abort staged work when a limit
-is reached. Closed handles and completed receipts are retained for exact retries;
-there is no automatic background cleanup or retry worker.
+is reached. Frozen projections have additional bounds of 256 pending plans,
+32 MiB of pending record bytes and 100,000 retained plan headers. These are work
+bounds, not latency measurements. Closed handles and completed receipts are
+retained for exact retries; there is no automatic background cleanup or retry worker.
 
 ## Suggested independent acceptance checks
 
 Contributors can verify these in temporary synthetic directories, with no real
 conversations or credentials: configure without `--vault`; commit via lifecycle
 and read via configured protocol/MCP; exact replay after response loss; abort
-before commit; concurrent commit/abort; interruption between the two canonical
-writes; capture disabled after a completed save; current trust after revocation;
+before commit; concurrent source acceptance; failure within a new atomic pair;
+interruption before the outer receipt; old v1 partial-write replay; bounded
+ancestor draining and restore-to-new-copy; capture disabled after a completed
+save; current trust after revocation;
 and a full portable or signed exchange into another model's authorized runtime.
-These are review/acceptance instructions, not tests run during this change.
+These are review instructions, not execution claims; use [VALIDATION.md](VALIDATION.md)
+to distinguish source-pinned results from remaining acceptance work.

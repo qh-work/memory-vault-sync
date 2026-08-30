@@ -16,6 +16,11 @@ was installed or launched for the campaign; the example configurations, host
 version, hook trust, Python availability, permissions and actual event delivery
 still require validation by the installing operator.
 
+The automatic continuity-chain behavior below describes source commit
+`098b22c44ca299d1f889b41df9355511dfa2caf4`. That implementation postdates the
+historical campaign above; this page does not claim new execution, performance,
+real-host or release validation from those older results.
+
 ## Configure explicitly
 
 Use the same private client configuration as the plugin/MCP route. Creating a
@@ -52,7 +57,7 @@ the Gemini command quoting to the configured shell.
 | --- | --- | --- | --- | --- |
 | Start/resume | `SessionStart` | `SessionStart` | `session.open` | Open local correlation, bounded pending-final recovery, recall; notify independently opted-in sync |
 | User input | `UserPromptSubmit` | `BeforeAgent` | `turn.input` | Cancel prior uncommitted input, stage visible text, recall relevant records |
-| Final reply | `Stop` | `AfterAgent` | `turn.commit` | Commit the paired visible turn and source-linked continuity through lifecycle v1 |
+| Final reply | `Stop` | `AfterAgent` | `turn.commit` | Freeze the paired visible projection and predecessor, then save through lifecycle v1 |
 | Failure/cancel | `StopFailure` | No dedicated mapped event | `turn.abort` | Discard staged input; never claim rollback of a started commit |
 | Close | `SessionEnd` | Best-effort `SessionEnd` | `session.close` | Abort staged input and close correlation; retain all long-term records |
 | Compaction | `PreCompact`; start with source `compact` | `PreCompress` | `session.compact` | Preserve staging; never infer a final response or commit a compression summary |
@@ -86,6 +91,63 @@ visibility filters, record ownership, or retention rules. Signatures identify
 the configured producer key, not the identity of a model or a host attestation.
 These adapters retain the lifecycle's `caller_reported` capture basis.
 
+### Frozen continuity without session-owned memory
+
+The lifecycle wire profile remains `universal-memory-lifecycle/v1`. Its private
+control schema is now `universal-memory-lifecycle-state/v2`, still stored in
+`<client-config-stem>.state/lifecycle-v1.sqlite3`. The internal capture builder
+is `lifecycle-visible-turn+continues/v1`. Shared `capture_heads`, `capture_jobs`
+and `capture_records` tables retain the accepted plan; `capture_sessions` maps
+local handles to their capture scope. These are delivery/retry metadata, not
+another canonical memory format.
+
+The [Codex visible-hook route](CLIENTS.md) uses
+`codex-visible-turn+continues/v1` in a separate hook journal; the old-envelope
+bridge uses `compat-visible-turn+continues/v1`. The native adapters on this page
+use the lifecycle builder, not either of those control-state profiles.
+
+When a final commit is accepted, one control transaction fixes the entire
+canonical record pair, timestamp, visible-input/continuity digest, core request
+ID and previous continuity's canonical ID/full SHA-256. The continuity has a
+`derived_from` edge to its episode and, when a previous accepted plan exists,
+a `continues` edge to that exact predecessor. Retry uses these frozen bytes;
+it cannot select a different predecessor or rebuild the accepted projection
+with a later clock or text template. The first plan has no guessed predecessor.
+
+For the host adapters, the internal scope is derived from the host profile and
+native session's local hash, not the lifecycle handle's generation. A close and
+resume may open a new lifecycle handle while retaining that same native scope,
+so subsequent turns can continue the earlier accepted chain. Different native
+sessions or host profiles do not borrow each other's latest record. Raw native
+IDs, scope hashes, generation counters and handles stay in private state. An
+arbitrary scope field is not accepted through the public lifecycle request
+schema, and remembered text cannot establish one. Direct lifecycle callers use their
+own explicit local session handle as the default scope.
+
+This scope selects a predecessor only. It does not own records, set their
+visibility, grant execution or determine their lifetime. Canonical memories
+and their relationships survive session closure, task completion, host removal
+and local-handle changes. Other clients still share the same canonical Vault
+without sharing native session-control directories.
+
+Each new canonical projection and its core receipt are saved together in one
+Vault transaction, distinct from the lifecycle and native adapter journals.
+On retry, the writer verifies every frozen record and predecessor full hash
+against actual stored records and current admission/trust. Existing records
+are not re-signed or re-admitted by a retry marker. Configured signing failure
+does not downgrade to unsigned storage; a revoked or quarantined dependency
+does not become usable because an old completion receipt exists. A read-only
+historical lifecycle ACK remains only an acknowledgment of the old local save,
+not a fresh signature verification or remote-delivery claim.
+
+An accepted pre-v2 lifecycle commit with no capture plan retains the old
+two-write request domains, fixed text and existing record IDs/timestamps during
+recovery. Upgrading the control schema does not reconstruct it into a new
+chain or invent an old predecessor. New final acceptance uses the new profile;
+read-only old receipt lookup does not require a migration.
+
+### Native staging and bounded recovery
+
 Local control state lives under:
 
 ```text
@@ -115,6 +177,15 @@ instead of silently creating a second saved turn. The lifecycle's transaction
 arbitrates cancel versus commit: staged input can be discarded, but a frozen or
 partly written commit cannot honestly be reported as rolled back.
 
+One new-profile lifecycle save attempt materializes at most four frozen
+projections in predecessor-first acceptance order, not timestamp order. It may
+finish ancestors while leaving the requested turn pending at that bound.
+Canonical progress on an ancestor does not fabricate its outer lifecycle ACK;
+the exact original request must still confirm its own completion. Frozen
+duplicate bodies can be cleared after canonical success while the unconfirmed
+outer request remains available for that acknowledgment. A retryable dependency
+boundary must not be reported as a completed target turn.
+
 An authorized non-compaction session start processes at most eight pending final
 jobs for that session, including confirmations of already cancelled jobs. A
 crash before the native session resumes can also be handled explicitly, without
@@ -134,7 +205,10 @@ within the eight-job bound. `attempted` counts final-save confirmation calls;
 `confirmed` counts their successful local-save acknowledgments, including exact
 historical replays. `cancelled_cleaned` separately counts already cancelled final
 jobs whose matching queued input/final paths were cleared. Cleanup never counts
-as a saved memory. The administrative events work with all three `--host` choices.
+as a saved memory. The eight-job adapter bound and four-projection lifecycle
+bound apply at different levels; eight considered jobs does not mean a global
+eight-record write limit. The administrative events work with all three
+`--host` choices.
 Recovery retries only final-save jobs; unmatched inputs remain staged until a
 cancel, later input, or close. It never invents missing user/final text or scans
 transcripts.
@@ -201,7 +275,11 @@ Each invocation reads one JSON object, bounded by the core's request limit.
 Visible user/final text is capped at 480 KiB each, optional continuity at 32 KiB,
 and the evidence view at about 8 KiB. An individual session has at most 256
 unconfirmed adapter requests and 32 MiB of queued bodies; the shared lifecycle
-also enforces its own global limits. Session locks have a bounded wait and are
+also enforces its own global limits. Frozen capture staging is independently
+limited to 256 pending plans and 32 MiB of canonical bodies, with at most
+100,000 retained plan headers. Bounds preserve pending evidence rather than
+silently evicting it or skipping an ancestor. They are work/storage limits, not
+latency or throughput measurements. Session locks have a bounded wait and are
 released by process exit. Receipt metadata is retained for exact retry; it is
 not cleared at compaction or session close.
 

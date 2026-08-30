@@ -235,7 +235,28 @@ retained synthetic artifacts, not actual host crashes. All execution remained
 offline, without installation, keys or private data. The report identifies
 exact methods, source/overlay inventories and raw hashes. Do not generalize its
 single unsigned recovery path to all components, native platforms or live
-installations. Automatic cross-turn continuity and the full ledger remain open.
+installations. That older source did not yet implement automatic cross-turn
+continuity; the newer source and its distinct evidence are described below.
+
+### Frozen capture and dependency reuse — twelve selected cases
+
+The [capture report](V0_25_CAPTURE_SMOKE.md) records twelve passing methods on
+`6eeb35ac2df8f0813d87ff6e6a0f3fbbf1c2f917`, with zero failures, errors or skips.
+They cover source-local frozen chains, selected old partial-write identities,
+bounded recovery, a done-before-journal-ack restore window and a real temporary
+SQLite hot-journal child exit. Four cases exercise small signed directory
+streams, including a fresh receiver, missing atomic prefix receipt, older SQL
+writer quarantine and ancestor revocation. Fresh fixture keys are not real
+credentials or independent cross-device evidence.
+
+The initial attempt is retained with six passes, one failure and five errors;
+only fixture response unpacking and private-directory setup changed before the
+passing rerun. Runtime checks were not weakened. The four new test modules have
+39 methods; the other 27 were not selected. Public review material includes
+those cases, but authorship is not execution. Exact case names, source inventory,
+isolation, output hashes and outstanding limits are in the report. Whole-suite,
+real-host/provider, scale, native Windows/Linux and independent implementation
+acceptance remain open, as does the full P01–P14 ledger.
 
 ## 3. Review campaigns — scoped authorization required
 

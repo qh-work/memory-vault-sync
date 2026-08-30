@@ -24,12 +24,12 @@ accessed no private memory. This table is not production certification.
 | --- | --- | --- | --- |
 | Persistent memory | Canonical taskless records, immutable IDs, provenance and relations | All entries use the same configured Vault | Preserves useful memory; no Task/Project owner |
 | Goal continuity | Dynamic recall/handoff over evidence | MCP, protocol and host entry points | A goal is a record; host coordination is not ownership |
-| Visible-turn capture | Caller decides what to append | Opt-in Codex/Claude/Gemini/generic adapters, durable staging and exact retry | Per-turn episode and continuity excerpt implemented; automatic cross-turn `continues` chain still missing. Neither old nor new automatically infers every semantic claim |
+| Visible-turn capture | Caller decides what to append and may explicitly reference earlier records | Opt-in Codex/Claude/Gemini/generic adapters, frozen acceptance, durable staging and exact retry | New per-turn episode/continuity captures retain a source-local `continues` edge; old pending jobs preserve their original identity. Neither old nor new automatically infers every semantic claim |
 | Local retrieval | CJK/Latin terms, full-text fragments, bounded BM25/concept/polarity explanations | Same retrieval through every entry | Explicit paginated reindex for preexisting short indexes; not a global exhaustive ranking or a measured speed claim |
 | Claim and graph views | `memory.views`, `memory.graph`, non-executing proposals | Same core through MCP; source/claim timelines | Current/superseded/conflicted/resolved state with bounded continuation and trust-aware edges |
 | Old host operations | Optional separate wire profile | `compat`: the ten production v0.21 operations, durable handles/receipts and old-ID mapping | Not the new lifecycle envelope; no fabricated Git commit or original author identity |
 | Record attribution | Optional Ed25519 record/message proofs | Independent public-key registry, explicit enrollment, revocation-aware reads | Additional to v0.21's ordinary hash-only records; signatures are not truth or execution rights |
-| Incremental transfer | Logical records and signed transfer profile | Chained v2 streams, receive-only/flush, current trust, replay/fork/gap handling | Replaces mandatory Git, not memory semantics; v1 heads require explicit anchoring when evidence is missing |
+| Incremental transfer | Logical records and signed transfer profile | Self-contained v2 and stream-proven v3 dependencies, receive-only/flush, current trust, replay/fork/gap handling | Replaces mandatory Git, not memory semantics; a cursor alone never proves possession. Old heads require explicit anchoring when evidence is missing |
 | Privacy-blocked delivery | Local records remain unchanged | Read-only review, explicit keep/exclude, idempotent decisions, signed dispositions, requeue | An exclusion means not delivered; original pending evidence is retained |
 | Large transfer | Complete dependency closure | Signed resumable fragment groups up to the core's 64 MiB / 100,000 records | Receiver commits only a complete validated group; no size-only silent skip |
 | Cloud carriage | Implementation chooses permitted transport | Directory or explicitly pinned/configured rclone remote and crypt | Replaces old native Drive/Git control-plane machinery; no credentials acquired automatically |
@@ -44,16 +44,22 @@ accessed no private memory. This table is not production certification.
 | Platforms | Language/OS independent; single-file standard-library reference | POSIX private modes and native Windows local-fixed-NTFS handles/ACLs/locks | Native implementation present, not Windows runtime certification |
 | Distributions | No-executable protocol ZIP and readable agreement | Complete built client, local catalog and explicit setup instructions | No runtime build or repository login after a built client download; host installation remains authorized |
 
-## Known capture gap: cross-turn continuity
+## Restored capture behavior: cross-turn continuity
 
-Automatic capture links a continuity excerpt to its own episode but does not
-append a `continues` reference to the preceding captured turn. v0.21 emitted a
-source-local predecessor chain. This is an implementation gap in P02/P05, not
-merely missing execution evidence; explicit `continues` relations are already
-supported by the core. Completing automatic chaining requires immutable
-acceptance-time projections, consistent retry/recovery and efficient incremental
-handling of long dependency chains. Memory references must not become Session,
-Task or Project ownership. See the [completion ledger](V0_25_PARITY_PLAN.md).
+v0.21 froze a source-local preceding episode reference. New automatic capture
+preserves that causal intent with an ordinary `continues` edge to the preceding
+continuity, alongside `derived_from` to its own episode. Complete canonical
+bytes, timestamps and the predecessor's full hash are frozen when a new job is
+accepted. Local scope/handle tables are correlation, never Session, Task or
+Project ownership. Old accepted queues without plans retain their original
+write domains and are not assigned guessed historical edges.
+
+The [twelve-case capture report](V0_25_CAPTURE_SMOKE.md) covers selected retry,
+recovery and signed-directory dependency behavior, not full P02/P05/P06
+acceptance. v3 transfer avoids resending a proven prefix when current trust still
+allows it; cache invalidation can require bounded revalidation. There is no
+arbitrary-scale or independent-implementation performance claim. See the
+[completion ledger](V0_25_PARITY_PLAN.md).
 
 ## Architecture that must not return
 

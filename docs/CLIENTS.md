@@ -6,11 +6,11 @@ SQLite database, provenance rules and transfer format. There is no separate
 
 The v0.25 integration code is **not a validated promise of automatic saving in
 every desktop client**. Publication does not establish host compatibility.
-The [scoped offline smoke campaign](V0_25_SCOPED_SMOKE.md) checked selected
-core/client/MCP exchanges and routing, not the full client suite, live host
-installation or functional capture. Those host checks remain unrun. No
-existing plugin, personal marketplace, private memory or host trust setting was
-changed by adding these source files.
+See [source-pinned validation evidence](VALIDATION.md) for the exact synthetic
+workflows exercised; those results do not establish live-host installation,
+cross-model acceptance or the complete client suite. No existing plugin,
+personal marketplace, private memory or host trust setting was changed by
+adding these source files.
 
 ## Choose the entry point
 
@@ -276,6 +276,9 @@ Reuse the same ID **and the same arguments** after interruption. `memory_observe
 has separate stable receipts for its episode and continuity writes; if only the
 first completes, retry resumes the second without duplicating the first. A
 changed payload with an already-used ID is a conflict, not an overwrite.
+Unlike the automatic capture routes below, explicit MCP observation does not
+infer a source chain from the latest Vault record. Core `observe` remains a
+single episode operation.
 
 The `continuity` argument can carry a concise visible progress summary. If it
 is omitted, the client makes a bounded excerpt of the supplied text; it does
@@ -361,11 +364,29 @@ that the host originated the event: another process with the same OS account
 and access to the selected identity can invoke that code. Client isolation and
 filesystem permissions remain the host's responsibility.
 
-Before attempting the two canonical writes, Stop saves a local pending job.
-After both writes and a completion receipt are durable, it removes only the
-corresponding transient prompt and job. It retains content-free completion
-receipts. Host logs and canonical memory remain untouched. A storage or signing
-failure retains the pending job for an explicit bounded retry:
+For a newly accepted Stop, `hook-capture-v1.sqlite3` freezes the source order,
+timestamp, previous continuity's ID/full hash and exact new record bytes in one
+local transaction. A staged prompt or outbox alone does not advance that head.
+The continuity records `derived_from` its episode and, when there is a previous
+accepted turn in that source, `continues` that turn's continuity. A pending
+predecessor is retained, not replaced by the newest record anywhere in the Vault.
+The hashed local source scope is correlation only; it does not own memory or
+appear in canonical records.
+
+The new pair and its canonical receipt are saved in one Vault transaction;
+local completion bookkeeping is separate. Stop processes at most four pending
+plans, oldest first, and leaves a longer backlog for bounded retry. Exact retries
+reuse frozen bytes, time and predecessor under the current capture/trust checks.
+Old v1 outboxes keep their original two-write receipts and partial-save retry
+behavior; they are not rewritten or assigned an invented predecessor.
+
+After saving, the hook publishes a content-free `done` receipt, removes the
+matching transient files, then marks the frozen plan saved. An interruption can
+therefore leave no outbox but a matching `done` and a still-pending journal plan.
+Retry and [full client-state recovery](BACKUP.md) retain this valid window and
+verify the canonical effects before finishing it. Host logs and canonical memory
+remain untouched. A storage or signing failure retains recoverable state for an
+explicit bounded retry:
 
 ```bash
 python3 /absolute/path/memory-vault-sync/memory_vault_client.py \
@@ -398,13 +419,16 @@ It retains the familiar operation meanings, **not the old v0.21 wire format**.
 It calls the same core and stores neither Git state nor task-owned memory.
 `--capture-visible-turns` is required for new lifecycle sessions/inputs/commits.
 
-`turn.input` stages only the supplied visible prompt. `turn.commit` freezes the
-visible reply and saves the episode and linked continuity with exact retry
-receipts. `turn.abort` cancels only before commit has begun; a partially saved
-commit cannot honestly be reported as rolled back. Sessions and turns are local
-correlation handles, not memory containers. This explicit route labels supplied
-text caller-reported; it does not assert that a host witnessed it. Complete
-schemas, examples, cancellation boundaries and recovery behavior are in
+`turn.input` stages only the supplied visible prompt. New `turn.commit` accepts
+freeze the reply, timestamp, exact pair and source-local `continues` predecessor
+before saving. One call materializes at most four pending ancestor/target plans;
+a still-pending target requires the same original request, not a new ID.
+`turn.abort` cancels only before commit has begun; saved canonical effects cannot
+honestly be reported as rolled back. Sessions and turns are local correlation
+handles, not memory containers. Native host correlation stays stable across
+lifecycle generations; old accepted v1 work retains its original retry path.
+This explicit route labels supplied text caller-reported; it does not assert
+that a host witnessed it. Complete schemas, cancellation and recovery details are in
 [LIFECYCLE.md](LIFECYCLE.md).
 
 Completed lifecycle receipts can be read back after capture is disabled,

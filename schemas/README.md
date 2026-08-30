@@ -21,6 +21,7 @@ make a network request.
 | `host-compat-request.schema.json` | Separate v0.21 host v1 / protocol 1.0 requests for ten production operations |
 | `host-compat-result.schema.json` | Separate old-host results and mapped local handles/receipts; not the new lifecycle response |
 | `delta-v2.schema.json` | Optional signed chained delta payload/proof, including privacy disposition and fragmented-group reference |
+| `delta-v3.schema.json` | Optional chained delta with explicit `closure` / `prior_stream` dependency mode; current trust, actual dependencies and same-Vault prefix receipts require separate semantic validation |
 | `fragment-group.schema.json` | Signed large-transfer descriptor; fragment paths/bytes and complete atomic admission are checked separately |
 | `selection.schema.json` | Content-only selected-share roots; no Task/Project ownership or permission selector |
 | `share-line.schema.json` | Selected-share header/record/footer, unchanged canonical records and optional detached proofs |
@@ -63,6 +64,10 @@ not implement every optional extension to exchange canonical core records.
 - For fragmented deltas and selected shares, verify the full signed/hashed
   stream, selected-root predicates and transitive closure; reject unrelated
   unselected records and incomplete groups. No cursor moves past missing data.
+- V3 `prior_stream` is not a caller-provided list of trusted IDs. The sender
+  uses actual published members of the exact stream; the receiver requires its
+  own atomic prefix receipt and current validation of actual stored dependencies.
+  A schema-valid cursor, cached head or source scope cannot grant admission.
 - Device transitions, publisher roots, encrypted catalog proofs and share
   providers require independently configured current trust. Validate cross-field
   state/epoch/generation, physical key uniqueness, path collisions, total byte

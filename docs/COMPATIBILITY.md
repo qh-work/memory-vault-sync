@@ -15,6 +15,12 @@ suite was not run. The earlier [12-case campaign](V0_25_SCOPED_SMOKE.md) targete
 establish an 18-case pass on one source version. Other reviewers must follow
 their own execution authorization when extending or running these fixtures.
 
+The automatic capture-chain behavior below describes source commit
+`098b22c44ca299d1f889b41df9355511dfa2caf4`. The historical campaigns above predate
+that change. Its focused review cases are in
+[`tests/test_v025_capture_compat.py`](../tests/test_v025_capture_compat.py);
+their presence is not a test result, performance measurement or release claim.
+
 ## What is compatible
 
 The closed request envelope remains exactly:
@@ -61,7 +67,7 @@ synthetic schema cases are in `tests/test_v025_mcp_bounds.py`; they were not run
 | `capabilities` | Zero-write, network-free original capability fields plus an explicit compatibility profile |
 | `session.open` | Issue/reuse an opaque local continuity handle; non-compact reasons may retry local intents and enter one separately configured sync window |
 | `turn.input` | Scan and NFC-normalize the visible prompt, stage it privately, return current local evidence |
-| `turn.commit` | Atomically accept the complete visible intent and receipt; then attempt local canonical materialization; never launch a worker or access a network |
+| `turn.commit` | Atomically accept the visible intent, frozen projection and old-format receipt; then attempt local canonical materialization; never launch a worker or access a network |
 | `turn.abort` | Abort an uncommitted input; an already accepted pending/done commit remains committed and is never falsely rolled back |
 | `session.close` | Close local correlation, discard only staged text, retain accepted intents and all canonical memory |
 | `memory.recall` | Current local retrieval rendered through the exact old evidence wrapper, with explicit evidence-ID mappings |
@@ -189,26 +195,85 @@ not long-term-memory parents. Handles use cryptographically random 256-bit
 values and an atomic local request receipt. They never embed native IDs,
 adapter metadata, user text or a public hash of a native host identifier.
 
-The turn path is:
+### Frozen capture for newly accepted turns
+
+The filename remains unchanged, but the current control schema is
+`memory-vault-host-compat-state/v2`. It adds the shared `capture_heads`,
+`capture_jobs` and `capture_records` tables. The internal builder profile is
+`compat-visible-turn+continues/v1`; it is neither a new host wire protocol nor
+a change to canonical record/v1.
+
+Within the same acceptance transaction, a new final turn fixes the complete
+ordered canonical projection, its timestamp, the normalized visible-input
+digest, its core request ID and the previous continuity record's ID **and full
+SHA-256**. The previous record comes from the last accepted plan for that
+explicit local continuity handle, including a still-pending predecessor. It is
+not guessed from the Vault's newest timestamp, last recalled hit or another
+client's most recent write. Acceptance order uses a local monotonic sequence,
+not the wall clock.
+
+The new continuity record keeps `derived_from` pointing to its episode and
+adds `continues` pointing to that frozen predecessor, when present. Large-turn
+episode fragments remain lossless as described above. The first new plan in a
+scope has no inferred predecessor. Reopening the same continuity handle retains
+its local sequence; another handle or client control directory does not select
+that sequence automatically. Semantic `memory.remember` writes do not advance
+the visible-turn capture head.
+
+These handles, sequences and scope keys stay in private delivery metadata. They
+do not enter canonical records, become Memory parents, decide visibility or
+control retention. Removing a local session or control directory cannot delete
+the canonical history or its `continues` edges. A native adapter's stable scope
+across handle generations is a separate integration described in
+[HOSTS.md](HOSTS.md), not a new field in this old request envelope.
+
+The new turn path is:
 
 ```text
-staged -> pending intent + durable old-format receipt -> done canonical batch
+staged -> pending intent + frozen projection + old-format receipt -> done batch
    \-> aborted
 ```
 
 A post-only commit with both visible texts atomically creates its turn handle,
-complete pending intent and receipt. Required local acceptance precedes any
-acknowledgement. The bridge then attempts local canonical storage; if storage
+complete pending intent, frozen projection and receipt. Required local
+acceptance precedes any acknowledgement. The bridge then attempts local canonical storage; if storage
 or signing is unavailable it returns `degraded`, with `queue_state: pending`,
 and retains the exact accepted intent. It never falls back to unsigned writes
 when configured signing fails.
 
 The control DB and canonical Vault are deliberately **not** described as one
 cross-database transaction. If a crash follows canonical commit but precedes
-the control receipt update, the frozen timestamp/content and core receipt make
-replay reuse the same canonical effect. `sync.flush`, non-compact session opens,
-or explicit `flush_local` can retry pending intents. They cannot invent a new
-answer for a completed turn or repair a conflict by overwriting old data.
+the control receipt update, retry uses the frozen bytes and original core
+request ID; it does not rerun a newer text template or choose another timestamp
+or predecessor. The canonical transaction checks the full projection and
+predecessor hash against the actual Vault and current admission/trust. Existing
+records are not re-signed or re-admitted merely because a capture plan or
+historical receipt exists. Configured signing still fails closed.
+
+After canonical success, the control transaction marks the plan saved, clears
+its duplicate record bodies and the turn's staged text, and retains ordered
+record IDs/full hashes plus the receipt metadata. A saved plan can therefore
+be checked against actual canonical records without retaining a second copy of
+the conversation. This is not an assertion that old evidence remains trusted
+or that another agent received it.
+
+`sync.flush`, non-compact session opens, or explicit `flush_local` can retry
+pending intents. For new plans, the finite flush only materializes a child
+after its accepted predecessor is saved; a backwards wall clock cannot reorder
+the chain. A direct child attempt whose predecessor is pending remains pending,
+and never recursively reacquires the control write lock. The default flush
+budget is four intents; the explicit API accepts 1–16. A budget boundary is not
+permission to drop a dependency, invent a new answer or overwrite old data.
+
+### Existing v1 state and shared semantic receipts
+
+Read-only v1 receipt lookups do not migrate the database. An authorized write
+adds the v2 control tables without rewriting old turns, canonical records or
+receipt bytes. An already accepted v1 turn with no capture plan continues
+through its original projection, fixed acceptance time and core request domain, keeping
+its original record IDs. Migration does not graft it onto a newly inferred
+`continues` chain. A staged input with no accepted final projection can enter
+the new profile when its final commit is subsequently accepted.
 
 Semantic `memory.remember` idempotency belongs to the **shared canonical
 Vault**, not to a client's `semantic_jobs` table. Two authorized client
@@ -237,9 +302,11 @@ checked, but this does **not** mean every replay independently reruns all
 Ed25519 signature verification. Configured signing/trust failures still fail
 closed.
 
-This repair adds no wire fields, tables or receipt schema; canonical-memory
-snapshots retain their existing receipt format. It provides exact reuse within
-one shared Vault, not a distributed transaction between independently writable
+That shared-semantic receipt repair adds no wire fields, semantic tables or
+receipt schema; the separate capture upgrade above adds only private control
+tables. Canonical-memory snapshots retain their existing receipt format. Shared
+semantic reuse operates within one shared Vault, not a distributed transaction
+between independently writable
 Vaults. Four methods in `test_v025_compat.py` passed in the
 [offline follow-up](V0_25_FOLLOWUP_SMOKE.md) at source commit
 `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`: sequential two-configuration reuse,
@@ -305,6 +372,8 @@ visible text at 32 MiB, each control-receipt collection at 100,000 rows,
 original-ID mappings at 250,000 rows, and its control DB at 256 MiB.
 A local flush attempts at most four intents by default;
 the explicit API allows 1–16. Each canonical projection has at most 64 records.
+Frozen capture bodies have their own aggregate 32 MiB/256-pending-plan bound;
+saved plans retain at most 100,000 historical headers, not duplicated bodies.
 Limits fail visibly; there is no silent receipt eviction that could permit a
 duplicate write. Local SQLite transactions are not hard real-time operations.
 
@@ -316,7 +385,9 @@ restored store cannot silently reuse an old pending queue or its receipt map.
 
 The separate [whole-client recovery workflow](BACKUP.md) can preserve explicitly
 selected compatibility control state, including its pending visible intent
-and verified original-ID mapping, as private inert evidence. It requires the
+and verified original-ID mapping, as private inert evidence. V2 selections also
+retain frozen plans and their ordered ID/hash references; saved projections
+must resolve to the restored canonical records. It requires the
 documented offline/quiesced boundary, restores to a new location and does not
 restore signing credentials, host permissions or sync authorization. Explicit
 local activation validates and rebinds that control state before any local

@@ -19,9 +19,15 @@ and [old/new capability mapping](PARITY.md), not a smaller renamed subset.
   timelines, conflicts, supersession and non-executing proposals.
 - Eleven MCP tools, direct protocol, visible-event adapters, the new lifecycle
   profile and a separate ten-operation v0.21 wire adapter share one Vault/trust.
+- New automatic captures freeze their time, complete record projection and
+  source-local predecessor at acceptance, then append an ordinary `continues`
+  relation. Exact retry does not choose a new predecessor or become a task-owned
+  memory. Previously pending v1 captures retain their original behavior.
 - Signed chained synchronization includes receive-only/flush, reviewed
   exclusions, requeue, complete resumable fragment groups and directory/rclone
-  backends. Prompt/save/recall paths do not perform remote delivery.
+  backends. Optional v3 dependency reuse requires actual prior published members,
+  current trust and the receiving Vault's atomic prefix receipt. Public `changes`
+  and v2 remain self-contained. Prompt/save/recall paths do not perform remote delivery.
 - Memory snapshots and separately selected full-client recovery preserve
   evidence. Reactivation is explicit, uses a new configuration and does not
   restore keys, remote publication permission or host trust.
@@ -67,21 +73,28 @@ pre-fix run of the same publication case reproduced the exact double-link
 failure. Remaining retrieval, compatibility and other authored cases stay unrun
 unless the index links an actual execution report.
 
-## Known implementation gap: automatic cross-turn continuity
+## Automatic cross-turn continuity and dependency reuse
 
-The v0.21 host path froze a source sequence and previous episode reference when
-accepting a turn. Current automatic capture saves an episode and its associated
-continuity record, but does not link that continuity to the preceding turn.
-This is missing behavior under P01/P02/P05, **not just missing test evidence**.
+The formerly missing v0.21 source-local predecessor behavior is implemented by
+frozen plans in `memory_vault_capture.py` and the hook/lifecycle/compatibility
+entries. The [capture campaign](V0_25_CAPTURE_SMOKE.md) records twelve passing
+methods on its exact source, including unchanged legacy partial-write identities,
+bounded predecessor completion, restore from a done-before-ack window and one
+real temporary SQLite hot-journal process exit. The initial fixture errors are
+retained separately; they are not silently counted as passes.
 
-The replacement must use ordinary canonical relations, not a Task/session-owned
-memory hierarchy. Its accepted predecessor, timestamp and complete projection
-must survive retry and recovery unchanged. A copied local head or the globally
-newest memory cannot silently become a predecessor. The existing incremental
-feed recursively carries relation dependencies; naively adding an ever-growing
-`continues` chain would repeatedly send the entire history. P06 therefore also
-needs an explicit bounded dependency-transfer design before the new chain can
-be claimed efficient. Existing records and signatures must remain valid.
+Only canonical relations travel. Private source correlation does not decide
+memory ownership, lifetime, visibility or authorization. New captures do not
+guess predecessors from a global latest record, and old pending jobs are not
+retroactively given a new history.
+
+The new v3 transfer path can omit dependencies actually published on the exact
+stream, with current trust/epoch validation and receiving-store receipt checks.
+The small signed fixture confirms four pages of a 32-record chain and rejects
+copied heads or newly untrusted ancestors. This is not a throughput benchmark:
+cache loss and trust changes can still require bounded full revalidation and
+return `dependency_revalidation_required`. First-use large closures, fragment
+groups, real remote providers and independent receivers remain unverified.
 
 ## Still unverified / release gate
 
@@ -95,6 +108,8 @@ do not authenticate an author or verify an encryption provider. The retrieval
 follow-up used fixture threads and an injected exception; its roughly 7 MiB
 long-tail fixture is not a scale or performance certification. The later
 publication case used one real temporary child exit, not a power-loss trial.
+The newer hot-journal case likewise does not simulate device power loss; the
+small signed directory fixtures use the same reference implementation at both ends.
 
 The work also does not establish native Work automatic events, production
 encryption/recovery ceremonies, a security audit, vendor certification or
@@ -102,5 +117,6 @@ independent adoption. A matching host must actually expose the integration.
 
 Stable publication and the full completion claim remain gated on the
 requirement-by-requirement audit and adequate evidence. Existing branch
-protection is not weakened or bypassed. A review snapshot must be labeled
-unverified; see [release scope](RELEASE.md) and [review handoff](REVIEW_HANDOFF.md).
+protection is not weakened or bypassed. A review snapshot must be labeled as
+development with its exact partial evidence; see [release scope](RELEASE.md) and
+[review handoff](REVIEW_HANDOFF.md).

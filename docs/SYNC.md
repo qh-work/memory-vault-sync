@@ -5,9 +5,12 @@ explicitly configured service exchanges signed incremental capsules. The light
 [protocol](../PROTOCOL.md) does not require this service, Python, a cloud account,
 or a particular database. Synchronization does not restore Task/Git containers.
 
-Implementation status: source and documentation are provided. This development
-pass did not run the application, workers, tests, rclone, or real user data.
-Backend availability is not evidence of a verified deployment.
+The v3 dependency behavior described here matches source
+`098b22c44ca299d1f889b41df9355511dfa2caf4`. This page describes implementation,
+not a test or deployment report. Consult [VALIDATION.md](VALIDATION.md) for
+revision-specific execution evidence; older smoke reports do not cover this
+change. Backend availability and bounded work do not establish real-provider,
+Windows, throughput or latency results.
 
 ## Opt in deliberately
 
@@ -134,24 +137,70 @@ atomic transfer receipt handles a crash between Vault admission and saving the
 receiver cursor. Two authenticated candidates at one prefix are a fork requiring
 operator review; unsigned garbage is not allowed to choose the next record.
 
-New capsules use `universal-memory-delta/v2`. They bind the previous capsule's
-**payload SHA-256** to the next one, in addition to the existing source/key and
-cursor interval. The receiver retains the last accepted signed head and checks
-that exact remote prefix before progressing. A missing/changed head, competing
-authenticated candidates, or a mismatched predecessor stops that stream; local
-canonical memories remain intact. This detects observed tail rollback/forks,
-not deletion of every historical remote object or a fork hidden from this peer.
-Independent receivers still need out-of-band comparison to detect a provider
-showing different complete histories to different peers.
+Fresh self-contained capsules remain `universal-memory-delta/v2`; verified
+continuations can use `universal-memory-delta/v3` with
+`dependency_mode=prior_stream` to omit reusable dependencies. Both bind the
+previous capsule's **payload SHA-256** to the next one, in addition to the
+existing source/key and cursor interval. The receiver retains the last accepted
+signed head and checks that exact remote prefix before progressing. A
+missing/changed head, competing authenticated candidates, or a mismatched
+predecessor stops that stream; local canonical memories remain intact. This
+detects observed tail rollback/forks, not deletion of every historical remote
+object or a fork hidden from this peer. Independent receivers still need
+out-of-band comparison to detect a provider showing different complete
+histories to different peers.
 
-Old delta/v1 capsules remain readable. Once v2 is accepted, that receiver
+Old delta/v1 capsules remain readable. Once v2 or v3 is accepted, that receiver
 refuses a v1 continuation. A pre-upgrade state that has a received cursor but no
 head hash cannot safely infer its anchor from a remote claim. Use the explicit
 `anchor --capsule /absolute/exact-previously-received.json` command: it verifies
 the capsule, its exact saved cursor and the existing atomic Vault receipt. It
-does not import memory, reset a cursor or contact a remote. If that evidence is
-missing, preserve the state and restore verified history rather than deleting
-state to invent a new clean stream.
+also saves the authenticated predecessor envelope needed for v3, but does not
+import memory, reset a cursor or contact a remote. If that evidence is missing,
+preserve the state and restore verified history rather than deleting state to
+invent a new clean stream. No automatic format negotiation is provided: v2-only
+receiving adapters must be upgraded to read v3; frozen batches are not silently
+rewritten to a different format.
+
+### V3 dependency reuse and cold receivers
+
+The publisher omits a dependency only if its exact ID/hash belongs to an
+**actually published** batch in the same sender/store stream, its private
+positive-member index matches the exact published head and destination, and
+the dependency's full closure remains currently verified. An arbitrary cursor,
+caller-supplied known-ID list or signed non-delivery disposition cannot create
+membership. Requeued roots are still sent; exclusions never silently count as
+copies. The public core `changes` and ordinary `Vault.transfer_changes()` keep
+their self-contained behavior. Record bytes, hashes and taskless relations are
+unchanged.
+
+For v3 receive, the retained predecessor envelope must match the sender, source
+store, cursor and digest. **Inside the same receiving Vault transaction** as
+new admission, the exact predecessor transfer receipt must exist and the actual
+canonical dependency graph must pass current admission/trust validation.
+Trusted envelope signers cannot override a revoked ancestor signer. A copied
+head, another Vault's receipt or an ID that merely exists is not enough.
+A partial group or a failed dependency check admits no new records and cannot
+advance that prefix.
+
+The private dependency index caches successful closure validation only while
+the canonical hash, SQL invalidation epoch and independently read trust-policy
+digest match. Admission/canonical mutation triggers invalidate cached results,
+including mutations from older writers; missing guarantees do not permit
+reuse. Cached validation is not perpetual trust. Each revalidation pass is
+bounded to 100,000 records and 64 MiB of canonical bodies. It returns an already
+complete prefix if possible; an oversized next root returns
+`dependency_revalidation_required` without a signed size-skip or cursor advance.
+It does not increase limits or assume success after a cache/trust change.
+
+A cold/new receiving Vault starts from cursor zero and replays retained batches
+and groups in order across finite windows. It cannot start from the latest thin
+batch, copy a peer's cache, or treat an upload receipt as local admission. If a
+required prefix, fragment, same-Vault receipt or current dependency is missing,
+the peer stops explicitly. Retain state and use explicit recovery/reconciliation;
+automatic retry alone need not resolve an invalidated over-budget closure.
+See [TRANSFER.md](TRANSFER.md#v3-verified-reuse-not-a-claimed-known-memory-list)
+for the exact v3 fields, cache boundaries and predecessor anchoring.
 
 Network/verification errors preserve pending state and content-free error codes.
 Automatic launch backoff increases from 5 seconds up to 300 seconds; these are
@@ -192,13 +241,21 @@ changed binding or limits.
 ### Complete dependency groups, not size-based skipping
 
 The small outgoing budget is a batching target, not a memory-size exclusion.
-When the ordinary `changes` page reports a size-only omission, the adapter asks
-the read-only `Vault.transfer_changes` API for the **complete** dependency
-closure, freezes it, and fragments it when necessary. One atomic group supports
-the core's 100,000 records and 64 MiB of canonical record bytes; proofs have a
-separate bounded allowance. A closure exceeding those core limits fails with
-`dependency_budget_exceeded` and **does not advance the cursor**. It is not
-silently shortened or signed as successfully synchronized.
+The verified adapter uses read-only `Vault.transfer_changes` with the validated
+published-member boundary. When one root cannot fit the small-page target, it
+uses the existing complete-group budget and fragments the supplied records when
+necessary. New v2 groups are self-contained. V3 groups can contain only new
+records and dependencies not already reusable through the verified prefix;
+their older ancestors need not be resent in each group. Explicit unsigned
+attestation retains the self-contained path.
+
+One atomic group supports the core's 100,000 records and 64 MiB of canonical
+record bytes; proofs have a separate bounded allowance. The new group budget
+does not make transitive revalidation unlimited. `dependency_budget_exceeded`
+or `dependency_revalidation_required` leaves the affected root pending and
+**does not advance past it**. An earlier complete verified prefix may finish;
+the oversized root is not signed as successfully synchronized or silently
+removed from the full synchronization scope.
 
 Each fragment is at most 4 MiB and contains whole canonical NDJSON lines of
 `{"record": RECORD, "attestation": PROOF}`. The signed group manifest binds
@@ -212,8 +269,10 @@ and remote sending cursor do not move until their complete manifest stage.
 
 The receiver stages verified fragments privately; a partial group admits no
 canonical records and advances no receive cursor. After all fragments arrive,
-it rechecks ordered hashes, totals, unique IDs, every record signature and
-current trust, then calls the core's atomic importer once for the entire group.
+it rechecks ordered hashes, totals, unique IDs, every supplied record signature
+and current trust. V3 also applies the same-Vault predecessor receipt and
+actual local dependency checks, including dependencies outside the fragments,
+inside the core's atomic import transaction for the entire new group.
 Invalid closure or an interrupted transaction admits none of that group. A
 crash after the database commit but before saving the cursor reuses the atomic
 transfer receipt, so replay never creates duplicate memories. Receiving the
@@ -227,6 +286,14 @@ changed remote fragment remains a visible receive failure. Files are not
 silently pruned. Large binary artifact directories remain a separate explicit
 mechanism: this protocol transports complete canonical memories, not arbitrary
 filesystem trees.
+
+Both directory and rclone call the same v3 receiver. The sender's private rclone
+staging publication can populate its positive-member index before remote upload;
+that is not remote delivery evidence. Separate remote receipts still enforce
+ordered uploading, exact read-back and predecessor checks. Before a pending v3
+upload attempt, outgoing dependencies are validated again under current local
+trust/admission. No remote known-ID claim can replace these checks, and the
+adapter does not fetch from unconfigured sources to repair a missing dependency.
 
 ### Explicit per-record publication decisions
 
@@ -283,6 +350,11 @@ a digest commitment, not a potentially multi-megabyte list. **Excluded is not
 delivered.** Local-path approval requires this independent completed journal;
 receiving a signed review object never grants forwarding permission.
 
+In a v3 batch, review applies to the records actually being published now.
+Previously exposed ancestors are not retracted or reauthorized by that review.
+An excluded record that never actually appeared in an earlier publication
+cannot be omitted later as a supposedly delivered dependency.
+
 Replacement is allowed only before publication has started. A durable started
 marker is written before any fragment/capsule can escape; its presence, a
 previously published prefix, or a recorded remote receipt forbids rewriting
@@ -320,6 +392,16 @@ does not restore signing/configuration/stream state; do not mix it with an
 arbitrary old cursor directory. See [BACKUP.md](BACKUP.md) for explicit recovery.
 There is no automatic pruning of history or remote files.
 
+`transfer/dependency-index.sqlite3` and its SQLite sidecars are a separate,
+bounded derived cache of member IDs/hashes and validation stamps. They are not
+canonical memory, signing keys, receive receipts or authority to resume a
+stream. Explicit client backup only observes their metadata for quiescence;
+it does not archive or activate them. Memory restore changes the store identity
+and epoch nonce and removes old transfer receipts. An absent cache requires
+bounded revalidation and cannot guess earlier publication membership; a corrupt
+or mismatched cache is not silently reset. Do not copy cache/cursor directories
+between independent Vaults or delete recovery state to bypass an error.
+
 Finite worker JSON results are appended to protected `worker-events.ndjson`.
 Automatic launch stops for review when this file reaches 512 KiB rather than
 silently erasing it. The service does not remove host/provider logs or promise
@@ -353,14 +435,17 @@ worker wait. `run(config_path)` remains the explicit bidirectional alias. The
 CLI requires `--config ABSOLUTE_PATH` before its subcommand. These are local
 operator/runtime APIs, not fields accepted inside core memory request JSON.
 
-The delta/v2 wire and fragment descriptors are specified structurally in
-[delta-v2.schema.json](../schemas/delta-v2.schema.json) and
+The delta/v2 and delta/v3 wire and fragment descriptors are specified in
+[delta-v2.schema.json](../schemas/delta-v2.schema.json),
+[delta-v3.schema.json](../schemas/delta-v3.schema.json) and
 [fragment-group.schema.json](../schemas/fragment-group.schema.json).
 Schema validation alone does not verify signatures, cross-field sums, ordered
-hashes, dependency closure, operator decisions, or current trust. Synthetic
-fault/replay cases are supplied in
-`tests/test_v025_sync_review.py` in the separate source/review kit for independent
-execution; they were authored and statically parsed, **not run** in this pass.
+hashes, actual dependency membership, same-Vault receipts, operator decisions,
+or current trust. Synthetic fault/replay cases are supplied in
+`tests/test_v025_sync_review.py` and
+`tests/test_v025_incremental_dependencies.py` in the separate source/review kit.
+Authored cases are not execution evidence; consult [VALIDATION.md](VALIDATION.md)
+for the exact methods and revisions actually run.
 
 See [REMOTE_BACKENDS.md](REMOTE_BACKENDS.md) for destination configuration and
 the distinct directory and rclone wire layouts.
