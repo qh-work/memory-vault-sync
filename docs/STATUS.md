@@ -45,18 +45,24 @@ integration, trust, alias, closure, recovery and packaging issues and led to
 source fixes. Python AST and JSON parsing were performed without importing the
 application. These checks prove only the parsed source/format properties.
 
-Synthetic cases are included in `tests/test_v025_*.py` and the existing core
-suite. They are material for authorized independent reviewers, **not executed
-test results**. Build/inventory checks, when performed, are recorded separately
-in the generated release manifest; a source document alone is not their result.
+On 2026-08-31 (Asia/Shanghai), the owner authorized a minimal offline synthetic
+campaign: **12 selected cases passed, 0 failures/errors/skips**, on source
+`066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`. See the
+[exact cases, environment and limits](V0_25_SCOPED_SMOKE.md). This includes an
+actual core → configured client/MCP write → new-core exchange, not a second
+implementation or cross-model certification. The other authored cases remain
+unrun. Build/inventory checks are separate evidence in their original manifests;
+those immutable artifacts have not been relabeled as runtime-tested builds.
 
 ## Still unverified / release gate
 
-At the owner's request, **no application tests or runtime trials were run**.
-There is no evidence here of live capture, installed-host compatibility,
+The scoped campaign did not cover live capture, installed-host compatibility,
 crash/concurrency recovery, cryptographic interoperability, Windows native
 behavior, 2 GiB operation, throughput, two-device delivery or a cross-language
-round trip. Do not infer those outcomes from synthetic cases or static checks.
+round trip. Configuration/recovery routing used mocks; it does not establish
+actual restore correctness. Metadata checks do not authenticate an author or
+verify an encryption provider. Do not infer these outcomes from source presence
+or the 12 passing cases.
 
 The work also does not establish native Work automatic events, production
 encryption/recovery ceremonies, a security audit, vendor certification or

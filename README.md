@@ -32,8 +32,14 @@ The build produces two usage packages and a separate review kit:
 - **Optional single-file reference:** [`memory_vault.py`](memory_vault.py),
   requiring only Python 3.10+ and its standard library.
 
-Development has static source review, **not runtime tests**.
-No desktop installation, real-memory migration or cross-device trial was run.
+An explicitly authorized, temporary-directory offline check passed **12 selected
+synthetic cases** on source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`, with
+zero failures, errors or skips. All other cases remain unrun; see the exact
+[scoped smoke evidence](docs/V0_25_SCOPED_SMOKE.md).
+The cross-entry checks share the Python reference: they do not establish
+independent-implementation or cross-model interoperability. No host plugin was
+installed or private memory accessed. Signing, cloud backends, live-host or
+cross-device behavior, native Windows and performance remain unvalidated.
 The protected main branch is not bypassed to avoid its required tests; use the
 exact source/version when reviewing. See [status](docs/STATUS.md),
 [release scope](docs/RELEASE.md) and [independent review tasks](docs/REVIEW_HANDOFF.md).

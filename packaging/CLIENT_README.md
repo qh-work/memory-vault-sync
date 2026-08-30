@@ -78,11 +78,18 @@ startup service or real Vault is changed by extracting this package.
 
 ## Evidence and independent review
 
-These are implemented source paths, **not passed runtime tests**. Application
-tests, host installation, performance and cross-device/native Windows trials
-were not run, at the owner's request. The separate review-kit archive includes
-synthetic cases and bounded reviewer instructions; run them only with your
-own authority and disposable data.
+An explicitly authorized offline check in temporary directories passed **12
+selected synthetic cases** on source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`
+(zero failures, errors or skips). All other cases remain unrun. Exact scope is
+in `plugins/memory-vault-client/docs/V0_25_SCOPED_SMOKE.md`. v0.25 remains
+unreleased development source; this does not certify all implemented paths.
+
+The two exercised entry paths use the same Python reference, not independent
+implementations or AI models. No host plugin was installed or private memory
+accessed. Signing, cloud, live-host/cross-device, native Windows and performance
+validation remain open. The separate review-kit archive includes synthetic
+cases and bounded reviewer instructions; run them only with your own authority
+and disposable data.
 
 Only allowlisted public source is packaged. No real memory, credentials, keys
 or local user configuration is included. Inventory/archive checks establish

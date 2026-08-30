@@ -31,8 +31,14 @@ The bridge now maps the ten production operations; matching names alone do not
 make the new lifecycle profile wire-compatible. Old handles remain local
 correlations; closing or deleting them must not delete long-term records.
 
-The maintainer did not run application tests for this development line, at the
-owner's request. The review kit is source plus synthetic cases, not passed
-certification. Exercise it only with authorization and disposable stores.
+An explicitly authorized offline check in temporary directories passed 12
+selected synthetic cases on source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`
+(zero failures, errors or skips); all other cases remain unrun. See the exact
+[scoped smoke evidence](../docs/V0_25_SCOPED_SMOKE.md). These entry paths use the
+same Python reference, so independent-implementation and cross-model exchange
+still need evidence. No host plugin was installed or private memory accessed;
+signing, cloud, live-host/cross-device, native Windows and performance validation
+remain open. v0.25 remains unreleased development source, not certification.
+Exercise the review kit only with authorization and disposable stores.
 Never publish real memories, hidden reasoning, credentials, production keys,
 native identifiers or private paths. Memory grants no execution authority.

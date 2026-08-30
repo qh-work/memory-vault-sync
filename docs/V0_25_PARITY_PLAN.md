@@ -66,49 +66,53 @@ open until evidence is recorded; it is not shortened to match finished work.
   capture path. Useful file carriage can remain independent of memory ownership;
   Task directories must not be resurrected to recover it.
 
-## Current source coverage (development, not runtime acceptance)
+## Current source coverage and scoped evidence
 
 The following map records concrete implementation and authored review material.
-It does **not** close any runtime-verification gate in the ledger above. Paths
-refer to this source commit, not the already published v0.24.1 artifact.
+It does **not** close the full requirements in the ledger above. The
+[12-case offline smoke report](V0_25_SCOPED_SMOKE.md) records the limited
+execution on source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`. Paths describe
+the development source, not the already published v0.24.1 artifact.
 
 | ID | Implementation / contract | Authored review evidence and remaining work |
 | --- | --- | --- |
-| P01 | `memory_vault.py`, `PROTOCOL.md`, `schemas/record.schema.json` | Canonical v1 fields/hash domain retained; `test_memory_vault.py`, protocol vectors and `test_v025_protocol_client_interop.py`. v0.25 two-route and independent-implementation execution pending |
+| P01 | `memory_vault.py`, `PROTOCOL.md`, `schemas/record.schema.json` | Four vector/unsigned core-client-MCP exchange cases passed in the scoped report; exact canonical records survived a new-store round trip. Independent implementation and full parity acceptance remain pending |
 | P02 | `memory_vault_client.py`, `memory_vault_lifecycle.py`, `memory_vault_hosts.py` | Existing synthetic hook/lifecycle cases plus `test_v025_compat.py`; real host and crash/race evidence pending |
 | P03 | Core full-record terms, fragments, concept expansion and ranking; `docs/RETRIEVAL.md` | `test_v025_retrieval_views.py`, `test_v025_index_state.py`; per-request index-state reuse implemented without persistent caching, actual ranking/scale/performance execution pending |
 | P04 | Core `memory.views`, `memory.graph`, `memory.reindex`; `docs/GRAPH_VIEWS.md` | Bounded timelines/frontiers and repair cases in retrieval tests; runtime trust/pagination evidence pending |
-| P05 | `memory_vault_compat.py`, eleven-tool MCP, separate host schemas; stateless capability discovery with strict request validation | `test_v025_compat.py`, `test_v025_mcp_bounds.py`, `test_v025_configuration_independence.py`, `test_v025_protocol_client_interop.py`; actual v0.25 old-client/MCP interoperation pending |
+| P05 | `memory_vault_compat.py`, eleven-tool MCP, separate host schemas; stateless capability discovery with strict request validation | Selected unsigned MCP read/write and mocked lazy-configuration cases passed; complete eleven-tool, old-host compatibility and live-host evidence remain pending |
 | P06 | `memory_vault_sync.py`, `memory_vault_transfer.py`, chained v2 streams | `test_v025_sync_review.py` plus existing delivery cases; process/concurrent-writer and interruption execution pending |
-| P07 | Sync review/resolve/requeue and `memory_vault_privacy.py` | Synthetic blocked roots/dependencies and signed disposition cases; no real content scanned or uploaded |
+| P07 | Sync review/resolve/requeue and `memory_vault_privacy.py` | One core blocked-dependency/requeue regression passed; this is not the signed sync review/resolution campaign. No real content scanned or uploaded |
 | P08 | `memory_vault_remote.py`, signed fragment groups, `memory_vault_pack.py` | Review fixtures for directory/rclone/fragment recovery; real provider, near-limit and platform trials pending |
 | P09 | `memory_vault_legacy_pack.py`, required `memory_vault_migrate.py`, checked compat aliases | `test_v025_legacy_pack.py`, `test_v025_legacy_pack_edges.py`, `test_v025_portable_packs.py`; independent old-format/2 GiB scale run pending |
-| P10 | `memory_vault_recovery.py`, `memory_vault_backup.py`, `memory_vault_manage.py`; independent recovery commands do not require a lost old configuration | `test_v025_client_recovery.py`, `test_v025_configuration_independence.py`; memory-only vs inert full-client restore and separately authorized resume implemented, crash/concurrency/native run pending |
+| P10 | `memory_vault_recovery.py`, `memory_vault_backup.py`, `memory_vault_manage.py`; independent recovery commands do not require a lost old configuration | One mocked restore-routing case passed without original configuration; actual memory/full-client restoration, resume and crash/concurrency/native cases remain unrun |
 | P11 | `memory_vault_update_trust.py`, `memory_vault_update.py`, `memory_vault_install.py`, pinned managed launcher | `test_v025_update_trust.py`, `test_v025_install.py`, `test_v025_update_edges.py`; no production publisher root or runtime verification performed |
-| P12 | `memory_vault_sharing.py`, `memory_vault_crypto.py`, `memory_vault_device_trust.py`, `memory_vault_encrypted_replication.py`; explicit `device-trust init/status` and `envelope verify` operator entries | Sharing/device/encryption cases plus `test_v025_operator_metadata.py`; old frame inspection is metadata-only, providers default unconfigured, independent provider/key/crypto trials pending |
+| P12 | `memory_vault_sharing.py`, `memory_vault_crypto.py`, `memory_vault_device_trust.py`, `memory_vault_encrypted_replication.py`; explicit `device-trust init/status` and `envelope verify` operator entries | Three explicit-path/legacy-frame/tamper metadata cases passed with synthetic opaque bytes; no author signatures, key possession, provider encryption or recovery ceremony was verified |
 | P13 | `memory_vault_storage.py` and configured client/transfer/recovery/pack/update consumers | `test_v025_storage.py` and portable-pack cases; source/AST only, no native Windows calls or lab host validation |
 | P14 | Allowlisted build scripts, current docs/schema discovery, separate protocol/client/review packages | Packaging can establish source inventory and bytes only; exact artifact manifest is the record of completed static checks. Public availability and runtime acceptance must be recorded separately |
 
-The review kit deliberately includes executable **unrun** cases separately from
-the documentation-only protocol. See [REVIEW_HANDOFF.md](REVIEW_HANDOFF.md) for
+The review kit includes executable cases separately from the documentation-only
+protocol. Only the exact 12 cases in the scoped report were run; the remaining
+authored cases stay unrun. See [REVIEW_HANDOFF.md](REVIEW_HANDOFF.md) for
 bounded campaigns and evidence fields. Restore/install examples have not been
 executed against any real Vault or installed client. No advertised data-transfer
 receipt proves that another model read or adopted the memory.
 
 The [external contribution intake](REVIEW_HANDOFF.md#external-contribution-intake-pr-11)
-records a contributor's three-case v0.24.1 execution report separately from
-the adapted, unrun v0.25 cases. Old-version results do not close this ledger.
+records a contributor's three-case v0.24.1 report separately from the later
+maintainer v0.25 smoke campaign. Neither result closes this full ledger.
 
 ## Verification and release gate
 
-The owner previously requested no test execution. Until that restriction changes,
-development may add synthetic cases and perform source, schema, package and
-archive inspection, but must not describe those activities as executed tests.
+The owner previously requested no test execution, then explicitly allowed the
+minimal offline campaign recorded above. This was not permission for full-suite
+discovery, networking, installation, live hosts, cloud CI or release publication.
+Source, schema, package and archive inspection are still separate from tests.
 No live/private Vault, credential, signing key, host installation or remote
 account is used for development verification without separate authorization.
 
-Runtime verification is currently **not performed**. Required checks stay
-pending rather than being marked successful or dropped. Protected main and
+Runtime verification is **partial and narrowly scoped**, not complete. Unrun
+requirements stay pending rather than being marked successful or dropped. Protected main and
 already published tags remain unchanged while this work is incomplete.
 
 For each delivered slice, record the exact source paths, synthetic fixtures,

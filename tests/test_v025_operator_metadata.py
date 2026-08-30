@@ -1,4 +1,6 @@
-"""Synthetic operator metadata cases; authored but NOT executed.
+"""Synthetic operator metadata cases; execution is recorded per case.
+
+Only three selected methods ran in docs/V0_25_SCOPED_SMOKE.md, not this full file.
 
 Fixtures contain opaque labels and manually framed bytes, not real ciphertext,
 keys, accounts or memory. Hashes use hashlib directly, independently of the

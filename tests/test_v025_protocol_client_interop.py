@@ -1,4 +1,6 @@
-"""Synthetic reference-entry-point interoperability: NOT RUN on this branch.
+"""Synthetic reference-entry-point interoperability; exact run evidence is scoped.
+
+See docs/V0_25_SCOPED_SMOKE.md for the tested source and four recorded cases.
 
 The first three cases are adapted from GitHub contributor @jagadeepmamidi:
 https://github.com/qh-work/memory-vault-sync/pull/11

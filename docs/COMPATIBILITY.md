@@ -7,9 +7,10 @@ index and append-only records as the independent protocol and current client.
 It does not revive the old runtime, a Git repository or Task-owned memory.
 
 This is source-implemented compatibility, **not an executed conformance or
-real-host certification claim**. The owner requested no application or test
-execution. Synthetic cases are provided in `tests/test_v025_compat.py` for
-independent execution and extension.
+real-host certification claim**. Compatibility-specific cases were not part
+of the [12-case offline campaign](V0_25_SCOPED_SMOKE.md). Synthetic cases in
+`tests/test_v025_compat.py` still require separately authorized execution and
+independent extension.
 
 ## What is compatible
 

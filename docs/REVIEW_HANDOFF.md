@@ -4,9 +4,10 @@ Target: **the complete useful v0.21 feature set plus the independent lightweight
 protocol**, as specified by [P01–P14](V0_25_PARITY_PLAN.md). Do not shorten that
 ledger to match completed code or mark a requirement passed because a function,
 schema, fixture or archive exists. This document does not assert that a v0.25
-release is published, installed, runtime-tested or certified.
+release is published, installed, fully runtime-accepted or certified.
 
-The owner requested no test execution during development. Reading this handoff
+The owner initially requested no tests and later allowed only the
+[12-case offline synthetic campaign](V0_25_SCOPED_SMOKE.md). Reading this handoff
 is **not permission to run tests or applications**. Obtain the current review
 user/host's authorization for the chosen execution scope first; without it,
 stop at source/static review and report runtime checks as pending. Never use a
@@ -117,17 +118,20 @@ the tests into v0.25.
 
 The adapted `test_v025_protocol_client_interop.py` retains attribution to the
 pinned contribution and adds a real core-export → client-import/MCP-write →
-new-core-import route, using synthetic data. All adapted/new cases are **not
-run here**. Both routes still use the same Python reference implementation;
+new-core-import route, using synthetic data. All four subsequently passed in
+the scoped offline campaign on `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`.
+Both routes still use the same Python reference implementation;
 this does not supply a second-language implementation or an AI adoption claim.
 The reported undefined `recalled` variable in the existing blocked-dependency
 test was confirmed in source and repaired by requesting recall before the
-authority assertion, not by removing that assertion. A repaired test is not
-proof that the behavior it checks passes.
+authority assertion, not by removing that assertion. That specific regression
+also passed in the recorded campaign; the source repair alone was not proof.
 
 ### Current v0.25 synthetic source inventory
 
-These are **authored cases, not passed results**. Re-list the selected commit
+This is an **authored inventory, not a passing full-suite result**. Only the
+12 exact cases in [the scoped report](V0_25_SCOPED_SMOKE.md) have execution
+evidence from that campaign; the other cases remain unrun. Re-list the selected commit
 before reporting coverage; retain `tests/test_memory_vault.py` for shared
 core/client regressions too. Asserting a size constant is not a scale trial.
 
@@ -163,7 +167,8 @@ python3 -B -m unittest discover -s tests -p 'test_v025_retrieval_views.py'
 That command **executes application code**. It grants no permission to run every
 file, install dependencies, generate real keys or invoke OpenSSL/rclone/hosts.
 Record skips and missing dependencies rather than silently counting them as
-passes. No execution result is supplied by this handoff.
+passes. The linked scoped report supplies only its named execution results;
+the example commands in this handoff were not run as a full campaign.
 
 ## 3. Review campaigns — scoped authorization required
 

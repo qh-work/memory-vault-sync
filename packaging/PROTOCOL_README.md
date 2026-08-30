@@ -26,7 +26,15 @@ artifacts described in `docs/RELEASE.md`. This development build is not the
 previous v0.24.1 package and does not assert that v0.25 is a finished published
 release. Check the matching source commit and validation scope in its manifest.
 
-No application or cross-host tests were executed while preparing these sources.
+An explicitly authorized offline check in temporary directories passed 12
+selected synthetic cases on source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`
+(zero failures, errors or skips); all other cases remain unrun. See
+`docs/V0_25_SCOPED_SMOKE.md`. The exercised routes share the Python reference;
+they do not prove independent-implementation or cross-model interoperability.
+No host plugin was installed or private memory accessed. Signing, cloud,
+live-host/cross-device, native Windows and performance validation remain open.
+v0.25 remains unreleased development source.
+
 Reading this agreement alone cannot create persistent storage, suppress logs,
 bypass permissions or prove another agent read a memory. Memory outlives tasks,
 projects, models, devices and clients.

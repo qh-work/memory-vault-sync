@@ -14,9 +14,10 @@ This is a **new profile**, `universal-memory-lifecycle/v1`, with request schema
 with v0.21**: old envelope names, historical fields and Git/task runtime behavior
 are not accepted. Operation names and visible-turn meanings are retained.
 
-The implementation is supplied for review. No tests, runtime checks or host
-installation checks were run for this change; publication is not evidence of
-successful capture in a particular client.
+The implementation is supplied for review. Lifecycle-specific tests, runtime
+event sequences and host installation checks were not part of the
+[scoped smoke campaign](V0_25_SCOPED_SMOKE.md) and remain unrun. Publication is
+not evidence of successful capture in a particular client.
 
 ## One store, optional local correlation
 

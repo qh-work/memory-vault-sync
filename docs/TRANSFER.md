@@ -12,8 +12,9 @@ fragment receipts are transport/recovery state, not Task or Project containers.
 Source store IDs and signer IDs do not own a memory or grant execution authority.
 
 The v0.25 changes and synthetic cases have been statically inspected/parsed.
-**No runtime tests, Windows validation, benchmark or end-to-end deployment was
-performed in this development pass.** Byte/count bounds are not latency claims.
+**No signed-transfer runtime tests, Windows validation, benchmark or end-to-end
+deployment was performed in the [scoped smoke campaign](V0_25_SCOPED_SMOKE.md).**
+Byte/count bounds are not latency claims.
 
 ## Explicit setup and basic commands
 

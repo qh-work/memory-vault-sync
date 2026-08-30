@@ -6,8 +6,9 @@ SQLite database, provenance rules and transfer format. There is no separate
 
 The v0.25 integration code is **not a validated promise of automatic saving in
 every desktop client**. Publication does not establish host compatibility.
-Automated tests, live host
-installation and functional capture checks were not run for this change. No
+The [scoped offline smoke campaign](V0_25_SCOPED_SMOKE.md) checked selected
+core/client/MCP exchanges and routing, not the full client suite, live host
+installation or functional capture. Those host checks remain unrun. No
 existing plugin, personal marketplace, private memory or host trust setting was
 changed by adding these source files.
 

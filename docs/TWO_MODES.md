@@ -54,7 +54,14 @@ key auto-enrollment or high-privilege instruction channel is restored. New
 lifecycle and old `compat` envelopes remain explicitly separate. [PARITY.md](PARITY.md)
 maps old capabilities to their current replacements and limits.
 
-This is development source for two distributions, not a runtime certification.
-No tests, host installation or private-data migration were performed for this
-version. Native Windows storage is implemented but unverified; native Work
-automatic event delivery is still not established.
+This is unreleased development source for two distributions, not a runtime
+certification. An explicitly authorized offline check in temporary directories
+passed 12 selected synthetic cases on source
+`066cd5629e690e6b38ab9c0bf43badafe4ef7a1b` (zero failures, errors or skips);
+all other cases remain unrun. See [the scoped smoke evidence](V0_25_SCOPED_SMOKE.md).
+The exercised paths use the same Python reference: this is not proof of
+independent-implementation or cross-model interoperability.
+
+No host plugin was installed or private memory accessed. Signing, cloud,
+live-host/cross-device, native Windows and performance validation remain open;
+native Work automatic event delivery is still not established.

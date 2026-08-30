@@ -3,7 +3,7 @@
 ## 0.25.0 — Development, unreleased
 
 The full [P01–P14 ledger](docs/V0_25_PARITY_PLAN.md) remains open. These entries
-describe implemented source and review material, **not completed runtime
+describe implemented source and limited review evidence, **not completed runtime
 acceptance or a published stable release**.
 
 - Restore useful v0.21 workflows alongside the independent lightweight protocol,
@@ -30,9 +30,14 @@ acceptance or a published stable release**.
   packages. Incorporate attributed PR #11 interoperability cases, add an actual
   cross-entry exchange case, and repair the reported undefined-variable test
   failure without dropping its authority assertion.
-- Application tests, installations, native-host/provider trials and performance
-  measurements remain unrun during this development work. The contributor's
-  old-version execution report is tracked separately in the
+- An explicitly authorized offline check in temporary directories passed 12
+  selected synthetic cases on source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`
+  (zero failures, errors or skips). All other cases remain unrun; see the
+  [scoped smoke evidence](docs/V0_25_SCOPED_SMOKE.md). The two Python entry paths
+  do not prove independent-implementation or cross-model interoperability.
+  No host plugin was installed or private memory accessed; signing, cloud,
+  native Windows, live-host/cross-device and performance validation remain open.
+  The contributor's old-version execution report is tracked separately in the
   [review handoff](docs/REVIEW_HANDOFF.md#external-contribution-intake-pr-11).
   Private memory, installed plugins, protected main and published tags remain
   unchanged by this review-branch work.

@@ -1,4 +1,6 @@
-"""Synthetic lazy-configuration regression cases; written, NOT executed here.
+"""Synthetic lazy-configuration regression cases; execution is recorded per case.
+
+Only four selected methods ran in docs/V0_25_SCOPED_SMOKE.md, not this full file.
 
 Fixtures contain no real memories or credentials. Operator storage/network
 effects are replaced with mocks. These cases check routing/contract boundaries,

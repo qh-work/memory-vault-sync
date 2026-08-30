@@ -38,12 +38,15 @@ services; the source exposes explicit fail-closed boundaries.
 
 ## Publication is not certification
 
-The owner requested no test execution. Source/AST/JSON, package structure and
-archive-byte inspection are permitted and are not application tests. No real
-Vault, installed private plugin, key, host setting or remote account is used.
+The owner initially requested no tests and later authorized only a minimal
+offline synthetic check. [Twelve selected cases passed](V0_25_SCOPED_SMOKE.md)
+on the exact source recorded there; the remaining suite was not run. This does
+not authorize cloud CI, networking, installation or publication. Source/AST/JSON,
+package structure and archive-byte inspection remain separate evidence. No real
+Vault, installed private plugin, key, host setting or remote account was used.
 
-Runtime, host, crash/concurrency, native-platform, throughput and cross-device
-evidence remain pending. Do not publish an unqualified stable/completed claim
+Full runtime acceptance, host, crash/concurrency, native-platform, throughput
+and cross-device evidence remain pending. Do not publish an unqualified stable/completed claim
 without auditing all requirements. Review material may be shared as explicitly
 unverified development work; it does not replace a completion audit.
 

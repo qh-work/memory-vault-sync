@@ -13,11 +13,19 @@ retrieval/graph views, signed resumable transfer and blocked-send review, legacy
 packs/checkpoints, full recovery, managed updates/rollback, selected sharing,
 external trust/encryption boundaries and native protected storage adapters.
 
-Source implementation is **not runtime evidence**. At the owner's request, no
-application tests, private-data migrations or live host trials were run.
-A separate public review-kit build includes synthetic material for authorized
-independent reviewers. Installation, interoperability, recovery, update crash
-boundaries and real Windows behavior still need evidence.
+Source implementation is **not runtime evidence**. An explicitly authorized
+offline check in temporary directories passed 12 selected synthetic cases on
+source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b` (zero failures, errors or skips);
+all other cases remain unrun. See the exact
+[scoped smoke evidence](../docs/V0_25_SCOPED_SMOKE.md). The two exercised paths
+share one Python reference; independent-implementation and cross-model
+interoperability are not established.
+
+No host plugin was installed or private memory accessed. Signing, cloud,
+live-host/cross-device, native Windows and performance validation remain open,
+as do the full recovery and update-crash acceptance requirements. The separate
+review-kit build includes synthetic material for authorized independent
+reviewers. v0.25 remains unreleased development source, not a certified release.
 
 Start with [AI_START_HERE.md](../AI_START_HERE.md),
 [the capability map](../docs/PARITY.md),

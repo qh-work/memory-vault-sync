@@ -1,11 +1,19 @@
 # Memory Vault v0.25 independent review kit
 
 This separate archive contains public source and synthetic tests, not private
-memory or a preconfigured installation. **The supplied tests were not run by
-the maintainer during this development work.** Their presence and AST parsing
-are not pass results. Read REVIEW_MANIFEST.json for the source commit and byte
-inventory, then docs/REVIEW_HANDOFF.md and docs/V0_25_PARITY_PLAN.md for the full
-review scope.
+memory or a preconfigured installation. An explicitly authorized offline check
+in temporary directories passed **12 selected synthetic cases** on source
+`066cd5629e690e6b38ab9c0bf43badafe4ef7a1b` (zero failures, errors or skips).
+All other cases remain unrun. See `docs/V0_25_SCOPED_SMOKE.md` for exact case IDs
+and scope; their presence or AST parsing is not a pass result. Compare that
+source with REVIEW_MANIFEST.json's source commit and byte inventory, then read
+docs/REVIEW_HANDOFF.md and docs/V0_25_PARITY_PLAN.md for the full review scope.
+
+The exercised entry paths share one Python reference, not independent
+implementations or AI models. No host plugin was installed or private memory
+accessed. Signing, cloud, live-host/cross-device, native Windows and performance
+validation remain open. v0.25 is still unreleased development source, not a
+finished stable release; the 12-case result does not certify this whole kit.
 
 The kit includes attributed adaptations of the three cases from PR #11 and a
 new actual core → client/MCP write → core exchange case. The contributor's

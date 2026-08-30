@@ -20,8 +20,10 @@ modules or bytecode caches. It suppresses new cache writes; inventory checks are
 not publisher signatures or isolation from a hostile same-user process.
 MCP/hook templates use isolated Python startup and retain separate host approval.
 
-No runtime tests, host installation, private-data migration or production
-signing/encryption provisioning were performed for this development version.
+Only the 12 offline synthetic cases recorded in `docs/V0_25_SCOPED_SMOKE.md`
+have the reported execution evidence, pinned to that source snapshot. They do
+not establish full runtime acceptance, host installation, private-data migration
+or production signing/encryption provisioning; none of those trials was run.
 Windows native protection is implemented but unverified on a real host; native
 Work automatic lifecycle delivery is not established.
 
