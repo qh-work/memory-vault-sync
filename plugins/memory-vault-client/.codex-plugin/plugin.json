@@ -1,0 +1,32 @@
+{
+  "name": "memory-vault-client",
+  "version": "0.24.0-alpha.1",
+  "description": "Preview: optional local MCP tools and opt-in Codex visible-turn hooks using the same taskless Memory Vault core.",
+  "author": {
+    "name": "Memory Vault contributors"
+  },
+  "homepage": "https://github.com/qh-work/memory-vault-sync",
+  "repository": "https://github.com/qh-work/memory-vault-sync",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "mcp", "local-first", "taskless", "continuity"],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Memory Vault Client",
+    "shortDescription": "Shared local memory; optional visible-turn capture",
+    "longDescription": "Read and append taskless memory through explicit MCP tools. Opt-in Codex hooks save documented visible user and final-assistant fields locally. No network, transcript scanning, task binding, or self-installation. Work automatic lifecycle hooks are not claimed.",
+    "developerName": "Memory Vault contributors",
+    "category": "Productivity",
+    "capabilities": [
+      "Local memory recall and handoff",
+      "Explicit memory writes",
+      "Opt-in Codex visible-turn capture",
+      "Configured record signing"
+    ],
+    "websiteURL": "https://github.com/qh-work/memory-vault-sync",
+    "defaultPrompt": [
+      "Recall relevant memory before this work.",
+      "Save this visible turn and its continuity.",
+      "Show the local memory record count."
+    ]
+  }
+}

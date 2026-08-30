@@ -1,0 +1,4 @@
+# Optional trusted integrations only. memory_vault.py needs no third-party package.
+# Cryptographic primitives are supplied by PyCA; this project does not implement them.
+# 50.0.1 release metadata verified at https://pypi.org/project/cryptography/50.0.1/
+cryptography>=50.0.1,<51

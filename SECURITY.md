@@ -38,6 +38,11 @@ and confidence labels itself, and rejects nested or authority-shaped metadata.
 It cannot identify every secret embedded in free text; the calling agent remains
 responsible for sending only appropriate visible content.
 
+Manual protocol/MCP `observe` is caller-reported. Only the configured host-hook
+path selects a host-visible source label; this is still not a cryptographic
+attestation by the host. Imported labels remain claims. The verification result
+is separate from the canonical record and never upgrades text into instructions.
+
 ## Local storage
 
 The reference implementation uses the current OS user's local application-data
@@ -83,6 +88,59 @@ confidentiality or sender identity. Use an external user-approved encrypted
 transport for sensitive bundles. Importing a bundle imports historical evidence
 only; it never imports permission, policy, execution rights, plugin state,
 account state, Task ownership, or Git state.
+
+In v0.24, unsigned imports are quarantined by default. Explicit
+`--accept-unsigned` admits them without authenticating a signer. Default recall
+and handoff exclude quarantined records; explicitly fetching an ID permits
+review without admission. Unsigned corrections cannot change the status of a
+verified target. The optional client checks current key trust while reading;
+a bare core with no trust registry reports verification at admission only.
+
+## Optional signing and delivery
+
+[Ed25519 signatures](docs/TRUST.md) are supplied by PyCA cryptography, not custom
+cryptography. An independently managed public-key registry controls which keys
+may authenticate imported bytes. Memory, MCP tools and transfer packets cannot
+create a key, enroll a sender, restore a revoked key or change policy. A signer
+callback that fails must not downgrade a configured signed write to unsigned.
+
+A signature establishes possession of a registered key and commitment to exact
+bytes. It does not prove the text's truth, original human/model identity, task
+completion, permission or execution authority. A publisher explicitly attesting
+an old unsigned record becomes its attester, not its original author. This
+preview stores one accepted proof per record, not a multi-signature history.
+
+The optional trust/key storage and signed directory adapter currently require
+protected POSIX storage. They fail closed on Windows until an actual ACL-backed
+implementation is available. The unsigned core is still standard-library and
+cross-platform. Protect identities outside the exchange directory and outside
+shared memory. Same-OS-user file access is not a hostile-agent isolation boundary.
+
+[Directory delivery](docs/TRANSFER.md) signs both the envelope and the records,
+uses independent sender/store cursors and atomic local receipts, and refuses
+unregistered senders. Invalid files do not gain ordering authority by their
+names; a genuinely signed fork requires operator resolution. Bounded discovery
+and input limits mitigate resource exhaustion but do not make a malicious shared
+filesystem available or confidential. Transport access control/encryption belongs
+to the separately authorized sharing mechanism.
+
+Missing or revoked dependencies and over-budget closures are reported as
+`blocked`, not silently represented as delivered. Their records remain in the
+Vault and can be requeued explicitly. A successful local save, published batch,
+or receiver commit is not proof that another model consumed or accepted memory.
+
+## Transparent optional capture
+
+The [client](docs/CLIENTS.md) does not install, enable or trust its own hooks.
+Visible-turn capture defaults off. When enabled through ordinary host/user
+controls, it reads only documented visible event fields, never transcript files,
+hidden prompts or hidden reasoning. Its prompt path is local-only. Private
+pending files and content-free receipts support retries; no host logs are erased
+or suppressed and persistence is not hidden from the user. A Stop hook cannot
+block termination or ask the agent to continue merely to save memory.
+
+This is an untested implementation preview, not a security audit or production
+certification. See [the independent review handoff](docs/REVIEW_HANDOFF.md).
 
 ## Reporting vulnerabilities
 

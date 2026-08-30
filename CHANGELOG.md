@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.24.0-alpha.1 — Shared-core integration preview (unreleased)
+
+- Kept the standalone standard-library core and taskless canonical record model;
+  added optional client, trust, directory-transfer and offline-migration modules.
+- Added eight stdio MCP tools and an opt-in Codex hook package that shares the
+  same Vault. Capture reads documented visible event fields only; no transcripts,
+  network prompt path, installation, hook self-trust or background daemon.
+- Added optional PyCA Ed25519 record/message signatures, separate key enrollment
+  and revocation, and read-time trust checks. Signing does not prove truth,
+  original author identity, or execution permission. POSIX protected-key storage
+  only; native Windows signing/ACL support remains open.
+- Added SQLite v2 admission metadata, unsigned-import quarantine and
+  trust-aware correction/handoff. V1 upgrades are additive and write-triggered;
+  reads neither create nor migrate databases. Canonical records stay immutable.
+- Changed direct `observe` provenance to caller-reported; only an explicitly
+  configured local host adapter can label event fields host-visible.
+- Added a bounded incremental feed with relation closure, explicit blocked
+  dispositions and requeue. Added signed per-store batches, durable sender
+  pending bytes, receiver receipts, replay checks and signed-fork detection.
+- Added a one-way converter for the documented v0.21 export-network ZIP schemas,
+  output mapping/loss reports and dry-run support. No live old-plugin, Task or
+  Git state is imported. Logical export/delta order preserves local ingest order;
+  migration uses dependency-first, preserved-time ordering.
+- Fixed long visible-turn indexing rejection, signed-writer accidental downgrade,
+  stale verification in retry responses, unsafe FIFO reads, and retry count
+  inflation found during static review.
+- Added source-only client packaging, setup/trust/transfer/migration guides,
+  implementation status and external review instructions. Existing stable
+  release and installed private client are unchanged. **No tests, runtime
+  benchmarks, live capture, installation or real migration were run.**
+
 ## 0.23.0 — Universal Agent Memory Protocol
 
 - Replaced the client-plugin product with a model-neutral protocol.
@@ -20,5 +51,6 @@
 - Reduced CI to synthetic, no-network protocol conformance on Linux, macOS, and
   Windows.
 
-Earlier plugin-oriented development remains available in Git history but is no
-longer distributed or supported by the current architecture.
+Earlier plugin-oriented development remains available in Git history. The
+v0.24 optional client is a new adapter over the current core, not a restored
+legacy runtime or a second memory model.
