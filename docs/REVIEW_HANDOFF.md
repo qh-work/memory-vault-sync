@@ -6,8 +6,12 @@ ledger to match completed code or mark a requirement passed because a function,
 schema, fixture or archive exists. This document does not assert that a v0.25
 release is published, installed, fully runtime-accepted or certified.
 
-The owner initially requested no tests and later allowed only the
-[12-case offline synthetic campaign](V0_25_SCOPED_SMOKE.md). Reading this handoff
+The owner initially requested no tests and later allowed minimal offline
+synthetic validation in temporary directories, without networking, installation
+or private-memory access. The authorization was not limited to one run or 12
+cases. The [initial campaign](V0_25_SCOPED_SMOKE.md) and
+[six-case follow-up](V0_25_FOLLOWUP_SMOKE.md) record separate pinned results.
+Reading this handoff
 is **not permission to run tests or applications**. Obtain the current review
 user/host's authorization for the chosen execution scope first; without it,
 stop at source/static review and report runtime checks as pending. Never use a
@@ -130,8 +134,10 @@ also passed in the recorded campaign; the source repair alone was not proof.
 ### Current v0.25 synthetic source inventory
 
 This is an **authored inventory, not a passing full-suite result**. Only the
-12 exact cases in [the scoped report](V0_25_SCOPED_SMOKE.md) have execution
-evidence from that campaign; the other cases remain unrun. Re-list the selected commit
+12 exact cases in [the first report](V0_25_SCOPED_SMOKE.md) and six exact cases in
+[the follow-up](V0_25_FOLLOWUP_SMOKE.md) have execution evidence on their
+respective source commits. They are not an 18-case pass on current source;
+the other cases remain unrun. Re-list the selected commit
 before reporting coverage; retain `tests/test_memory_vault.py` for shared
 core/client regressions too. Asserting a size constant is not a scale trial.
 
@@ -171,16 +177,18 @@ passes. The linked scoped report supplies only its named execution results;
 the example commands in this handoff were not run as a full campaign.
 
 The cross-client semantic-retry and candidate/fragment-budget regressions were
-authored after the pinned smoke campaign. Neither those new cases nor their
-runtime repairs inherit its passing result. Review the shared transaction,
-complete canonical projection binding, current admission, bounded direct versus
-expanded candidates and separately reported span/scoring work before seeking
-permission for a focused execution campaign.
+authored after the initial pinned campaign. Six now have their own execution
+evidence below; neither their runtime repairs nor other unrun cases inherit the
+older passing result. Review the shared transaction, complete canonical
+projection binding, current admission, bounded direct versus expanded
+candidates and separately reported span/scoring work before any further
+execution within an authorized scope.
 
-### Proposed six-case follow-up — not run or scheduled
+### Six-case follow-up — executed on pinned newer source
 
-For the post-smoke retrieval and shared-Vault semantic-retry changes, a proposed
-minimal next campaign consists of exactly these six methods:
+For the post-smoke retrieval and shared-Vault semantic-retry changes, exactly
+these six methods passed on `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`, with
+zero failures, errors or skips:
 
 ```text
 test_v025_retrieval_views.RetrievalAndViewTests.test_expansion_cannot_evict_a_direct_match_with_a_unique_query_word
@@ -191,15 +199,19 @@ test_v025_compat.HostCompatibilityTests.test_semantic_crash_after_shared_commit_
 test_v025_compat.HostCompatibilityTests.test_shared_semantic_receipt_rejects_redirected_anchor_and_extra_response_fields
 ```
 
-This is a scope proposal, **not renewed execution permission**. Pin the newer
-reviewed source, use a fresh source copy and isolated temporary synthetic paths,
-and retain the offline/no-install/no-private-state boundary. The long-tail
-fixture contains about 7 MiB of synthetic text; it is not a throughput trial.
-The concurrency case uses two local fixture threads; the interrupted-cache
-case injects an exception, not a real process crash. Do not expand this list to
-whole-file discovery, other cases, native hosts, real keys/providers, cloud CI
-or publication. Even six passing outcomes would leave the other ledger rows
-open; they would not replace independent cross-model or cross-device evidence.
+The [follow-up evidence report](V0_25_FOLLOWUP_SMOKE.md) records the environment,
+isolation, raw-output hashes and limitations. The original minimal-validation
+authorization covered this follow-up; the previous claim that these six cases
+needed a new allowance was not supported by the actual scope. Execution used a
+fresh source copy and isolated temporary synthetic paths, preserving the
+offline/no-install/no-private-state boundary. It did not expand to whole-file
+discovery or other cases. The long-tail fixture contained about 7 MiB of
+synthetic text; it was not a throughput trial. The concurrency case used two
+local fixture threads; the interrupted-cache case injected an exception, not a
+real process crash. The other ten newly authored methods and both expanded
+existing cases remain unrun. All full ledger requirements stay open; these six
+passing results do not replace independent cross-model or cross-device evidence
+or authorize native hosts, real keys/providers, cloud CI or publication.
 
 ## 3. Review campaigns — scoped authorization required
 

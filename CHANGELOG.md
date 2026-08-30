@@ -38,11 +38,11 @@ acceptance or a published stable release**.
   choose the first canonical timestamp in the shared transaction and reuse only
   a fully revalidated projection/receipt under current evidence admission.
   Client-local attempt clocks no longer create permanent retry conflicts.
-  These new runtime changes and their authored regressions remain unrun; they
-  are not covered by the earlier pinned smoke evidence below.
+  A separate six-case follow-up below checks selected new regressions; these
+  repairs are not covered by the earlier pinned smoke evidence.
 - An explicitly authorized offline check in temporary directories passed 12
   selected synthetic cases on source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`
-  (zero failures, errors or skips). All other cases remain unrun; see the
+  (zero failures, errors or skips); see the
   [scoped smoke evidence](docs/V0_25_SCOPED_SMOKE.md). The two Python entry paths
   do not prove independent-implementation or cross-model interoperability.
   No host plugin was installed or private memory accessed; signing, cloud,
@@ -51,6 +51,14 @@ acceptance or a published stable release**.
   [review handoff](docs/REVIEW_HANDOFF.md#external-contribution-intake-pr-11).
   Private memory, installed plugins, protected main and published tags remain
   unchanged by this review-branch work.
+- Within the same minimal offline/temporary-data authorization, a separate
+  six-case follow-up passed on `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`
+  (zero failures, errors or skips): two retrieval and four shared semantic-retry
+  scenarios. See the [source-pinned evidence](docs/V0_25_FOLLOWUP_SMOKE.md).
+  The earlier 12 and newer six are not an 18-case current-source pass. The other
+  ten newly authored regressions and both expanded existing cases remain unrun;
+  full host, crypto, device, platform, recovery and performance acceptance is
+  still pending. No additional runtime repair was needed for this follow-up.
 
 ## 0.24.1 — Full authorized client alongside the lightweight protocol
 

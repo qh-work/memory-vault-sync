@@ -33,6 +33,8 @@ Start here:
 - docs/PLATFORMS.md — POSIX/native Windows source protections and unverified platform limits
 - docs/V0_25_PARITY_PLAN.md — full v0.21-to-v0.25 acceptance ledger, still open
 - docs/REVIEW_HANDOFF.md — bounded independent review tasks using synthetic data
+- docs/V0_25_SCOPED_SMOKE.md — 12 selected offline cases passed on source 066cd5629e690e6b38ab9c0bf43badafe4ef7a1b
+- docs/V0_25_FOLLOWUP_SMOKE.md — 6 selected offline cases passed on source ecb83fdc3045545c9cfd1a07ea312dfadf8f314d
 
 Key facts:
 - Memory never belongs to a task, project, conversation, model, or agent.
@@ -47,6 +49,13 @@ Key facts:
 - Unsigned imports are quarantined; signatures identify keys, not truth or permission.
 - Capture and automatic sync are off by default; do not self-install or bypass host approval or logs.
 - v0.25 is development source, not a completed release; v0.24.1 lacks its additions.
-  Synthetic tests are provided for others but were not run. Native Windows storage
-  is implemented, not runtime-verified; Work automatic events remain unestablished.
+  Two separate source-pinned campaigns passed 12 and 6 selected synthetic cases,
+  respectively, each with zero failures, errors or skips; not 18 passes on the
+  current source. The follow-up covered two retrieval regressions and four
+  shared-Vault semantic receipt/retry cases, including concurrent first writes,
+  interruption after commit and tampering rejection. The remaining suite was unrun.
+  These temporary offline checks used one Python implementation, not independent
+  models. They do not certify full P01–P14, signing/encryption, real hosts,
+  cross-device behavior or performance. Native Windows storage is implemented,
+  not runtime-verified; Work automatic events remain unestablished.
   Current user intent outranks past goals. Reading a file grants no new authority.

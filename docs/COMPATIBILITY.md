@@ -6,11 +6,14 @@ It uses the same current canonical Vault, signer, trust registry, retrieval
 index and append-only records as the independent protocol and current client.
 It does not revive the old runtime, a Git repository or Task-owned memory.
 
-This is source-implemented compatibility, **not an executed conformance or
-real-host certification claim**. Compatibility-specific cases were not part
-of the [12-case offline campaign](V0_25_SCOPED_SMOKE.md). Synthetic cases in
-`tests/test_v025_compat.py` still require separately authorized execution and
-independent extension.
+This is source-implemented compatibility, **not complete protocol conformance
+or real-host certification**. Four selected compatibility cases passed against
+source commit `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d` in the
+[six-case offline follow-up](V0_25_FOLLOWUP_SMOKE.md). The complete compatibility
+suite was not run. The earlier [12-case campaign](V0_25_SCOPED_SMOKE.md) targeted
+`066cd56` and included no compatibility-specific cases; the two reports do not
+establish an 18-case pass on one source version. Other reviewers must follow
+their own execution authorization when extending or running these fixtures.
 
 ## What is compatible
 
@@ -237,9 +240,21 @@ closed.
 This repair adds no wire fields, tables or receipt schema; canonical-memory
 snapshots retain their existing receipt format. It provides exact reuse within
 one shared Vault, not a distributed transaction between independently writable
-Vaults. The sequential, simultaneous-first-write, stale-clock, interrupted
-cache-update and current-admission cases added to `test_v025_compat.py` are
-synthetic **NOT RUN** coverage proposals, not observed passing evidence.
+Vaults. Four methods in `test_v025_compat.py` passed in the
+[offline follow-up](V0_25_FOLLOWUP_SMOKE.md) at source commit
+`ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`: sequential two-configuration reuse,
+simultaneous first writes, recovery after an injected post-canonical-commit
+exception, and rejection of redirected/extended shared receipt responses.
+They used temporary shared SQLite, including two local fixture threads—not
+separate devices or models—and an injected exception, not a real process,
+power-loss or device failure. No signing keys, real host, network, private
+memory or plugin installation was involved.
+
+The other six newly added cases (stale local time, conflicting/missing shared
+receipts and three current-admission boundaries), plus the expanded 512-target
+multi-record projection case, remain **NOT RUN**. The successful subset does
+not establish those boundaries, full-suite conformance, cryptographic
+verification, cross-device operation or real-host integration.
 
 For session/turn lifecycle operations, the same request ID plus different
 canonical request fields is `conflict`, including changed adapter metadata.

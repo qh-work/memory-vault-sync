@@ -6,9 +6,12 @@ session or device the owner of a memory. Configuration and retry handles are
 local control state, not another memory hierarchy.
 
 These commands are implementation interfaces, not evidence of a successful
-installation. This release work did **not** run the application, tests, a real
-backup/restore, a key ceremony or a private-data migration. Use synthetic data
-for independent validation before relying on recovery in production.
+installation. The [initial scoped campaign](V0_25_SCOPED_SMOKE.md) included a
+mocked restore-routing case, not an actual recovery. The
+[six-case follow-up](V0_25_FOLLOWUP_SMOKE.md) did not exercise these operator
+workflows. Real backup/restore, key ceremonies and private-data migration remain
+unverified. Use authorized synthetic validation before relying on recovery in
+production.
 
 ## Read-only doctor
 

@@ -71,16 +71,19 @@ open until evidence is recorded; it is not shortened to match finished work.
 The following map records concrete implementation and authored review material.
 It does **not** close the full requirements in the ledger above. The
 [12-case offline smoke report](V0_25_SCOPED_SMOKE.md) records the limited
-execution on source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`. Paths describe
+execution on source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`. The separate
+[six-case follow-up](V0_25_FOLLOWUP_SMOKE.md) records two retrieval and four
+shared semantic-retry cases on `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`.
+Neither result applies retroactively to the other's source. Paths describe
 the development source, not the already published v0.24.1 artifact.
 
 | ID | Implementation / contract | Authored review evidence and remaining work |
 | --- | --- | --- |
 | P01 | `memory_vault.py`, `PROTOCOL.md`, `schemas/record.schema.json` | Four vector/unsigned core-client-MCP exchange cases passed in the scoped report; exact canonical records survived a new-store round trip. Independent implementation and full parity acceptance remain pending |
 | P02 | `memory_vault_client.py`, `memory_vault_lifecycle.py`, `memory_vault_hosts.py` | Existing synthetic hook/lifecycle cases plus `test_v025_compat.py`; real host and crash/race evidence pending |
-| P03 | Core full-record terms, fragments, concept expansion and ranking; `docs/RETRIEVAL.md` | `test_v025_retrieval_views.py`, `test_v025_index_state.py`; direct-token candidates precede expansion, relevant spans precede nonmatching prefixes within unchanged byte/scoring limits. These post-smoke fixes and ranking/scale/performance cases remain unrun |
+| P03 | Core full-record terms, fragments, concept expansion and ranking; `docs/RETRIEVAL.md` | Two follow-up cases passed: unique direct-token retention against backup/archive/save distractors and seven large-record tail matches within existing budgets. The other retrieval/index/graph methods, comparative ranking and scale/performance acceptance remain pending |
 | P04 | Core `memory.views`, `memory.graph`, `memory.reindex`; `docs/GRAPH_VIEWS.md` | Bounded timelines/frontiers and repair cases in retrieval tests; runtime trust/pagination evidence pending |
-| P05 | `memory_vault_compat.py`, eleven-tool MCP, separate host schemas; stateless capability discovery with strict request validation | Selected unsigned MCP read/write and mocked lazy-configuration cases passed. Shared-Vault semantic retries now validate and reuse the first canonical projection across client configurations; this post-smoke fix, complete eleven-tool, old-host and live-host cases remain unrun |
+| P05 | `memory_vault_compat.py`, eleven-tool MCP, separate host schemas; stateless capability discovery with strict request validation | Selected unsigned MCP read/write and mocked lazy-configuration cases passed in the older campaign. Four follow-up cases passed for shared semantic retries, first-write fixture threads, injected post-commit interruption and receipt tampering. Complete eleven-tool, old-host and live-host acceptance remain pending |
 | P06 | `memory_vault_sync.py`, `memory_vault_transfer.py`, chained v2 streams | `test_v025_sync_review.py` plus existing delivery cases; process/concurrent-writer and interruption execution pending |
 | P07 | Sync review/resolve/requeue and `memory_vault_privacy.py` | One core blocked-dependency/requeue regression passed; this is not the signed sync review/resolution campaign. No real content scanned or uploaded |
 | P08 | `memory_vault_remote.py`, signed fragment groups, `memory_vault_pack.py` | Review fixtures for directory/rclone/fragment recovery; real provider, near-limit and platform trials pending |
@@ -92,20 +95,23 @@ the development source, not the already published v0.24.1 artifact.
 | P14 | Allowlisted build scripts, current docs/schema discovery, separate protocol/client/review packages | Packaging can establish source inventory and bytes only; exact artifact manifest is the record of completed static checks. Public availability and runtime acceptance must be recorded separately |
 
 The review kit includes executable cases separately from the documentation-only
-protocol. Only the exact 12 cases in the scoped report were run; the remaining
-authored cases stay unrun. See [REVIEW_HANDOFF.md](REVIEW_HANDOFF.md) for
+protocol. Execution is limited to the exact 12 old-source cases and six
+newer-source cases in their respective reports; this is not an 18-case pass on
+current source. The remaining authored cases stay unrun. See
+[REVIEW_HANDOFF.md](REVIEW_HANDOFF.md) for
 bounded campaigns and evidence fields. Restore/install examples have not been
 executed against any real Vault or installed client. No advertised data-transfer
 receipt proves that another model read or adopted the memory.
 
 The [external contribution intake](REVIEW_HANDOFF.md#external-contribution-intake-pr-11)
 records a contributor's three-case v0.24.1 report separately from the later
-maintainer v0.25 smoke campaign. Neither result closes this full ledger.
+maintainer v0.25 campaigns. These results do not close this full ledger.
 
 ## Verification and release gate
 
 The owner previously requested no test execution, then explicitly allowed the
-minimal offline campaign recorded above. This was not permission for full-suite
+minimal temporary-directory offline validation used for the campaigns above,
+without a one-time or 12-case limit. This was not permission for full-suite
 discovery, networking, installation, live hosts, cloud CI or release publication.
 Source, schema, package and archive inspection are still separate from tests.
 No live/private Vault, credential, signing key, host installation or remote

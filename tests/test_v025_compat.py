@@ -1,7 +1,19 @@
-"""Synthetic host-protocol contract cases, provided but NOT run for this release.
+"""Synthetic host-protocol cases with narrowly scoped execution evidence.
 
-All filesystem data lives in temporary fixtures. No account, real Vault,
-private signing key, host transcript, executable or network is required.
+Four selected methods passed against source commit
+ecb83fdc3045545c9cfd1a07ea312dfadf8f314d; see docs/V0_25_FOLLOWUP_SMOKE.md:
+- test_two_configurations_reuse_shared_semantic_record_and_original_receipt
+- test_simultaneous_first_semantic_writers_share_one_canonical_effect
+- test_semantic_crash_after_shared_commit_reuses_effect_without_local_cache
+- test_shared_semantic_receipt_rejects_redirected_anchor_and_extra_response_fields
+
+The other six newly added regression methods and the expanded 512-target case
+remain NOT RUN. The complete suite was not run. Recorded checks used temporary
+shared SQLite fixtures; concurrency means two local fixture threads, and the
+"crash" means an injected exception, not a real process/device failure. No
+private memory, signing keys, real host, network or plugin installation was
+involved. These results are not cross-device or cryptographic certification.
+Other reviewers must remain within their own execution authorization.
 """
 
 from __future__ import annotations

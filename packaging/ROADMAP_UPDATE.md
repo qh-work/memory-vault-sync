@@ -13,15 +13,23 @@ retrieval/graph views, signed resumable transfer and blocked-send review, legacy
 packs/checkpoints, full recovery, managed updates/rollback, selected sharing,
 external trust/encryption boundaries and native protected storage adapters.
 
-Source implementation is **not runtime evidence**. An explicitly authorized
-offline check in temporary directories passed 12 selected synthetic cases on
-source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b` (zero failures, errors or skips);
-all other cases remain unrun. See the exact
-[scoped smoke evidence](../docs/V0_25_SCOPED_SMOKE.md). The two exercised paths
+Source implementation is **not runtime evidence**. Two authorized offline
+campaigns used temporary synthetic data:
+
+- [12 selected cases passed](../docs/V0_25_SCOPED_SMOKE.md) on
+  `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`.
+- [6 selected cases passed](../docs/V0_25_FOLLOWUP_SMOKE.md) on
+  `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`: two retrieval regressions and
+  four shared-Vault semantic receipt/retry cases, including concurrent first
+  writes, interruption after commit and tampering rejection.
+
+Each campaign had zero failures, errors or skips. These are separate results,
+not 18 passes on the current source; the remaining suite was not run.
+The two exercised paths
 share one Python reference; independent-implementation and cross-model
 interoperability are not established.
 
-No host plugin was installed or private memory accessed. Signing, cloud,
+No host plugin was installed or private memory accessed. Signing/encryption, cloud,
 live-host/cross-device, native Windows and performance validation remain open,
 as do the full recovery and update-crash acceptance requirements. The separate
 review-kit build includes synthetic material for authorized independent

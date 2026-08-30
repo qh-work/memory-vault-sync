@@ -6,9 +6,15 @@ client modes. They never create Task directories, own memories, alter records,
 or execute proposed next actions.
 
 The operations are implemented in the single standard-library core. Public
-synthetic cases are supplied in `tests/test_v025_retrieval_views.py`, but were
-not executed during this implementation. This document is not a deployment,
-cryptographic or real-host certification.
+synthetic cases are supplied in `tests/test_v025_retrieval_views.py`. Two
+retrieval-only cases from that file passed at source
+`ecb83fdc3045545c9cfd1a07ea312dfadf8f314d` in the limited
+[offline synthetic follow-up](V0_25_FOLLOWUP_SMOKE.md); they do not exercise or
+validate the `memory.views` or `memory.graph` operations described here.
+The actual graph/view cases and the expanded current-trust revocation case
+remain unexecuted. The earlier twelve-case smoke run at `066cd56` does not
+cover the later retrieval changes either. This document is not graph/view
+acceptance evidence or a deployment, cryptographic or real-host certification.
 
 ## A claim is an association, not a container
 

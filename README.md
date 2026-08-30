@@ -32,13 +32,20 @@ The build produces two usage packages and a separate review kit:
 - **Optional single-file reference:** [`memory_vault.py`](memory_vault.py),
   requiring only Python 3.10+ and its standard library.
 
-An explicitly authorized, temporary-directory offline check passed **12 selected
-synthetic cases** on source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`, with
-zero failures, errors or skips. All other cases remain unrun; see the exact
-[scoped smoke evidence](docs/V0_25_SCOPED_SMOKE.md).
+Two authorized, temporary-directory offline campaigns have separate evidence:
+
+- **12 selected cases passed** on `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`:
+  [original scoped smoke report](docs/V0_25_SCOPED_SMOKE.md).
+- **6 selected cases passed** on `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`:
+  [follow-up report](docs/V0_25_FOLLOWUP_SMOKE.md), covering two retrieval
+  regressions and four shared-Vault semantic receipt/retry cases, including
+  simultaneous first writers, interruption after commit and receipt tampering.
+
+Each campaign had zero failures, errors or skips. They are not an 18-case pass
+on the current source; the remaining suite was not run in either campaign.
 The cross-entry checks share the Python reference: they do not establish
 independent-implementation or cross-model interoperability. No host plugin was
-installed or private memory accessed. Signing, cloud backends, live-host or
+installed or private memory accessed. Signing/encryption, cloud backends, live-host or
 cross-device behavior, native Windows and performance remain unvalidated.
 The protected main branch is not bypassed to avoid its required tests; use the
 exact source/version when reviewing. See [status](docs/STATUS.md),

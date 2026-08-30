@@ -6,10 +6,25 @@ outlive the client and the task that produced them.** You can adopt the protocol
 without installing our plugin or using our language/database.
 
 This source targets **v0.25**, restoring full v0.21 workflows alongside the
-independent protocol. It is development work, **not a runtime-tested or publicly
+independent protocol. It is development work, **not a fully runtime-validated or publicly
 completed v0.25 release**. The prior [v0.24.1 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.24.1)
 does not include these additions. Use an exact reviewed commit, not an
 unqualified main checkout; see [status](docs/STATUS.md).
+
+Limited execution evidence comes from two separate offline campaigns:
+
+- [12 selected cases passed](docs/V0_25_SCOPED_SMOKE.md) on
+  `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`.
+- [6 selected cases passed](docs/V0_25_FOLLOWUP_SMOKE.md) on
+  `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`: two retrieval regressions and
+  four shared-Vault semantic receipt/retry cases, including concurrent first
+  writes, interruption after commit and tampering rejection.
+
+Both used temporary synthetic data, with zero failures, errors or skips.
+This is not 18 passed cases on one current source. The remaining suite and full
+P01–P14 acceptance are open. The reference's two entry paths are not independent
+implementations or models; no real-host, signing/encryption, cross-device,
+native Windows or performance result follows from these checks.
 
 ## Route A — your implementation, existing host tools
 

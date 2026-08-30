@@ -1,19 +1,27 @@
 # Memory Vault v0.25 independent review kit
 
 This separate archive contains public source and synthetic tests, not private
-memory or a preconfigured installation. An explicitly authorized offline check
-in temporary directories passed **12 selected synthetic cases** on source
-`066cd5629e690e6b38ab9c0bf43badafe4ef7a1b` (zero failures, errors or skips).
-All other cases remain unrun. See `docs/V0_25_SCOPED_SMOKE.md` for exact case IDs
-and scope; their presence or AST parsing is not a pass result. Compare that
-source with REVIEW_MANIFEST.json's source commit and byte inventory, then read
+memory or a preconfigured installation. Two authorized offline campaigns used
+temporary synthetic data:
+
+- **12 selected cases passed** on `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`;
+  see `docs/V0_25_SCOPED_SMOKE.md`.
+- **6 selected cases passed** on `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`;
+  see `docs/V0_25_FOLLOWUP_SMOKE.md`. These cover two retrieval regressions and
+  four shared-Vault semantic receipt/retry cases, including simultaneous first
+  writers, interruption after commit and tampering rejection.
+
+Each campaign had zero failures, errors or skips. They are not an 18-case pass
+on the current source; the remaining suite was not run. Case presence or AST
+parsing is not a pass result. Compare each report's source with
+REVIEW_MANIFEST.json's source commit and byte inventory, then read
 docs/REVIEW_HANDOFF.md and docs/V0_25_PARITY_PLAN.md for the full review scope.
 
 The exercised entry paths share one Python reference, not independent
 implementations or AI models. No host plugin was installed or private memory
-accessed. Signing, cloud, live-host/cross-device, native Windows and performance
+accessed. Signing/encryption, cloud, live-host/cross-device, native Windows and performance
 validation remain open. v0.25 is still unreleased development source, not a
-finished stable release; the 12-case result does not certify this whole kit.
+finished stable release; neither campaign certifies the whole kit or P01–P14.
 
 The kit includes attributed adaptations of the three cases from PR #11 and a
 new actual core → client/MCP write → core exchange case. The contributor's

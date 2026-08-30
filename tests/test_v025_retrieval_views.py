@@ -1,4 +1,13 @@
-"""Public synthetic 0.25 conformance cases, supplied without execution evidence.
+"""Public synthetic 0.25 cases, with narrowly scoped execution evidence.
+
+At source ecb83fdc3045545c9cfd1a07ea312dfadf8f314d, only these two methods
+from this file passed in the six-case offline synthetic follow-up:
+test_expansion_cannot_evict_a_direct_match_with_a_unique_query_word and
+test_seven_large_record_tails_do_not_spend_scoring_slots_on_unrelated_prefixes.
+See docs/V0_25_FOLLOWUP_SMOKE.md. The other four new retrieval cases, the
+expanded trust-revocation case and the actual graph/view cases remain unrun.
+The earlier twelve-case smoke run at 066cd56 does not cover these changes.
+Neither limited run is full-suite, performance or graph/view acceptance.
 
 Only disposable temporary Vaults are used. The shape-only signing fixture tests
 the core's injected admission boundary, NOT cryptography or real key custody.
@@ -121,7 +130,8 @@ class RetrievalAndViewTests(unittest.TestCase):
     def test_seven_large_record_tails_do_not_spend_scoring_slots_on_unrelated_prefixes(self) -> None:
         # About 7 MiB total, below the unchanged 8-MiB canonical-read limit.
         # The unrelated prefixes contain more than 4096 cheap candidate spans.
-        # This authored case is not a measured latency or a passed scale test.
+        # The ecb83fd follow-up passed this functional synthetic case, not a
+        # scale, throughput or latency benchmark.
         prefix = ("ordinary detail " * (core.MAX_TEXT_BYTES // 16))[:core.MAX_TEXT_BYTES - 96]
         originals: dict[str, str] = {}
         for index in range(7):

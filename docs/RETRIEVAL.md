@@ -5,11 +5,21 @@ Chinese/English concept groups from the former taskless runtime, polarity
 hints, evidence diversity and explainable ranking. It imports no old runtime,
 Git integration, model, embedding library or external service.
 
-This is a source capability description. The public synthetic cases in
-`tests/test_v025_retrieval_views.py` have been added for independent review;
-they were not executed during this implementation. In particular, the new
-direct-candidate priority and long-record fragment selection described below
-are not covered by the earlier, limited smoke run at `066cd56`.
+This is a source capability description with limited execution evidence. At
+source `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`, two selected retrieval
+regressions passed as part of the six-case
+[offline synthetic follow-up](V0_25_FOLLOWUP_SMOKE.md): protecting a direct
+match with a unique query word from concept expansion, and retrieving the
+tails of seven roughly 1-MiB records without spending full-scoring slots on
+unrelated prefixes. The latter is a functional synthetic check, not a scale,
+throughput or latency benchmark.
+
+The other four new retrieval regressions, the expanded current-trust
+revocation case and the actual graph/view cases in
+`tests/test_v025_retrieval_views.py` remain unexecuted. The full test file was
+not run. The earlier twelve-case smoke run at `066cd56` does not cover these
+retrieval changes; neither report establishes full retrieval parity or
+performance certification.
 
 ## Request and compatibility
 

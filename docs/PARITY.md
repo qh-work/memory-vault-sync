@@ -10,10 +10,21 @@ The baseline is v0.21.0 commit
 commit `de349ef8453b0aa0ebf68ae18484d0c1355cf91b`.
 The [full completion ledger](V0_25_PARITY_PLAN.md) is the acceptance scope.
 **Source present does not mean a test passed, a host was installed or v0.25
-was publicly released.** Only the [pinned 12-case offline campaign](V0_25_SCOPED_SMOKE.md)
-has execution evidence; later retrieval and semantic-retry source fixes are
-unrun. Full runtime acceptance remains pending; do not use this table as
-production certification.
+was publicly released.** Execution evidence is limited to two separate
+temporary-directory offline campaigns:
+
+- [12 selected cases passed](V0_25_SCOPED_SMOKE.md) on
+  `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`.
+- [6 selected cases passed](V0_25_FOLLOWUP_SMOKE.md) on
+  `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`: two retrieval regressions and
+  four shared-Vault semantic receipt/retry cases, including concurrent first
+  writes, interruption after commit and tampering rejection.
+
+Each campaign had zero failures, errors or skips. This is not 18 passes on the
+current source; the remaining suite and full P01–P14 acceptance remain open.
+These synthetic checks of one Python reference do not certify independent
+implementations/models, real hosts, signing/encryption, cross-device behavior,
+native Windows or performance. Do not use this table as production certification.
 
 ## Capability mapping
 

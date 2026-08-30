@@ -38,17 +38,31 @@ services; the source exposes explicit fail-closed boundaries.
 
 ## Publication is not certification
 
-The owner initially requested no tests and later authorized only a minimal
-offline synthetic check. [Twelve selected cases passed](V0_25_SCOPED_SMOKE.md)
-on the exact source recorded there; the remaining suite was not run. This does
-not authorize cloud CI, networking, installation or publication. Source/AST/JSON,
-package structure and archive-byte inspection remain separate evidence. No real
-Vault, installed private plugin, key, host setting or remote account was used.
+The owner authorized minimal offline synthetic acceptance in temporary
+directories, without networking, plugin installation or private-memory access.
+That permission was scope-limited, not a one-run or 12-case quota. Two separate
+source-pinned campaigns completed within that scope:
 
-Full runtime acceptance, host, crash/concurrency, native-platform, throughput
-and cross-device evidence remain pending. Do not publish an unqualified stable/completed claim
-without auditing all requirements. Review material may be shared as explicitly
-unverified development work; it does not replace a completion audit.
+- [12 selected cases passed](V0_25_SCOPED_SMOKE.md) on
+  `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`.
+- [6 selected cases passed](V0_25_FOLLOWUP_SMOKE.md) on
+  `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d`: two retrieval regressions and
+  four shared-Vault semantic receipt/retry cases, including simultaneous first
+  writes, interruption after commit and tampering rejection.
+
+Each campaign had zero failures, errors or skips. They are not an 18-case pass
+on the current source; the remaining suite was not run. This permission does
+not extend to full-suite discovery, cloud CI, networking, installation or
+publication. Source/AST/JSON, package structure and archive-byte inspection
+remain separate evidence. No real Vault, installed private plugin, key, host
+setting or remote account was used. The exercised entry paths share one Python
+reference; independent-implementation or cross-model interoperability is unproven.
+
+Full P01–P14 acceptance, broader crash/concurrency coverage, signing/encryption,
+real-host, native-platform, throughput and cross-device validation remain
+pending. Do not publish an unqualified stable/completed claim
+without auditing all requirements. Review material may be shared as development
+work with its precise validation limits; it does not replace a completion audit.
 
 Protected main and existing tags must not be rewritten or bypassed to obtain
 a green indicator. Tests are not silently triggered merely to manufacture a

@@ -45,14 +45,15 @@ integration, trust, alias, closure, recovery and packaging issues and led to
 source fixes. Python AST and JSON parsing were performed without importing the
 application. These checks prove only the parsed source/format properties.
 
-On 2026-08-31 (Asia/Shanghai), the owner authorized a minimal offline synthetic
-campaign: **12 selected cases passed, 0 failures/errors/skips**, on source
+On 2026-08-31 (Asia/Shanghai), under the owner's minimal offline synthetic
+validation authorization, **12 selected cases passed, 0 failures/errors/skips**,
+on source
 `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`. See the
 [exact cases, environment and limits](V0_25_SCOPED_SMOKE.md). This includes an
 actual core → configured client/MCP write → new-core exchange, not a second
-implementation or cross-model certification. The other authored cases remain
-unrun. Build/inventory checks are separate evidence in their original manifests;
-those immutable artifacts have not been relabeled as runtime-tested builds.
+implementation or cross-model certification. Build/inventory checks are separate
+evidence in their original manifests; those immutable artifacts have not been
+relabeled as runtime-tested builds.
 
 Subsequent source review identified and repaired three additional omissions:
 concept-expanded candidates could evict a direct query match; irrelevant long
@@ -62,26 +63,33 @@ conflict when saving the same semantic proposal with different attempt times.
 The retrieval changes preserve the existing candidate/byte/scoring limits and
 report lightweight span inspection separately. Semantic retries now reuse the
 shared first canonical projection only after checking its complete bytes,
-receipt binding and current evidence admission. These post-smoke changes and
-their newly authored regression cases **have not been executed**. The report
-above remains evidence for its pinned source only, not for this newer runtime.
+receipt binding and current evidence admission. A separate
+[six-case offline follow-up](V0_25_FOLLOWUP_SMOKE.md) on source
+`ecb83fdc3045545c9cfd1a07ea312dfadf8f314d` passed **6 selected cases, 0
+failures/errors/skips**: two retrieval regressions and four shared semantic-retry
+scenarios. The earlier report remains evidence for its own pinned source only;
+these campaigns must not be combined as 18 passing cases on current source.
 
 The post-smoke slice changes only the core retrieval and old-host compatibility
 runtime modules, plus their documentation and review material. Independent
 static cross-review, Python AST/JSON parsing, local-link inspection and diff
 checks were performed without importing the application. Six retrieval and
-ten compatibility test methods were authored, with two existing cases extended;
-none of those new or expanded cases has execution evidence.
+ten compatibility test methods were authored, with two existing cases extended.
+Of those 16 new methods, only the six named in the follow-up have execution
+evidence; the other ten and both expanded existing cases remain unrun.
 
 ## Still unverified / release gate
 
-The scoped campaign did not cover live capture, installed-host compatibility,
-crash/concurrency recovery, cryptographic interoperability, Windows native
-behavior, 2 GiB operation, throughput, two-device delivery or a cross-language
+The scoped campaigns did not cover live capture, installed-host compatibility,
+real process/device crash and concurrency recovery, cryptographic
+interoperability, Windows native behavior, 2 GiB operation, throughput,
+two-device delivery or a cross-language
 round trip. Configuration/recovery routing used mocks; it does not establish
 actual restore correctness. Metadata checks do not authenticate an author or
 verify an encryption provider. Do not infer these outcomes from source presence
-or the 12 passing cases.
+or either passing subset. The follow-up used two local fixture threads and an
+injected exception, not separate devices or a real process crash; its roughly
+7 MiB long-tail fixture is not a scale or performance certification.
 
 The work also does not establish native Work automatic events, production
 encryption/recovery ceremonies, a security audit, vendor certification or
