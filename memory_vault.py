@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Universal Agent Memory Protocol — zero-install reference implementation.
 
-An AI agent adopts this memory system by reading this file and using its small
-JSON protocol. This core requires no plugin, Git repository, account, task
+PROTOCOL.md defines the language- and storage-independent agreement. An agent
+may implement it with its host's existing tools or use this optional Python
+reference. This core requires no plugin, Git repository, account, task
 binding, project binding, model registration, network service or third-party
 package. Optional client/trust/transfer modules reuse this same core.
 
@@ -29,7 +30,7 @@ Protocol examples:
     {"op":"capabilities"}
     {"op":"recall","query":"What did we decide about sync?","limit":8}
     {"op":"observe","user":"Use local-first memory","assistant":"Done"}
-    {"op":"remember","kind":"goal","text":"Ship the universal memory protocol"}
+    {"op":"remember","kind":"fact","text":"Memory is independent of a task"}
     {"op":"handoff","query":"memory architecture","limit":12}
     {"op":"status"}
 
@@ -58,7 +59,7 @@ import unicodedata
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 
-VERSION = "0.24.0-alpha.1"
+VERSION = "0.24.0"
 REQUEST_SCHEMA = "universal-agent-memory-request/v1"
 RESULT_SCHEMA = "universal-agent-memory-result/v1"
 RECORD_SCHEMA = "universal-memory-record/v1"

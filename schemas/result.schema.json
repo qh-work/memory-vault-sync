@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UAMP core response envelope v1",
+  "$comment": "The envelope fixes authority and success/error exclusivity. Operation result details are defined in PROTOCOL.md; search ranking and implementation-specific storage metadata are not fixed by this schema. A valid envelope does not establish successful durable execution.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "ok",
+    "authority"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "universal-agent-memory-result/v1"
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/$defs/request_id"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "authority": {
+      "$ref": "common.schema.json#/$defs/authority"
+    },
+    "result": {
+      "type": "object"
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "code",
+        "retryable"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{1,63}$",
+          "not": {"pattern": "[\\r\\n]"}
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "ok": {
+          "const": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "not": {
+        "required": [
+          "error"
+        ]
+      }
+    },
+    {
+      "properties": {
+        "ok": {
+          "const": false
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "not": {
+        "required": [
+          "result"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "x-maxUtf8Bytes": 4194304
+}

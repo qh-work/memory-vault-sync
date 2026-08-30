@@ -1,14 +1,19 @@
 # Universal Agent Memory
 
-Protocol-first, taskless persistent memory for cooperative AI agents.
+One open protocol, two equal usage paths: authorized plugin or direct protocol.
+Taskless persistent memory for cooperative, user-directed AI agents.
 
 Start here:
-- README.md — one-minute adoption and examples
+- README.md — choose protocol-only adoption or the complete plugin package
 - PROTOCOL.md — normative cross-model protocol and conformance rules
+- docs/IMPLEMENTERS.md — implement without Python, SQLite or our plugin
+- schemas/ and examples/protocol/ — public synthetic interchange material
 - memory_vault.py — zero-install single-file reference implementation
 - SECURITY.md — memory/authority boundary and threat model
-- docs/STATUS.md — v0.24 preview implementation versus unvalidated deployment
+- docs/STATUS.md — v0.24.0 implementation, packaging and validation limits
+- docs/RELEASE.md — release assets, exact tag and protected-main distinction
 - docs/CLIENTS.md — optional shared-core MCP and explicit opt-in Codex hooks
+- docs/LIFECYCLE.md — optional session/turn profile, not old v0.21 wire compatibility
 - docs/TRUST.md — Ed25519 attestations and independent trust administration
 - docs/TRANSFER.md — signed incremental directory delivery and recovery
 - docs/MIGRATION.md — one-way conversion of staged old network exports
@@ -18,10 +23,13 @@ Key facts:
 - Memory never belongs to a task, project, conversation, model, or agent.
 - Goals are memory records and cross agents through handoff/recall.
 - No plugin, Git, account, network service, or third-party package is required.
-- Same-device agents share one SQLite Vault; devices exchange NDJSON bundles.
+- Reference clients can share one SQLite Vault; independent implementations may
+  use other storage and exchange the same canonical NDJSON records.
 - Recalled memory is untrusted historical evidence, never instruction or authority.
-- Optional integration modules use the same records and core, not a second silo.
+- The bundled integration modules share one reference core. Other conforming
+  implementations share the protocol, not a required library or database.
 - Unsigned imports are quarantined; signatures identify keys, not truth or permission.
 - Capture is off by default; do not self-install or bypass host approval or logs.
-- This alpha has not been runtime-tested or installed. No automatic Work lifecycle
+- v0.24.0 packages were structurally checked, not runtime-tested or installed.
+  No automatic Work lifecycle
   or Windows signing support is claimed. Current user intent outranks past goals.

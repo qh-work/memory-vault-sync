@@ -1,7 +1,9 @@
 # Contributing
 
-Universal Agent Memory keeps one readable standard-library core. Optional
-clients, trust and transfer modules build on that core, never duplicate it.
+Universal Agent Memory defines one language- and storage-independent protocol.
+The Python reference keeps one readable standard-library core; its optional
+clients, trust and transfer modules reuse it. Independent implementations are
+welcome when they preserve the same record, provenance and exchange contracts.
 
 ## Preserve the product boundary
 
@@ -31,7 +33,7 @@ account identifiers, hostnames, local paths, database files, or bundles.
 
 ## Minimal checks
 
-The v0.24 preview was developed without running tests at the owner's request.
+The v0.24 release was prepared without running tests at the owner's request.
 Do not describe that as a pass. The existing synthetic conformance specification
 has been updated for quarantine; new integrations still need independent review.
 See [the review handoff](docs/REVIEW_HANDOFF.md) for a bounded contribution task.

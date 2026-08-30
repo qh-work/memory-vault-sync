@@ -8,7 +8,8 @@ service carries that directory between devices, it provides the remote delivery.
 Local save/recall never waits for this adapter. The canonical SQLite records and
 delivery log are the local durable source; pending batches and small cursor
 receipts are retry state, not another memory database or Task system. The code
-is an untested alpha; no performance or end-to-end delivery result is claimed.
+has not undergone runtime testing; no performance or end-to-end delivery result
+is claimed.
 
 ## Setup
 
@@ -25,7 +26,7 @@ This adapter and protected signing storage currently require POSIX; native
 Windows signing/ACL support is not implemented.
 
 Commands below are examples for an authorized operator, not commands run while
-developing this preview. All paths must be absolute, without symlink components.
+preparing this release. All paths must be absolute, without symlink components.
 
 Publisher:
 
@@ -103,7 +104,7 @@ python3 /absolute/source/memory_vault.py \
 The ID is an example; use the actual blocked ID. This changes delivery metadata,
 not memory contents. It does not trust a key or admit quarantined memory. Repeat
 publication with the appropriate budget after repair. Deep/large relation
-graphs may need explicit larger-bundle review; this alpha does not fragment a
+graphs may need explicit larger-bundle review; this release does not fragment a
 single oversized dependency closure across independently admitted packets.
 
 Reception defaults to 16 batches per invocation (`--maximum-batches` up to 256),
@@ -138,7 +139,7 @@ is present, `acknowledge-published` with the same path arguments explicitly
 records that observed publication without sending it again or trusting its
 records. Otherwise restore the correct transport/state evidence or start an
 explicitly provisioned new publisher identity and fresh state directory;
-retain the old pending evidence for reconciliation. The alpha does not automate
+retain the old pending evidence for reconciliation. This release does not automate
 cross-recipient key rotation or cancellation of an uncertain prior publication.
 If the publisher key itself is revoked (including when it also signed a record),
 publication and acknowledgment fail closed; retain the old evidence and use the

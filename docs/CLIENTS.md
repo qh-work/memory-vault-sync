@@ -1,12 +1,12 @@
-# One Vault, optional client integrations — 0.24.0-alpha.1 preview
+# One Vault, optional client integrations
 
 The lightweight file and the optional client use the same canonical records,
 SQLite database, provenance rules and transfer format. There is no separate
 "plugin memory" and no Task or Project parent container.
 
-This is a prerelease, not a stable production release. The integration code is
-an implementation candidate, **not a validated promise
-of automatic saving in every desktop client**. Automated tests, live host
+The v0.24 integration code is **not a validated promise of automatic saving in
+every desktop client**. Publication does not establish host compatibility.
+Automated tests, live host
 installation and functional capture checks were not run for this change. No
 existing plugin, personal marketplace, private memory or host trust setting was
 changed by adding these source files.
@@ -16,7 +16,9 @@ changed by adding these source files.
 | Entry point | What invokes it | What it can do |
 | --- | --- | --- |
 | `memory_vault.py` | An explicitly launched local process | Standard-library core protocol, same local Vault |
+| `memory_vault_client.py protocol` | An explicitly launched configured client | The same core wire protocol, with the client's exact path and current trust checks |
 | `memory_vault_client.py mcp` | A host that supports local stdio MCP | Discoverable read/write memory tools |
+| `memory_vault_client.py lifecycle` | An explicitly launched runtime adapter | Stage, commit or abort visible turns using the new optional lifecycle v1 profile |
 | Optional Codex hooks | Reviewed/trusted host lifecycle events, plus capture opt-in | Stage the visible prompt, recall locally, save the visible final pair |
 | Work MCP entry point | Work installations that support the packaged local MCP server | Explicit tool calls; automatic Work lifecycle capture is **not established** |
 
@@ -31,18 +33,27 @@ cache as the Vault or key directory. The following commands are setup examples,
 not commands run by this release work:
 
 ```bash
+python3 /absolute/path/memory-vault-sync/memory_vault_client.py configure
+```
+
+Omitting `--vault` selects exactly the lightweight core's `default_vault_path()`:
+`MEMORY_VAULT_PATH` when set, otherwise the core's user-data directory. It is not
+a separate plugin database. To select explicit private paths instead:
+
+```bash
 python3 /absolute/path/memory-vault-sync/memory_vault_client.py \
   --config /absolute/private/control/client.json configure \
   --vault /absolute/private/memory/vault.sqlite3
 ```
 
-This creates one new client configuration with automatic capture **off**. It
+Either form creates one new client configuration with automatic capture **off**. It
 does not create a Vault, install a plugin, enroll a key or enable hooks. Existing
 configuration files are never replaced. To change a configuration, review and
 edit that operator-controlled file explicitly, preserving its private file
 permissions, or create a distinct new configuration and point the host at it.
 
-Set the light core's `--vault` to the same path to share one database. The
+For a custom path, set the light core's `--vault` to the same path, or use the
+configured `protocol` entry below so there is no second path to keep aligned. The
 configuration stores the chosen absolute Vault path; an unrelated shell's
 `MEMORY_VAULT_PATH` does not silently redirect an already-configured client.
 Do not put a WAL-mode SQLite database on a multi-host shared filesystem.
@@ -57,6 +68,51 @@ otherwise it reads `client.json` under:
 
 The client does not discover all old plugins or conversations and does not
 silently migrate another Vault. Use the explicit migration workflow separately.
+
+### Direct protocol access to the configured client's records
+
+These commands do not copy the database. A plugin write is immediately a record
+in the same local Vault available to this entry point:
+
+```bash
+python3 /absolute/path/memory-vault-sync/memory_vault_client.py \
+  --config /absolute/private/control/client.json protocol --serve
+```
+
+Send the standard `universal-agent-memory-request/v1` JSON requests documented
+in [PROTOCOL.md](../PROTOCOL.md), one line per request. Omit `--serve` for one JSON
+request on stdin and one response. Core `observe` remains one episode write;
+MCP `memory_observe` and lifecycle `turn.commit` are the explicitly named
+episode-plus-continuity conveniences. The passthrough does not rename core
+request IDs or invent a second record format.
+
+The configured protocol entry retains the client's signing configuration for
+new writes and its current trust-store checks for reads. Bare `memory_vault.py`
+with the same path sees the same records but does **not** load the client's trust
+registry or signing identity: admission-time verification alone is not a live
+revocation check. Choose the configured entry when those checks are required.
+Neither entry grants new host permissions. Explicit core/MCP writes do not
+require the automatic-capture toggle; their host must separately authorize them.
+
+Portable snapshots use the same client's exact Vault selection:
+
+```bash
+python3 /absolute/path/memory-vault-sync/memory_vault_client.py \
+  --config /absolute/private/control/client.json protocol \
+  --export /absolute/private/exchange/review.ndjson
+python3 /absolute/path/memory-vault-sync/memory_vault_client.py \
+  --config /absolute/private/control/other-client.json protocol \
+  --import /absolute/private/exchange/review.ndjson
+```
+
+The export target must be new. This explicit snapshot contains all canonical
+records, including quarantined records; it is not a filtered context view or a
+proof of trust. Bundles preserve record hashes and relations, **not signed
+admission metadata**. Import does not re-sign another author's records. Imports
+are quarantined by default; add `--accept-unsigned` only after deliberately
+reviewing and accepting that unsigned content. Use [signed transfer](TRANSFER.md)
+when author verification and sender/receiver acknowledgments are needed. None
+of these commands delivers a file over the network.
 
 ## 2. Connect a local MCP host
 
@@ -215,6 +271,35 @@ Hook results are JSON advisories, including on errors. They never block an
 action, return an allow decision, suppress logging, or request that the agent
 continue working. Recalled context is bounded and labeled untrusted evidence.
 
+### Portable runtime lifecycle, independently of Codex hooks
+
+A runtime that already has authorized local process access can explicitly use:
+
+```bash
+python3 /absolute/path/memory-vault-sync/memory_vault_client.py \
+  --config /absolute/private/control/client.json lifecycle --serve
+```
+
+This is the new `universal-memory-lifecycle/v1` profile: `capabilities`,
+`session.open`, `turn.input`, `turn.commit`, `turn.abort`, `session.close`.
+It retains the familiar operation meanings, **not the old v0.21 wire format**.
+It calls the same core and stores neither Git state nor task-owned memory.
+`--capture-visible-turns` is required for new lifecycle sessions/inputs/commits.
+
+`turn.input` stages only the supplied visible prompt. `turn.commit` freezes the
+visible reply and saves the episode and linked continuity with exact retry
+receipts. `turn.abort` cancels only before commit has begun; a partially saved
+commit cannot honestly be reported as rolled back. Sessions and turns are local
+correlation handles, not memory containers. This explicit route labels supplied
+text caller-reported; it does not assert that a host witnessed it. Complete
+schemas, examples, cancellation boundaries and recovery behavior are in
+[LIFECYCLE.md](LIFECYCLE.md).
+
+Completed lifecycle receipts can be read back after capture is disabled,
+without another memory write. Partial commits cannot resume while capture is
+off. Explicit abort/close may still discard uncommitted staging. Receipt replay
+confirms a historical local save, not current signature trust or remote receipt.
+
 ## 5. Build the optional package without installing it
 
 From a reviewed repository checkout:
@@ -235,7 +320,8 @@ need an explicit `py -3` or interpreter path in its MCP configuration. The
 Windows hook override assumes a PowerShell-based host command launcher; that
 host combination has not been functionally verified in this change.
 
-The package MCP entry uses relative `cwd: "."` and
+The package `.mcp.json` uses the `mcpServers` wrapper accepted by Codex's
+plugin configuration loader and the plugin metadata validator. Its entry uses relative `cwd: "."` and
 `args: ["scripts/launcher.py", "mcp"]`. Codex resolves that working directory
 against the installed plugin root, as specified by its
 [plugin configuration normalizer](https://github.com/openai/codex/blob/main/codex-rs/codex-mcp/src/plugin_config.rs#L281-L288).
@@ -262,6 +348,9 @@ client acceptance check establish that the new path is working.
   to perform the supported incremental upgrade.
 - Transport and old-data migration are optional components outside this
   lifecycle adapter. Hook latency never includes remote synchronization.
+- The new lifecycle adapter uses a small private local staging/control database,
+  not another canonical Vault. Keep this state for precise retry correlation;
+  changing a configured Vault path does not silently retarget pending turns.
 - Before production claims, another contributor should exercise an authorized
   Work/MCP save, a second model's read/write, signed transfer and revocation, and
   the original client's read-back. That acceptance work is still outstanding;

@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UAMP core request binding v1, with optional changes extension",
+  "$comment": "No permission, signing, admission or execution field is accepted. request_id is optional on the wire but required for exact-effect mutation retries. JSON lexical floats/exponents and duplicate keys require a strict parser.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "universal-agent-memory-request/v1"
+        },
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/request_id"
+        },
+        "op": {
+          "enum": [
+            "capabilities",
+            "status"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "op",
+        "kind",
+        "text"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "universal-agent-memory-request/v1"
+        },
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/request_id"
+        },
+        "op": {
+          "const": "remember"
+        },
+        "kind": {
+          "enum": [
+            "event",
+            "fact",
+            "observation",
+            "decision",
+            "artifact",
+            "entity",
+            "relation",
+            "provenance",
+            "summary",
+            "goal",
+            "continuity"
+          ]
+        },
+        "text": {
+          "$ref": "common.schema.json#/$defs/text"
+        },
+        "entities": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/entities"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "relations": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/relations"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/caller_provenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "op",
+        "user",
+        "assistant"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "universal-agent-memory-request/v1"
+        },
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/request_id"
+        },
+        "op": {
+          "const": "observe"
+        },
+        "user": {
+          "$ref": "common.schema.json#/$defs/text"
+        },
+        "assistant": {
+          "$ref": "common.schema.json#/$defs/text"
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/caller_provenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "op",
+        "query"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "universal-agent-memory-request/v1"
+        },
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/request_id"
+        },
+        "op": {
+          "enum": [
+            "recall",
+            "handoff"
+          ]
+        },
+        "query": {
+          "$ref": "common.schema.json#/$defs/text"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "maximum_context_bytes": {
+          "type": "integer",
+          "minimum": 512,
+          "maximum": 65536
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "op",
+        "memory_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "universal-agent-memory-request/v1"
+        },
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/request_id"
+        },
+        "op": {
+          "const": "get"
+        },
+        "memory_id": {
+          "$ref": "common.schema.json#/$defs/memory_id"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "universal-agent-memory-request/v1"
+        },
+        "request_id": {
+          "$ref": "common.schema.json#/$defs/request_id"
+        },
+        "op": {
+          "const": "changes"
+        },
+        "after": {
+          "$ref": "common.schema.json#/$defs/nonnegative_integer"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        },
+        "maximum_bytes": {
+          "type": "integer",
+          "minimum": 4096,
+          "maximum": 3145728
+        },
+        "store_id": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/store_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "require_verified": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "x-maxUtf8Bytes": 2097152
+}

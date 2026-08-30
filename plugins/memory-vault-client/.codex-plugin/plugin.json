@@ -1,7 +1,7 @@
 {
   "name": "memory-vault-client",
-  "version": "0.24.0-alpha.1",
-  "description": "Preview: optional local MCP tools and opt-in Codex visible-turn hooks using the same taskless Memory Vault core.",
+  "version": "0.24.0",
+  "description": "Authorized local plugin for the open Memory Vault protocol: MCP tools, opt-in visible-turn capture, lifecycle and portable memory.",
   "author": {
     "name": "Memory Vault contributors"
   },
@@ -13,14 +13,16 @@
   "interface": {
     "displayName": "Memory Vault Client",
     "shortDescription": "Shared local memory; optional visible-turn capture",
-    "longDescription": "Read and append taskless memory through explicit MCP tools. Opt-in Codex hooks save documented visible user and final-assistant fields locally. No network, transcript scanning, task binding, or self-installation. Work automatic lifecycle hooks are not claimed.",
+    "longDescription": "One open memory protocol, two equal usage paths. This optional plugin automates local recall and explicitly enabled visible-turn saving; independent agents can use the same records through the public protocol without this plugin. Includes a configured protocol bridge and optional session/turn lifecycle. No transcript scanning, task binding, self-installation or automatic network service. Work automatic lifecycle hooks and production validation are not claimed.",
     "developerName": "Memory Vault contributors",
     "category": "Productivity",
     "capabilities": [
       "Local memory recall and handoff",
       "Explicit memory writes",
       "Opt-in Codex visible-turn capture",
-      "Configured record signing"
+      "Configured record signing",
+      "Direct protocol and portable bundle access",
+      "Optional session and turn lifecycle"
     ],
     "websiteURL": "https://github.com/qh-work/memory-vault-sync",
     "defaultPrompt": [

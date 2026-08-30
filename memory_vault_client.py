@@ -32,9 +32,12 @@ from memory_vault import (
     VERSION,
     Vault,
     canonical_bytes,
+    default_vault_path,
     failure,
+    read_request,
     strict_json_loads,
     success,
+    write_response,
 )
 
 
@@ -279,6 +282,7 @@ def observe_turn(
     assistant: str,
     continuity: str | None = None,
     host_visible: bool = False,
+    caller_source: str = "mcp-caller-reported",
 ) -> Mapping[str, Any]:
     """Two idempotent writes; an interrupted second write can be retried safely."""
     user = _text(user, maximum=MAX_TURN_PART_BYTES)
@@ -287,7 +291,9 @@ def observe_turn(
     episode_request = _request_id(request_id, "episode")
     continuity_request = _request_id(request_id, "continuity")
     vault = config.vault(writing=True, host_visible=host_visible)
-    provenance = {"source_ref": "codex-visible-hook" if host_visible else "mcp-caller-reported"}
+    if caller_source not in {"mcp-caller-reported", "lifecycle-caller-reported"}:
+        raise MemoryError("invalid_capture_source")
+    provenance = {"source_ref": "codex-visible-hook" if host_visible else caller_source}
     observed = vault.handle({
         "op": "observe", "request_id": episode_request,
         "user": user, "assistant": assistant, "provenance": provenance,
@@ -692,7 +698,7 @@ def _emit(value: Mapping[str, Any]) -> None:
 
 
 def configure(args: argparse.Namespace, path: Path) -> Mapping[str, Any]:
-    vault = _absolute(args.vault)
+    vault = _absolute(args.vault if args.vault is not None else default_vault_path())
     identity = _absolute(args.identity) if args.identity is not None else None
     trust = _absolute(args.trust) if args.trust is not None else None
     if identity is not None and trust is None:
@@ -717,6 +723,7 @@ def configure(args: argparse.Namespace, path: Path) -> Mapping[str, Any]:
         raise MemoryError("client_config_exists") from None
     return success({
         "state": "configured", "capture_visible_turns": config["capture_visible_turns"],
+        "vault_path": str(vault),
         "signing_configured": identity is not None,
         "trust_checks_configured": trust is not None,
         "host_installed": False, "host_hooks_trusted": False,
@@ -724,16 +731,70 @@ def configure(args: argparse.Namespace, path: Path) -> Mapping[str, Any]:
     })
 
 
+def protocol_request(config_path: Path, request: Any) -> Mapping[str, Any]:
+    """Pass the core wire protocol through the selected client's trust boundary.
+
+    Unlike MCP memory_observe, core observe is exactly one episode write. The
+    lifecycle and MCP pair adapters are explicit higher-level conveniences.
+    """
+    if isinstance(request, dict) and request.get("op") == "capabilities":
+        return Vault().handle(request)
+    config = ClientConfig.load(config_path)
+    writing = isinstance(request, dict) and request.get("op") in {"remember", "observe"}
+    return config.vault(writing=writing).handle(request)
+
+
+def run_protocol(args: argparse.Namespace, config_path: Path) -> int:
+    if args.accept_unsigned and args.import_path is None:
+        raise MemoryError("accept_unsigned_requires_import")
+    if args.export_path is not None or args.import_path is not None:
+        # Bundles contain original records, not new assertions by the importer.
+        # Do not load a private key or silently re-sign another author's bytes.
+        vault = ClientConfig.load(config_path).vault()
+        if args.export_path is not None:
+            result = vault.export_bundle(_absolute(args.export_path))
+        else:
+            result = vault.import_bundle(_absolute(args.import_path), accept_unsigned=args.accept_unsigned)
+        write_response(success(result))
+        return 0
+    if not args.serve:
+        response = protocol_request(config_path, read_request())
+        write_response(response)
+        return 0 if response.get("ok") else 1
+    while True:
+        line = sys.stdin.buffer.readline(MAX_REQUEST_BYTES + 1)
+        if not line:
+            return 0
+        if len(line) > MAX_REQUEST_BYTES or not line.endswith(b"\n"):
+            write_response(failure("invalid_frame"))
+            return 1
+        try:
+            response = protocol_request(config_path, strict_json_loads(line))
+        except MemoryError as exc:
+            response = failure(exc.code, retryable=exc.retryable)
+        except Exception:
+            response = failure("client_unavailable", retryable=True)
+        write_response(response)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Optional local Memory Vault MCP and visible-turn adapters.")
+    parser = argparse.ArgumentParser(description="Optional local Memory Vault protocol, MCP and visible-turn adapters.")
     parser.add_argument("--config", type=Path, help="absolute configuration path; defaults to MEMORY_VAULT_CLIENT_CONFIG or user configuration directory")
     sub = parser.add_subparsers(dest="command", required=True)
     setup = sub.add_parser("configure", help="create a new config; never replace one or install a host plugin")
-    setup.add_argument("--vault", type=Path, required=True)
+    setup.add_argument("--vault", type=Path, help="absolute shared Vault path; omitted: the core's MEMORY_VAULT_PATH or user-data default")
     setup.add_argument("--identity", type=Path)
     setup.add_argument("--trust", type=Path)
     setup.add_argument("--capture-visible-turns", action="store_true", help="explicit opt-in to local visible-turn capture when the host delivers approved hooks")
     sub.add_parser("mcp", help="serve MCP JSON-RPC on stdio until the host closes stdin")
+    protocol = sub.add_parser("protocol", help="use the core protocol with this client's exact Vault, identity and trust configuration")
+    action = protocol.add_mutually_exclusive_group()
+    action.add_argument("--serve", action="store_true", help="serve core NDJSON until EOF")
+    action.add_argument("--export", dest="export_path", type=Path, help="write one new portable bundle; no network delivery")
+    action.add_argument("--import", dest="import_path", type=Path, help="import one portable bundle; quarantined by default")
+    protocol.add_argument("--accept-unsigned", action="store_true", help="explicitly admit this unsigned import; never authenticate it")
+    lifecycle = sub.add_parser("lifecycle", help="serve the explicit v1 local lifecycle profile; not the old v0.21 wire format")
+    lifecycle.add_argument("--serve", action="store_true", help="serve lifecycle NDJSON until EOF")
     hook = sub.add_parser("hook", help="consume one documented Codex event; never read transcripts")
     hook.add_argument("event", choices=sorted(_EVENTS))
     retry = sub.add_parser("retry", help="explicitly retry bounded local visible-turn outbox work; no network")
@@ -751,6 +812,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "configure":
             _emit(configure(args, path))
             return 0
+        if args.command == "protocol":
+            return run_protocol(args, path)
+        if args.command == "lifecycle":
+            from memory_vault_lifecycle import run_stream
+            return run_stream(path, serve=args.serve)
         config = ClientConfig.load(path)
         if args.command == "hook":
             raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)

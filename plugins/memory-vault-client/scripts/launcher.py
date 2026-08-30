@@ -12,10 +12,10 @@ import sys
 
 
 ALLOWED_MODULES = {
-    "memory_vault.py", "memory_vault_client.py", "memory_vault_trust.py",
+    "memory_vault.py", "memory_vault_client.py", "memory_vault_lifecycle.py", "memory_vault_trust.py",
     "memory_vault_transfer.py", "memory_vault_migrate.py",
 }
-REQUIRED_MODULES = {"memory_vault.py", "memory_vault_client.py", "memory_vault_trust.py"}
+REQUIRED_MODULES = {"memory_vault.py", "memory_vault_client.py", "memory_vault_lifecycle.py", "memory_vault_trust.py"}
 MAX_MODULE_BYTES = 1024 * 1024
 
 

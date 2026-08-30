@@ -108,7 +108,7 @@ A signature establishes possession of a registered key and commitment to exact
 bytes. It does not prove the text's truth, original human/model identity, task
 completion, permission or execution authority. A publisher explicitly attesting
 an old unsigned record becomes its attester, not its original author. This
-preview stores one accepted proof per record, not a multi-signature history.
+release stores one accepted proof per record, not a multi-signature history.
 
 The optional trust/key storage and signed directory adapter currently require
 protected POSIX storage. They fail closed on Windows until an actual ACL-backed
@@ -139,7 +139,7 @@ pending files and content-free receipts support retries; no host logs are erased
 or suppressed and persistence is not hidden from the user. A Stop hook cannot
 block termination or ask the agent to continue merely to save memory.
 
-This is an untested implementation preview, not a security audit or production
+This release has not undergone runtime testing, a security audit or production
 certification. See [the independent review handoff](docs/REVIEW_HANDOFF.md).
 
 ## Reporting vulnerabilities

@@ -7,7 +7,7 @@ state or treat remembered goals as a mandate to keep running.
 
 ## Scope and starting point
 
-Review `0.24.0-alpha.1` against stable `v0.23.0`. The implementation was not
+Review release tag `v0.24.0` against `v0.23.0`. The implementation was not
 runtime-tested at the owner's request. Only run checks if the current user/host
 authorizes them. Use fresh temporary directories and synthetic conversations;
 never point these examples at a real private Vault or copy real credentials.
@@ -15,11 +15,28 @@ Do not automatically activate the supplied plugin on somebody's desktop.
 
 Read [PROTOCOL.md](../PROTOCOL.md), [SECURITY.md](../SECURITY.md), and the relevant
 [client](CLIENTS.md), [trust](TRUST.md), [transfer](TRANSFER.md) or
-[migration](MIGRATION.md) guide before changing contracts. One canonical core is
-mandatory; Task/Project IDs may remain references only. Improvements belong in
-focused modules rather than a second memory implementation.
+[migration](MIGRATION.md) guide before changing contracts. One canonical protocol
+is mandatory; a different language or storage engine is welcome. The bundled
+plugin and Python reference reuse one core. Task/Project IDs remain references
+only. Read [independent implementation](IMPLEMENTERS.md) and
+[lifecycle](LIFECYCLE.md) contracts when working across the two usage paths.
 
 ## Small, useful review tasks
+
+The highest-priority v0.24 contribution is the **two-route round trip**: use the
+published schemas and synthetic NDJSON without importing the Python application,
+independently produce canonical records, import through the configured plugin's
+`protocol` entry, explicitly admit unsigned evidence, recall through MCP, export
+again and inspect with the independent implementation. Published vectors are
+specification material, not a passed test report.
+
+Also review the new [lifecycle profile](LIFECYCLE.md): capabilities → open →
+input → commit → close, exact retries, changed-request conflicts, abort before
+commit, crash recovery and cancel/commit races. Closing transport state must not
+delete or partition memory. A completed receipt remains readable after capture
+is disabled without restoring permission to create new memory. The old v0.21
+Host Adapter envelope is not this profile; do not run the old adapter unchanged
+and report that as v0.24 conformance.
 
 1. **Storage and unsigned import.** With synthetic data, confirm read-only
    operations do not create or migrate files. A known v1 upgrade must preserve

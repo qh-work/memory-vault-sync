@@ -1,0 +1,4 @@
+{"op":"capabilities","request_id":"req_example_capabilities_0001","schema_version":"universal-agent-memory-request/v1"}
+{"entities":["portable memory"],"kind":"goal","op":"remember","request_id":"req_example_goal_0001","schema_version":"universal-agent-memory-request/v1","text":"Finish the portable memory guide."}
+{"entities":["portable memory"],"kind":"goal","op":"remember","request_id":"req_example_goal_0001","schema_version":"universal-agent-memory-request/v1","text":"Finish the portable memory guide."}
+{"limit":4,"op":"handoff","query":"portable memory guide","request_id":"req_example_handoff_0001","schema_version":"universal-agent-memory-request/v1"}

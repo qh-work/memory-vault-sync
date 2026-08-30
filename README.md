@@ -1,33 +1,46 @@
 # Universal Agent Memory
 
-Persistent, taskless memory for long-running, user-directed AI agents — a
-readable lightweight core, with optional clients sharing that same memory.
+Persistent, taskless memory for user-directed AI agents.
 
-**One memory model. No required plugin, Git, account, network service, or task
-binding.**
+**One open protocol. Two equal ways to use it: an authorized plugin, or direct
+protocol adoption. Neither owns the memory.**
 
-[`memory_vault.py`](memory_vault.py) is a standalone standard-library reference
-implementation. An AI agent can read this file, run it directly, and share the
-same memory with a different model or agent process.
+Read the agreement and implement it with your host's existing tools, or install
+the optional client to automate the same operations. The record, relation,
+provenance and exchange contracts are shared; Python, SQLite, a particular
+model, and a particular plugin are not protocol requirements.
 
-## v0.24 preview: light core and usable client entry points
+## v0.24.0: protocol and plugin, released together
 
-This branch contains **0.24.0-alpha.1**, an implementation preview, not a
-production-validated release. Code and documentation have been statically
-reviewed; tests and live host installation were deliberately not run. The
-published stable v0.23 release is unchanged. See [implementation status](docs/STATUS.md)
-and the [external review handoff](docs/REVIEW_HANDOFF.md).
+Get the [v0.24.0 release and download packages](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.24.0):
+
+- **Protocol-only package:** the specification, JSON Schemas and synthetic
+  interchange examples. No executable, plugin or database dependency.
+- **Plugin package:** the complete source-built client runtime and a local
+  marketplace catalog. No runtime build or repository login is needed after
+  download; installation, hook trust and capture remain explicit user choices.
+- **Optional single-file reference:** [`memory_vault.py`](memory_vault.py),
+  requiring only Python 3.10+ and its standard library.
+
+The release was packaged and statically reviewed, **not runtime-tested**.
+No desktop installation, real-memory migration or cross-device trial was run.
+The protected main branch is not bypassed to avoid its required tests; use the
+release tag/packages for v0.24. See [status](docs/STATUS.md),
+[release scope](docs/RELEASE.md) and [independent review tasks](docs/REVIEW_HANDOFF.md).
 
 | Entry point | Purpose | Required extra |
 | --- | --- | --- |
+| [Direct protocol](docs/IMPLEMENTERS.md) | Implement compatible persistent records and exchange in any host | Existing host storage/tools; no particular language or database |
 | Single-file core | Local save, recall, continuity and portable records | Python 3.10+, SQLite from stdlib |
 | [Optional client](docs/CLIENTS.md) | 8 MCP tools; opt-in Codex visible-turn saving | An authorized local stdio MCP/hook host |
+| [Lifecycle profile](docs/LIFECYCLE.md) | Optional session/turn staging, durable commit and cancellation | The same configured client; not the old v0.21 wire format |
 | [Signing and trust](docs/TRUST.md) | Ed25519 record attribution, independent key registry, revocation-aware views | Explicit key enrollment and PyCA cryptography; protected POSIX storage |
 | [Incremental transfer](docs/TRANSFER.md) | Bounded signed batches, dependency closure, durable retries | An explicitly selected exchange directory; signing/trust |
 | [Offline migration](docs/MIGRATION.md) | Convert supported old network exports without restoring the old runtime | A staged export, not access to the live private plugin |
 
-The optional client packages the authoritative core; it does not fork another
-memory engine. Removing a client does not remove memory. Automatic capture is
+The bundled client reuses the reference core. Independent implementations may
+use a different engine while preserving the same protocol. Removing a client
+does not remove memory. Automatic capture is
 off by default. Work automatic lifecycle support and Windows signing/ACL support
 are **not claimed**. No installed plugin, real memory, credentials or host trust
 settings are changed just by obtaining this source.
@@ -45,7 +58,20 @@ settings are changed just by obtaining this source.
 Memory is never owned by a Task or Project. A task reference may be recorded as
 provenance, but deleting or renaming that task cannot delete or hide memory.
 
-## Start in one minute
+## Choose your route
+
+For protocol-only adoption, start with [IMPLEMENTERS.md](docs/IMPLEMENTERS.md)
+and the [synthetic exchange examples](examples/protocol/README.md). Reading a
+specification does not create storage or grant permissions; use the tools your
+host already makes available. Do not install the plugin to satisfy this route.
+
+For authorized plugin use, download the complete plugin ZIP from the release,
+extract it and follow its README. The source folder under `plugins/` is a build
+template, not an installed runtime. The plugin's configured `protocol` command
+reads/writes the very same Vault as its MCP tools and hooks; portable bundles
+connect implementations that do not share a database.
+
+### Optional Python reference quick start
 
 Requirement: Python 3.10 or newer.
 
@@ -185,6 +211,8 @@ permission, policy, or execution operation.
 ## Read next
 
 - [Protocol and conformance](PROTOCOL.md)
+- [Independent implementation guide](docs/IMPLEMENTERS.md)
+- [Session/turn lifecycle profile](docs/LIFECYCLE.md)
 - [Security boundaries](SECURITY.md)
 - [Client setup and opt-in capture](docs/CLIENTS.md)
 - [Trust and signing](docs/TRUST.md)

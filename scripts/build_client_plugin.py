@@ -11,9 +11,18 @@ import shutil
 import sys
 
 
-REQUIRED_MODULES = ("memory_vault.py", "memory_vault_client.py", "memory_vault_trust.py")
+REQUIRED_MODULES = ("memory_vault.py", "memory_vault_client.py", "memory_vault_lifecycle.py", "memory_vault_trust.py")
 OPTIONAL_MODULES = ("memory_vault_transfer.py", "memory_vault_migrate.py")
-PACKAGE_DOCUMENTS = ("LICENSE", "NOTICE", "SECURITY.md", "requirements-integrations.txt", "docs/CLIENTS.md", "docs/TRUST.md")
+PACKAGE_DOCUMENTS = (
+    "LICENSE", "NOTICE", "SECURITY.md", "PROTOCOL.md", "requirements-integrations.txt",
+    "docs/CLIENTS.md", "docs/LIFECYCLE.md", "docs/IMPLEMENTERS.md", "docs/TRUST.md",
+    "docs/TRANSFER.md", "docs/MIGRATION.md", "docs/STATUS.md", "docs/RELEASE.md",
+    "docs/REVIEW_HANDOFF.md",
+)
+TEMPLATE_FILES = (
+    ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",
+    "scripts/launcher.py", "README.md",
+)
 
 
 def plain(path: Path) -> bool:
@@ -38,17 +47,10 @@ def build(output: Path) -> Path:
             if not plain(root / name):
                 raise ValueError("unsafe_source_module")
             modules.append(name)
-    source_files = []
-    for source in template.rglob("*"):
-        if source.is_symlink():
-            raise ValueError("symlink_template_forbidden")
-        if source.is_file():
-            if "__pycache__" in source.parts or source.name == ".DS_Store":
-                continue
-            relative = source.relative_to(template)
-            if relative.parts[0] == "runtime":
-                raise ValueError("template_must_not_contain_runtime_copies")
-            source_files.append((source, relative))
+    # Copy the release allowlist, never arbitrary files from a working folder.
+    source_files = [(template / name, Path(name)) for name in TEMPLATE_FILES]
+    if any(not plain(source) for source, _ in source_files):
+        raise ValueError("required_template_file_missing")
     for name in PACKAGE_DOCUMENTS:
         if not plain(root / name):
             raise ValueError("required_package_document_missing")
@@ -64,6 +66,17 @@ def build(output: Path) -> Path:
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(root / name, target)
+    for directory in ("schemas", "examples/protocol"):
+        for source in sorted((root / directory).rglob("*")):
+            if source.is_dir() and not source.is_symlink():
+                continue
+            if not plain(source) or source.suffix not in {".json", ".ndjson", ".md"}:
+                raise ValueError("unsafe_protocol_document")
+            if source.stat().st_size > 2 * 1024 * 1024:
+                raise ValueError("protocol_document_too_large")
+            target = destination / source.relative_to(root)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
     runtime = destination / "runtime"
     runtime.mkdir()
     hashes = {}

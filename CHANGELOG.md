@@ -1,6 +1,20 @@
 # Changelog
 
-## 0.24.0-alpha.1 — Shared-core integration preview (unreleased)
+## 0.24.0 — One protocol, two equal usage paths
+
+- Made the language- and storage-independent protocol and the authorized plugin
+  equal entry points, with shared immutable records and exchange rules.
+- Added public JSON Schemas, synthetic portable records and canonical hash
+  examples so another implementation does not need the Python runtime.
+- Added an optional local session/turn lifecycle profile over the current core,
+  configured protocol/bundle access, and a shared default Vault path.
+- Distribute a protocol-only archive and a complete plugin archive with runtime
+  inventory, a local marketplace catalog and checksums. Obtaining a package
+  neither installs it nor enables hooks or migrates real data.
+- Publication uses its own tag without changing protected-main requirements.
+  Tests and real-host trials were not run; this is not production certification.
+
+### Included shared-core integration work
 
 - Kept the standalone standard-library core and taskless canonical record model;
   added optional client, trust, directory-transfer and offline-migration modules.
@@ -26,9 +40,9 @@
 - Fixed long visible-turn indexing rejection, signed-writer accidental downgrade,
   stale verification in retry responses, unsafe FIFO reads, and retry count
   inflation found during static review.
-- Added source-only client packaging, setup/trust/transfer/migration guides,
-  implementation status and external review instructions. Existing stable
-  release and installed private client are unchanged. **No tests, runtime
+- Added client packaging, setup/trust/transfer/migration guides,
+  implementation status and external review instructions. The prior release
+  and installed private client are unchanged. **No tests, runtime
   benchmarks, live capture, installation or real migration were run.**
 
 ## 0.23.0 — Universal Agent Memory Protocol
