@@ -90,6 +90,11 @@ class FrozenHookCaptureTests(unittest.TestCase):
             values = [strict_json_loads(row[0]) for row in connection.execute("SELECT record_json FROM memories ORDER BY ingest_seq")]
         return {record["memory_id"]: record for record in values}
 
+    def retry(self, config: client.ClientConfig | None = None) -> dict:
+        response = client.retry_pending(config or self.config(), limit=1)
+        self.assertTrue(response["ok"], response)
+        return dict(response["result"])
+
     def assert_pending(self, session: str, turn: str, text: str = "Synthetic pending final") -> None:
         with mock.patch.object(client, "save_turn_projection", return_value=failure("synthetic_temporarily_unavailable", retryable=True)):
             response = self.finish(session, turn, text)
@@ -110,7 +115,7 @@ class FrozenHookCaptureTests(unittest.TestCase):
         self.assertEqual(frozen["accepted_sequence"], 2)
         self.assertEqual(frozen["created_at"], "2026-08-01T00:00:00Z")
         with mock.patch.object(client, "build_turn_projection", side_effect=AssertionError("must not rebuild accepted capture")):
-            result = client.retry_pending(self.config(), limit=1)
+            result = self.retry()
         self.assertEqual((result["processed"], result["saved"], result["failed"]), (1, 1, 0))
         saved = self.plan(second)
         self.assertEqual(saved["projection_sha256"], frozen["projection_sha256"])
@@ -148,7 +153,7 @@ class FrozenHookCaptureTests(unittest.TestCase):
         self.assertEqual(retained["previous_continuity_id"], self.plan(first)["continuity_id"])
         self.assertEqual(retained["projection_sha256"], frozen["projection_sha256"])
         with mock.patch.object(client, "build_turn_projection", side_effect=AssertionError("must use retained projection")):
-            result = client.retry_pending(resumed, limit=1)
+            result = self.retry(resumed)
         self.assertEqual(result["saved"], 1, result)
         self.assertEqual(self.plan(key, resumed)["state"], "saved")
         self.assertEqual(self.records(resumed), original_records)
@@ -173,7 +178,7 @@ class FrozenHookCaptureTests(unittest.TestCase):
         episode_id = response["partial_result"]["episode_id"]
         self.assertEqual(len(self.records()), 1)
         self.assertFalse(self.journal().path.exists())
-        result = client.retry_pending(self.config(), limit=1)
+        result = self.retry()
         self.assertEqual(result["saved"], 1, result)
         self.assertEqual(state.read("done", key)["episode_id"], episode_id)
         self.assertEqual(state.read("done", key)["schema_version"], client.STATE_SCHEMA)
@@ -195,7 +200,7 @@ class FrozenHookCaptureTests(unittest.TestCase):
         notify.assert_called_once()
         self.assertEqual(len(self.records()), 8)
         self.assertEqual([self.plan(key)["state"] for key in keys], ["saved"] * 4 + ["pending"])
-        self.assertEqual(client.retry_pending(self.config(), limit=1)["saved"], 1)
+        self.assertEqual(self.retry()["saved"], 1)
         self.assertEqual(len(self.records()), 10)
 
     @unittest.skipUnless(os.name == "posix", "synthetic child-exit fixture currently covers POSIX")
@@ -211,7 +216,7 @@ class FrozenHookCaptureTests(unittest.TestCase):
         with self.assertRaises(sqlite3.OperationalError):
             with journal.transaction(writable=False):
                 pass
-        result = client.retry_pending(self.config(), limit=1)
+        result = self.retry()
         self.assertEqual((result["processed"], result["saved"], result["failed"]), (1, 1, 0))
         self.assertEqual(self.plan(key)["projection_sha256"], frozen["projection_sha256"])
         self.assertEqual(len(self.records()), 2)

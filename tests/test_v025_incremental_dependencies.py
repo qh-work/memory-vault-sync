@@ -138,6 +138,10 @@ class IncrementalDependencyTests(unittest.TestCase):
                                            attestations=base["payload"]["attestations"])
         state = self.receiver._state()
         self.receiver._bind_vault(state, missing_ok=False)
+        # The deliberately forged head still uses an ordinary protected local
+        # control directory. Otherwise the outer filesystem guard, not the
+        # missing same-Vault receipt under test, would reject this fixture.
+        transfer._private_directory(self.receiver.state_directory)
         digest = transfer.sha256(transfer.canonical_bytes(base["payload"]))
         self.receiver._remember_head(state, base["payload"], digest)
         self.receiver._received_evidence(base, digest)
