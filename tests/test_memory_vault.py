@@ -150,6 +150,8 @@ class UniversalMemoryTests(unittest.TestCase):
             resumed = self.request(destination, {"op": "changes", "after": delta["cursor"], "store_id": delta["store_id"]})["result"]
             self.assertEqual(resumed["blocked"], [])
             self.assertIn(blocked["result"]["memory_id"], [record["memory_id"] for record in resumed["records"]])
+            recalled = self.request(destination, {"op": "recall", "query": "Synthetic blocked goal", "limit": 8})
+            self.assertTrue(recalled["ok"])
             self.assertFalse(recalled["authority"]["execution_eligible"])
 
     def test_request_retry_is_exact_and_conflict_safe(self) -> None:

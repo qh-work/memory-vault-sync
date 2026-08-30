@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.25.0 — Development, unreleased
+
+The full [P01–P14 ledger](docs/V0_25_PARITY_PLAN.md) remains open. These entries
+describe implemented source and review material, **not completed runtime
+acceptance or a published stable release**.
+
+- Restore useful v0.21 workflows alongside the independent lightweight protocol,
+  without Task/Project ownership, mandatory Git or the old monolithic runtime.
+  Both routes retain the same taskless canonical records and optional proofs.
+- Add full-record CJK/Latin retrieval, bounded BM25/concept/polarity explanations,
+  claim timelines, graph views and explicit paginated derived-index repair.
+- Expose the ten old production host operations through a separate compatibility
+  entry, retaining visible-turn lifecycle, exact retry and current-trust rules.
+- Extend signed incremental transfer with chained streams, complete resumable
+  fragment groups and explicit privacy-blocked review/resolution/requeue.
+- Add genuine old pack/ZIP/checkpoint handling and preserved evidence/mappings;
+  supplement memory snapshots with inert full-client recovery and separately
+  authorized reactivation into new paths.
+- Restore independent publisher verification, isolated managed activation and
+  rollback, selected-subgraph sharing, device metadata operations and optional
+  fail-closed encryption/catalog provider contracts. No production key ceremony
+  or encryption service is provisioned by default.
+- Add native protected Windows storage adapters and expose independent recovery
+  and metadata checks without depending on a lost client configuration.
+  Stateless discovery does not select a Vault; actual operations keep the exact
+  selected configuration and current trust, with no fallback to another store.
+- Provide full-client, documentation-only protocol and separate synthetic-review
+  packages. Incorporate attributed PR #11 interoperability cases, add an actual
+  cross-entry exchange case, and repair the reported undefined-variable test
+  failure without dropping its authority assertion.
+- Application tests, installations, native-host/provider trials and performance
+  measurements remain unrun during this development work. The contributor's
+  old-version execution report is tracked separately in the
+  [review handoff](docs/REVIEW_HANDOFF.md#external-contribution-intake-pr-11).
+  Private memory, installed plugins, protected main and published tags remain
+  unchanged by this review-branch work.
+
 ## 0.24.1 — Full authorized client alongside the lightweight protocol
 
 - Corrected the v0.24.0 thin-client gap: added durable coalesced sync work,

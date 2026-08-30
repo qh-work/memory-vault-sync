@@ -7,6 +7,12 @@ are not pass results. Read REVIEW_MANIFEST.json for the source commit and byte
 inventory, then docs/REVIEW_HANDOFF.md and docs/V0_25_PARITY_PLAN.md for the full
 review scope.
 
+The kit includes attributed adaptations of the three cases from PR #11 and a
+new actual core → client/MCP write → core exchange case. The contributor's
+reported execution concerns **v0.24.1**, not this kit's source commit. See the
+external-intake section in docs/REVIEW_HANDOFF.md; no prior result is relabeled
+as a v0.25 pass.
+
 The companion protocol-only archive has no executable files. A model can
 implement its record contract without adopting this Python reference or client.
 The companion full-client archive is built separately; nothing in this kit is

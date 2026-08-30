@@ -74,11 +74,11 @@ refer to this source commit, not the already published v0.24.1 artifact.
 
 | ID | Implementation / contract | Authored review evidence and remaining work |
 | --- | --- | --- |
-| P01 | `memory_vault.py`, `PROTOCOL.md`, `schemas/record.schema.json` | Canonical v1 fields/hash domain retained; `test_memory_vault.py` and protocol vectors. Independent two-route execution pending |
+| P01 | `memory_vault.py`, `PROTOCOL.md`, `schemas/record.schema.json` | Canonical v1 fields/hash domain retained; `test_memory_vault.py`, protocol vectors and `test_v025_protocol_client_interop.py`. v0.25 two-route and independent-implementation execution pending |
 | P02 | `memory_vault_client.py`, `memory_vault_lifecycle.py`, `memory_vault_hosts.py` | Existing synthetic hook/lifecycle cases plus `test_v025_compat.py`; real host and crash/race evidence pending |
 | P03 | Core full-record terms, fragments, concept expansion and ranking; `docs/RETRIEVAL.md` | `test_v025_retrieval_views.py`, `test_v025_index_state.py`; per-request index-state reuse implemented without persistent caching, actual ranking/scale/performance execution pending |
 | P04 | Core `memory.views`, `memory.graph`, `memory.reindex`; `docs/GRAPH_VIEWS.md` | Bounded timelines/frontiers and repair cases in retrieval tests; runtime trust/pagination evidence pending |
-| P05 | `memory_vault_compat.py`, eleven-tool MCP, separate host schemas; stateless capability discovery with strict request validation | `test_v025_compat.py`, `test_v025_mcp_bounds.py`, `test_v025_configuration_independence.py`; actual old-client/MCP interoperation pending |
+| P05 | `memory_vault_compat.py`, eleven-tool MCP, separate host schemas; stateless capability discovery with strict request validation | `test_v025_compat.py`, `test_v025_mcp_bounds.py`, `test_v025_configuration_independence.py`, `test_v025_protocol_client_interop.py`; actual v0.25 old-client/MCP interoperation pending |
 | P06 | `memory_vault_sync.py`, `memory_vault_transfer.py`, chained v2 streams | `test_v025_sync_review.py` plus existing delivery cases; process/concurrent-writer and interruption execution pending |
 | P07 | Sync review/resolve/requeue and `memory_vault_privacy.py` | Synthetic blocked roots/dependencies and signed disposition cases; no real content scanned or uploaded |
 | P08 | `memory_vault_remote.py`, signed fragment groups, `memory_vault_pack.py` | Review fixtures for directory/rclone/fragment recovery; real provider, near-limit and platform trials pending |
@@ -94,6 +94,10 @@ the documentation-only protocol. See [REVIEW_HANDOFF.md](REVIEW_HANDOFF.md) for
 bounded campaigns and evidence fields. Restore/install examples have not been
 executed against any real Vault or installed client. No advertised data-transfer
 receipt proves that another model read or adopted the memory.
+
+The [external contribution intake](REVIEW_HANDOFF.md#external-contribution-intake-pr-11)
+records a contributor's three-case v0.24.1 execution report separately from
+the adapted, unrun v0.25 cases. Old-version results do not close this ledger.
 
 ## Verification and release gate
 

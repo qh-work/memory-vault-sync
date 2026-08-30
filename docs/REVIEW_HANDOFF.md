@@ -95,6 +95,36 @@ These exclusions do not justify omitting useful v0.21 features. Old ordinary
 records were hash-addressed, **not individually author-signed**; update
 signatures and Git commit identities are different evidence.
 
+### External contribution intake: PR #11
+
+[PR #11](https://github.com/qh-work/memory-vault-sync/pull/11) from
+`jagadeepmamidi` adds three unsigned-interchange cases and a
+[v0.24.1 execution report](https://github.com/jagadeepmamidi/memory-vault-sync/blob/7121ba388178eb11eff8274aa65d20c16af9a24c/examples/protocol/interop-v0.24.1.md).
+The report identifies tested commit
+`de349ef8453b0aa0ebf68ae18484d0c1355cf91b`, Windows/Python 3.12.10 and three
+passing cases. This is **contributor-reported execution on v0.24.1**, not a
+maintainer reproduction, a v0.25 result or independent implementation evidence.
+
+At intake on 2026-08-30, its
+[GitHub run](https://github.com/qh-work/memory-vault-sync/actions/runs/33317756756)
+was terminal with `action_required` and zero jobs. That run supplies no
+executed CI result. No run was approved or triggered during this review.
+The PR targets older protected main; the
+[exact comparison from v0.24.1](https://github.com/qh-work/memory-vault-sync/compare/de349ef8453b0aa0ebf68ae18484d0c1355cf91b...7121ba388178eb11eff8274aa65d20c16af9a24c)
+contains only the test, report and CI command, not the many cumulative runtime
+changes shown against main. Do not merge that cumulative diff to transplant
+the tests into v0.25.
+
+The adapted `test_v025_protocol_client_interop.py` retains attribution to the
+pinned contribution and adds a real core-export → client-import/MCP-write →
+new-core-import route, using synthetic data. All adapted/new cases are **not
+run here**. Both routes still use the same Python reference implementation;
+this does not supply a second-language implementation or an AI adoption claim.
+The reported undefined `recalled` variable in the existing blocked-dependency
+test was confirmed in source and repaired by requesting recall before the
+authority assertion, not by removing that assertion. A repaired test is not
+proof that the behavior it checks passes.
+
 ### Current v0.25 synthetic source inventory
 
 These are **authored cases, not passed results**. Re-list the selected commit
@@ -108,6 +138,7 @@ core/client regressions too. Asserting a size constant is not a scale trial.
 | `test_v025_index_state.py` | One index-completeness check per views request; no stale cross-request cache |
 | `test_v025_mcp_bounds.py` | Transport-specific graph/view bounds, schema agreement and complete bounded MCP responses |
 | `test_v025_configuration_independence.py` | Strict stateless discovery; deferred/default configuration pinning; independent recovery/pack/operator routing without a lost old config |
+| `test_v025_protocol_client_interop.py` | Contributor-derived public-vector/core/MCP checks plus actual core → client write → new-core exchange; explicit unsigned admission and unchanged record identities |
 | `test_v025_sync_review.py` | Privacy review, explicit dispositions, chained streams, groups and interruption |
 | `test_v025_legacy_pack.py` | Old wire fixtures, checkpoints, exact evidence, ordered parts and aliases |
 | `test_v025_legacy_pack_edges.py` | Escaped secrets, same-kind alias misdirection, cycles/missing targets, cross-part replay |
