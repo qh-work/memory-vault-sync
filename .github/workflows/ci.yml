@@ -32,4 +32,4 @@ jobs:
       - name: Compile the single-file implementation
         run: python -m py_compile memory_vault.py
       - name: Run synthetic protocol conformance
-        run: python -m unittest -v tests.test_memory_vault
+        run: python -m unittest -v tests.test_memory_vault tests.test_protocol_client_interop
