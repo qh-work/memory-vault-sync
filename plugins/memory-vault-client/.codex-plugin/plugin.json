@@ -1,0 +1,38 @@
+{
+  "name": "memory-vault-client",
+  "version": "0.24.1",
+  "description": "Full authorized client for the open memory protocol: MCP, visible-turn capture, queued signed sync, host adapters and recovery.",
+  "author": {
+    "name": "Memory Vault contributors"
+  },
+  "homepage": "https://github.com/qh-work/memory-vault-sync",
+  "repository": "https://github.com/qh-work/memory-vault-sync",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "mcp", "local-first", "taskless", "continuity"],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Memory Vault Client",
+    "shortDescription": "Shared memory, opt-in sync and recovery",
+    "longDescription": "One open protocol with two equal usage paths: independent protocol adoption or this full authorized client. Includes MCP, opt-in visible-turn capture, a configured protocol bridge, multiple host adapters, bounded signed directory/rclone synchronization, content-free diagnostics, backup/restore, compressed packs and explicit update staging. No Task/Git control plane, transcript scanning, self-installation, key auto-enrollment or log suppression. Work automatic lifecycle and production validation are not claimed.",
+    "developerName": "Memory Vault contributors",
+    "category": "Productivity",
+    "capabilities": [
+      "Local memory recall and handoff",
+      "Explicit memory writes",
+      "Opt-in Codex visible-turn capture",
+      "Configured record signing",
+      "Direct protocol and portable bundle access",
+      "Optional session and turn lifecycle",
+      "Opt-in bounded signed synchronization",
+      "Directory and configured rclone transport",
+      "Diagnostics, backup and restore",
+      "Compressed resumable packs and staged updates"
+    ],
+    "websiteURL": "https://github.com/qh-work/memory-vault-sync",
+    "defaultPrompt": [
+      "Recall relevant memory before this work.",
+      "Save this visible turn and its continuity.",
+      "Show the local memory record count."
+    ]
+  }
+}

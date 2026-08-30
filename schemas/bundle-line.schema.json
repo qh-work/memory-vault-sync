@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "One UAMP portable bundle v1 NDJSON line",
+  "$comment": "Apply separately to each decoded line. Entire stream must have one header first, zero or more unique record IDs, one footer last and LF after every line. Count, ordered digest accumulator, dependency closure, byte bounds and atomic commit are semantic checks.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "schema_version",
+        "created_at",
+        "hash_profile"
+      ],
+      "properties": {
+        "type": {
+          "const": "header"
+        },
+        "schema_version": {
+          "const": "universal-memory-bundle/v1"
+        },
+        "created_at": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "hash_profile": {
+          "const": "canonical-json+sha256/v1"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "record"
+      ],
+      "properties": {
+        "type": {
+          "const": "record"
+        },
+        "record": {
+          "$ref": "record.schema.json"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "type",
+        "record_count",
+        "records_sha256"
+      ],
+      "properties": {
+        "type": {
+          "const": "footer"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "records_sha256": {
+          "$ref": "common.schema.json#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "x-maxUtf8Bytes": 2097152
+}

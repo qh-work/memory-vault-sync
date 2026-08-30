@@ -1,0 +1,148 @@
+{
+  "artifact": "UAMP core-v1 synthetic implementation vectors",
+  "status": "generated_public_material_not_application_test_results",
+  "hash_profile": "canonical-json+sha256/v1",
+  "canonical_vectors": [
+    {
+      "name": "utf8-and-json-escapes",
+      "input": {
+        "z": "line\n\t记忆 / café",
+        "a": "quote \" slash / backslash \\"
+      },
+      "canonical_utf8": "{\"a\":\"quote \\\" slash / backslash \\\\\",\"z\":\"line\\n\\t记忆 / café\"}",
+      "canonical_utf8_hex": "7b2261223a2271756f7465205c2220736c617368202f206261636b736c617368205c5c222c227a223a226c696e655c6e5c74e8aeb0e5bf86202f20636166c3a9227d",
+      "canonical_utf8_bytes": 66,
+      "sha256": "dac05d04deb60af6b847a3ca9a51ba62e85d3ddc65005dfbbc379d1e129b6581"
+    },
+    {
+      "name": "signed-64-bit-extremes",
+      "input": {
+        "maximum": 9223372036854775807,
+        "minimum": -9223372036854775808
+      },
+      "canonical_utf8": "{\"maximum\":9223372036854775807,\"minimum\":-9223372036854775808}",
+      "canonical_utf8_hex": "7b226d6178696d756d223a393232333337323033363835343737353830372c226d696e696d756d223a2d393232333337323033363835343737353830387d",
+      "canonical_utf8_bytes": 62,
+      "sha256": "a3898087619aa8edb1bf16a16ec7edde747cfc707da017ff0088ebef89f89012"
+    },
+    {
+      "name": "unicode-is-not-normalized",
+      "input": {
+        "composed": "é",
+        "decomposed": "é",
+        "separator": "a b"
+      },
+      "canonical_utf8": "{\"composed\":\"é\",\"decomposed\":\"é\",\"separator\":\"a b\"}",
+      "canonical_utf8_hex": "7b22636f6d706f736564223a22c3a9222c226465636f6d706f736564223a2265cc81222c22736570617261746f72223a2261e280a862227d",
+      "canonical_utf8_bytes": 56,
+      "sha256": "6ffc8e6cea85c6af21bec3426ffd2d7f44e9d082df4a48fad1e19f12229ba06d"
+    }
+  ],
+  "record_vectors": [
+    {
+      "name": "visible-content-as-reported-by-agent",
+      "body": {
+        "schema_version": "universal-memory-record/v1",
+        "kind": "episode",
+        "text": "User:\nContinue the portable memory guide.\n\nAssistant:\nDrafted the introduction; examples remain.",
+        "entities": [],
+        "relations": [],
+        "provenance": {
+          "source_type": "agent_supplied",
+          "confidence": "assistant_inferred",
+          "source_ref": "synthetic:portable-guide"
+        },
+        "created_at": "2030-01-01T00:00:00Z",
+        "hash_profile": "canonical-json+sha256/v1"
+      },
+      "canonical_utf8": "{\"created_at\":\"2030-01-01T00:00:00Z\",\"entities\":[],\"hash_profile\":\"canonical-json+sha256/v1\",\"kind\":\"episode\",\"provenance\":{\"confidence\":\"assistant_inferred\",\"source_ref\":\"synthetic:portable-guide\",\"source_type\":\"agent_supplied\"},\"relations\":[],\"schema_version\":\"universal-memory-record/v1\",\"text\":\"User:\\nContinue the portable memory guide.\\n\\nAssistant:\\nDrafted the introduction; examples remain.\"}",
+      "canonical_utf8_hex": "7b22637265617465645f6174223a22323033302d30312d30315430303a30303a30305a222c22656e746974696573223a5b5d2c22686173685f70726f66696c65223a2263616e6f6e6963616c2d6a736f6e2b7368613235362f7631222c226b696e64223a22657069736f6465222c2270726f76656e616e6365223a7b22636f6e666964656e6365223a22617373697374616e745f696e666572726564222c22736f757263655f726566223a2273796e7468657469633a706f727461626c652d6775696465222c22736f757263655f74797065223a226167656e745f737570706c696564227d2c2272656c6174696f6e73223a5b5d2c22736368656d615f76657273696f6e223a22756e6976657273616c2d6d656d6f72792d7265636f72642f7631222c2274657874223a22557365723a5c6e436f6e74696e75652074686520706f727461626c65206d656d6f72792067756964652e5c6e5c6e417373697374616e743a5c6e447261667465642074686520696e74726f64756374696f6e3b206578616d706c65732072656d61696e2e227d",
+      "canonical_utf8_bytes": 401,
+      "record_sha256": "13b638e00cc90de31fb8476ec46c66cd043f0870ed6dea97f9bacf51d2155ee8",
+      "memory_id": "mem_13b638e00cc90de31fb8476ec46c66cd043f0870"
+    },
+    {
+      "name": "episode-anchored-goal",
+      "body": {
+        "schema_version": "universal-memory-record/v1",
+        "kind": "goal",
+        "text": "Finish the portable memory guide / 完成记忆指南.",
+        "entities": [
+          "portable memory",
+          "记忆"
+        ],
+        "relations": [
+          {
+            "type": "derived_from",
+            "target": "mem_13b638e00cc90de31fb8476ec46c66cd043f0870"
+          }
+        ],
+        "provenance": {
+          "source_type": "agent_supplied",
+          "confidence": "assistant_inferred",
+          "source_ref": "synthetic:portable-guide"
+        },
+        "created_at": "2030-01-01T00:00:01Z",
+        "hash_profile": "canonical-json+sha256/v1"
+      },
+      "canonical_utf8": "{\"created_at\":\"2030-01-01T00:00:01Z\",\"entities\":[\"portable memory\",\"记忆\"],\"hash_profile\":\"canonical-json+sha256/v1\",\"kind\":\"goal\",\"provenance\":{\"confidence\":\"assistant_inferred\",\"source_ref\":\"synthetic:portable-guide\",\"source_type\":\"agent_supplied\"},\"relations\":[{\"target\":\"mem_13b638e00cc90de31fb8476ec46c66cd043f0870\",\"type\":\"derived_from\"}],\"schema_version\":\"universal-memory-record/v1\",\"text\":\"Finish the portable memory guide / 完成记忆指南.\"}",
+      "canonical_utf8_hex": "7b22637265617465645f6174223a22323033302d30312d30315430303a30303a30315a222c22656e746974696573223a5b22706f727461626c65206d656d6f7279222c22e8aeb0e5bf86225d2c22686173685f70726f66696c65223a2263616e6f6e6963616c2d6a736f6e2b7368613235362f7631222c226b696e64223a22676f616c222c2270726f76656e616e6365223a7b22636f6e666964656e6365223a22617373697374616e745f696e666572726564222c22736f757263655f726566223a2273796e7468657469633a706f727461626c652d6775696465222c22736f757263655f74797065223a226167656e745f737570706c696564227d2c2272656c6174696f6e73223a5b7b22746172676574223a226d656d5f31336236333865303063633930646533316662383437366563343663363663643034336630383730222c2274797065223a22646572697665645f66726f6d227d5d2c22736368656d615f76657273696f6e223a22756e6976657273616c2d6d656d6f72792d7265636f72642f7631222c2274657874223a2246696e6973682074686520706f727461626c65206d656d6f7279206775696465202f20e5ae8ce68890e8aeb0e5bf86e68c87e58d972e227d",
+      "canonical_utf8_bytes": 457,
+      "record_sha256": "f0458a3abd2e97baaac8892cde52ce97d0c8e236c6442c4df1203a80241447f6",
+      "memory_id": "mem_f0458a3abd2e97baaac8892cde52ce97d0c8e236"
+    },
+    {
+      "name": "continuity-is-evidence-not-an-execution-grant",
+      "body": {
+        "schema_version": "universal-memory-record/v1",
+        "kind": "continuity",
+        "text": "Introduction drafted. Next: add a synthetic exchange example. Publication still requires current approval.",
+        "entities": [
+          "portable memory"
+        ],
+        "relations": [
+          {
+            "type": "derived_from",
+            "target": "mem_13b638e00cc90de31fb8476ec46c66cd043f0870"
+          },
+          {
+            "type": "continues",
+            "target": "mem_f0458a3abd2e97baaac8892cde52ce97d0c8e236"
+          }
+        ],
+        "provenance": {
+          "source_type": "agent_supplied",
+          "confidence": "assistant_inferred",
+          "source_ref": "synthetic:portable-guide"
+        },
+        "created_at": "2030-01-01T00:00:02Z",
+        "hash_profile": "canonical-json+sha256/v1"
+      },
+      "canonical_utf8": "{\"created_at\":\"2030-01-01T00:00:02Z\",\"entities\":[\"portable memory\"],\"hash_profile\":\"canonical-json+sha256/v1\",\"kind\":\"continuity\",\"provenance\":{\"confidence\":\"assistant_inferred\",\"source_ref\":\"synthetic:portable-guide\",\"source_type\":\"agent_supplied\"},\"relations\":[{\"target\":\"mem_13b638e00cc90de31fb8476ec46c66cd043f0870\",\"type\":\"derived_from\"},{\"target\":\"mem_f0458a3abd2e97baaac8892cde52ce97d0c8e236\",\"type\":\"continues\"}],\"schema_version\":\"universal-memory-record/v1\",\"text\":\"Introduction drafted. Next: add a synthetic exchange example. Publication still requires current approval.\"}",
+      "canonical_utf8_hex": "7b22637265617465645f6174223a22323033302d30312d30315430303a30303a30325a222c22656e746974696573223a5b22706f727461626c65206d656d6f7279225d2c22686173685f70726f66696c65223a2263616e6f6e6963616c2d6a736f6e2b7368613235362f7631222c226b696e64223a22636f6e74696e75697479222c2270726f76656e616e6365223a7b22636f6e666964656e6365223a22617373697374616e745f696e666572726564222c22736f757263655f726566223a2273796e7468657469633a706f727461626c652d6775696465222c22736f757263655f74797065223a226167656e745f737570706c696564227d2c2272656c6174696f6e73223a5b7b22746172676574223a226d656d5f31336236333865303063633930646533316662383437366563343663363663643034336630383730222c2274797065223a22646572697665645f66726f6d227d2c7b22746172676574223a226d656d5f66303435386133616264326539376261616163383839326364653532636539376430633865323336222c2274797065223a22636f6e74696e756573227d5d2c22736368656d615f76657273696f6e223a22756e6976657273616c2d6d656d6f72792d7265636f72642f7631222c2274657874223a22496e74726f64756374696f6e20647261667465642e204e6578743a2061646420612073796e7468657469632065786368616e6765206578616d706c652e205075626c69636174696f6e207374696c6c2072657175697265732063757272656e7420617070726f76616c2e227d",
+      "canonical_utf8_bytes": 583,
+      "record_sha256": "5a0b402c9a3ef62bbb59691eae0ff6f702c1fd18ecbec609725e148d6f961661",
+      "memory_id": "mem_5a0b402c9a3ef62bbb59691eae0ff6f702c1fd18"
+    }
+  ],
+  "bundle": {
+    "file": "exchange.ndjson",
+    "record_count": 3,
+    "accumulator_input_ascii": "13b638e00cc90de31fb8476ec46c66cd043f0870ed6dea97f9bacf51d2155ee8\nf0458a3abd2e97baaac8892cde52ce97d0c8e236c6442c4df1203a80241447f6\n5a0b402c9a3ef62bbb59691eae0ff6f702c1fd18ecbec609725e148d6f961661\n",
+    "records_sha256": "ba6ebe4e465d87c7b8444f5f6310a83e404e6880da892f8277c5700d5d2c45d1",
+    "file_utf8_bytes": 2212,
+    "file_sha256": "cbf59e6c7df009bc0026aab52b37698511611e387179e92469c35b9779ed5c82"
+  },
+  "request_retry": {
+    "file": "requests.ndjson",
+    "mutation_line_numbers": [
+      2,
+      3
+    ],
+    "request_id": "req_example_goal_0001",
+    "canonical_request_utf8": "{\"entities\":[\"portable memory\"],\"kind\":\"goal\",\"op\":\"remember\",\"request_id\":\"req_example_goal_0001\",\"schema_version\":\"universal-agent-memory-request/v1\",\"text\":\"Finish the portable memory guide.\"}",
+    "request_sha256": "baed56d6c9db2c719d363aa8c829972cc770808d190e50aa9ed22c32c1596fa4",
+    "expected_total_successful_write_effects": 1,
+    "observed_result": null
+  }
+}

@@ -114,6 +114,42 @@ class UniversalMemoryTests(unittest.TestCase):
             hits = recalled["result"]["hits"]
             self.assertEqual(hits[0]["kind"], "goal")
             self.assertIn("通用外部记忆协议", hits[0]["text"])
+
+    def test_read_only_operations_do_not_create_a_vault(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "missing" / "vault.sqlite3"
+            for request in ({"op": "status"}, {"op": "recall", "query": "synthetic"}, {"op": "changes"}):
+                response = self.request(database, request)
+                self.assertFalse(response["ok"])
+                self.assertEqual(response["error"]["code"], "not_initialized")
+                self.assertFalse(database.parent.exists())
+
+    def test_manual_observe_is_caller_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "vault.sqlite3"
+            saved = self.request(database, {"op": "observe", "user": "Synthetic user", "assistant": "Synthetic answer"})
+            record = self.request(database, {"op": "get", "memory_id": saved["result"]["memory_id"]})
+            self.assertEqual(record["result"]["record"]["provenance"]["source_type"], "agent_supplied")
+            self.assertEqual(record["result"]["verification"]["admission"], "local_unsigned")
+
+    def test_blocked_dependency_does_not_freeze_later_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, destination, bundle = root / "source.sqlite3", root / "destination.sqlite3", root / "memory.ndjson"
+            episode = self.request(source, {"op": "observe", "user": "Synthetic source", "assistant": "Synthetic evidence"})
+            self.assertTrue(self.command(source, "--export", str(bundle))["ok"])
+            self.assertTrue(self.command(destination, "--import", str(bundle))["ok"])
+            blocked = self.request(destination, {"op": "remember", "kind": "goal", "text": "Synthetic blocked goal",
+                                                 "relations": [{"type": "derived_from", "target": episode["result"]["memory_id"]}]})
+            independent = self.request(destination, {"op": "remember", "kind": "fact", "text": "Synthetic independent fact"})
+            delta = self.request(destination, {"op": "changes"})["result"]
+            self.assertEqual([record["memory_id"] for record in delta["records"]], [independent["result"]["memory_id"]])
+            self.assertEqual(delta["blocked"][0]["memory_id"], blocked["result"]["memory_id"])
+            self.assertEqual(delta["blocked"][0]["reason"], "dependency_not_admitted")
+            self.assertTrue(self.command(destination, "--import", str(bundle), "--accept-unsigned")["ok"])
+            resumed = self.request(destination, {"op": "changes", "after": delta["cursor"], "store_id": delta["store_id"]})["result"]
+            self.assertEqual(resumed["blocked"], [])
+            self.assertIn(blocked["result"]["memory_id"], [record["memory_id"] for record in resumed["records"]])
             self.assertFalse(recalled["authority"]["execution_eligible"])
 
     def test_request_retry_is_exact_and_conflict_safe(self) -> None:
@@ -155,6 +191,12 @@ class UniversalMemoryTests(unittest.TestCase):
             self.assertTrue(exported["ok"])
             imported = self.command(second_database, "--import", str(bundle))
             self.assertTrue(imported["ok"])
+            self.assertEqual(imported["result"]["admission"], "quarantined")
+            isolated = self.request(second_database, {"op": "recall", "query": "portable NDJSON handoff", "limit": 4})
+            self.assertEqual(isolated["result"]["hits"], [])
+            admitted = self.command(second_database, "--import", str(bundle), "--accept-unsigned")
+            self.assertTrue(admitted["ok"])
+            self.assertEqual(admitted["result"]["records_added"], 0)
             recalled = self.request(
                 second_database,
                 {"op": "recall", "query": "portable NDJSON handoff", "limit": 4},
