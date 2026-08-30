@@ -383,6 +383,16 @@ Once exposure has started, review cannot rewrite that prefix, even if remote
 files later disappear. Frozen bytes and receipts, not a new signature over
 different content, determine retry behavior.
 
+On supported macOS/Linux filesystems, private control files and complete
+fragments/capsules use an exclusive rename, so an interruption does not leave a
+published inode with a temporary hard-link alias. Existing private aliases are
+not repaired automatically. Explicit exchange outputs retain their prior parent
+permissions and exact-overlap behavior; this separate no-replace profile never
+relaxes private-state or Windows checks. New output bytes remain 0600/single-linked.
+See [platform limits](PLATFORMS.md) and the separately source-pinned
+[publication repair evidence](V0_25_PARITY_REPAIR_SMOKE.md), which is not a full
+signed-sync or real remote-provider trial.
+
 The receiver first retains each uniquely authenticated inline/group capsule at
 `received-capsules/<payload-sha256>.json` beneath its private transfer state.
 For the sync client that is `S/transfer/received-capsules/`. These are immutable

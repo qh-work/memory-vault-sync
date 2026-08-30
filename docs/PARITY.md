@@ -61,6 +61,14 @@ allows it; cache invalidation can require bounded revalidation. There is no
 arbitrary-scale or independent-implementation performance claim. See the
 [completion ledger](V0_25_PARITY_PLAN.md).
 
+The subsequent [parity-repair report](V0_25_PARITY_REPAIR_SMOKE.md) records a
+separate source and twelve selected methods. It covers ordinary entity lookup,
+handoff target filtering, complete old-format short-message histories and
+selected crash-safe output paths without tightening explicit POSIX directory
+contracts. These fixes apply to the shared reference/client implementation;
+they add no task ownership and do not convert narrow verification into complete
+release acceptance.
+
 ## Architecture that must not return
 
 Task, Project, conversation, model, device and runtime IDs are optional

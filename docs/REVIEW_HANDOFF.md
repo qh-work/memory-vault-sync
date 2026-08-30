@@ -169,6 +169,15 @@ core/client regressions too. Asserting a size constant is not a scale trial.
 | `test_v025_encryption.py` | Provider framing, authenticated-data bindings, ciphertext catalogs |
 | `test_v025_storage.py` | Pure ACL/path policy and separately gated native file/lock/publication |
 | `test_v025_portable_packs.py` | Resumable packs, small-ZIP interface and native protected publication |
+| `test_v025_capture_hooks.py` | Frozen visible-turn chains, exact retry, old partial jobs, bounded draining and hot-journal recovery |
+| `test_v025_capture_lifecycle.py` | Frozen lifecycle acceptance, predecessor completion, retained legacy identities and original outer receipts |
+| `test_v025_capture_compat.py` | Old-envelope frozen capture, acceptance order, large projections and current evidence checks |
+| `test_v025_incremental_dependencies.py` | v3 prior-stream possession, current trust/epochs, cold receivers and closure budgets |
+| `test_v025_entity_retrieval.py` | Ordinary entities/claim keys, bounded text-first scoring, no alias multiplication and handoff admission filtering |
+| `test_v025_conversation_limits.py` | More than 20,000 short old messages within byte bounds, late-message validation and old-pack publication |
+| `test_v025_sharing_publication.py` | Single-name output before cleanup, conflicts/aliases and unsupported-publisher refusal |
+| `test_v025_transport_publication.py` | Three bounded publication children, private/shared output contracts, exact retry, pack resume and unpack |
+| `test_v025_backup_publication.py` | Backup publication, paired-output rollback, original POSIX parent modes and competing-output preservation |
 
 After execution is authorized, inspect the selected file's imports, fixtures,
 subprocess/provider needs and platform skips first. For example:
@@ -257,6 +266,23 @@ those cases, but authorship is not execution. Exact case names, source inventory
 isolation, output hashes and outstanding limits are in the report. Whole-suite,
 real-host/provider, scale, native Windows/Linux and independent implementation
 acceptance remain open, as does the full P01–P14 ledger.
+
+### Entity, old-format and publication repairs — twelve selected cases
+
+The [parity-repair report](V0_25_PARITY_REPAIR_SMOKE.md) records twelve passing
+methods on `9d98ce0d56394adc275915a0ea1fd39b6ca06254`, with zero failures, errors
+or skips. It covers ordinary entity lookup, handoff quarantine filtering, exact
+preservation of a 20,001-short-message old export, selected output interruption
+and rollback boundaries, and existing POSIX directory-mode compatibility.
+Three small children exit at real publication calls; other failures are injected
+in-process. No keys, providers, real Vaults or host installations are used.
+
+The five new files contain 22 methods; only the report's 12 were selected. The
+ten remaining cases are not implied passes. Backup helper bytes are not a full
+snapshot/restore; shared-file fixtures are not a complete signed sync session;
+the old conversation fixture is not a 2 GiB or performance trial. Source/raw
+hashes and the exact case names are in the report. Earlier campaigns remain
+separate and the complete ledger stays open.
 
 ## 3. Review campaigns — scoped authorization required
 

@@ -21,6 +21,12 @@ not run. The earlier twelve-case smoke run at `066cd56` does not cover these
 retrieval changes; neither report establishes full retrieval parity or
 performance certification.
 
+The separate [parity-repair campaign](V0_25_PARITY_REPAIR_SMOKE.md), on
+`9d98ce0d56394adc275915a0ea1fd39b6ca06254`, adds three passing cases for ordinary
+entity recall, text-first scoring under a one-slot bound and handoff quarantine
+filtering. Its other entity/claim/revocation methods remain unrun; it does not
+replace the earlier source-pinned report or certify every graph view.
+
 ## Request and compatibility
 
 ```json

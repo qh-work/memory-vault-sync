@@ -210,6 +210,8 @@ that fits the checked 2 MiB member and existing structural budgets. The count
 bound comes from the actual decoded member bytes, not an untrusted manifest
 claim. Every ordinal, role, phase and visible text is still validated, and all
 messages retain their original bytes and ordered visible projection.
+The [parity-repair report](V0_25_PARITY_REPAIR_SMOKE.md) records a selected
+20,001-message regression and publication boundary checks, not a 2 GiB trial.
 
 Pack indexes are parsed entry-by-entry, into temporary SQLite, up to the old
 128 MiB index bound. Bodies and graph work lists are disk-indexed; at most one

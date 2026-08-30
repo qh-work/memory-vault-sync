@@ -16,7 +16,9 @@ and [old/new capability mapping](PARITY.md), not a smaller renamed subset.
   common foundation. The single-file core still imports no optional client.
 - Full local retrieval adds fragments, bounded BM25, bilingual concepts,
   polarity/explanations and explicit paginated reindex. Graph/claim views expose
-  timelines, conflicts, supersession and non-executing proposals.
+  timelines, conflicts, supersession and non-executing proposals. Ordinary entity
+  labels do not require a concept-group match; structural handoff filters relation
+  targets with the same current admission checks as ordinary recall.
 - Eleven MCP tools, direct protocol, visible-event adapters, the new lifecycle
   profile and a separate ten-operation v0.21 wire adapter share one Vault/trust.
 - New automatic captures freeze their time, complete record projection and
@@ -33,7 +35,8 @@ and [old/new capability mapping](PARITY.md), not a smaller renamed subset.
   restore keys, remote publication permission or host trust.
 - Real v0.21 packs/ZIPs and checkpoint chains can be inspected/repacked and
   converted through a disk index into complete split canonical parts with
-  original-byte evidence and validated old-ID mappings.
+  original-byte evidence and validated old-ID mappings. Full conversation imports
+  use checked member-byte bounds instead of the small converter's message cap.
 - Content-selected sharing preserves complete dependency closure and optional
   proofs. Imports default to quarantine; verified import uses independent
   current trust. Encryption/device/catalog contracts remain external-provider
@@ -43,11 +46,12 @@ and [old/new capability mapping](PARITY.md), not a smaller renamed subset.
   present. A production publisher root/channel is not provisioned.
 - Native Windows local-fixed-NTFS protection is implemented alongside POSIX
   protection. It does not isolate a hostile process running as the same user.
-- Client private-state publication now uses a single exclusive rename on
-  supported macOS/Linux filesystems. A process exit can no longer leave that
-  newly published file linked to its temporary name and unreadable on retry.
-  Existing aliases remain rejected; other independent publishers are not all
-  migrated by this change. See [the platform limits](PLATFORMS.md).
+- Client control, transfer, sharing, pack, migration and backup publication use
+  a single exclusive rename on supported macOS/Linux filesystems. This avoids
+  leaving a complete file linked to its temporary name and unreadable on retry.
+  Explicit output-directory contracts are preserved. Existing private aliases
+  remain rejected; the independent core's raw bundle exporter is a separate
+  path. See [the platform limits](PLATFORMS.md).
 - Host recovery can finish interrupted cleanup only after verifying the exact
   lifecycle cancellation receipt and pending requests. Cleanup is bounded and
   does not count as a successful memory save. Disabling capture still blocks
@@ -110,6 +114,15 @@ long-tail fixture is not a scale or performance certification. The later
 publication case used one real temporary child exit, not a power-loss trial.
 The newer hot-journal case likewise does not simulate device power loss; the
 small signed directory fixtures use the same reference implementation at both ends.
+
+The [parity-repair campaign](V0_25_PARITY_REPAIR_SMOKE.md) separately records twelve
+passing methods on `9d98ce0d56394adc275915a0ea1fd39b6ca06254`: entity recall,
+handoff relation filtering, a 20,001-message old export, selected publication
+interruptions/rollback and POSIX directory compatibility. Only three tiny
+publication children exited; the other failures were injected in-process. The
+backup case exercised its file publisher, not a complete snapshot/restore. No
+keys or providers were used. The five new modules contain ten additional methods
+that were not selected, and the whole ledger remains open.
 
 The work also does not establish native Work automatic events, production
 encryption/recovery ceremonies, a security audit, vendor certification or
