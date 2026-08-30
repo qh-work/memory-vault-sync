@@ -204,6 +204,13 @@ objects, including its manifest, are capped at 16 MiB by the **old pack
 format**; a larger valid ZIP catalog cannot be repacked into that old format.
 That incompatibility is explicit rather than a truncated export.
 
+The complete converter does not inherit the small ZIP converter's 20,000-message
+limit. A `conversation-export/v1` member may contain any nonempty message list
+that fits the checked 2 MiB member and existing structural budgets. The count
+bound comes from the actual decoded member bytes, not an untrusted manifest
+claim. Every ordinal, role, phase and visible text is still validated, and all
+messages retain their original bytes and ordered visible projection.
+
 Pack indexes are parsed entry-by-entry, into temporary SQLite, up to the old
 128 MiB index bound. Bodies and graph work lists are disk-indexed; at most one
 ordinary document is decoded at a time. Standard-library ZIP central-directory

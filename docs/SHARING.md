@@ -105,3 +105,11 @@ starts a worker, opens a network or proves another AI read/agreed with memory.
 Plaintext shares are not encrypted. They are written only to a new private
 local file. Use a separately approved transport or the explicit
 [encryption provider boundary](ENCRYPTION.md) for confidentiality outside it.
+
+On supported macOS/Linux filesystems the shared output helper uses an exclusive
+rename, not a link followed by cleanup. A complete published file therefore
+does not depend on later cleanup of a temporary hard-link alias to remain
+readable. Existing aliases are still rejected, and an existing or competing
+output is never overwritten. The same helper is used for explicitly requested
+encryption-provider outputs; this publication property does not verify or
+provision a provider. See [platform limits](PLATFORMS.md).

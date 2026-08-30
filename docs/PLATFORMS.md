@@ -28,15 +28,26 @@ This profile is not a universal Windows folder-sharing or ACL repair utility.
 Unknown permission conditions return a visible error rather than automatically
 changing an existing object to make it pass.
 
-## macOS/Linux exclusive private-file publication
+## macOS/Linux exclusive file publication
 
-Shared `publish_file(..., replace=False)` now uses a single exclusive rename
-instead of a hard-link followed by unlink. The client hook/host control writer
-uses the same `atomic_write` implementation. A process exit after publication
+Shared `publish_file(..., replace=False)` uses a single exclusive rename
+instead of a hard-link followed by unlink. Client hook/host control, transfer
+state and fragments, sharing, chunk packs, full legacy packs, backup and small
+migration outputs use this primitive. A process exit after publication
 can no longer leave that writer's complete destination aliased to its temporary
 name. A later exact retry still compares the existing bytes via
 `FileExistsError`; a conflicting write does not overwrite them. Private owner,
 mode, single-link and inode checks remain in force.
+
+The default profile still requires a private parent. Explicit POSIX exchange,
+unpack, backup and migration outputs can retain their existing parent-directory
+contract through `private_parent=False`, only for no-replace publication. Their
+callers keep their own parent checks; this option never changes directory modes.
+The staged and newly published files still require private single-link bytes.
+Existing shared exchange files are left untouched and returned to the caller
+for exact-byte/canonical comparison; this is not a private-state shortcut,
+signature check or enrollment of trust. Windows and replacement writes cannot
+use that opt-out.
 
 The standard-library binding is loaded lazily from the current process, without
 a library search, subprocess or dependency installation. macOS uses
@@ -54,10 +65,11 @@ The destination's identity and private single-link state are checked after
 rename, followed by directory fsync. The new synthetic cases in
 `tests/test_v025_publication_recovery.py` exercise this path separately; their
 execution status is in the validation index. A controlled process exit after
-fsync is not power-loss durability certification. Existing abandoned aliases
-are still rejected, not automatically removed or declared safe. Other modules'
-independent POSIX hard-link publishers have not all been converted by this
-slice, and must not inherit its interruption guarantee.
+fsync is not power-loss durability certification. Private inputs with abandoned
+aliases are still rejected, not automatically removed or declared safe.
+The independent single-file core's raw unsigned bundle exporter retains its own
+publication path; it does not inherit the full-client helper's interruption
+guarantee. That does not change portable record bytes or the protocol contract.
 
 ## Native Windows design
 

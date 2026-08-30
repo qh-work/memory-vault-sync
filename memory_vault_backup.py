@@ -291,16 +291,19 @@ def _sync_directory(path: Path) -> None:
 
 def _publish_file(temporary: Path, destination: Path) -> None:
     absolute(destination)
+    from memory_vault_storage import publish_file
     if os.name == "nt":
-        from memory_vault_storage import publish_file
         publish_file(temporary, destination, replace=False)
         return
+    # Keep the existing POSIX parent contract (e.g. owned 0755 directories),
+    # while the shared publisher still requires private single-link file bytes.
+    _private_parent(destination.parent)
+    if os.path.lexists(destination):
+        raise MemoryError("backup_output_exists")
     try:
-        os.link(temporary, destination)
+        publish_file(temporary, destination, replace=False, private_parent=False)
     except FileExistsError:
         raise MemoryError("backup_output_exists") from None
-    temporary.unlink()
-    _sync_directory(destination.parent)
 
 
 def _new_temporary(parent: Path) -> Path:

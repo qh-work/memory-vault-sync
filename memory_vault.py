@@ -624,6 +624,24 @@ def _expanded_query_tokens(tokens: Sequence[str], features: frozenset[str]) -> l
     return sorted(result)
 
 
+def _entity_query_matches(entities: Sequence[str], query_tokens: set[str]) -> frozenset[str]:
+    """Match original query terms in explicit labels, independently of concepts.
+
+    Canonical labels are each bounded to 512 UTF-8 bytes. Inspect every token
+    within that bound, but count each query term only once across all labels:
+    repeated aliases cannot multiply this lexical association signal. A label
+    is searchable evidence, never a memory owner or an admission decision.
+    """
+    matched: set[str] = set()
+    for entity in entities:
+        if len(matched) == len(query_tokens):
+            break
+        matched.update(query_tokens.intersection(tokenize(
+            entity, maximum=MAX_BUNDLE_LINE_BYTES * 2, maximum_input_bytes=512,
+        )))
+    return frozenset(matched)
+
+
 def _fragment_locator(tokens: Sequence[str], normalized_query: str) -> Callable[[str], bool]:
     """Locate possible scoring spans without token lists, counts or semantics.
 
@@ -1520,6 +1538,26 @@ class Vault:
             return "conflicted"
         return "current"
 
+    @staticmethod
+    def _context_relations(
+        connection: sqlite3.Connection, relations: Sequence[Mapping[str, str]],
+    ) -> tuple[list[Mapping[str, str]], bool]:
+        """Bound the view, not the canonical record, to currently admitted targets.
+
+        Callers supply validated canonical relations (at most 256). One bounded
+        query serves recall and structural handoff alike; no admission is changed.
+        """
+        targets = sorted({str(relation["target"]) for relation in relations})
+        admitted: set[str] = set()
+        if targets:
+            placeholders = ",".join("?" for _ in targets)
+            admitted = {str(row[0]) for row in connection.execute(
+                f"SELECT memory_id FROM record_admissions WHERE memory_id IN ({placeholders}) "
+                "AND vault_admitted(state,signer_key_id)>0", targets,
+            )}
+        selected = [relation for relation in relations if relation["target"] in admitted][:32]
+        return selected, len(relations) > len(selected)
+
     def _recall_rows(
         self,
         connection: sqlite3.Connection,
@@ -1617,6 +1655,7 @@ class Vault:
         records: dict[str, dict[str, Any]] = {}
         statuses: dict[str, str] = {}
         entity_features: dict[str, frozenset[str]] = {}
+        entity_matches: dict[str, frozenset[str]] = {}
         scoring_spans: list[dict[str, Any]] = []
         fallback_spans: list[dict[str, Any]] = []
         spans_examined = 0
@@ -1639,6 +1678,7 @@ class Vault:
             records[memory_id] = record
             statuses[memory_id] = self._memory_status(connection, memory_id)
             entity_features[memory_id] = semantic_features(" ".join(record["entities"])) if semantic else frozenset()
+            entity_matches[memory_id] = _entity_query_matches(record["entities"], token_set)
             used += int(item["bytes"])
             first_fragment: dict[str, Any] | None = None
             first_selected = False
@@ -1654,7 +1694,8 @@ class Vault:
                 scoring_spans.append({"memory_id": memory_id, "fragment": fragment})
                 first_selected = first_selected or fragment is first_fragment
             if (first_fragment is not None and not first_selected
-                    and (memory_id in related_ids or semantic_similarity(features, entity_features[memory_id]) > 0)):
+                    and (memory_id in related_ids or entity_matches[memory_id]
+                         or semantic_similarity(features, entity_features[memory_id]) > 0)):
                 # These records can be useful without a textual query match.
                 # Keep their first span, as before, but do not let unrelated
                 # prefixes consume slots needed by genuine matching spans.
@@ -1689,7 +1730,8 @@ class Vault:
                 denominator = frequency + 1.35 * (1.0 - 0.72 + 0.72 * item["length"] / max(1.0, average))
                 lexical += inverse * frequency * 2.35 / denominator
             concept = semantic_similarity(features, item["features"]) * 2.25
-            entity = semantic_similarity(features, entity_features[memory_id]) * 0.5
+            entity_lexical = len(entity_matches[memory_id]) / max(1, len(token_set))
+            entity = (entity_lexical + semantic_similarity(features, entity_features[memory_id])) * 0.5
             phrase = 1.35 if normalized_query and normalized_query in normalize_text(str(fragment["text"])) else 0.0
             graph = 0.20 if memory_id in related_ids else 0.0
             if not any((lexical, concept, entity, phrase, graph)):
@@ -1708,11 +1750,14 @@ class Vault:
                 explanation.append("concept_polarity_mismatch_penalty")
             if fragment["role_hint"]:
                 explanation.append("role_hint_is_not_authenticated")
+            if entity_matches[memory_id]:
+                explanation.append("entity_lexical_match")
             if graph:
                 explanation.append("bounded_related_evidence")
             candidate = {
                 "record": record, "fragment": fragment, "status": status,
-                "score_milli": max(0, round(score * 1000)), "matched_tokens": len(item["counts"]),
+                "score_milli": max(0, round(score * 1000)),
+                "matched_tokens": len(set(item["counts"]) | entity_matches[memory_id]),
                 "explanation": explanation,
                 "score_components": {
                     "lexical_milli": round(lexical * 1000), "semantic_milli": round(concept * 1000),
@@ -1743,16 +1788,7 @@ class Vault:
                 continue
             seen_excerpts.add(diversity_key)
             entities = list(record["entities"])
-            raw_relations = list(record["relations"])
-            targets = sorted({str(value["target"]) for value in raw_relations})
-            admitted_targets: set[str] = set()
-            if targets:
-                placeholders = ",".join("?" for _ in targets)
-                admitted_targets = {str(row[0]) for row in connection.execute(
-                    f"SELECT memory_id FROM record_admissions WHERE memory_id IN ({placeholders}) "
-                    "AND vault_admitted(state,signer_key_id)>0", targets,
-                )}
-            relations = [value for value in raw_relations if value["target"] in admitted_targets]
+            relations, relations_truncated = self._context_relations(connection, record["relations"])
             result.append(
                 {
                     "memory_id": record["memory_id"],
@@ -1762,8 +1798,8 @@ class Vault:
                     "fragment": dict(fragment),
                     "entities": entities[:32],
                     "entities_truncated": len(entities) > 32,
-                    "relations": relations[:32],
-                    "relations_truncated": len(raw_relations) > len(relations[:32]),
+                    "relations": relations,
+                    "relations_truncated": relations_truncated,
                     "provenance": record["provenance"],
                     "created_at": record["created_at"],
                     "status": item["status"],
@@ -2281,7 +2317,7 @@ class Vault:
                         continue
                     text, text_truncated = _bounded_text(str(record["text"]))
                     entities = list(record["entities"])
-                    relations = list(record["relations"])
+                    relations, relations_truncated = self._context_relations(connection, record["relations"])
                     structural.append(
                         {
                             "memory_id": memory_id,
@@ -2290,8 +2326,8 @@ class Vault:
                             "text_truncated": text_truncated,
                             "entities": entities[:32],
                             "entities_truncated": len(entities) > 32,
-                            "relations": relations[:32],
-                            "relations_truncated": len(relations) > 32,
+                            "relations": relations,
+                            "relations_truncated": relations_truncated,
                             "provenance": record["provenance"],
                             "created_at": record["created_at"],
                             "status": status,

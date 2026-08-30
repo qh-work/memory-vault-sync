@@ -471,7 +471,7 @@ def open_file(path: Path, flags: int, *, private: bool = False, trusted: bool = 
 def _rename_no_replace(temporary: Path, destination: Path) -> None:
     """One native rename, never a link/unlink crash window or overwrite fallback.
 
-    Called only after publish_file checks private sibling paths. Loading the
+    Called only after publish_file checks sibling paths and the private source. Loading the
     current process's C symbols is lazy and needs no library search, executable,
     network or extra package. Unsupported kernels/filesystems fail closed.
     """
@@ -505,7 +505,9 @@ def _rename_no_replace(temporary: Path, destination: Path) -> None:
     raise StorageError("atomic_publication_failed", retryable=error in {errno.EINTR, errno.EAGAIN, errno.EBUSY})
 
 
-def publish_file(temporary: Path, destination: Path, *, replace: bool = False) -> None:
+def publish_file(
+    temporary: Path, destination: Path, *, replace: bool = False, private_parent: bool = True,
+) -> None:
     """Publish a caller-flushed private sibling without reading its contents.
 
     Fixed local NTFS, no COPY_ALLOWED fallback, exact before/after file identity.
@@ -514,11 +516,23 @@ def publish_file(temporary: Path, destination: Path, *, replace: bool = False) -
     On macOS/Linux, no-replace uses an exclusive rename so interruption cannot
     leave a published inode with a temporary hard-link alias. Existing aliases
     are still rejected; this is not automatic repair of an older damaged file.
+
+    An explicit POSIX output publisher may select private_parent=False after
+    its own parent-path checks, but only for no-replace output. The staged and
+    newly published file remain private single-link files. Existing exchange
+    bytes are never opened or repaired here: FileExistsError lets that caller
+    enforce its own new-output or exact-overlap contract. Private state and
+    all replacement/Windows publication retain the default strict profile.
     """
     temporary, destination = validate_path(temporary), validate_path(destination)
-    if type(replace) is not bool or temporary == destination or temporary.parent != destination.parent:
+    if (type(replace) is not bool or type(private_parent) is not bool
+            or temporary == destination or temporary.parent != destination.parent
+            or not private_parent and (os.name != "posix" or replace)):
         raise StorageError("private_sibling_publication_required")
-    check_private_directory(destination.parent)
+    if private_parent:
+        check_private_directory(destination.parent)
+    elif not destination.parent.is_dir():
+        raise StorageError("invalid_storage_directory")
     source_fd = open_file(temporary, os.O_RDONLY, private=True)
     try:
         source_info = os.fstat(source_fd)
@@ -530,6 +544,8 @@ def publish_file(temporary: Path, destination: Path, *, replace: bool = False) -
     finally:
         os.close(source_fd)
     if destination.exists():
+        if not private_parent:
+            raise FileExistsError(errno.EEXIST, "private_storage_exists")
         check = open_file(destination, os.O_RDONLY, private=True)
         os.close(check)
         if not replace:

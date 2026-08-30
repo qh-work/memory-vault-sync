@@ -87,8 +87,10 @@ Vault.
    normalized-query phrase signal. Fragments use at most 1600 characters,
    prefer newline boundaries and overlap by up to 128 characters. Unrelated
    prefixes do not receive full tokenization or concept extraction. Matching
-   spans take the first scoring slots; entity-concept-only and related-evidence
-   candidates retain a first-fragment fallback when slots remain. At most
+   spans take the first scoring slots; entity-only and related-evidence
+   candidates retain a first-fragment fallback when slots remain. Ordinary
+   entity labels and legacy claim keys can match original query tokens without
+   belonging to a fixed concept group, including with `semantic: false`. At most
    4096 selected spans undergo full scoring. Reaching a byte, candidate or
    scoring bound still reports truncation; arbitrarily many relevant spans
    cannot all be returned within these limits.
@@ -98,6 +100,10 @@ Vault.
    full-Vault BM25. Candidate and span selection can change scores; different
    queries are not calibrated or comparable probabilities.
 5. Add concept Jaccard similarity and entity/phrase/related-evidence hints.
+   Entity lexical coverage counts each original query token at most once across
+   all labels; repeated aliases cannot multiply it. An entity match contributes
+   to `entity_milli` and `matched_tokens`, with `entity_lexical_match` in the
+   explanation. It does not fabricate a match inside the returned text fragment.
    A negation mismatch reduces concept similarity to one quarter; it does not
    delete opposing evidence. The ten hand-authored groups are not semantic
    understanding, a learned model or a universal translator.
@@ -110,6 +116,12 @@ not separately authenticated role segments. Parsing those labels is only a
 ranking heuristic. The `role_hint_authenticated` field is always false. An
 embedded label, a high score, a recent timestamp or even a valid signature
 does not prove what a user said or create authorization.
+
+Both ordinary recall and structural handoff context filter outgoing relations
+against current target admission/trust, in one query over at most 256 canonical
+targets. Returned relations are capped at 32; `relations_truncated` also signals
+filtered targets. This changes only the context view, never the stored record,
+its ID/signature or another record's admission.
 
 Retrieval never performs automatic semantic extraction. Decisions, constraints
 or summaries still have to be supplied explicitly as evidence-backed memory by

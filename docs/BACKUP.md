@@ -155,6 +155,15 @@ delivery, model consumption or real-world task completion.
 
 ## Resource and storage limits
 
+On supported macOS/Linux filesystems, completed backup/restore files use the
+shared exclusive-rename publisher. This preserves the existing owned,
+non-group/other-writable parent contract, including suitable 0755 directories;
+new files remain private and single-linked. An interruption does not strand a
+complete output under both its temporary and destination name. A backup still
+requires its valid manifest and complete component verification before use.
+Existing output conflicts and unsafe aliases are not automatically repaired.
+See [PLATFORMS.md](PLATFORMS.md) for filesystem and verification limits.
+
 The profile accepts the current SQLite v2 schema only. Bounds are 2 GiB for the
 database, 1,000,000 memory records, 2,000,000 write receipts and a 32 KiB manifest.
 Work defaults to a 60-second deadline; `--timeout` permits 1–300 seconds. SQLite

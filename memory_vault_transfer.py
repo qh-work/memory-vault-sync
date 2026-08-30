@@ -98,46 +98,42 @@ def _read(path: Path, *, maximum: int = MAX_CAPSULE_BYTES, private: bool = False
     return value
 
 
-def _write(path: Path, value: Mapping[str, Any], *, replace: bool, maximum: int = MAX_CAPSULE_BYTES) -> None:
-    """Durable atomic output; immutable exchange files never overwrite peers."""
+def _write(path: Path, value: Mapping[str, Any], *, replace: bool, maximum: int = MAX_CAPSULE_BYTES,
+           private: bool = True) -> None:
+    """Atomic private state or explicitly selected immutable exchange output."""
     _path(path)
+    if type(private) is not bool or (not private and replace):
+        raise MemoryError("invalid_transfer_publication_profile")
     encoded = canonical_bytes(value) + b"\n"
     if len(encoded) > maximum:
         raise MemoryError("transfer_too_large")
-    if os.name == "nt":
-        try:
-            protected_storage.atomic_write(path, encoded, replace=replace)
-        except FileExistsError:
-            if replace or canonical_bytes(_read(path, maximum=maximum)) != canonical_bytes(value):
-                raise MemoryError("transfer_output_conflict") from None
-        return
-    descriptor, temporary_name = tempfile.mkstemp(prefix=".vault-", suffix=".tmp", dir=path.parent)
-    temporary = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, "wb") as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            stream.write(encoded)
-            stream.flush()
-            os.fsync(stream.fileno())
-        if replace:
-            if path.exists():
-                _read(path, maximum=maximum, private=True)
-            os.replace(temporary, path)
-        else:
-            try:
-                os.link(temporary, path)
-            except FileExistsError:
-                if canonical_bytes(_read(path, maximum=maximum)) != canonical_bytes(value):
-                    raise MemoryError("transfer_output_conflict") from None
-            temporary.unlink()
-        directory_fd = os.open(path.parent, os.O_RDONLY)
         try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            temporary.unlink()
+            if os.name == "nt":
+                # The native profile stays private even for an exchange file.
+                protected_storage.atomic_write(path, encoded, replace=replace)
+            else:
+                descriptor, temporary_name = tempfile.mkstemp(prefix=".vault-", suffix=".tmp", dir=path.parent)
+                temporary = Path(temporary_name)
+                try:
+                    with os.fdopen(descriptor, "wb") as stream:
+                        os.fchmod(stream.fileno(), 0o600)
+                        stream.write(encoded)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    if replace and path.exists():
+                        _read(path, maximum=maximum, private=True)
+                    # One exclusive rename consumes the temporary name. A
+                    # process exit cannot strand a private two-link journal.
+                    protected_storage.publish_file(temporary, path, replace=replace, private_parent=private)
+                finally:
+                    with contextlib.suppress(FileNotFoundError):
+                        temporary.unlink()
+        except FileExistsError:
+            if replace or canonical_bytes(_read(path, maximum=maximum, private=private)) != canonical_bytes(value):
+                raise MemoryError("transfer_output_conflict") from None
+    except protected_storage.StorageError as exc:
+        raise MemoryError(exc.code, retryable=exc.retryable) from None
 
 
 @contextlib.contextmanager
@@ -190,39 +186,35 @@ def _read_fragment(path: Path, *, maximum: int = MAX_FRAGMENT_BYTES) -> bytes:
     return raw
 
 
-def _write_fragment(path: Path, data: bytes) -> None:
+def _write_fragment(path: Path, data: bytes, *, private: bool = True) -> None:
     """Publish complete fragment bytes atomically and without overwriting."""
     _path(path)
+    if type(private) is not bool:
+        raise MemoryError("invalid_transfer_publication_profile")
     if not data or len(data) > MAX_FRAGMENT_BYTES:
         raise MemoryError("invalid_group_fragment")
-    if os.name == "nt":
-        try:
-            protected_storage.atomic_write(path, data, replace=False)
-        except FileExistsError:
-            if _read_fragment(path) != data:
-                raise MemoryError("group_fragment_conflict") from None
-        return
-    fd, name = tempfile.mkstemp(prefix=".fragment-", dir=path.parent)
-    temporary = Path(name)
     try:
-        with os.fdopen(fd, "wb") as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
         try:
-            os.link(temporary, path)
+            if os.name == "nt":
+                protected_storage.atomic_write(path, data, replace=False)
+            else:
+                fd, name = tempfile.mkstemp(prefix=".fragment-", dir=path.parent)
+                temporary = Path(name)
+                try:
+                    with os.fdopen(fd, "wb") as stream:
+                        os.fchmod(stream.fileno(), 0o600)
+                        stream.write(data)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    protected_storage.publish_file(temporary, path, replace=False, private_parent=private)
+                finally:
+                    with contextlib.suppress(FileNotFoundError):
+                        temporary.unlink()
         except FileExistsError:
             if _read_fragment(path) != data:
                 raise MemoryError("group_fragment_conflict") from None
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            temporary.unlink()
+    except protected_storage.StorageError as exc:
+        raise MemoryError(exc.code, retryable=exc.retryable) from None
 
 
 def _group(value: Any) -> dict[str, Any]:
@@ -678,7 +670,7 @@ class DirectoryTransfer:
                 before_write(fragment["bytes"])
             data = _read_fragment(source / _fragment_name(fragment))
             self._fragment_records(fragment, data, verify_signatures=False)
-            _write_fragment(target, data)
+            _write_fragment(target, data, private=False)
             self._record_group_file(target, fragment, receipt)
             copied += 1
         return True
@@ -1106,7 +1098,7 @@ class DirectoryTransfer:
             else:
                 directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             destination = directory / f"{payload['after']:020d}-{payload['cursor']:020d}-{digest}.json"
-            _write(destination, capsule, replace=False)
+            _write(destination, capsule, replace=False, private=False)
             self._record_published(capsule, digest)
             state["published_cursor"] = payload["cursor"]
             state["last_published"] = digest

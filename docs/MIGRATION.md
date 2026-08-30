@@ -162,7 +162,9 @@ claim. Preserving visible evidence is not permission to publish it.
   Content-addressed records cannot represent mutually recursive IDs by assuming
   the old unrelated identifiers are still valid.
 - The archive is limited to 64 MiB, expanded contents to 64 MiB, 10,000 members,
-  2 MiB per member, and 4 MiB for the manifest. Encrypted entries, directory or
+  2 MiB per member, 20,000 messages per conversation snapshot, and 4 MiB for the
+  manifest. The complete legacy-pack converter uses checked member-byte bounds
+  instead of this snapshot message cap. Encrypted entries, directory or
   special-file entries, duplicate names, unsafe paths, unsupported compression,
   and expansion ratios above 250:1 are rejected.
 - For this retained tool, the new core's stricter limits still apply: a visible

@@ -545,7 +545,10 @@ class _Archive:
                 if schema == legacy.EPISODE_SCHEMA and not events:
                     node = legacy._episode(value, path, digest)
                 elif schema == legacy.CONVERSATION_SCHEMA and not events:
-                    node = legacy._conversation(value, path, digest)
+                    # Each nonempty JSON message consumes bytes in this actual
+                    # <=2 MiB member. Do not inherit the small ZIP converter's
+                    # unrelated 20,000-message cap or trust a manifest count.
+                    node = legacy._conversation(value, path, digest, maximum_messages=len(_raw))
                 elif schema == legacy.EVENT_SCHEMA and events:
                     node = self._event(value, path, digest)
                 else:
@@ -823,7 +826,7 @@ def _staging(output: Path) -> Iterator[tuple[Path, BinaryIO]]:
                 os.fsync(stream.fileno())
     finally:
         # The unique temporary is ours; destination publication is a separate
-        # no-clobber link performed only after source fingerprints are checked.
+        # no-clobber rename performed only after source fingerprints are checked.
         try:
             path.unlink()
         except FileNotFoundError:
@@ -831,12 +834,12 @@ def _staging(output: Path) -> Iterator[tuple[Path, BinaryIO]]:
 
 
 def _publish(staged: Path, output: Path, stream: BinaryIO) -> None:
+    from memory_vault_storage import StorageError, publish_file
     stream.flush()
     os.fsync(stream.fileno())
     if os.fstat(stream.fileno()).st_size > MAX_CAPSULE_BYTES:
         _fail("legacy_output_size_limit")
     if os.name == "nt":
-        from memory_vault_storage import publish_file
         # Native protected handles intentionally deny delete-sharing. Close
         # before WRITE_THROUGH/no-copy publication, not before file flushing.
         stream.close()
@@ -844,14 +847,11 @@ def _publish(staged: Path, output: Path, stream: BinaryIO) -> None:
         return
     legacy._check_parent_chain(output, create=False, private=True)
     try:
-        os.link(staged, output, follow_symlinks=False)
+        publish_file(staged, output, replace=False, private_parent=False)
     except FileExistsError:
         _fail("output_exists")
-    descriptor = os.open(output.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    except StorageError as exc:
+        raise MemoryError(exc.code, retryable=exc.retryable) from None
 
 
 def _write_pack(archive: _Archive, output: BinaryIO) -> None:

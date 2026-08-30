@@ -314,7 +314,9 @@ def _episode(value: dict[str, Any], path: str, member_hash: str) -> _Node:
     )
 
 
-def _conversation(value: dict[str, Any], path: str, member_hash: str) -> _Node:
+def _conversation(
+    value: dict[str, Any], path: str, member_hash: str, *, maximum_messages: int = 20_000,
+) -> _Node:
     _object(value, {
         "schema_version", "source_id", "title", "captured_at", "coverage",
         "included_content", "excluded_content", "messages",
@@ -327,7 +329,10 @@ def _conversation(value: dict[str, Any], path: str, member_hash: str) -> _Node:
         raise MigrationError("invalid_legacy_conversation")
     _string_list(value["included_content"], 100)
     _string_list(value["excluded_content"], 100)
-    messages = _messages(value["messages"], maximum=20_000, phase_required=False)
+    # The retained single-bundle ZIP converter has its original count limit.
+    # The full pack converter supplies a bound derived from the already checked
+    # member bytes: v0.21 conversation exports had no independent message cap.
+    messages = _messages(value["messages"], maximum=maximum_messages, phase_required=False)
     return _Node(
         identity="conversation:" + path, schema=CONVERSATION_SCHEMA, kind="episode",
         text=f"Legacy visible conversation snapshot\nTitle: {title}\nCoverage: {value['coverage']}\n\n" + _render_messages(messages),
@@ -767,36 +772,43 @@ def _publish_pair(output: Path, report: Path, bundle: list[bytes], report_bytes:
                     # handle, inherited ACLs and the resulting file identity.
                     protected_storage.publish_file(temporary, destination, replace=False)
                 else:
-                    os.link(temporary, destination, follow_symlinks=False)
+                    # Retain the existing owned/non-writable parent contract;
+                    # publication must not newly require every output dir 0700.
+                    _check_parent_chain(destination, create=False, private=True)
+                    if os.path.lexists(destination):
+                        raise MigrationError("output_exists")
+                    protected_storage.publish_file(temporary, destination, replace=False,
+                                                   private_parent=False)
             except FileExistsError:
                 raise MigrationError("output_exists") from None
-            published.append((destination, info.st_dev, info.st_ino))
-        for destination in (() if os.name == "nt" else (output, report)):
-            try:
-                fd = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-                try:
-                    os.fsync(fd)
-                finally:
-                    os.close(fd)
-            except OSError:
-                # Files have already been fsynced; not every supported filesystem
-                # permits a directory fsync. Do not overwrite/retry implicitly.
-                pass
+            finally:
+                # A rename may have succeeded before directory fsync or the
+                # post-publication check failed. Track that effect even when
+                # publish_file raises, but never claim a competing destination.
+                if not os.path.lexists(temporary):
+                    try:
+                        moved = destination.lstat()
+                    except OSError:
+                        pass
+                    else:
+                        if (stat.S_ISREG(moved.st_mode) and moved.st_nlink == 1
+                                and (moved.st_dev, moved.st_ino) == (info.st_dev, info.st_ino)):
+                            published.append((destination, info.st_dev, info.st_ino))
     except BaseException:
         for destination, device, inode in reversed(published):
             try:
                 info = destination.lstat()
-                if (info.st_dev, info.st_ino) == (device, inode):
-                    if os.name == "nt":
-                        # Never remove a replaced/reparse/hardlinked object
-                        # while rolling back this invocation's own outputs.
-                        descriptor = protected_storage.open_file(destination, os.O_RDONLY, private=True)
-                        try:
-                            current = os.fstat(descriptor)
-                            if (current.st_dev, current.st_ino) != (device, inode):
-                                continue
-                        finally:
-                            os.close(descriptor)
+                if (stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                        and (info.st_dev, info.st_ino) == (device, inode)):
+                    # Recheck the current protected file on every platform;
+                    # never clean up a replacement, reparse point or alias.
+                    descriptor = protected_storage.open_file(destination, os.O_RDONLY, private=True)
+                    try:
+                        current = os.fstat(descriptor)
+                        if (current.st_dev, current.st_ino) != (device, inode):
+                            continue
+                    finally:
+                        os.close(descriptor)
                     destination.unlink()
             except OSError:
                 pass

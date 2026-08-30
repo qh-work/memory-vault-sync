@@ -50,8 +50,12 @@ profile: local fixed NTFS, checked process-user private ACLs on new output/state
 directories, no reparse paths, and same-volume no-replacement publication. The
 CRT receives ownership of a checked native handle; no `chmod`, POSIX hard-link
 publication or silent permission repair is substituted. Existing directories
-with incompatible ACLs are refused. POSIX keeps private temporary files and its
-existing no-clobber publication path. See [PLATFORMS.md](PLATFORMS.md).
+with incompatible ACLs are refused. On supported macOS/Linux filesystems,
+private chunks/manifests and explicit unpack outputs use a single exclusive
+rename: a published chunk can be verified on retry without waiting for removal
+of a temporary hard-link alias. POSIX unpack retains the caller-selected parent
+permissions, while new output bytes remain private and single-linked. Existing
+outputs are never overwritten. See [PLATFORMS.md](PLATFORMS.md).
 
 Packs have no network client; the selected mount may perform network I/O under
 the OS. [SYNC.md](SYNC.md) instead uses small signed incremental memory batches
@@ -60,5 +64,7 @@ Compression is not encryption and a hash is not an author's signature. Use a
 private destination or a separately configured encrypted transport for private
 memory. Public synthetic cases in `tests/test_v025_portable_packs.py` cover the
 native routing, unchanged bounds, resumable copies and unsafe-file refusals;
-they were authored but **not run**. No native Windows, performance benchmark or
-interruption test was run for this release.
+those methods were authored but **not run**. Selected publication cases in
+`tests/test_v025_transport_publication.py` have their execution recorded
+separately in [VALIDATION.md](VALIDATION.md). No native Windows or performance
+certification is claimed.

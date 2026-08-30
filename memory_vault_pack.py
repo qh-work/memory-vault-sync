@@ -114,20 +114,24 @@ def _atomic_state(path: Path, value: Mapping[str, Any]) -> None:
 def _new_bytes(path: Path, data: bytes) -> None:
     """No-clobber publication of complete bytes, including the final manifest."""
     _absolute(path)
-    if os.name == "nt":
-        protected_storage.atomic_write(path, data, replace=False)
-        return
-    descriptor, temporary = tempfile.mkstemp(prefix=".pack-write-", dir=path.parent)
     try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.link(temporary, path)
-        _sync_directory(path.parent)
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            Path(temporary).unlink()
+        if os.name == "nt":
+            protected_storage.atomic_write(path, data, replace=False)
+            return
+        descriptor, temporary = tempfile.mkstemp(prefix=".pack-write-", dir=path.parent)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            # A copied chunk is either absent or has one complete name, even
+            # when interrupted before the copy receipt has been committed.
+            protected_storage.publish_file(Path(temporary), path, replace=False)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                Path(temporary).unlink()
+    except protected_storage.StorageError as exc:
+        raise MemoryError(exc.code, retryable=exc.retryable) from None
 
 
 def _new_directory(path: Path) -> None:
@@ -309,11 +313,12 @@ def unpack(source: Path, output: Path) -> Mapping[str, Any]:
                 raise MemoryError("pack_source_hash_mismatch")
             stream.flush()
             os.fsync(stream.fileno())
-        if os.name == "nt":
-            protected_storage.publish_file(Path(temporary), output, replace=False)
-        else:
-            os.link(temporary, output)
-            _sync_directory(output.parent)
+        # A selected unpack destination is not a private control directory on
+        # POSIX. Keep its existing sharing permissions without weakening the
+        # new file's 0600/single-link checks or the native private profile.
+        protected_storage.publish_file(Path(temporary), output, replace=False, private_parent=os.name == "nt")
+    except protected_storage.StorageError as exc:
+        raise MemoryError(exc.code, retryable=exc.retryable) from None
     finally:
         with contextlib.suppress(FileNotFoundError):
             Path(temporary).unlink()

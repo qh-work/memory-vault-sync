@@ -240,17 +240,11 @@ def _new_output(output: Path) -> Iterator[Any]:
             yield stream
             stream.flush()
             os.fsync(stream.fileno())
-        if os.name == "nt":
-            from memory_vault_storage import publish_file
-            publish_file(temporary, destination, replace=False)
-        else:
-            os.link(temporary, destination)
-        if os.name == "posix":
-            directory = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+        # The shared publisher preserves no-clobber and directory durability.
+        # Its exclusive rename also consumes the temporary name atomically:
+        # interruption must not leave a two-link file our strict readers reject.
+        from memory_vault_storage import publish_file
+        publish_file(temporary, destination, replace=False)
     finally:
         temporary.unlink(missing_ok=True)
 
