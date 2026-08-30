@@ -155,6 +155,7 @@ _UTC_TIMESTAMP = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z"
 )
 _LATIN = re.compile(r"[a-z0-9][a-z0-9_+.-]{0,63}")
+_CJK_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]+")
 _SPACE = re.compile(r"\s+")
 _STOPWORDS = {
     "about",
@@ -598,6 +599,38 @@ def _expanded_query_tokens(tokens: Sequence[str], features: frozenset[str]) -> l
             for term in sorted(terms):
                 result.update(tokenize(term))
     return sorted(result)
+
+
+def _fragment_locator(tokens: Sequence[str], normalized_query: str) -> Callable[[str], bool]:
+    """Locate possible scoring spans without token lists, counts or semantics.
+
+    Use the same NFKC/case folding, Latin token regex and CJK runs as tokenize.
+    This linear prefilter may inspect more spans than the scoring budget, but
+    only inside already byte-bounded candidate records. Full tokenization and
+    semantic feature extraction are reserved for the selected scoring spans.
+    """
+    latin = {token[2:] for token in tokens if token.startswith("w:")}
+    cjk = {token[2:] for token in tokens if token.startswith("c:")}
+    phrases = {token[2:] for token in tokens if token.startswith("p:")}
+
+    def locate(text: str) -> bool:
+        normalized = normalize_text(text)
+        if normalized_query and normalized_query in normalized:
+            return True  # Preserve the existing exact-substring phrase signal.
+        if latin and any(match.group(0) in latin for match in _LATIN.finditer(normalized)):
+            return True
+        if cjk or phrases:
+            for match in _CJK_RUN.finditer(normalized):
+                run = match.group(0)
+                if len(run) == 1:
+                    if run in cjk:
+                        return True
+                elif ((len(run) <= 8 and run in phrases)
+                      or any(run[index:index + 2] in cjk for index in range(len(run) - 1))):
+                    return True
+        return False
+
+    return locate
 
 
 def memory_fragments(record: Mapping[str, Any]) -> Iterable[dict[str, Any]]:
@@ -1414,22 +1447,51 @@ class Vault:
         through: int | None = None,
     ) -> list[dict[str, Any]]:
         tokens = list(dict.fromkeys(tokenize(query)))
+        token_set = set(tokens)
         features = semantic_features(query) if semantic else frozenset()
         expanded = _expanded_query_tokens(tokens, features)
+        expansion_only = [token for token in expanded if token not in token_set]
         candidate_limit = min(MAX_RETRIEVAL_CANDIDATES, max(128, limit * 16))
         snapshot_filter = "AND m.ingest_seq<=? " if through is not None else ""
         snapshot_arguments: tuple[Any, ...] = (through,) if through is not None else ()
-        if expanded:
-            placeholders = ",".join("?" for _ in expanded)
-            rows = connection.execute(
+
+        def indexed_candidates(index_tokens: Sequence[str], slots: int,
+                               excluded: Sequence[str] = ()) -> list[sqlite3.Row]:
+            placeholders = ",".join("?" for _ in index_tokens)
+            exclusion = ("AND m.memory_id NOT IN (" + ",".join("?" for _ in excluded) + ") "
+                         if excluded else "")
+            return connection.execute(
                 "SELECT m.memory_id,m.ingest_seq,length(CAST(m.record_json AS BLOB)) AS bytes,"
                 "COUNT(DISTINCT t.token) AS matched,SUM(t.frequency) AS frequency "
                 "FROM terms t JOIN memories m ON m.memory_id=t.memory_id "
                 "JOIN record_admissions a ON a.memory_id=m.memory_id "
                 f"WHERE t.token IN ({placeholders}) AND vault_admitted(a.state,a.signer_key_id)>0 "
-                + snapshot_filter + "GROUP BY m.memory_id ORDER BY matched DESC,frequency DESC,m.created_at DESC,m.memory_id "
-                "LIMIT ?", (*expanded, *snapshot_arguments, candidate_limit + 1),
+                + snapshot_filter + exclusion
+                + "GROUP BY m.memory_id ORDER BY matched DESC,frequency DESC,m.created_at DESC,m.memory_id "
+                "LIMIT ?", (*index_tokens, *snapshot_arguments, *excluded, slots + 1),
             ).fetchall()
+
+        truncated = False
+        selected: list[sqlite3.Row] = []
+        if expanded:
+            # Original query matches own the first slots. A verbose collection
+            # of concept synonyms must not evict an exact, rare-query match.
+            if tokens:
+                direct = indexed_candidates(tokens, candidate_limit)
+                truncated = len(direct) > candidate_limit
+                selected.extend(direct[:candidate_limit])
+            if expansion_only:
+                remaining = candidate_limit - len(selected)
+                if remaining:
+                    concept_rows = indexed_candidates(
+                        expansion_only, remaining, [str(row["memory_id"]) for row in selected],
+                    )
+                    truncated = truncated or len(concept_rows) > remaining
+                    selected.extend(concept_rows[:remaining])
+                else:
+                    # No expansion was attempted after the direct pool filled.
+                    # Do not describe that unsearched working set as complete.
+                    truncated = True
         else:
             pattern = "%" + normalize_text(query).replace("%", "\\%").replace("_", "\\_") + "%"
             rows = connection.execute(
@@ -1438,8 +1500,8 @@ class Vault:
                 "WHERE normalized_text LIKE ? ESCAPE '\\' AND vault_admitted(a.state,a.signer_key_id)>0 "
                 + snapshot_filter + "ORDER BY m.created_at DESC,m.memory_id LIMIT ?", (pattern, *snapshot_arguments, candidate_limit + 1),
             ).fetchall()
-        truncated = len(rows) > candidate_limit
-        selected = list(rows[:candidate_limit])
+            truncated = len(rows) > candidate_limit
+            selected.extend(rows[:candidate_limit])
         root_ids = {str(row["memory_id"]) for row in selected}
         related_ids: set[str] = set()
         if root_ids:
@@ -1467,14 +1529,18 @@ class Vault:
                     (*sorted(related_ids), *snapshot_arguments),
                 ).fetchall())
         normalized_query = normalize_text(query)
+        locate_fragment = _fragment_locator(expanded, normalized_query)
         records: dict[str, dict[str, Any]] = {}
         statuses: dict[str, str] = {}
         entity_features: dict[str, frozenset[str]] = {}
+        scoring_spans: list[dict[str, Any]] = []
+        fallback_spans: list[dict[str, Any]] = []
+        spans_examined = 0
         pool: list[dict[str, Any]] = []
         document_frequency: Counter[str] = Counter()
         used = 0
         for item in selected:
-            if used + int(item["bytes"]) > MAX_RERANK_BYTES or len(pool) >= MAX_RERANK_FRAGMENTS:
+            if used + int(item["bytes"]) > MAX_RERANK_BYTES or len(scoring_spans) >= MAX_RERANK_FRAGMENTS:
                 truncated = True
                 break
             row = connection.execute(
@@ -1490,18 +1556,40 @@ class Vault:
             statuses[memory_id] = self._memory_status(connection, memory_id)
             entity_features[memory_id] = semantic_features(" ".join(record["entities"])) if semantic else frozenset()
             used += int(item["bytes"])
+            first_fragment: dict[str, Any] | None = None
+            first_selected = False
             for fragment in memory_fragments(record):
-                if len(pool) >= MAX_RERANK_FRAGMENTS:
+                if len(scoring_spans) >= MAX_RERANK_FRAGMENTS:
                     truncated = True
                     break
-                terms = tokenize(str(fragment["text"]), maximum=4096)
-                counts = Counter(term for term in terms if term in tokens)
-                document_frequency.update(counts.keys())
-                pool.append({
-                    "memory_id": memory_id, "fragment": fragment, "counts": counts,
-                    "length": max(1, len(terms)),
-                    "features": semantic_features(str(fragment["text"])) if semantic else frozenset(),
-                })
+                spans_examined += 1
+                if first_fragment is None:
+                    first_fragment = fragment
+                if not locate_fragment(str(fragment["text"])):
+                    continue
+                scoring_spans.append({"memory_id": memory_id, "fragment": fragment})
+                first_selected = first_selected or fragment is first_fragment
+            if (first_fragment is not None and not first_selected
+                    and (memory_id in related_ids or semantic_similarity(features, entity_features[memory_id]) > 0)):
+                # These records can be useful without a textual query match.
+                # Keep their first span, as before, but do not let unrelated
+                # prefixes consume slots needed by genuine matching spans.
+                fallback_spans.append({"memory_id": memory_id, "fragment": first_fragment})
+        remaining = MAX_RERANK_FRAGMENTS - len(scoring_spans)
+        if len(fallback_spans) > remaining:
+            truncated = True
+        scoring_spans.extend(fallback_spans[:remaining])
+        # Only selected spans incur full tokenization, semantic extraction and
+        # BM25 statistics. The prefilter count is reported separately below.
+        for item in scoring_spans:
+            fragment = item["fragment"]
+            terms = tokenize(str(fragment["text"]), maximum=4096)
+            counts = Counter(term for term in terms if term in token_set)
+            document_frequency.update(counts.keys())
+            pool.append({
+                **item, "counts": counts, "length": max(1, len(terms)),
+                "features": semantic_features(str(fragment["text"])) if semantic else frozenset(),
+            })
         average = sum(item["length"] for item in pool) / max(1, len(pool))
         total = len(pool)
         now = dt.datetime.now(dt.timezone.utc)
@@ -1611,6 +1699,7 @@ class Vault:
                 "bm25_scope": "bounded_candidate_fragments", "index": self._retrieval_index_state(connection, through=through),
                 "candidate_limit": candidate_limit, "candidate_records": len(records),
                 "fragments_scanned": len(pool), "record_bytes_scanned": used,
+                "fragment_spans_examined": spans_examined,
                 "truncated": truncated, "ranking_is_authority": False,
             })
         return result

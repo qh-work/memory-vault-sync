@@ -10,8 +10,10 @@ The baseline is v0.21.0 commit
 commit `de349ef8453b0aa0ebf68ae18484d0c1355cf91b`.
 The [full completion ledger](V0_25_PARITY_PLAN.md) is the acceptance scope.
 **Source present does not mean a test passed, a host was installed or v0.25
-was publicly released.** Runtime verification remains pending at the owner's
-request; do not use this table as production certification.
+was publicly released.** Only the [pinned 12-case offline campaign](V0_25_SCOPED_SMOKE.md)
+has execution evidence; later retrieval and semantic-retry source fixes are
+unrun. Full runtime acceptance remains pending; do not use this table as
+production certification.
 
 ## Capability mapping
 

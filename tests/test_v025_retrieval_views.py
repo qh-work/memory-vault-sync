@@ -11,6 +11,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 
 import memory_vault as core
 
@@ -45,6 +46,57 @@ class RetrievalAndViewTests(unittest.TestCase):
         self.assertEqual(disabled["hits"], [])
         self.assertEqual(disabled["retrieval"]["semantic_adapter"], "disabled")
 
+    def test_expansion_cannot_evict_a_direct_match_with_a_unique_query_word(self) -> None:
+        expected = self.remember("falcon backup")
+        for index in range(128):
+            self.remember(f"backup archive save synthetic note {index}")
+        before = self.count_delivery()
+        result = self.ask("recall", query="falcon backup", limit=8)
+        self.assertEqual(result["hits"][0]["memory_id"], expected)
+        self.assertEqual(result["hits"][0]["matched_tokens"], 2)
+        self.assertEqual(result["retrieval"]["candidate_limit"], 128)
+        self.assertEqual(result["retrieval"]["candidate_records"], 128)
+        self.assertTrue(result["retrieval"]["truncated"])
+        self.assertLessEqual(result["retrieval"]["fragments_scanned"], core.MAX_RERANK_FRAGMENTS)
+        self.assertEqual(self.count_delivery(), before)
+
+    def test_concept_fill_shares_the_candidate_limit_and_deduplicates_direct_records(self) -> None:
+        direct = self.remember("backup save direct synthetic evidence")
+        expanded = {self.remember("保存合成的历史事实"), self.remember("存档不同的合成事实")}
+        # A smaller synthetic bound checks the route, not production scale.
+        with mock.patch.object(core, "MAX_RETRIEVAL_CANDIDATES", 2):
+            result = self.ask("recall", query="backup", limit=8)
+        identifiers = {hit["memory_id"] for hit in result["hits"]}
+        self.assertIn(direct, identifiers)
+        self.assertEqual(len(identifiers & expanded), 1)
+        self.assertEqual(result["retrieval"]["candidate_records"], 2)
+        self.assertEqual(result["retrieval"]["candidate_limit"], 2)
+        self.assertTrue(result["retrieval"]["truncated"])
+
+    def test_fragment_locator_keeps_normalization_and_cjk_matches_without_full_scoring(self) -> None:
+        cases = (
+            ("RareMarker secondary", "Full-width ＲＡＲＥＭＡＲＫＥＲ evidence", True),
+            ("Straße secondary", "STRASSE evidence", True),
+            ("backup", "保存合成历史", True),
+            ("历史存档", "需要保存证据", True),
+            ("연결 기억", "연결된 기록", True),
+            ("キロ", "記録キロメートル", True),
+            ("x-y secondary", "Synthetic X-Y evidence", True),
+            ("a" * 64 + " secondary", "a" * 80, True),  # Same Latin token chunks.
+            ("marker secondary", "markerized fixture", False),
+            ("检 marker", "检查", False),  # One-char tokens require a one-char run.
+            ("mark", "Remarkable fixture", True),  # Existing phrase signal is a substring.
+        )
+        for query, text, expected in cases:
+            with self.subTest(query=query):
+                tokens = core.tokenize(query)
+                features = core.semantic_features(query)
+                locate = core._fragment_locator(core._expanded_query_tokens(tokens, features), core.normalize_text(query))
+                with mock.patch.object(core, "tokenize", side_effect=AssertionError("prefilter cannot fully tokenize")), \
+                        mock.patch.object(core, "semantic_features", side_effect=AssertionError("prefilter cannot extract semantic features")):
+                    self.assertEqual(locate(text), expected)
+                    self.assertFalse(locate("ordinary unrelated fixture"))
+
     def test_negative_polarity_is_a_soft_penalty(self) -> None:
         query = core.semantic_features("do not backup")
         same = core.semantic_similarity(query, core.semantic_features("不要保存"))
@@ -65,6 +117,72 @@ class RetrievalAndViewTests(unittest.TestCase):
         self.assertEqual(text[fragment["start_character"]:fragment["end_character"]], fragment["text"])
         self.assertTrue(hit["text_truncated"])
         self.assertTrue(result["retrieval"]["index"]["complete"])
+
+    def test_seven_large_record_tails_do_not_spend_scoring_slots_on_unrelated_prefixes(self) -> None:
+        # About 7 MiB total, below the unchanged 8-MiB canonical-read limit.
+        # The unrelated prefixes contain more than 4096 cheap candidate spans.
+        # This authored case is not a measured latency or a passed scale test.
+        prefix = ("ordinary detail " * (core.MAX_TEXT_BYTES // 16))[:core.MAX_TEXT_BYTES - 96]
+        originals: dict[str, str] = {}
+        for index in range(7):
+            text = prefix + f"\nNeedleMarker document-{index:02d}"
+            originals[self.remember(text)] = text
+        before = self.count_delivery()
+        with mock.patch.object(core, "tokenize", wraps=core.tokenize) as tokenize, \
+                mock.patch.object(core, "semantic_features", wraps=core.semantic_features) as semantics:
+            result = self.ask("recall", query="NeedleMarker", limit=8)
+        statistics = result["retrieval"]
+        self.assertEqual({hit["memory_id"] for hit in result["hits"]}, set(originals))
+        self.assertEqual(statistics["candidate_records"], 7)
+        self.assertTrue(statistics["index"]["complete"])
+        self.assertFalse(statistics["truncated"])
+        self.assertGreater(statistics["fragment_spans_examined"], core.MAX_RERANK_FRAGMENTS)
+        self.assertLess(statistics["fragments_scanned"], 64)
+        self.assertLessEqual(statistics["record_bytes_scanned"], core.MAX_RERANK_BYTES)
+        scoring_calls = [call for call in tokenize.call_args_list if call.kwargs.get("maximum") == 4096]
+        self.assertEqual(len(scoring_calls), statistics["fragments_scanned"])
+        self.assertLessEqual(len(scoring_calls), core.MAX_RERANK_FRAGMENTS)
+        self.assertEqual(semantics.call_count, 1 + statistics["candidate_records"] + statistics["fragments_scanned"])
+        for hit in result["hits"]:
+            fragment = hit["fragment"]
+            self.assertIn("NeedleMarker", hit["text"])
+            self.assertGreater(fragment["start_character"], 900_000)
+            self.assertEqual(originals[hit["memory_id"]][fragment["start_character"]:fragment["end_character"]], hit["text"])
+        self.assertEqual(self.count_delivery(), before)
+
+    def test_entity_and_related_evidence_keep_a_fallback_without_displacing_text_matches(self) -> None:
+        related = self.remember("Unrelated supporting fixture excerpt")
+        direct = self.remember("Synthetic backup anchor", relations=[{"type": "derived_from", "target": related}])
+        entity_only = self.remember("A separately associated fixture statement", entities=["backup"])
+        result = self.ask("recall", query="backup", limit=8)
+        hits = {hit["memory_id"]: hit for hit in result["hits"]}
+        self.assertEqual(set(hits), {direct, related, entity_only})
+        self.assertGreater(hits[related]["score_components"]["graph_milli"], 0)
+        self.assertGreater(hits[entity_only]["score_components"]["entity_milli"], 0)
+        # Even when the newer entity-only row is selected first, its fallback
+        # must not consume the only synthetic scoring slot before the anchor.
+        with mock.patch.object(core, "MAX_RERANK_FRAGMENTS", 1):
+            bounded = self.ask("recall", query="backup", limit=8)
+        self.assertEqual([hit["memory_id"] for hit in bounded["hits"]], [direct])
+        self.assertEqual(bounded["retrieval"]["fragments_scanned"], 1)
+        self.assertTrue(bounded["retrieval"]["truncated"])
+
+    def test_fragment_and_record_byte_limits_still_stop_scoring_with_honest_truncation(self) -> None:
+        self.remember("backup synthetic evidence " * 300)
+        with mock.patch.object(core, "MAX_RERANK_FRAGMENTS", 2), \
+                mock.patch.object(core, "tokenize", wraps=core.tokenize) as tokenize:
+            fragments = self.ask("recall", query="backup")
+        statistics = fragments["retrieval"]
+        self.assertEqual(statistics["fragments_scanned"], 2)
+        self.assertEqual(sum(call.kwargs.get("maximum") == 4096 for call in tokenize.call_args_list), 2)
+        self.assertTrue(statistics["truncated"])
+        with mock.patch.object(core, "MAX_RERANK_BYTES", 1024):
+            byte_limited = self.ask("recall", query="backup")
+        self.assertEqual(byte_limited["hits"], [])
+        self.assertEqual(byte_limited["retrieval"]["record_bytes_scanned"], 0)
+        self.assertEqual(byte_limited["retrieval"]["fragments_scanned"], 0)
+        self.assertEqual(byte_limited["retrieval"]["fragment_spans_examined"], 0)
+        self.assertTrue(byte_limited["retrieval"]["truncated"])
 
     def test_scores_are_integer_explanations_not_authority(self) -> None:
         self.remember("local backup memory")
@@ -190,9 +308,12 @@ class RetrievalAndViewTests(unittest.TestCase):
 
         self.vault = core.Vault(self.path, signer=self.shape_only_signer, trust_check=trust_check)
         memory_id = self.remember("Synthetic revocation marker", entities=["claim:v021:revocation"])
+        expanded_id = self.remember("保存合成的历史事实")
         self.assertEqual(self.ask("recall", query="revocation marker")["hits"][0]["memory_id"], memory_id)
+        self.assertEqual(self.ask("recall", query="backup")["hits"][0]["memory_id"], expanded_id)
         active[0] = False
         self.assertEqual(self.ask("recall", query="revocation marker")["hits"], [])
+        self.assertEqual(self.ask("recall", query="backup")["hits"], [])
         self.assertEqual(self.ask("memory.views", entity="claim:v021:revocation")["views"], [])
         response = self.vault.handle({"op": "memory.graph", "memory_id": memory_id})
         self.assertFalse(response["ok"])

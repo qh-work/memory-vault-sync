@@ -7,7 +7,9 @@ Git integration, model, embedding library or external service.
 
 This is a source capability description. The public synthetic cases in
 `tests/test_v025_retrieval_views.py` have been added for independent review;
-they were not executed during this implementation.
+they were not executed during this implementation. In particular, the new
+direct-candidate priority and long-record fragment selection described below
+are not covered by the earlier, limited smoke run at `066cd56`.
 
 ## Request and compatibility
 
@@ -39,7 +41,20 @@ UTF-8 byte offsets. No fragment changes the canonical record, ID or signature.
 
 The top-level `retrieval` result reports the profile, index completeness,
 candidate/fragment/byte bounds and whether a working-set bound truncated the
-search. Results are not an exhaustive enumeration of the Vault.
+search. It distinguishes cheap span inspection from full scoring:
+
+- `fragment_spans_examined`: original-text spans checked by the lightweight
+  normalized token/phrase locator, before full tokenization or concept scoring;
+- `fragments_scanned`: spans actually tokenized and included in the BM25 and
+  concept-scoring corpus, never more than 4096;
+- `record_bytes_scanned`: canonical record bytes read for reranking, never
+  more than 8 MiB.
+
+`fragment_spans_examined` can exceed 4096 when long records contain unrelated
+prefixes. Those spans do not consume full-scoring slots, but their inspection
+still costs work inside the same byte-bounded records. These counters are not
+wall-clock measurements. Results are not an exhaustive enumeration of the
+Vault.
 
 ## Ranking stages
 
@@ -47,15 +62,30 @@ search. Results are not an exhaustive enumeration of the Vault.
    groups for backup, transfer, performance, memory, removal, conflict,
    preference, correction, local/offline and privacy/encryption. Latin words
    match whole words; CJK terms match normalized phrases.
-2. Select at most 512 indexed candidate records, plus at most 128 related
-   admitted records from a bounded relation query. Current injected trust is
-   checked before a record or a graph neighbor can enter this working set.
-3. Read at most 8 MiB of canonical candidate record bytes and score at most
-   4096 original-text fragments. Fragments use at most 1600 characters, prefer
-   newline boundaries and overlap by up to 128 characters.
-4. Compute BM25 (`k1=1.35`, `b=0.72`) over the **bounded candidate fragment
-   corpus**. Its document frequencies and average lengths are local reranking
-   statistics, not a claim to global full-Vault BM25. Scores from different
+2. Select at most 512 indexed candidate records (the request-specific limit
+   can be lower). Original query-token matches take the first slots, ordered
+   by matched query tokens, frequency and the existing timestamp/ID ties.
+   Concept-only matches fill remaining slots without duplicating direct
+   candidates; they share the same limit. A one-row lookahead detects overflow.
+   If direct matches fill the limit, unused concept expansion is reported as
+   truncated rather than claimed to be searched. Add at most 128 related
+   admitted records from the existing bounded relation query. Current injected
+   trust and any applicable snapshot boundary are checked for both routes.
+3. Read at most 8 MiB of canonical candidate record bytes. Locate potentially
+   matching original-text spans using the same NFKC normalization, case folding,
+   Latin token chunks and CJK runs as tokenization, plus the existing exact
+   normalized-query phrase signal. Fragments use at most 1600 characters,
+   prefer newline boundaries and overlap by up to 128 characters. Unrelated
+   prefixes do not receive full tokenization or concept extraction. Matching
+   spans take the first scoring slots; entity-concept-only and related-evidence
+   candidates retain a first-fragment fallback when slots remain. At most
+   4096 selected spans undergo full scoring. Reaching a byte, candidate or
+   scoring bound still reports truncation; arbitrarily many relevant spans
+   cannot all be returned within these limits.
+4. Compute BM25 (`k1=1.35`, `b=0.72`) over the **selected, bounded scoring
+   fragment corpus**, not over every inspected span. Its document frequencies
+   and average lengths are local reranking statistics, not a claim to global
+   full-Vault BM25. Candidate and span selection can change scores; different
    queries are not calibrated or comparable probabilities.
 5. Add concept Jaccard similarity and entity/phrase/related-evidence hints.
    A negation mismatch reduces concept similarity to one quarter; it does not

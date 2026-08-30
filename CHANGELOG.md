@@ -30,6 +30,16 @@ acceptance or a published stable release**.
   packages. Incorporate attributed PR #11 interoperability cases, add an actual
   cross-entry exchange case, and repair the reported undefined-variable test
   failure without dropping its authority assertion.
+- Source review after the scoped smoke campaign repaired direct-query candidate
+  eviction by synonyms and long-record tail omission caused by nonmatching
+  prefixes spending the fragment budget. Candidate, byte and scoring limits
+  remain unchanged; lightweight span inspection is reported separately.
+- Repair semantic proposal retries across client configurations sharing a Vault:
+  choose the first canonical timestamp in the shared transaction and reuse only
+  a fully revalidated projection/receipt under current evidence admission.
+  Client-local attempt clocks no longer create permanent retry conflicts.
+  These new runtime changes and their authored regressions remain unrun; they
+  are not covered by the earlier pinned smoke evidence below.
 - An explicitly authorized offline check in temporary directories passed 12
   selected synthetic cases on source `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b`
   (zero failures, errors or skips). All other cases remain unrun; see the

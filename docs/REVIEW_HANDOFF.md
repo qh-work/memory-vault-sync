@@ -137,8 +137,8 @@ core/client regressions too. Asserting a size constant is not a scale trial.
 
 | File under `tests/` | Main slice |
 | --- | --- |
-| `test_v025_compat.py` | Closed old envelopes, opaque handles, receipts, semantic/large-turn projection |
-| `test_v025_retrieval_views.py` | Bilingual/BM25/fragments, claim timelines, trust-aware edges, graph bounds, reindex/requeue |
+| `test_v025_compat.py` | Closed old envelopes, opaque handles, receipts, semantic/large-turn projection; shared-Vault cross-client first-write/retry and receipt/evidence validation |
+| `test_v025_retrieval_views.py` | Bilingual/BM25/fragments, direct-query candidate retention and long-record tail budgets, claim timelines, trust-aware edges, graph bounds, reindex/requeue |
 | `test_v025_index_state.py` | One index-completeness check per views request; no stale cross-request cache |
 | `test_v025_mcp_bounds.py` | Transport-specific graph/view bounds, schema agreement and complete bounded MCP responses |
 | `test_v025_configuration_independence.py` | Strict stateless discovery; deferred/default configuration pinning; independent recovery/pack/operator routing without a lost old config |
@@ -169,6 +169,37 @@ file, install dependencies, generate real keys or invoke OpenSSL/rclone/hosts.
 Record skips and missing dependencies rather than silently counting them as
 passes. The linked scoped report supplies only its named execution results;
 the example commands in this handoff were not run as a full campaign.
+
+The cross-client semantic-retry and candidate/fragment-budget regressions were
+authored after the pinned smoke campaign. Neither those new cases nor their
+runtime repairs inherit its passing result. Review the shared transaction,
+complete canonical projection binding, current admission, bounded direct versus
+expanded candidates and separately reported span/scoring work before seeking
+permission for a focused execution campaign.
+
+### Proposed six-case follow-up — not run or scheduled
+
+For the post-smoke retrieval and shared-Vault semantic-retry changes, a proposed
+minimal next campaign consists of exactly these six methods:
+
+```text
+test_v025_retrieval_views.RetrievalAndViewTests.test_expansion_cannot_evict_a_direct_match_with_a_unique_query_word
+test_v025_retrieval_views.RetrievalAndViewTests.test_seven_large_record_tails_do_not_spend_scoring_slots_on_unrelated_prefixes
+test_v025_compat.HostCompatibilityTests.test_two_configurations_reuse_shared_semantic_record_and_original_receipt
+test_v025_compat.HostCompatibilityTests.test_simultaneous_first_semantic_writers_share_one_canonical_effect
+test_v025_compat.HostCompatibilityTests.test_semantic_crash_after_shared_commit_reuses_effect_without_local_cache
+test_v025_compat.HostCompatibilityTests.test_shared_semantic_receipt_rejects_redirected_anchor_and_extra_response_fields
+```
+
+This is a scope proposal, **not renewed execution permission**. Pin the newer
+reviewed source, use a fresh source copy and isolated temporary synthetic paths,
+and retain the offline/no-install/no-private-state boundary. The long-tail
+fixture contains about 7 MiB of synthetic text; it is not a throughput trial.
+The concurrency case uses two local fixture threads; the interrupted-cache
+case injects an exception, not a real process crash. Do not expand this list to
+whole-file discovery, other cases, native hosts, real keys/providers, cloud CI
+or publication. Even six passing outcomes would leave the other ledger rows
+open; they would not replace independent cross-model or cross-device evidence.
 
 ## 3. Review campaigns — scoped authorization required
 

@@ -21,11 +21,11 @@ import secrets
 import sqlite3
 import stat
 import sys
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 import unicodedata
 
 from memory_vault import (
-    AUTHORITY, MemoryError, VERSION, build_record, canonical_bytes, sha256,
+    AUTHORITY, RESULT_SCHEMA as CORE_RESULT_SCHEMA, MemoryError, VERSION, build_record, canonical_bytes, sha256,
     strict_json_loads, success, utc_now, validate_record,
 )
 
@@ -650,30 +650,136 @@ def _episode_records(job: Mapping[str, Any]) -> tuple[list[dict[str, Any]], str]
     return records, anchor["memory_id"]
 
 
-def _store_records(config: Any, records: Sequence[Mapping[str, Any]], *, request_id: str, anchor: str) -> Mapping[str, Any]:
+def _projection(records: Sequence[Mapping[str, Any]], anchor: str | None) -> list[dict[str, Any]]:
+    prepared = [validate_record(record) for record in records]
+    if not prepared or len(prepared) > 64 or len({record["memory_id"] for record in prepared}) != len(prepared):
+        raise MemoryError("compat_projection_limit")
+    if sum(record["memory_id"] == anchor for record in prepared) != 1:
+        raise MemoryError("invalid_compat_projection")
+    return prepared
+
+
+def _projection_receipt(value: Any, request_id: str) -> dict[str, Any]:
+    response = strict_json_loads(value)
+    if (not isinstance(response, dict)
+            or set(response) != {"schema_version", "ok", "authority", "result", "request_id"}
+            or response["schema_version"] != CORE_RESULT_SCHEMA or response["ok"] is not True
+            or response["authority"] != dict(AUTHORITY) or response["request_id"] != request_id):
+        raise MemoryError("invalid_compat_receipt")
+    result = response["result"]
+    if (not isinstance(result, dict)
+            or set(result) != {"state", "memory_id", "kind", "network_accessed", "verification"}
+            or not isinstance(result["state"], str) or result["state"] not in {"stored", "duplicate"}
+            or not isinstance(result["kind"], str) or result["network_accessed"] is not False
+            or not isinstance(result["memory_id"], str) or not _MEMORY.fullmatch(result["memory_id"])
+            or not isinstance(result["verification"], dict)):
+        raise MemoryError("invalid_compat_receipt")
+    verification = result["verification"]
+    flags = {"signature_verified_at_admission", "current_trust_checked", "eligible_for_context",
+             "claimed_provenance_is_authenticated", "grants_authority"}
+    if (set(verification) != {"admission", "signer_key_id", *flags}
+            or not isinstance(verification["admission"], str)
+            or verification["admission"] not in {"quarantined", "accepted_unsigned", "local_unsigned", "verified"}
+            or any(type(verification[key]) is not bool for key in flags)
+            or verification["claimed_provenance_is_authenticated"] is not False or verification["grants_authority"] is not False
+            or (verification["signer_key_id"] is not None and (not isinstance(verification["signer_key_id"], str)
+                or re.fullmatch(r"ed25519_[0-9a-f]{64}", verification["signer_key_id"]) is None))):
+        raise MemoryError("invalid_compat_receipt")
+    # Historical verification is never used as current trust. The caller
+    # checks the actual canonical rows and refreshes verification before reuse.
+    return response
+
+
+def _projection_record(vault: Any, connection: sqlite3.Connection, memory_id: str) -> dict[str, Any]:
+    row = connection.execute("SELECT * FROM memories WHERE memory_id=?", (memory_id,)).fetchone()
+    if row is None:
+        raise MemoryError("invalid_compat_receipt")
+    record = vault._record_from_row(row)
+    if row["record_sha256"] != record["record_sha256"]:
+        raise MemoryError("invalid_compat_receipt")
+    return record
+
+
+def _store_records(
+    config: Any, records: Sequence[Mapping[str, Any]] = (), *, request_id: str, anchor: str | None = None,
+    semantic_factory: Callable[[str], tuple[Sequence[Mapping[str, Any]], str]] | None = None,
+    evidence_records: Sequence[Mapping[str, Any]] = (), expected_anchor: str | None = None,
+) -> Mapping[str, Any]:
     """Trusted, local atomic writer using the SAME core signer/admission/receipts.
 
     The host cannot supply records, admission flags, proofs or timestamps to
     this helper. The bridge constructs and validates this finite projection.
     It does not call ingest_records(verified) on caller-supplied assertions.
+
+    Only the internal semantic path supplies a factory. The shared Vault's
+    transaction chooses the first canonical timestamp, or recovers it from an
+    existing, fully revalidated projection. Client-local attempt times cannot
+    change canonical identity. No new receipt fields or tables are required.
     """
-    prepared = [validate_record(record) for record in records]
-    if not prepared or len(prepared) > 64 or len({record["memory_id"] for record in prepared}) != len(prepared):
-        raise MemoryError("compat_projection_limit")
-    anchors = [record for record in prepared if record["memory_id"] == anchor]
-    if len(anchors) != 1:
-        raise MemoryError("invalid_compat_projection")
-    digest = sha256(canonical_bytes({"profile": ALIAS_PROFILE, "records": prepared, "anchor": anchor}))
+    if semantic_factory is None:
+        if evidence_records or expected_anchor is not None:
+            raise MemoryError("invalid_compat_projection")
+        prepared = _projection(records, anchor)
+        evidence: dict[str, dict[str, Any]] = {}
+    else:
+        if records or anchor is not None or not 1 <= len(evidence_records) <= MAX_GRAPH_TARGETS + 1:
+            raise MemoryError("invalid_compat_projection")
+        if expected_anchor is not None:
+            _match(expected_anchor, _MEMORY)
+        evidence = {}
+        for original in evidence_records:
+            record = validate_record(original)
+            previous = evidence.setdefault(record["memory_id"], record)
+            if previous != record:
+                raise MemoryError("legacy_alias_evidence_changed")
+        prepared = []
     vault = config.vault(writing=True)
     with contextlib.closing(vault._connect()) as connection, connection:
         connection.execute("BEGIN IMMEDIATE")
         prior = connection.execute("SELECT request_sha256,response_json FROM receipts WHERE request_id=?", (request_id,)).fetchone()
+        response = None
+        if semantic_factory is not None:
+            for memory_id, original in evidence.items():
+                if _projection_record(vault, connection, memory_id) != original:
+                    raise MemoryError("legacy_alias_evidence_changed")
+                if not vault._verification(connection, memory_id)["eligible_for_context"]:
+                    raise MemoryError("evidence_not_admitted")
+            if prior is not None:
+                response = _projection_receipt(prior["response_json"], request_id)
+                prior_anchor = response["result"]["memory_id"]
+                if expected_anchor is not None and expected_anchor != prior_anchor:
+                    raise MemoryError("conflict")
+                created_at = _projection_record(vault, connection, prior_anchor)["created_at"]
+            else:
+                # A completed local hint is not enough to reconstruct a missing
+                # shared receipt or create a second version of that memory.
+                if expected_anchor is not None:
+                    raise MemoryError("invalid_compat_receipt")
+                created_at = utc_now()
+            records, anchor = semantic_factory(created_at)
+            prepared = _projection(records, anchor)
+            if response is not None and response["result"]["memory_id"] != anchor:
+                raise MemoryError("conflict")
+        anchors = [record for record in prepared if record["memory_id"] == anchor]
+        digest = sha256(canonical_bytes({"profile": ALIAS_PROFILE, "records": prepared, "anchor": anchor}))
         if prior is not None:
             if prior["request_sha256"] != digest:
                 raise MemoryError("conflict")
-            response = strict_json_loads(prior["response_json"])
-            if not isinstance(response, dict) or response.get("authority") != dict(AUTHORITY):
-                raise MemoryError("invalid_compat_receipt")
+            if semantic_factory is not None:
+                assert response is not None
+                if response["result"]["kind"] != anchors[0]["kind"]:
+                    raise MemoryError("invalid_compat_receipt")
+                for record in prepared:
+                    if _projection_record(vault, connection, record["memory_id"]) != record:
+                        raise MemoryError("invalid_compat_receipt")
+                    if not vault._verification(connection, record["memory_id"])["eligible_for_context"]:
+                        raise MemoryError("evidence_not_admitted")
+                # This returned copy changes, never the stored historical bytes.
+                response["result"]["state"] = "duplicate"
+            else:
+                response = strict_json_loads(prior["response_json"])
+                if not isinstance(response, dict) or response.get("authority") != dict(AUTHORITY):
+                    raise MemoryError("invalid_compat_receipt")
             response["result"]["verification"] = vault._verification(connection, anchor)
             return response
         changed: list[str] = []
@@ -991,23 +1097,26 @@ def _remember(config: Any, proposal: Mapping[str, Any]) -> tuple[str, Mapping[st
     state = CompatState(config)
     with state.transaction() as connection:
         row = connection.execute("SELECT * FROM semantic_jobs WHERE proposal_sha256=?", (digest,)).fetchone()
-        if row is None:
-            if connection.execute("SELECT COUNT(*) FROM semantic_jobs").fetchone()[0] >= MAX_CONTROL_ROWS:
-                raise MemoryError("semantic_receipt_limit")
-            created_at = utc_now()
-            connection.execute("INSERT INTO semantic_jobs VALUES(?,?,NULL)", (digest, created_at))
-        else:
-            created_at = row["created_at"]
-            if row["memory_id"] is not None:
-                record = _current_record(config, row["memory_id"], eligible=False)
-                return "duplicate", _semantic_result(record, evidence, duplicate=True)
-    records, identifier = _semantic_records(proposal, anchor, targets, created_at=created_at)
-    _store_records(config, records, request_id="req_compat_semantic_" + digest, anchor=identifier)
-    with state.transaction() as connection:
-        connection.execute("UPDATE semantic_jobs SET memory_id=? WHERE proposal_sha256=?", (identifier, digest))
+        if row is None and connection.execute("SELECT COUNT(*) FROM semantic_jobs").fetchone()[0] >= MAX_CONTROL_ROWS:
+            raise MemoryError("semantic_receipt_limit")
+        stored = _store_records(
+            config, request_id="req_compat_semantic_" + digest,
+            semantic_factory=lambda created_at: _semantic_records(proposal, anchor, targets, created_at=created_at),
+            evidence_records=[anchor, *(value[0] for value in targets.values())],
+            expected_anchor=row["memory_id"] if row is not None else None,
+        )
+        record = _current_record(config, stored["result"]["memory_id"], eligible=False)
+        duplicate = stored["result"]["state"] == "duplicate"
+        # The shared receipt is already durable. A crash here can lose only the
+        # local cache update; an exact retry rebuilds it from canonical facts.
+        # Old NULL jobs may contain another client's now-conflicting timestamp.
+        # Correct that local hint only after the entire shared projection agrees.
+        connection.execute(
+            "INSERT INTO semantic_jobs VALUES(?,?,?) ON CONFLICT(proposal_sha256) DO UPDATE SET created_at=excluded.created_at,memory_id=excluded.memory_id",
+            (digest, record["created_at"], record["memory_id"]),
+        )
         state._bind(connection, writable=True)
-    record = next(record for record in records if record["memory_id"] == identifier)
-    return "accepted_local", _semantic_result(record, evidence, duplicate=False)
+    return "duplicate" if duplicate else "accepted_local", _semantic_result(record, evidence, duplicate=duplicate)
 
 
 def _semantic_result(record: Mapping[str, Any], evidence: Mapping[str, Any], *, duplicate: bool) -> Mapping[str, Any]:

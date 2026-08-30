@@ -207,18 +207,55 @@ replay reuse the same canonical effect. `sync.flush`, non-compact session opens,
 or explicit `flush_local` can retry pending intents. They cannot invent a new
 answer for a completed turn or repair a conflict by overwriting old data.
 
-Same request ID plus different canonical request fields is `conflict`, including
-changed adapter metadata. Object key ordering and JSON whitespace are not part
-of the receipt identity. User-text equality uses NFC **only**: whitespace,
-newlines and trailing spaces are not trimmed or rewritten. A different final
-answer under an accepted turn handle is a hard conflict.
+Semantic `memory.remember` idempotency belongs to the **shared canonical
+Vault**, not to a client's `semantic_jobs` table. Two authorized client
+configurations may have different private control directories and still submit
+the same proposal against the same admitted episode and typed relation targets.
+Its identity is derived from that proposal/evidence domain, not from the outer
+host `request_id`, which correlates the response for this operation.
+The canonical writer serializes first acceptance in one SQLite write
+transaction, chooses its timestamp there, and stores the complete projection
+and existing-format core receipt together. A later or simultaneous caller
+reconstructs the expected projection using the first canonical record's time;
+it must match the receipt digest, anchor, every canonical record and all current
+evidence/target admission checks before receiving `duplicate`.
 
-Exact completed receipt lookup is read-only and still works after capture is
-disabled. Disabled capture never materializes pending text, resumes an
-incomplete canonical write or loads a signing key merely to replay an ACK.
-Abort/close remain available to clear unaccepted staged input. Once an intent
-is accepted, abort reports `terminal_state: committed` with pending/done state;
-it cannot truthfully undo durable acceptance.
+A local completed marker alone never proves success. Even its replay takes
+the shared-receipt path; a missing, redirected or conflicting receipt fails
+closed. An older pending local job with another timestamp can be reconciled to
+the validated shared record without changing that record or the original
+receipt bytes. The local cache update follows the canonical commit, so a crash
+between the two is recovered by the same shared check. Reuse does not re-sign
+or re-admit old records, and quarantined or currently untrusted projections
+cannot become eligible merely because their historical receipt exists.
+Replay still passes the configured signing/trust gate (`config.vault(writing=True)`);
+it is not a key-free lifecycle ACK lookup. Current admission and key trust are
+checked, but this does **not** mean every replay independently reruns all
+Ed25519 signature verification. Configured signing/trust failures still fail
+closed.
+
+This repair adds no wire fields, tables or receipt schema; canonical-memory
+snapshots retain their existing receipt format. It provides exact reuse within
+one shared Vault, not a distributed transaction between independently writable
+Vaults. The sequential, simultaneous-first-write, stale-clock, interrupted
+cache-update and current-admission cases added to `test_v025_compat.py` are
+synthetic **NOT RUN** coverage proposals, not observed passing evidence.
+
+For session/turn lifecycle operations, the same request ID plus different
+canonical request fields is `conflict`, including changed adapter metadata.
+Object key ordering and JSON whitespace are not part of the lifecycle receipt
+identity. User-text equality uses NFC **only**: whitespace, newlines and trailing
+spaces are not trimmed or rewritten. A different final answer under an accepted
+turn handle is a hard conflict.
+
+Exact completed **session/turn lifecycle** receipt lookup is read-only and still
+works after capture is disabled. Disabled capture never materializes pending
+turn text, resumes an incomplete turn write or loads a signing key merely to
+replay that lifecycle ACK. Abort/close remain available to clear unaccepted
+staged input. Once a turn intent is accepted, abort reports
+`terminal_state: committed` with pending/done state; it cannot truthfully undo
+durable acceptance. The explicit semantic `memory.remember` operation uses
+the separate shared-canonical checks above, not this lifecycle receipt shortcut.
 
 ## Deliberate differences from the old transport
 
