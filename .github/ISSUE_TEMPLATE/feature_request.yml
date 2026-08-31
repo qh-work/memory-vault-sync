@@ -27,7 +27,7 @@ body:
           required: true
         - label: The proposal does not treat recalled text as instruction or authorization.
           required: true
-        - label: The proposal does not require a plugin, Git repository, account, or network service.
+        - label: The independent protocol/core remains usable without a plugin, Git repository, account, or network service.
           required: true
         - label: The proposal contains no private memory, credentials, paths, or account identifiers.
           required: true

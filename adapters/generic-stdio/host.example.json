@@ -1,0 +1,20 @@
+{
+  "profile": "memory-vault-host-events/v1",
+  "executable": "python3",
+  "arguments_before_event": [
+    "/absolute/path/to/memory-vault-sync/memory_vault_hosts.py",
+    "--config", "/absolute/path/to/private/client.json",
+    "--host", "generic", "--event"
+  ],
+  "event_argument": "one of session.open, turn.input, turn.commit, turn.abort, session.close, session.compact, recall",
+  "transport": "one JSON object on stdin; one JSON object on stdout; then exit",
+  "example_event_bodies": {
+    "session.open": {"session_id":"example-session","query":"memory interoperability"},
+    "turn.input": {"session_id":"example-session","turn_id":"example-turn-1","user":"Keep our memory independent of tasks."},
+    "turn.commit": {"session_id":"example-session","turn_id":"example-turn-1","assistant":"The shared Vault stores records independently; sessions are only local correlation."},
+    "turn.abort": {"session_id":"example-session","turn_id":"example-turn-2"},
+    "session.compact": {"session_id":"example-session","query":"memory interoperability"},
+    "session.close": {"session_id":"example-session"},
+    "recall": {"session_id":"example-session","query":"memory interoperability"}
+  }
+}

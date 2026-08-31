@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Universal Memory Lifecycle Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "ok", "authority"],
+  "properties": {
+    "schema_version": {"const": "universal-memory-lifecycle-result/v1"},
+    "ok": {"type": "boolean"},
+    "op": {"enum": ["capabilities", "session.open", "turn.input", "turn.commit", "turn.abort", "session.close"]},
+    "request_id": {"type": "string", "pattern": "^req_[A-Za-z0-9_-]{8,96}$"},
+    "replayed": {"type": "boolean"},
+    "result": {
+      "oneOf": [
+        {"$ref": "#/$defs/capabilities"},
+        {"$ref": "#/$defs/transition"}
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "retryable"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$"},
+        "retryable": {"type": "boolean"}
+      }
+    },
+    "resume_same_request": {
+      "const": true,
+      "description": "A commit was frozen. Reuse the exact original request; a failure is not confirmation that nothing was stored."
+    },
+    "partial_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["episode_saved", "episode_id", "continuity_saved", "retry_same_request"],
+      "properties": {
+        "episode_saved": {"const": true},
+        "episode_id": {"$ref": "#/$defs/memoryId"},
+        "continuity_saved": {"const": false},
+        "retry_same_request": {"const": true}
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory", "instruction_eligible", "authorization_eligible", "execution_eligible", "policy_change_eligible", "current_user_input_precedence"],
+      "properties": {
+        "memory": {"const": "untrusted_historical_evidence"},
+        "instruction_eligible": {"const": false},
+        "authorization_eligible": {"const": false},
+        "execution_eligible": {"const": false},
+        "policy_change_eligible": {"const": false},
+        "current_user_input_precedence": {"const": true}
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {"ok": {"const": true}},
+      "required": ["op", "result", "replayed"],
+      "not": {"anyOf": [{"required": ["error"]}, {"required": ["partial_result"]}, {"required": ["resume_same_request"]}]}
+    },
+    {
+      "properties": {"ok": {"const": false}},
+      "required": ["error"],
+      "not": {"anyOf": [{"required": ["result"]}, {"required": ["replayed"]}]}
+    }
+  ],
+  "allOf": [
+    {
+      "if": {"properties": {"ok": {"const": true}, "op": {"const": "capabilities"}}, "required": ["op"]},
+      "then": {"properties": {"result": {"$ref": "#/$defs/capabilities"}}}
+    },
+    {
+      "if": {"properties": {"ok": {"const": true}, "op": {"const": "session.open"}}, "required": ["op"]},
+      "then": {"properties": {"result": {"$ref": "#/$defs/transition", "properties": {"state": {"const": "opened"}}}}}
+    },
+    {
+      "if": {"properties": {"ok": {"const": true}, "op": {"const": "turn.input"}}, "required": ["op"]},
+      "then": {"properties": {"result": {"$ref": "#/$defs/transition", "properties": {"state": {"const": "staged"}}}}}
+    },
+    {
+      "if": {"properties": {"ok": {"const": true}, "op": {"const": "turn.commit"}}, "required": ["op"]},
+      "then": {"properties": {"result": {"$ref": "#/$defs/transition", "properties": {"state": {"const": "committed"}}}}}
+    },
+    {
+      "if": {"properties": {"ok": {"const": true}, "op": {"const": "turn.abort"}}, "required": ["op"]},
+      "then": {"properties": {"result": {"$ref": "#/$defs/transition", "properties": {"state": {"const": "aborted"}}}}}
+    },
+    {
+      "if": {"properties": {"ok": {"const": true}, "op": {"const": "session.close"}}, "required": ["op"]},
+      "then": {"properties": {"result": {"$ref": "#/$defs/transition", "properties": {"state": {"const": "closed"}}}}}
+    },
+    {
+      "if": {"anyOf": [{"required": ["resume_same_request"]}, {"required": ["partial_result"]}]},
+      "then": {"required": ["op"], "properties": {"op": {"const": "turn.commit"}}}
+    }
+  ],
+  "$defs": {
+    "memoryId": {"type": "string", "pattern": "^mem_[0-9a-f]{40}$"},
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "implementation_version", "request_schema", "result_schema", "operations", "transport", "legacy_v021_wire_compatible", "capture_opt_in_required", "capture_basis", "host_attestation", "memory_store", "handles_are_memory_owners", "context_view", "network_accessed", "limits"],
+      "properties": {
+        "profile": {"const": "universal-memory-lifecycle/v1"},
+        "implementation_version": {"type": "string"},
+        "request_schema": {"const": "universal-memory-lifecycle-request/v1"},
+        "result_schema": {"const": "universal-memory-lifecycle-result/v1"},
+        "operations": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 6,
+          "maxItems": 6,
+          "items": {"enum": ["capabilities", "session.open", "turn.input", "turn.commit", "turn.abort", "session.close"]}
+        },
+        "transport": {"const": "local_ndjson_stdio"},
+        "legacy_v021_wire_compatible": {"const": false},
+        "capture_opt_in_required": {"const": true},
+        "capture_basis": {"const": "caller_reported"},
+        "host_attestation": {"const": false},
+        "memory_store": {"const": "shared_canonical_vault"},
+        "handles_are_memory_owners": {"const": false},
+        "context_view": {"const": "core_handoff_or_recall"},
+        "network_accessed": {"const": false},
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["request_bytes", "turn_part_bytes", "continuity_bytes", "active_sessions", "pending_turns", "pending_text_bytes"],
+          "properties": {
+            "request_bytes": {"const": 2097152},
+            "turn_part_bytes": {"const": 491520},
+            "continuity_bytes": {"const": 32768},
+            "active_sessions": {"const": 128},
+            "pending_turns": {"const": 256},
+            "pending_text_bytes": {"const": 33554432}
+          }
+        }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "current_state", "session_handle", "memory_saved", "network_accessed"],
+      "properties": {
+        "state": {"enum": ["opened", "staged", "committed", "aborted", "closed"]},
+        "current_state": {"enum": ["open", "closed", "staged", "committing", "committed", "aborted"]},
+        "session_handle": {"type": "string", "pattern": "^ses_[0-9a-f]{32}$"},
+        "turn_handle": {"type": "string", "pattern": "^turn_[0-9a-f]{32}$"},
+        "memory_saved": {"type": "boolean"},
+        "network_accessed": {"const": false},
+        "episode_id": {"$ref": "#/$defs/memoryId"},
+        "continuity_id": {"$ref": "#/$defs/memoryId"},
+        "capture_basis": {"const": "caller_reported"},
+        "host_attestation": {"const": false},
+        "receipt_scope": {"const": "local_save_not_current_trust_or_remote_delivery"},
+        "long_term_memory_deleted": {"const": false},
+        "aborted_turns": {"type": "integer", "minimum": 0, "maximum": 256}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"enum": ["staged", "committed", "aborted"]}}},
+          "then": {"required": ["turn_handle"]}
+        },
+        {
+          "if": {"properties": {"state": {"const": "committed"}}},
+          "then": {
+            "required": ["episode_id", "continuity_id", "capture_basis", "host_attestation", "receipt_scope"],
+            "properties": {"memory_saved": {"const": true}}
+          },
+          "else": {"properties": {"memory_saved": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"state": {"enum": ["aborted", "closed"]}}},
+          "then": {"required": ["long_term_memory_deleted"]}
+        },
+        {
+          "if": {"properties": {"state": {"const": "closed"}}},
+          "then": {"required": ["aborted_turns"]}
+        }
+      ]
+    }
+  }
+}

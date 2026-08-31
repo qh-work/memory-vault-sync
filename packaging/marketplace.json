@@ -1,0 +1,20 @@
+{
+  "name": "memory-vault-public",
+  "interface": {
+    "displayName": "Memory Vault — Protocol and Client"
+  },
+  "plugins": [
+    {
+      "name": "memory-vault-client",
+      "source": {
+        "source": "local",
+        "path": "./plugins/memory-vault-client"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

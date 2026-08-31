@@ -1,0 +1,41 @@
+{
+  "name": "memory-vault-client",
+  "version": "0.25.0",
+  "description": "Full authorized client for the open memory protocol: MCP, visible-turn capture, queued signed sync, host adapters and recovery.",
+  "author": {
+    "name": "Memory Vault contributors"
+  },
+  "homepage": "https://github.com/qh-work/memory-vault-sync",
+  "repository": "https://github.com/qh-work/memory-vault-sync",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "mcp", "local-first", "taskless", "continuity"],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Memory Vault Client",
+    "shortDescription": "Shared memory, opt-in sync and recovery",
+    "longDescription": "One open protocol with two equal usage paths: independent protocol adoption or this authorized full client. Restores v0.21 workflows with local retrieval and graph views, old host-wire adapters, visible-turn capture, resumable signed sync, complete client recovery, old packs, selective sharing and independently controlled verified updates. No Task/Git ownership, transcript discovery, permission creation, key auto-enrollment or log suppression. Development version: runtime validation, Work automatic lifecycle and production signing/encryption provisioning are not claimed.",
+    "developerName": "Memory Vault contributors",
+    "category": "Productivity",
+    "capabilities": [
+      "Local memory recall and handoff",
+      "Explicit memory writes",
+      "Opt-in Codex visible-turn capture",
+      "Configured record signing",
+      "Direct protocol and portable bundle access",
+      "Optional session and turn lifecycle",
+      "Opt-in bounded signed synchronization",
+      "Directory and configured rclone transport",
+      "Diagnostics, backup and restore",
+      "Old host-wire and pack compatibility",
+      "Selective complete memory sharing",
+      "Controlled signed updates and reversible activation",
+      "Native private storage with explicit platform limits"
+    ],
+    "websiteURL": "https://github.com/qh-work/memory-vault-sync",
+    "defaultPrompt": [
+      "Recall relevant memory before this work.",
+      "Save this visible turn and its continuity.",
+      "Show the local memory record count."
+    ]
+  }
+}

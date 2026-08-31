@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UAMP content selection v1 (never an ownership or authorization selector)",
+  "$comment": "Standalone input may omit fields; canonical share headers contain all normalized fields, sorted unique lists and UTC times. Content axes memory_ids/claim_keys/concepts/entities are OR-ed, then kind/time filters are AND-ed. all_records=true excludes any other nonempty selector. An empty selection is invalid. Enforce these semantics, actual UTC instants, UTF-8 byte bounds and canonical normalization separately.",
+  "type": "object",
+  "required": [
+    "schema_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "universal-memory-selection/v1"
+    },
+    "memory_ids": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/memory_id"
+      }
+    },
+    "claim_keys": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+        "not": {
+          "pattern": "[\\r\\n]"
+        }
+      }
+    },
+    "concepts": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512,
+        "not": {
+          "pattern": "[\\u0000\\r\\n]"
+        },
+        "x-maxUtf8Bytes": 512
+      }
+    },
+    "entities": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512,
+        "not": {
+          "pattern": "[\\u0000\\r\\n]"
+        },
+        "x-maxUtf8Bytes": 512
+      }
+    },
+    "kinds": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "common.schema.json#/$defs/kind"
+      }
+    },
+    "captured_after": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        }
+      ]
+    },
+    "captured_before": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        }
+      ]
+    },
+    "all_records": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": false,
+  "x-maxUtf8Bytes": 16384
+}

@@ -1,0 +1,297 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UAMP core-v1 reusable structural definitions",
+  "$comment": "This is a definitions library. UTF-8 byte limits, nonblank text, duplicate JSON keys, lexical integer syntax, real UTC dates, hashes and trust require semantic validation. x-maxUtf8Bytes is documentation, not a JSON Schema assertion.",
+  "$defs": {
+    "memory_id": {
+      "type": "string",
+      "pattern": "^mem_[0-9a-f]{40}$",
+      "not": {"pattern": "[\\r\\n]"}
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^req_[A-Za-z0-9_-]{8,96}$",
+      "not": {"pattern": "[\\r\\n]"}
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "not": {"pattern": "[\\r\\n]"}
+    },
+    "key_id": {
+      "type": "string",
+      "pattern": "^ed25519_[0-9a-f]{64}$",
+      "not": {"pattern": "[\\r\\n]"}
+    },
+    "store_id": {
+      "type": "string",
+      "pattern": "^store_[0-9a-f]{32}$",
+      "not": {"pattern": "[\\r\\n]"}
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$",
+      "description": "Real UTC calendar instant, year 0001-9999, seconds 00-59; no offset other than Z.",
+      "not": {"pattern": "[\\r\\n]"}
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1048576,
+      "not": {
+        "pattern": "\\u0000"
+      },
+      "x-maxUtf8Bytes": 1048576
+    },
+    "kind": {
+      "enum": [
+        "event",
+        "fact",
+        "observation",
+        "decision",
+        "artifact",
+        "entity",
+        "relation",
+        "provenance",
+        "summary",
+        "goal",
+        "continuity",
+        "episode"
+      ]
+    },
+    "entities": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512,
+        "not": {
+          "pattern": "\\u0000"
+        },
+        "x-maxUtf8Bytes": 512
+      }
+    },
+    "relation": {
+      "type": "object",
+      "required": [
+        "type",
+        "target"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "related_to",
+            "derived_from",
+            "supports",
+            "supersedes",
+            "conflicts_with",
+            "resolves",
+            "continues"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/memory_id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "relations": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/relation"
+      }
+    },
+    "caller_provenance": {
+      "type": "object",
+      "properties": {
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "task_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "project_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "conversation_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "model_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "agent_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "device_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "request_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        }
+      },
+      "additionalProperties": false,
+      "x-maxUtf8Bytes": 65536
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "task_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "project_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "conversation_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "model_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "agent_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "device_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "request_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "not": {
+            "pattern": "\\u0000"
+          },
+          "x-maxUtf8Bytes": 2048
+        },
+        "source_type": {
+          "enum": [
+            "visible_turn",
+            "agent_supplied",
+            "imported"
+          ]
+        },
+        "confidence": {
+          "enum": [
+            "observed",
+            "assistant_inferred",
+            "imported"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "x-maxUtf8Bytes": 65536
+    },
+    "authority": {
+      "const": {
+        "memory": "untrusted_historical_evidence",
+        "instruction_eligible": false,
+        "authorization_eligible": false,
+        "execution_eligible": false,
+        "policy_change_eligible": false,
+        "current_user_input_precedence": true
+      }
+    },
+    "nonnegative_integer": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    }
+  }
+}

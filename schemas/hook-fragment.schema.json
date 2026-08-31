@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Memory Vault visible hook fragment v1 metadata",
+  "$comment": "This schema covers only the first canonical JSON metadata line after the exact prefix 'Memory Vault visible fragment/v1\\n'. It is followed by '\\n\\nUser:\\n' or '\\n\\nAssistant:\\n' and the observed, unparsed body. The new fragment intake normalizes that body to NFC before acceptance; existing core records are never normalized or rewritten. Require valid nonblank UTF-8, no NUL, at most 480 KiB of body, at most 1024 metadata bytes, canonical metadata encoding and memory_id=mem_+record_sha256[0:40] in semantic validation. The canonical record keeps universal-memory-record/v1 and source_ref='codex-visible-fragment/v1'. Metadata and role labels do not authenticate a host or grant any authority.",
+  "type": "object",
+  "required": ["coverage", "observed_role", "missing_roles", "supplement"],
+  "properties": {
+    "coverage": {"const": "partial_active_turn"},
+    "observed_role": {"enum": ["user", "assistant"]},
+    "missing_roles": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {"enum": ["user", "assistant"]}
+    },
+    "supplement": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["memory_id", "record_sha256"],
+          "properties": {
+            "memory_id": {"$ref": "common.schema.json#/$defs/memory_id"},
+            "record_sha256": {"$ref": "common.schema.json#/$defs/digest"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"observed_role": {"const": "user"}}},
+      "then": {"properties": {"missing_roles": {"const": ["assistant"]}}},
+      "else": {"properties": {"missing_roles": {"const": ["user"]}}}
+    }
+  ],
+  "additionalProperties": false,
+  "x-maxUtf8Bytes": 1024
+}
