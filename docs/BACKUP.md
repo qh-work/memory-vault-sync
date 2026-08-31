@@ -285,6 +285,18 @@ can verify the saved canonical pair and finish bookkeeping without inventing
 text or duplicating records. Missing or inconsistent evidence is not silently
 treated as a completed capture. Activation itself performs no replay.
 
+The optional [single-sided profile](VISIBLE_FRAGMENTS.md) adds closed v3 hook
+outbox/done documents, not a new database layout. A missing role has a null hash,
+never the hash of an invented empty message. Both memory-only and full-client
+recovery validate a supplement's complete canonical anchor hash and opposite
+role. Full-client activation also proves the exact original local turn/scope
+and earlier accepted sequence; it cannot substitute a recent unrelated record.
+An initial prepared outbox can exist before its own frozen plan. An unaccepted
+supplement may also precede its own plan, but its original fragment must already
+be durably frozen. A v3 done receipt without its matching plan is not accepted
+as evidence of a completed save. Current trust is rechecked separately on
+readmission and replay; old local correlation metadata cannot restore it.
+
 ### Restore memory plus inert evidence
 
 ```bash

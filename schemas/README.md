@@ -20,6 +20,7 @@ make a network request.
 | `lifecycle-result.schema.json` | Optional lifecycle result envelope and operation results |
 | `host-compat-request.schema.json` | Separate v0.21 host v1 / protocol 1.0 requests for ten production operations |
 | `host-compat-result.schema.json` | Separate old-host results and mapped local handles/receipts; not the new lifecycle response |
+| `hook-fragment.schema.json` | Optional single-sided capture's bounded text-metadata line; not a canonical record field or a nullable `observe` request |
 | `delta-v2.schema.json` | Optional signed chained delta payload/proof, including privacy disposition and fragmented-group reference |
 | `delta-v3.schema.json` | Optional chained delta with explicit `closure` / `prior_stream` dependency mode; current trust, actual dependencies and same-Vault prefix receipts require separate semantic validation |
 | `fragment-group.schema.json` | Signed large-transfer descriptor; fragment paths/bytes and complete atomic admission are checked separately |

@@ -117,6 +117,15 @@ Vault.
    evidence remains eligible but is de-emphasized. Return the strongest
    fragment per record, then use the bounded diversity pass described below.
 
+The optional [single-sided visible-fragment framing](VISIBLE_FRAGMENTS.md)
+retains the same unverified role hint for its actual body. Only its closed
+metadata line is inspected, within 1,024 bytes; body delimiters do not create
+another speaker. Returned fragment offsets still address the original canonical
+text. Unknown or malformed framing is searchable plain text, never a permission
+or a reason to rewrite/reject an otherwise valid core record. The independent
+core does not import the capture client. The two pure cases in
+`tests/test_v025_partial_fragment_recall.py` are authored and not executed.
+
 ### Evidence diversity without source ownership
 
 The selected candidate set uses the old taskless runtime's token-set Jaccard

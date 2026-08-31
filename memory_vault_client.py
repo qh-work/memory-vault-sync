@@ -22,6 +22,7 @@ import re
 import sqlite3
 import stat
 import sys
+import unicodedata
 from typing import Any, Mapping, Sequence
 
 from memory_vault import (
@@ -51,6 +52,7 @@ from memory_vault import (
 CONFIG_SCHEMA = "memory-vault-client-config/v1"
 STATE_SCHEMA = "memory-vault-client-state/v1"
 CHAIN_STATE_SCHEMA = "memory-vault-client-state/v2"
+FRAGMENT_STATE_SCHEMA = "memory-vault-client-state/v3"
 HOOK_CAPTURE_PROFILE = "codex-visible-turn+continues/v1"
 MCP_PROTOCOL = "2025-06-18"
 MAX_CONFIG_BYTES = 16 * 1024
@@ -84,6 +86,31 @@ _EVENTS = {
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def hook_supplement_key(turn_key: str) -> str:
+    """One content-independent supplement slot for an exact local turn."""
+    if not isinstance(turn_key, str) or _KEY.fullmatch(turn_key) is None:
+        raise MemoryError("invalid_hook_state_key")
+    return _digest(["codex-visible-hook-supplement/v1", turn_key])
+
+
+def _fragment_text(value: Any) -> str:
+    # Only the new fragment profile normalizes. Old v1/v2 files and receipts
+    # retain their original raw-text identities and retry behavior.
+    return _text(unicodedata.normalize("NFC", _text(value, maximum=MAX_TURN_PART_BYTES)),
+                 maximum=MAX_TURN_PART_BYTES)
+
+
+def _fragment_reference(value: Any) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if (not isinstance(value, dict) or set(value) != {"memory_id", "record_sha256"}
+            or not isinstance(value["memory_id"], str) or _MEMORY.fullmatch(value["memory_id"]) is None
+            or not isinstance(value["record_sha256"], str) or _KEY.fullmatch(value["record_sha256"]) is None
+            or value["memory_id"] != "mem_" + value["record_sha256"][:40]):
+        raise MemoryError("invalid_hook_fragment_supplement")
+    return dict(value)
 
 
 def _object(value: Any, *, required: set[str], optional: set[str] = frozenset()) -> dict[str, Any]:
@@ -454,14 +481,18 @@ def build_turn_projection(
     return [episode, continued], episode["memory_id"], continued["memory_id"]
 
 
-def save_turn_projection(config: ClientConfig, plan: Mapping[str, Any]) -> Mapping[str, Any]:
+def save_turn_projection(config: ClientConfig, plan: Mapping[str, Any], *,
+                         hook_source: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
     """Atomically save a frozen client projection and its exact core receipt.
 
     This is an internal authorized-capture path, not a new JSON permission or
     an unsigned-import shortcut. Existing records are rechecked, never re-signed
     or re-admitted simply because a local retry marker says they were saved.
     """
-    from memory_vault_capture import CAPTURE_COLUMNS, capture_digest, validate_capture_header, validate_capture_projection
+    from memory_vault_capture import (
+        CAPTURE_COLUMNS, HOOK_FRAGMENT_PROFILE, capture_digest, parse_hook_fragment,
+        validate_capture_header, validate_capture_projection,
+    )
     header = validate_capture_header({key: plan[key] for key in CAPTURE_COLUMNS["capture_jobs"]})
     current = ClientConfig.load(config.path)
     if current.vault_path != config.vault_path:
@@ -498,7 +529,21 @@ def save_turn_projection(config: ClientConfig, plan: Mapping[str, Any]) -> Mappi
         if len(records) != 2 or any(record["entities"] for record in records):
             raise MemoryError("invalid_client_capture_projection")
         episode = next(record for record in records if record["memory_id"] == header["episode_id"])
-        if episode["relations"]:
+        if header["builder_profile"] == HOOK_FRAGMENT_PROFILE:
+            if not isinstance(hook_source, Mapping):
+                raise MemoryError("capture_pending_source_missing", retryable=True)
+            # Hydration of a saved plan must still bind its canonical text to
+            # the source digest; caller-supplied auxiliary data is not trusted.
+            source = hook_capture_source({**plan, "records": records}, done={
+                **hook_source, "episode_id": header["episode_id"], "continuity_id": header["continuity_id"],
+            })
+            fragment = parse_hook_fragment(episode)
+            if source["supplement"] is not None:
+                reference = source["supplement"]
+                anchor = parse_hook_fragment(existing_record(reference["memory_id"], reference["record_sha256"]))
+                if anchor["supplement"] is not None or anchor["observed_role"] == fragment["observed_role"]:
+                    raise MemoryError("invalid_hook_fragment_supplement")
+        elif episode["relations"] or hook_source is not None:
             raise MemoryError("invalid_client_capture_projection")
         if header["previous_continuity_id"] is not None:
             previous = existing_record(header["previous_continuity_id"], header["previous_record_sha256"])
@@ -572,8 +617,33 @@ class HookState:
 
     @staticmethod
     def validate(group: str, value: Any) -> dict[str, Any]:
-        if not isinstance(value, dict) or value.get("schema_version") not in {STATE_SCHEMA, CHAIN_STATE_SCHEMA}:
+        if not isinstance(value, dict) or value.get("schema_version") not in {STATE_SCHEMA, CHAIN_STATE_SCHEMA, FRAGMENT_STATE_SCHEMA}:
             raise MemoryError("invalid_hook_state")
+        if value["schema_version"] == FRAGMENT_STATE_SCHEMA:
+            common = {"schema_version", "scope_key", "turn_key", "supplement"}
+            fields = common | ({"user", "assistant"} if group == "outbox" else {
+                "episode_id", "continuity_id", "user_sha256", "assistant_sha256",
+            } if group == "done" else set())
+            if group not in {"outbox", "done"} or set(value) != fields:
+                raise MemoryError("invalid_hook_state")
+            if any(not isinstance(value[name], str) or _KEY.fullmatch(value[name]) is None
+                   for name in ("scope_key", "turn_key")):
+                raise MemoryError("invalid_hook_state")
+            _fragment_reference(value["supplement"])
+            names = ("user", "assistant") if group == "outbox" else ("user_sha256", "assistant_sha256")
+            if sum(value[name] is not None for name in names) != 1:
+                raise MemoryError("invalid_hook_state")
+            for name in names:
+                if value[name] is not None:
+                    if group == "outbox":
+                        if _fragment_text(value[name]) != value[name]:
+                            raise MemoryError("invalid_hook_state")
+                    elif not isinstance(value[name], str) or _KEY.fullmatch(value[name]) is None:
+                        raise MemoryError("invalid_hook_state")
+            if group == "done" and any(not isinstance(value[name], str) or _MEMORY.fullmatch(value[name]) is None
+                                       for name in ("episode_id", "continuity_id")):
+                raise MemoryError("invalid_hook_state")
+            return dict(value)
         fields = {
             "prompts": {"schema_version", "user"},
             "outbox": {"schema_version", "user", "assistant"},
@@ -655,6 +725,27 @@ class HookState:
             with contextlib.suppress(FileNotFoundError):
                 self.path(group, key).unlink()
 
+    def finish_fragment(self, key: str, result: Mapping[str, Any], source: Mapping[str, Any]) -> None:
+        """Confirm only this immutable fragment; never delete its missing side."""
+        done = self.validate("done", {**source, "episode_id": result["episode_id"],
+                                     "continuity_id": result["continuity_id"]})
+        outbox = self.read("outbox", key)
+        if outbox is not None and _fragment_source(outbox) != dict(source):
+            raise MemoryError("hook_event_conflict")
+        prompt = self.read("prompts", source["turn_key"])
+        clear_prompt = prompt is not None and source["user_sha256"] is not None
+        if clear_prompt and (prompt.get("scope_key", source["scope_key"]) != source["scope_key"]
+                             or _digest(_fragment_text(prompt["user"])) != source["user_sha256"]):
+            raise MemoryError("hook_event_conflict")
+        self.once("done", key, done)
+        # Caller holds the same journal lock used by input/Stop preparation.
+        # An assistant-only receipt cannot consume a later staged user input.
+        with contextlib.suppress(FileNotFoundError):
+            self.path("outbox", key).unlink()
+        if clear_prompt:
+            with contextlib.suppress(FileNotFoundError):
+                self.path("prompts", source["turn_key"]).unlink()
+
 
 def _turn_key(event: Mapping[str, Any]) -> str:
     session = _text(event.get("session_id"), maximum=512)
@@ -706,14 +797,66 @@ def _hook_recall(config: ClientConfig, event_name: str, query: str) -> dict[str,
     }}
 
 
-def validate_hook_capture(plan: Mapping[str, Any], *, job: Mapping[str, Any] | None = None,
-                          done: Mapping[str, Any] | None = None) -> tuple[str, str]:
-    """Bind a frozen plan to exact source hashes, not a guessed latest turn."""
+def _fragment_source(value: Mapping[str, Any]) -> dict[str, Any]:
+    group = "outbox" if "user" in value else "done"
+    document = HookState.validate(group, value)
+    if document["schema_version"] != FRAGMENT_STATE_SCHEMA:
+        raise MemoryError("hook_capture_input_changed")
+    return {
+        "schema_version": FRAGMENT_STATE_SCHEMA, "scope_key": document["scope_key"],
+        "turn_key": document["turn_key"], "supplement": document["supplement"],
+        **({name + "_sha256": _digest(document[name]) if document[name] is not None else None
+            for name in ("user", "assistant")} if group == "outbox" else {
+                name: document[name] for name in ("user_sha256", "assistant_sha256")}),
+    }
+
+
+def _fragment_input_digest(source: Mapping[str, Any]) -> str:
+    from memory_vault_capture import HOOK_FRAGMENT_PROFILE
+    return _digest({"profile": HOOK_FRAGMENT_PROFILE, **source})
+
+
+def hook_capture_source(plan: Mapping[str, Any], *, job: Mapping[str, Any] | None = None,
+                        done: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Pure source/name/body binding shared by live retry and inert recovery."""
+    from memory_vault_capture import HOOK_FRAGMENT_PROFILE, parse_hook_fragment
     if (not isinstance(plan.get("job_key"), str) or _KEY.fullmatch(plan["job_key"]) is None
             or not isinstance(plan.get("scope_key"), str) or _KEY.fullmatch(plan["scope_key"]) is None
-            or plan.get("builder_profile") != HOOK_CAPTURE_PROFILE
+            or plan.get("builder_profile") not in {HOOK_CAPTURE_PROFILE, HOOK_FRAGMENT_PROFILE}
             or plan.get("canonical_request_id") != "req_hook_capture_" + plan["job_key"]):
         raise MemoryError("invalid_hook_capture_plan")
+    if plan["builder_profile"] == HOOK_FRAGMENT_PROFILE:
+        source = None
+        for group, document in (("outbox", job), ("done", done)):
+            if document is None:
+                continue
+            value = HookState.validate(group, document)
+            current = _fragment_source(value)
+            expected_key = current["turn_key"] if current["supplement"] is None else hook_supplement_key(current["turn_key"])
+            if (expected_key != plan["job_key"] or current["scope_key"] != plan["scope_key"]
+                    or (source is not None and current != source)
+                    or (group == "done" and any(value[name] != plan[name] for name in ("episode_id", "continuity_id")))):
+                raise MemoryError("hook_capture_input_changed")
+            source = current
+        if source is None:
+            raise MemoryError("capture_pending_source_missing", retryable=True)
+        if _fragment_input_digest(source) != plan.get("input_sha256"):
+            raise MemoryError("hook_capture_input_changed")
+        records = plan.get("records", [])
+        if not isinstance(records, list):
+            raise MemoryError("invalid_capture_projection")
+        if records:
+            episodes = [record for record in records if record.get("memory_id") == plan.get("episode_id")]
+            if len(episodes) != 1:
+                raise MemoryError("invalid_capture_projection")
+            fragment = parse_hook_fragment(episodes[0])
+            role = fragment["observed_role"]
+            other = "assistant" if role == "user" else "user"
+            if (source[role + "_sha256"] != _digest(fragment["text"])
+                    or source[other + "_sha256"] is not None
+                    or source["supplement"] != fragment["supplement"]):
+                raise MemoryError("hook_capture_input_changed")
+        return source
     hashes = None
     if job is not None:
         value = HookState.validate("outbox", job)
@@ -732,20 +875,71 @@ def validate_hook_capture(plan: Mapping[str, Any], *, job: Mapping[str, Any] | N
         raise MemoryError("capture_pending_source_missing", retryable=True)
     if _hook_input_digest(*hashes) != plan.get("input_sha256"):
         raise MemoryError("hook_capture_input_changed")
-    return hashes
+    return {"schema_version": CHAIN_STATE_SCHEMA, "scope_key": plan["scope_key"],
+            "turn_key": plan["job_key"], "user_sha256": hashes[0], "assistant_sha256": hashes[1], "supplement": None}
+
+
+def validate_hook_capture(plan: Mapping[str, Any], *, job: Mapping[str, Any] | None = None,
+                          done: Mapping[str, Any] | None = None) -> tuple[str | None, str | None]:
+    source = hook_capture_source(plan, job=job, done=done)
+    return source["user_sha256"], source["assistant_sha256"]
+
+
+def _hook_primary(connection: sqlite3.Connection, state: HookState, source: Mapping[str, Any], *,
+                  child: Mapping[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Require an already frozen initial fragment for this exact local turn."""
+    from memory_vault_capture import HOOK_FRAGMENT_PROFILE, load_capture
+    primary = load_capture(connection, source["turn_key"])
+    if primary is None:
+        raise MemoryError("capture_dependency_pending", retryable=True)
+    first = hook_capture_source(primary, job=state.read("outbox", source["turn_key"]),
+                                done=state.read("done", source["turn_key"]))
+    reference = next((item for item in primary["record_refs"] if item["memory_id"] == primary["episode_id"]), None)
+    if (primary["builder_profile"] != HOOK_FRAGMENT_PROFILE or first["schema_version"] != FRAGMENT_STATE_SCHEMA
+            or first["scope_key"] != source["scope_key"] or first["turn_key"] != source["turn_key"]
+            or first["supplement"] is not None or reference != source["supplement"]
+            or (first["user_sha256"] is None) == (source["user_sha256"] is None)
+            or (child is not None and primary["accepted_sequence"] >= child["accepted_sequence"])):
+        raise MemoryError("invalid_hook_fragment_supplement")
+    return primary, first
 
 
 def _complete_hook_capture(config: ClientConfig, state: HookState, connection: sqlite3.Connection,
                            plan: Mapping[str, Any], completed: list[str]) -> Mapping[str, Any]:
-    from memory_vault_capture import mark_capture_saved
+    from memory_vault_capture import HOOK_FRAGMENT_PROFILE, mark_capture_saved
     key = plan["job_key"]
     if state.read("conflicts", key) is not None:
         raise MemoryError("hook_event_conflict")
-    hashes = validate_hook_capture(plan, job=state.read("outbox", key), done=state.read("done", key))
-    response = save_turn_projection(config, plan)
+    source = hook_capture_source(plan, job=state.read("outbox", key), done=state.read("done", key))
+    if plan["builder_profile"] == HOOK_FRAGMENT_PROFILE:
+        if state.read("conflicts", source["turn_key"]) is not None:
+            raise MemoryError("hook_event_conflict")
+        if source["supplement"] is not None:
+            primary, first = _hook_primary(connection, state, source, child=plan)
+            if not primary["records"]:
+                # Validate a purged primary's source hashes against its actual
+                # canonical body too. The writer below rechecks the same full
+                # reference and current admission in its own atomic commit.
+                response = _read_operation(config, {"op": "get", "memory_id": primary["episode_id"]})
+                if not response.get("ok"):
+                    raise MemoryError("capture_dependency_pending", retryable=True)
+                record = response["result"]["record"]
+                if record["record_sha256"] != source["supplement"]["record_sha256"]:
+                    raise MemoryError("capture_projection_changed")
+                hook_capture_source({**primary, "records": [record]}, done={
+                    **first, "episode_id": primary["episode_id"], "continuity_id": primary["continuity_id"],
+                })
+        response = save_turn_projection(config, plan, hook_source=source)
+    else:
+        response = save_turn_projection(config, plan)
     if response.get("ok"):
-        completed.append(key)
-        state.finish_hashes(key, response["result"], *hashes, schema_version=CHAIN_STATE_SCHEMA)
+        if plan["state"] != "saved":
+            completed.append(key)
+        if source["schema_version"] == FRAGMENT_STATE_SCHEMA:
+            state.finish_fragment(key, response["result"], source)
+        else:
+            state.finish_hashes(key, response["result"], source["user_sha256"], source["assistant_sha256"],
+                                schema_version=CHAIN_STATE_SCHEMA)
         # The complete canonical receipt and the content-free done file are
         # durable before duplicate staging bodies are cleared in this journal.
         mark_capture_saved(connection, key)
@@ -795,6 +989,113 @@ def _drain_hook_capture(config: ClientConfig, state: HookState, key: str, *, lim
     return response
 
 
+def _hook_preparation_budget(connection: sqlite3.Connection, state: HookState, *,
+                             additions: Sequence[tuple[str, str, Mapping[str, Any]]] = ()) -> None:
+    """Bound transient source files plus pending projections, never done history.
+
+    Called under the journal lock only before new preparation/freeze. An exact
+    already-accepted retry deliberately does not enter this gate: old excess
+    staging must not prevent it from draining existing accepted work.
+    """
+    from memory_vault_capture import MAX_CAPTURE_PENDING_BYTES, MAX_CAPTURE_PENDING_JOBS
+    from memory_vault_storage import open_file, validate_path
+    pending = list(connection.execute("SELECT job_key FROM capture_jobs WHERE state='pending' LIMIT ?",
+                                      (MAX_CAPTURE_PENDING_JOBS + 1,)))
+    keys = {row[0] for row in pending}
+    occupied = int(connection.execute(
+        "SELECT COALESCE(SUM(length(CAST(r.record_json AS BLOB))),0) FROM capture_records r "
+        "JOIN capture_jobs j ON j.job_key=r.job_key WHERE j.state='pending'").fetchone()[0])
+    paths: set[Path] = set()
+    for group in ("prompts", "outbox"):
+        directory = state.root / group
+        validate_path(directory)
+        if not directory.exists():
+            continue
+        with os.scandir(directory) as entries:
+            for index, entry in enumerate(entries):
+                if index >= MAX_CAPTURE_PENDING_JOBS:
+                    raise MemoryError("hook_preparation_limit")
+                path = Path(entry.path)
+                if path.suffix != ".json" or _KEY.fullmatch(path.stem) is None:
+                    raise MemoryError("invalid_hook_preparation_entry")
+                descriptor = open_file(path, os.O_RDONLY, private=True)
+                try:
+                    occupied += os.fstat(descriptor).st_size
+                finally:
+                    os.close(descriptor)
+                paths.add(path)
+                keys.add(path.stem)
+                if occupied > MAX_CAPTURE_PENDING_BYTES or len(keys) > MAX_CAPTURE_PENDING_JOBS:
+                    raise MemoryError("hook_preparation_limit")
+    for group, key, value in additions:
+        path = state.path(group, key)
+        if path not in paths:
+            keys.add(key)
+            occupied += len(canonical_bytes(value)) + 1
+            paths.add(path)
+    if occupied > MAX_CAPTURE_PENDING_BYTES or len(keys) > MAX_CAPTURE_PENDING_JOBS:
+        raise MemoryError("hook_preparation_limit")
+
+
+def _prepare_hook_outbox(connection: sqlite3.Connection, state: HookState, key: str,
+                         value: Mapping[str, Any]) -> dict[str, Any]:
+    prepared = HookState.validate("outbox", value)
+    existing = state.read("outbox", key)
+    if existing is not None:
+        if existing != prepared:
+            raise MemoryError("hook_event_conflict")
+        return existing
+    _hook_preparation_budget(connection, state, additions=[("outbox", key, prepared)])
+    state.once("outbox", key, prepared)
+    return prepared
+
+
+def _freeze_hook_job(connection: sqlite3.Connection, state: HookState, key: str,
+                     value: Mapping[str, Any], *, recover_prepared: bool = False) -> dict[str, Any]:
+    from memory_vault_capture import HOOK_FRAGMENT_PROFILE, build_hook_fragment_projection, freeze_capture, load_capture
+    value = HookState.validate("outbox", value)
+    if value["schema_version"] not in {CHAIN_STATE_SCHEMA, FRAGMENT_STATE_SCHEMA} or state.read("outbox", key) != value:
+        raise MemoryError("hook_capture_input_changed")
+    if state.read("conflicts", key) is not None:
+        raise MemoryError("hook_event_conflict")
+    previous = load_capture(connection, key)
+    if value["schema_version"] == FRAGMENT_STATE_SCHEMA:
+        source = _fragment_source(value)
+        expected_key = source["turn_key"] if source["supplement"] is None else hook_supplement_key(source["turn_key"])
+        if key != expected_key or state.read("conflicts", source["turn_key"]) is not None:
+            raise MemoryError("hook_capture_input_changed")
+        if source["supplement"] is not None:
+            _hook_primary(connection, state, source, child=previous)
+        plan = freeze_capture(
+            connection, scope_key=value["scope_key"], job_key=key,
+            input_sha256=_fragment_input_digest(source), builder_profile=HOOK_FRAGMENT_PROFILE,
+            canonical_request_id="req_hook_capture_" + key,
+            build_projection=lambda created_at, earlier: build_hook_fragment_projection(
+                value["user"], value["assistant"], created_at=created_at, predecessor=earlier,
+                supplement=value["supplement"],
+            ),
+        )
+        hook_capture_source(plan, job=value, done=state.read("done", key))
+        if source["supplement"] is not None:
+            _hook_primary(connection, state, source, child=plan)
+    else:
+        plan = freeze_capture(
+            connection, scope_key=value["scope_key"], job_key=key,
+            input_sha256=_hook_input_digest(_digest(value["user"]), _digest(value["assistant"])),
+            builder_profile=HOOK_CAPTURE_PROFILE, canonical_request_id="req_hook_capture_" + key,
+            build_projection=lambda created_at, earlier: build_turn_projection(
+                value["user"], value["assistant"], None, created_at=created_at,
+                host_visible=True, predecessor=earlier,
+            ),
+        )
+    if previous is None and not recover_prepared:
+        # This transaction may roll back the new plan but not its already
+        # bounded immutable source file. Report pending preparation, never a
+        # successful acceptance, until a later explicit/bounded retry fits.
+        _hook_preparation_budget(connection, state)
+    return plan
+
+
 def _persist_job(config: ClientConfig, state: HookState, key: str, job: Mapping[str, Any], *, drain_limit: int = 4) -> Mapping[str, Any]:
     current = ClientConfig.load(config.path)
     if current.vault_path != config.vault_path:
@@ -811,8 +1112,10 @@ def _persist_job(config: ClientConfig, state: HookState, key: str, job: Mapping[
         from memory_vault_capture import HookCaptureJournal, load_capture
         journal = HookCaptureJournal(config.state_path, config.vault_path)
         with journal.transaction(writable=journal.path.exists()) as connection:
+            config = _hook_config_enabled(config)
             if connection is not None and load_capture(connection, key) is not None:
                 raise MemoryError("hook_capture_input_changed")
+        config = _hook_config_enabled(config)
         response = observe_turn(config, request_id="req_hook_" + key,
                                 user=value["user"], assistant=value["assistant"], host_visible=True)
         if response.get("ok"):
@@ -821,23 +1124,181 @@ def _persist_job(config: ClientConfig, state: HookState, key: str, job: Mapping[
         return response
     if state.read("outbox", key) != value:
         raise MemoryError("hook_capture_input_changed")
-    from memory_vault_capture import HookCaptureJournal, freeze_capture
+    from memory_vault_capture import HookCaptureJournal
     journal = HookCaptureJournal(current.state_path, current.vault_path)
     with journal.transaction() as connection:
         assert connection is not None
-        freeze_capture(
-            connection, scope_key=value["scope_key"], job_key=key,
-            input_sha256=_hook_input_digest(_digest(value["user"]), _digest(value["assistant"])),
-            builder_profile=HOOK_CAPTURE_PROFILE, canonical_request_id="req_hook_capture_" + key,
-            build_projection=lambda created_at, previous: build_turn_projection(
-                value["user"], value["assistant"], None, created_at=created_at,
-                host_visible=True, predecessor=previous,
-            ),
-        )
+        config = _hook_config_enabled(config)
+        # The named source already exists and is revalidated inside freeze.
+        # Drain old prepared collections one bounded job at a time even if
+        # they predate the combined preparation quota. freeze_capture still
+        # enforces its original pending-plan count and byte ceilings.
+        _freeze_hook_job(connection, state, key, value, recover_prepared=True)
     # Acceptance is now durable, before any canonical write. A bounded drain
     # finishes earlier accepted turns first, without opening a second journal
     # connection while holding its write lock or recursively walking history.
-    return _drain_hook_capture(current, state, key, limit=drain_limit)
+    return _drain_hook_capture(config, state, key, limit=drain_limit)
+
+
+def _hook_config_enabled(config: ClientConfig) -> ClientConfig:
+    current = ClientConfig.load(config.path)
+    if current.vault_path != config.vault_path:
+        raise MemoryError("hook_capture_vault_changed")
+    if not current.capture_visible_turns:
+        raise MemoryError("automatic_capture_disabled")
+    return current
+
+
+def _hook_prompt_source(state: HookState, key: str, scope_key: str) -> str | None:
+    prompt = state.read("prompts", key)
+    if prompt is None:
+        return None
+    if prompt.get("scope_key", scope_key) != scope_key:
+        raise MemoryError("hook_event_conflict")
+    return prompt["user"]
+
+
+def _prepare_hook_event(config: ClientConfig, state: HookState, key: str, scope_key: str, *,
+                        user: str | None, assistant: str | None, from_prompt: bool
+                        ) -> tuple[str | None, str, Mapping[str, Any] | None]:
+    """Select/freeze one immutable job under the shared prompt/Stop lock.
+
+    A supplement's source file is published only in the second transaction,
+    after its primary's frozen bytes and full reference have committed. No
+    turn identifier, scope, correlation handle or permission enters a record.
+    """
+    from memory_vault_capture import HookCaptureJournal, load_capture
+    journal = HookCaptureJournal(config.state_path, config.vault_path)
+    supplement = None
+    with journal.transaction() as connection:
+        assert connection is not None
+        config = _hook_config_enabled(config)
+        if state.read("conflicts", key) is not None:
+            raise MemoryError("hook_event_conflict")
+        job, done = state.read("outbox", key), state.read("done", key)
+        plan = load_capture(connection, key)
+        if job is not None and done is not None and job["schema_version"] != done["schema_version"]:
+            raise MemoryError("hook_capture_input_changed")
+        document = job if job is not None else done
+        if document is None:
+            if plan is not None:
+                raise MemoryError("capture_pending_source_missing", retryable=True)
+            if from_prompt:
+                assert user is not None
+                # Check exact old prompts before the new-preparation quota so
+                # already-staged old work remains retryable at the limit.
+                if state.read("prompts", key) is None:
+                    _hook_preparation_budget(connection, state, additions=[("prompts", key, {
+                        "schema_version": CHAIN_STATE_SCHEMA, "scope_key": scope_key, "user": user,
+                    })])
+                state.prompt(key, user, scope_key=scope_key)
+                return None, "visible_prompt_staged_local", None
+            user = _hook_prompt_source(state, key, scope_key)
+            if user is None and assistant is None:
+                return None, "no_visible_content_no_turn_saved", None
+            if user is not None and assistant is not None:
+                job = {"schema_version": CHAIN_STATE_SCHEMA, "scope_key": scope_key,
+                       "user": user, "assistant": assistant}
+            else:
+                job = {"schema_version": FRAGMENT_STATE_SCHEMA, "scope_key": scope_key,
+                       "turn_key": key, "supplement": None,
+                       "user": _fragment_text(user) if user is not None else None,
+                       "assistant": _fragment_text(assistant) if assistant is not None else None}
+            job = _prepare_hook_outbox(connection, state, key, job)
+            _freeze_hook_job(connection, state, key, job)
+            notice = ("visible_fragment_and_continuity_saved_local" if job["schema_version"] == FRAGMENT_STATE_SCHEMA
+                      else "visible_turn_and_continuity_saved_local")
+            return key, notice, None
+
+        if document["schema_version"] != FRAGMENT_STATE_SCHEMA:
+            # Accepted v1/v2 pairs retain raw hashes, their existing request
+            # domains and full-pair meaning. Missing new fields cannot convert
+            # them into fragments, and a repeated prompt need not replay them.
+            if job is not None and job.get("scope_key", scope_key) != scope_key:
+                raise MemoryError("hook_event_conflict")
+            hashes = ({role: _digest(job[role]) for role in ("user", "assistant")} if job is not None
+                      else {role: done[role + "_sha256"] for role in ("user", "assistant")})
+            if done is not None and any(done[role + "_sha256"] != hashes[role] for role in hashes):
+                raise MemoryError("hook_event_conflict")
+            staged_user = _hook_prompt_source(state, key, scope_key)
+            if staged_user is not None and _digest(staged_user) != hashes["user"]:
+                raise MemoryError("hook_event_conflict")
+            if any(text is not None and _digest(text) != hashes[role]
+                   for role, text in (("user", user), ("assistant", assistant))):
+                raise MemoryError("hook_event_conflict")
+            if document["schema_version"] == STATE_SCHEMA:
+                if plan is not None:
+                    raise MemoryError("hook_capture_input_changed")
+                if from_prompt or done is not None:
+                    return None, "visible_turn_already_saved_local" if done else "visible_prompt_staged_local", None
+                return key, "visible_turn_and_continuity_saved_local", job
+            if plan is not None:
+                hook_capture_source(plan, job=job, done=done)
+            elif done is not None:
+                raise MemoryError("capture_pending_source_missing", retryable=True)
+            if from_prompt:
+                return None, "visible_prompt_staged_local", None
+            if job is not None:
+                plan = _freeze_hook_job(connection, state, key, job)
+                hook_capture_source(plan, job=job, done=done)
+            return key, "visible_turn_and_continuity_saved_local", None
+
+        if plan is None:
+            if done is not None or job is None:
+                raise MemoryError("capture_pending_source_missing", retryable=True)
+            first = _fragment_source(job)
+        else:
+            first = hook_capture_source(plan, job=job, done=done)
+        if (first["turn_key"] != key or first["scope_key"] != scope_key or first["supplement"] is not None):
+            raise MemoryError("invalid_hook_fragment_supplement")
+        staged_user = _hook_prompt_source(state, key, scope_key)
+        if staged_user is not None:
+            if user is not None and _fragment_text(user) != _fragment_text(staged_user):
+                raise MemoryError("hook_event_conflict")
+            user = staged_user
+        incoming = {role: _fragment_text(text) if text is not None else None
+                    for role, text in (("user", user), ("assistant", assistant))}
+        for role, text in incoming.items():
+            if text is not None and first[role + "_sha256"] is not None and _digest(text) != first[role + "_sha256"]:
+                raise MemoryError("hook_event_conflict")
+        # Any existing source was already prepared by a terminal Stop. Retry
+        # freezes that exact primary; it never folds the newly arrived half in.
+        if job is not None:
+            plan = _freeze_hook_job(connection, state, key, job)
+        assert plan is not None
+        missing = "user" if first["user_sha256"] is None else "assistant"
+        if incoming[missing] is None:
+            return key, "visible_fragment_and_continuity_saved_local", None
+        reference = next(item for item in plan["record_refs"] if item["memory_id"] == plan["episode_id"])
+        supplement = {"schema_version": FRAGMENT_STATE_SCHEMA, "scope_key": scope_key,
+                      "turn_key": key, "supplement": reference,
+                      "user": incoming["user"] if missing == "user" else None,
+                      "assistant": incoming["assistant"] if missing == "assistant" else None}
+    # The first context manager has committed. A process interruption here can
+    # leave an accepted primary, never a supplement pointing at a rolled-back
+    # primary timestamp or an unfrozen predecessor.
+    assert supplement is not None
+    supplement_key = hook_supplement_key(key)
+    with journal.transaction() as connection:
+        assert connection is not None
+        config = _hook_config_enabled(config)
+        if state.read("conflicts", key) is not None or state.read("conflicts", supplement_key) is not None:
+            raise MemoryError("hook_event_conflict")
+        source = _fragment_source(supplement)
+        plan = load_capture(connection, supplement_key)
+        _hook_primary(connection, state, source, child=plan)
+        job, done = state.read("outbox", supplement_key), state.read("done", supplement_key)
+        if plan is not None:
+            if hook_capture_source(plan, job=job, done=done) != source:
+                raise MemoryError("hook_event_conflict")
+        elif done is not None:
+            raise MemoryError("capture_pending_source_missing", retryable=True)
+        if job is not None and job != supplement:
+            raise MemoryError("hook_event_conflict")
+        if plan is None or job is not None:
+            job = _prepare_hook_outbox(connection, state, supplement_key, supplement)
+            _freeze_hook_job(connection, state, supplement_key, job)
+    return supplement_key, "visible_fragment_supplement_and_continuity_saved_local", None
 
 
 def handle_hook(config: ClientConfig, action: str, value: Any) -> Mapping[str, Any]:
@@ -876,40 +1337,30 @@ def handle_hook(config: ClientConfig, action: str, value: Any) -> Mapping[str, A
         return _hook_recall(config, "SessionStart", "Current goals, decisions, continuity and unresolved next actions")
     key = _turn_key(value)
     state = HookState(config)
-    if action == "user-prompt-submit":
-        prompt = _text(value.get("prompt"), maximum=MAX_TURN_PART_BYTES)
-        state.prompt(key, prompt, scope_key=_hook_scope(value))
-        return _hook_recall(config, "UserPromptSubmit", _excerpt(prompt, MAX_QUERY_BYTES - 128))
-    if not isinstance(value.get("stop_hook_active", False), bool):
+    from_prompt = action == "user-prompt-submit"
+    prompt = _text(value.get("prompt"), maximum=MAX_TURN_PART_BYTES) if from_prompt else None
+    if not from_prompt and not isinstance(value.get("stop_hook_active", False), bool):
         raise MemoryError("invalid_hook_event")
-    assistant = _text(value.get("last_assistant_message"), maximum=MAX_TURN_PART_BYTES)
-    done = state.read("done", key)
-    if done is not None:
-        if done.get("assistant_sha256") != _digest(assistant):
-            raise MemoryError("hook_event_conflict")
-        return _notice("visible_turn_already_saved_local")
-    if state.read("conflicts", key) is not None:
-        raise MemoryError("hook_event_conflict")
-    prompt = state.read("prompts", key)
-    if prompt is None:
-        # Never guess the user message by opening a transcript or reading a
-        # different turn. A host without these fields must use explicit MCP.
-        return _notice("matching_prompt_missing_no_turn_saved")
-    user = _text(prompt.get("user"), maximum=MAX_TURN_PART_BYTES)
-    scope_key = _hook_scope(value)
-    if prompt.get("scope_key", scope_key) != scope_key:
-        raise MemoryError("hook_event_conflict")
-    job = state.read("outbox", key)
-    if job is None:
-        job = {"schema_version": CHAIN_STATE_SCHEMA, "user": user, "assistant": assistant, "scope_key": scope_key}
-        state.once("outbox", key, job)
-    elif job["user"] != user or job["assistant"] != assistant or job.get("scope_key", scope_key) != scope_key:
-        raise MemoryError("hook_event_conflict")
-    response = _persist_job(config, state, key, job)
-    if response.get("ok"):
-        return _notice("visible_turn_and_continuity_saved_local")
-    code = response.get("error", {}).get("code", "unavailable")
-    return _notice("visible_turn_pending_retry_" + code)
+    raw_assistant = value.get("last_assistant_message") if not from_prompt else None
+    # Absent/empty is missing evidence, not cancellation and not an invented
+    # assistant answer. Malformed nonempty fields still fail validation.
+    assistant = None if raw_assistant is None or raw_assistant == "" else _text(raw_assistant, maximum=MAX_TURN_PART_BYTES)
+    target, saved_notice, legacy_job = _prepare_hook_event(
+        config, state, key, _hook_scope(value), user=prompt, assistant=assistant, from_prompt=from_prompt,
+    )
+    response = None
+    if target is not None:
+        response = (_persist_job(config, state, target, legacy_job) if legacy_job is not None
+                    else _drain_hook_capture(config, state, target, limit=4))
+    if from_prompt:
+        recalled = _hook_recall(config, "UserPromptSubmit", _excerpt(prompt, MAX_QUERY_BYTES - 128))
+        if response is not None:
+            code = saved_notice if response.get("ok") else "visible_turn_pending_retry_" + response.get("error", {}).get("code", "unavailable")
+            recalled.update(_notice(code))
+        return recalled
+    if response is None or response.get("ok"):
+        return _notice(saved_notice)
+    return _notice("visible_turn_pending_retry_" + response.get("error", {}).get("code", "unavailable"))
 
 
 def retry_pending(config: ClientConfig, *, limit: int = 16) -> Mapping[str, Any]:

@@ -674,6 +674,54 @@ def _fragment_locator(tokens: Sequence[str], normalized_query: str) -> Callable[
     return locate
 
 
+def _visible_fragment_region(record: Mapping[str, Any]) -> tuple[int, int, str] | None:
+    """Recognize one public text framing as an unauthenticated ranking hint.
+
+    The independent core does not import the optional client or its journal.
+    Unknown/malformed framing stays ordinary searchable text, not a protocol
+    error. Only the bounded metadata header is parsed; embedded delimiters in
+    the visible body cannot invent a second role or change the original span.
+    """
+    if (record.get("kind") != "episode"
+            or not isinstance(record.get("provenance"), Mapping)
+            or record["provenance"].get("source_ref") != "codex-visible-fragment/v1"):
+        return None
+    text = str(record["text"])
+    prefix = "Memory Vault visible fragment/v1\n"
+    if not text.startswith(prefix):
+        return None
+    boundary = text.find("\n\n", len(prefix), len(prefix) + 1026)
+    if boundary < 0:
+        return None
+    encoded = text[len(prefix):boundary]
+    try:
+        if _utf8_length(encoded) > 1024:
+            return None
+        header = strict_json_loads(encoded)
+        if (not isinstance(header, dict)
+                or set(header) != {"coverage", "observed_role", "missing_roles", "supplement"}
+                or header["coverage"] != "partial_active_turn"
+                or header["observed_role"] not in ("user", "assistant")
+                or header["missing_roles"] != ["assistant" if header["observed_role"] == "user" else "user"]
+                or canonical_bytes(header).decode("utf-8") != encoded):
+            return None
+        supplement = header["supplement"]
+        if supplement is not None and (
+                not isinstance(supplement, dict) or set(supplement) != {"memory_id", "record_sha256"}
+                or not isinstance(supplement["record_sha256"], str)
+                or re.fullmatch(r"[0-9a-f]{64}", supplement["record_sha256"]) is None
+                or supplement["memory_id"] != "mem_" + supplement["record_sha256"][:40]):
+            return None
+    except (MemoryError, UnicodeError):
+        return None
+    role = header["observed_role"]
+    label = "User:\n" if role == "user" else "Assistant:\n"
+    begin = boundary + 2
+    if not text.startswith(label, begin) or not text[begin + len(label):].strip():
+        return None
+    return begin + len(label), len(text), role
+
+
 def memory_fragments(record: Mapping[str, Any]) -> Iterable[dict[str, Any]]:
     """Yield overlapping original-text spans, never generated summaries.
 
@@ -686,6 +734,10 @@ def memory_fragments(record: Mapping[str, Any]) -> Iterable[dict[str, Any]]:
     split = text.find(delimiter)
     if record.get("kind") == "episode" and text.startswith("User:\n") and split >= 6:
         regions = [(6, split, "user"), (split + len(delimiter), len(text), "assistant")]
+    else:
+        visible_fragment = _visible_fragment_region(record)
+        if visible_fragment is not None:
+            regions = [visible_fragment]
     ordinal = 0
     for begin, end, role in regions:
         offset = begin

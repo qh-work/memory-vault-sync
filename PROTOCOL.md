@@ -70,6 +70,13 @@ are separately scoped optional integrations. An old-host handle, stream cursor,
 share selector or device trust entry does not become a parent of memory or an
 execution permission. Their wire versions do not replace canonical record/v1.
 
+The optional [visible-fragment text profile](docs/VISIBLE_FRAGMENTS.md) retains
+one actually observed side of a turn and can append a later opposite-side
+supplement. It uses ordinary episode/continuity records and existing relations;
+it does not add nullable fields to `observe`, change record hashing or require
+the reader to install a client. An implementation may preserve this text as
+opaque evidence without implementing its private capture journal.
+
 Implementers MUST advertise only the operations/profiles they actually
 implement. These profile names describe capability sets; they do not add a
 `profile` field to existing strict request/record objects.

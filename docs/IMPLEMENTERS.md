@@ -73,6 +73,13 @@ neither label is proof of author identity. A historical conversion can use
 `imported` / `imported`. Never store system instructions, hidden reasoning,
 credentials, cookies, account internals or unrelated transcripts.
 
+Only one visible side available? Preserve only that actual evidence; do not
+invent the missing speaker. The optional [fragment text profile](VISIBLE_FRAGMENTS.md)
+defines how the full client records single-sided observations and later linked
+supplements. Its records remain readable/exchangeable without a plugin or local
+turn handles. The core `observe` JSON request still requires a complete pair;
+this optional producer profile does not silently change that request contract.
+
 Generate a real UTC timestamp ending in `Z`, preserve it, and compute the body
 hash precisely as [section 4](../PROTOCOL.md#4-memory-record) specifies. Preserve
 text and array order; do not normalize Unicode. Use the

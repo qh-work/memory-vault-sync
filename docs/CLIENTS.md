@@ -28,7 +28,7 @@ adding these source files.
 | `memory_vault_client.py share` | Explicit operator command | Review and exchange a selected complete subgraph, with optional original proofs |
 | `memory_vault_client.py device-trust` / `envelope` | Explicit operator command | Initialize/inspect a named private device metadata file; inspect new or explicitly selected old ciphertext framing without keys or decryption |
 | `memory_vault_client.py update` / `install` | Explicit operator command | Independent publisher verification, staging / isolated activation, rollback and separately opted-in updates |
-| Optional Codex hooks | Reviewed/trusted host lifecycle events, plus capture opt-in | Stage the visible prompt, recall locally, save the visible final pair |
+| Optional Codex hooks | Reviewed/trusted host lifecycle events, plus capture opt-in | Stage visible input, recall locally, save complete pairs or explicit single-sided fragments with later linked supplements |
 | Work MCP entry point | Work installations that support the packaged local MCP server | Explicit tool calls; automatic Work lifecycle capture is **not established** |
 
 Reading instructions does not create storage access or install tools. Hosts
@@ -338,8 +338,8 @@ host must deliver the documented fields and the operator must trust the hooks.
 | Event | Local behavior |
 | --- | --- |
 | `SessionStart` | Notify independently enabled sync, retry at most four local pending saves, read a bounded local handoff; never wait for network |
-| `UserPromptSubmit` | Stage only `prompt` for the supplied `session_id` and `turn_id`, then recall relevant local evidence |
-| `Stop` | Pair the staged prompt with `last_assistant_message`, save episode and continuity, report an advisory result |
+| `UserPromptSubmit` | Stage only `prompt` for the supplied `session_id` and `turn_id`, or append it as the late missing side of an accepted assistant fragment; then recall local evidence |
+| `Stop` | Save the complete pair when both sides are visible, otherwise an explicit one-sided fragment; a late assistant side becomes a linked supplement |
 
 The adapter deliberately ignores `transcript_path`, `cwd`, permission fields
 and unknown fields. It never scans other chats, tool transcripts or hidden
@@ -355,9 +355,11 @@ platforms or filesystems fail closed; see [platform limits](PLATFORMS.md).
 Two simultaneous
 events cannot overwrite each other's visible text. Different prompts or final
 responses for the same event identity are rejected as conflicts instead of
-guessing a pairing. If the host omits the necessary IDs or final visible text,
-capture reports that it did not confirm saving. Use explicit MCP capture for
-unsupported hosts or ambiguous events.
+guessing a pairing. Missing required IDs still prevent automatic correlation.
+If neither side is visible, no memory is saved. One missing side does not erase
+the other: the optional [single-sided profile](VISIBLE_FRAGMENTS.md) records
+only the actual input, never guessed content. Use explicit MCP capture for
+unsupported hosts or ambiguous complete-pair events.
 
 The capture marker describes the local hook code path, not cryptographic proof
 that the host originated the event: another process with the same OS account
@@ -380,6 +382,15 @@ reuse frozen bytes, time and predecessor under the current capture/trust checks.
 Old v1 outboxes keep their original two-write receipts and partial-save retry
 behavior; they are not rewritten or assigned an invented predecessor.
 
+Single-sided fragments use a separate, closed builder profile and v3 hook JSON
+state, without changing that journal's tables or the old v1/v2 meaning. The
+initial episode stays immutable. A later opposite-side message is accepted at
+most once as a new episode with `derived_from` to the initial episode and its
+full hash in canonical metadata. The new continuity still follows the source's
+actual acceptance order, even when another turn intervened. Local turn hashes
+prove the pairing only inside private control state; they never become portable
+memory owners. The writer rechecks the original episode's current admission.
+
 After saving, the hook publishes a content-free `done` receipt, removes the
 matching transient files, then marks the frozen plan saved. An interruption can
 therefore leave no outbox but a matching `done` and a still-pending journal plan.
@@ -399,6 +410,9 @@ Disabling capture also disables replay of these automatic jobs. No always-on
 daemon is installed, and there is no promise that a host will deliver an event
 after being force-killed. A never-completed turn may leave its staged prompt;
 there is no indiscriminate automatic cleanup of old private state.
+Opting out of capture does not disable reading: SessionStart and input can still
+recall existing eligible memory without creating staging state, replaying jobs,
+or notifying sync/update workers from that disabled branch.
 
 Hook results are JSON advisories, including on errors. They never block an
 action, return an allow decision, suppress logging, or request that the agent

@@ -40,6 +40,10 @@ capture-disabled-recall fixtures have not been executed. Their accompanying
 source repairs postdate every runtime campaign above. AST/JSON/diff inspection
 does not turn these fixtures into passing tests; see the current
 [development status](STATUS.md#latest-guarded-workflows).
+The same applies to the newer fragment builder, native-hook, fragment-retrieval
+and partial-recovery fixture files. Their single-sided input coverage is not
+established by the earlier complete-pair partial-write campaign. Verification
+must name the exact selected methods and current source separately.
 
 The recorded maintainer runs use disposable synthetic data. They do not prove
 full parity, real-host event delivery, independent cryptographic interoperability,

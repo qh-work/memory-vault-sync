@@ -450,14 +450,50 @@ def _validate_capture_write_receipt(connection: sqlite3.Connection, row: sqlite3
         previous_hash = predecessor["record_sha256"]
         expected.append({"type": "continues", "target": previous[0]})
     host_visible = episode["provenance"].get("source_type") == "visible_turn"
-    if (episode["relations"] or episode["created_at"] != continuity["created_at"]
+    from memory_vault_capture import (
+        HOOK_FRAGMENT_PROFILE, HOOK_FRAGMENT_SOURCE, build_hook_fragment_projection,
+        capture_digest, parse_hook_fragment,
+    )
+    builder_profile = "codex-visible-turn+continues/v1" if host_visible else "lifecycle-visible-turn+continues/v1"
+    episode_relations = []
+    if episode["provenance"].get("source_ref") == HOOK_FRAGMENT_SOURCE:
+        # Memory-only snapshots deliberately do not include hook outbox files.
+        # The closed canonical fragment body, not a guessed role or a restored
+        # control flag, carries the profile and complete supplemental anchor.
+        try:
+            fragment = parse_hook_fragment(episode)
+            supplement = fragment["supplement"]
+            if supplement is not None:
+                found = connection.execute("SELECT * FROM memories WHERE memory_id=?", (supplement["memory_id"],)).fetchone()
+                if found is None:
+                    raise MemoryError("invalid_backup_write_receipt")
+                anchor = Vault._record_from_row(found)
+                if (anchor["record_sha256"] != found["record_sha256"]
+                        or any(anchor[key] != supplement[key] for key in ("memory_id", "record_sha256"))):
+                    raise MemoryError("invalid_backup_write_receipt")
+                original = parse_hook_fragment(anchor)
+                if original["supplement"] is not None or original["observed_role"] == fragment["observed_role"]:
+                    raise MemoryError("invalid_backup_write_receipt")
+                episode_relations.append({"type": "derived_from", "target": supplement["memory_id"]})
+            rebuilt, rebuilt_episode, rebuilt_continuity = build_hook_fragment_projection(
+                fragment["text"] if fragment["observed_role"] == "user" else None,
+                fragment["text"] if fragment["observed_role"] == "assistant" else None,
+                created_at=episode["created_at"],
+                predecessor={"memory_id": previous[0], "record_sha256": previous_hash} if previous else None,
+                supplement=supplement,
+            )
+            if rebuilt != records or (rebuilt_episode, rebuilt_continuity) != (episode["memory_id"], continuity["memory_id"]):
+                raise MemoryError("invalid_backup_write_receipt")
+        except MemoryError as exc:
+            raise MemoryError("invalid_backup_write_receipt") from exc
+        builder_profile = HOOK_FRAGMENT_PROFILE
+    if (episode["relations"] != episode_relations or episode["created_at"] != continuity["created_at"]
             or (result["capture_basis"] == "host_event_fields") != host_visible
             or {(edge["type"], edge["target"]) for edge in continuity["relations"]}
             != {(edge["type"], edge["target"]) for edge in expected}):
         raise MemoryError("invalid_backup_write_receipt")
-    from memory_vault_capture import capture_digest
     projection_sha256 = capture_digest({
-        "builder_profile": "codex-visible-turn+continues/v1" if host_visible else "lifecycle-visible-turn+continues/v1",
+        "builder_profile": builder_profile,
         "created_at": episode["created_at"], "previous_continuity_id": previous[0] if previous else None,
         "previous_record_sha256": previous_hash, "episode_id": episode["memory_id"], "continuity_id": continuity["memory_id"],
     }, records)

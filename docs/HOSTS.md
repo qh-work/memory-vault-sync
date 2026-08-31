@@ -105,6 +105,10 @@ The [Codex visible-hook route](CLIENTS.md) uses
 `codex-visible-turn+continues/v1` in a separate hook journal; the old-envelope
 bridge uses `compat-visible-turn+continues/v1`. The native adapters on this page
 use the lifecycle builder, not either of those control-state profiles.
+Codex's new [single-sided visible-fragment path](VISIBLE_FRAGMENTS.md) uses a
+separate optional builder in that same hook journal. It does not silently make
+the lifecycle or old-host complete-pair request fields nullable, or change the
+event-delivery requirements of the Claude/Gemini adapters above.
 
 When a final commit is accepted, one control transaction fixes the entire
 canonical record pair, timestamp, visible-input/continuity digest, core request

@@ -24,8 +24,9 @@ from typing import Any, Iterator, Mapping, Sequence
 from memory_vault import AUTHORITY, MAX_BUNDLE_LINE_BYTES, MemoryError, Vault, canonical_bytes, sha256, strict_json_loads, utc_now, validate_record
 from memory_vault_capture import (
     CAPTURE_COLUMNS, CAPTURE_SQL, HOOK_CAPTURE_FILENAME, HOOK_CAPTURE_SCHEMA,
-    MAX_CAPTURE_JOBS, MAX_CAPTURE_RECORDS, load_capture, validate_capture_header,
-    validate_capture_projection, validate_capture_state,
+    HOOK_FRAGMENT_PROFILE, MAX_CAPTURE_JOBS, MAX_CAPTURE_RECORDS, load_capture,
+    parse_hook_fragment, validate_capture_header, validate_capture_projection,
+    validate_capture_state, validate_hook_fragment_projection,
 )
 import memory_vault_backup as database_backup
 import memory_vault_storage as protected_storage
@@ -1088,6 +1089,8 @@ def _validate_capture_control(connection: sqlite3.Connection, component: str,
             records.append(record)
         if plan["state"] == "saved":
             validate_capture_projection(plan, records)
+        if component == "hooks" and plan["builder_profile"] == HOOK_FRAGMENT_PROFILE:
+            validate_hook_fragment_projection(plan, records if plan["state"] == "saved" else plan["records"])
         if component in {"lifecycle", "hooks"}:
             from memory_vault import RESULT_SCHEMA as CORE_RESULT_SCHEMA
             from memory_vault_client import _digest
@@ -1146,7 +1149,7 @@ def _validate_capture_control(connection: sqlite3.Connection, component: str,
         else:
             _match(plan["job_key"], _HASH)
             _match(plan["scope_key"], _HASH)
-            _require(plan["builder_profile"] == "codex-visible-turn+continues/v1"
+            _require(plan["builder_profile"] in {"codex-visible-turn+continues/v1", HOOK_FRAGMENT_PROFILE}
                      and plan["canonical_request_id"] == "req_hook_capture_" + plan["job_key"])
 
 
@@ -1207,22 +1210,28 @@ def _rebuild_control(source: Path, destination: Path, component: str, old_source
 
 def _hook_document(value: Any, group: str, memory: sqlite3.Connection, *, key: str | None = None,
                    capture: sqlite3.Connection | None = None) -> dict[str, Any]:
-    from memory_vault_client import HookState
-    # Reuse the fixed, closed v1/v2 schemas, not an archive-supplied validator.
-    # In v2 prompts/outbox carry a scope; done keeps only hashes and record IDs.
+    from memory_vault_client import FRAGMENT_STATE_SCHEMA, HookState, hook_supplement_key
+    # Reuse closed source schemas, never an archive-supplied validator. Old
+    # v1/v2 remain exact pairs; v3 explicitly records just one observed role.
     result = HookState.validate(group, value)
+    fragment = result["schema_version"] == FRAGMENT_STATE_SCHEMA
     for field in ("user", "assistant"):
-        if field in result:
+        if field in result and result[field] is not None:
             _text(result[field], 480 * 1024)
     if group == "done":
         _record_reference(memory, result["episode_id"], kind="episode")
         _record_reference(memory, result["continuity_id"], kind="continuity")
-        _match(result["user_sha256"], _HASH)
-        _match(result["assistant_sha256"], _HASH)
+        _match(result["user_sha256"], _HASH, nullable=fragment)
+        _match(result["assistant_sha256"], _HASH, nullable=fragment)
     if group == "conflicts":
         _require(result["reason"] == "different_prompts_for_same_turn")
-    if key is not None and capture is not None and group in {"outbox", "done"}:
-        plan = load_capture(capture, key)
+    if key is not None and group in {"outbox", "done"}:
+        if fragment:
+            expected_key = result["turn_key"] if result["supplement"] is None else hook_supplement_key(result["turn_key"])
+            _require(key == expected_key, "hook_recovery_fragment_turn_changed")
+        plan = load_capture(capture, key) if capture is not None else None
+        if fragment and group == "done":
+            _require(plan is not None, "hook_recovery_capture_plan_missing")
         if plan is not None:
             _validate_hook_plan_document(plan, result, group)
     return result
@@ -1233,23 +1242,102 @@ def _validate_hook_plan_document(plan: Mapping[str, Any], value: Mapping[str, An
     validate_hook_capture(plan, job=value if group == "outbox" else None, done=value if group == "done" else None)
 
 
-def _validate_hook_capture_files(connection: sqlite3.Connection, state: Path,
-                                  memory: sqlite3.Connection, deadline: float) -> None:
-    for original in connection.execute("SELECT job_key FROM capture_jobs"):
+def _hook_plan_evidence(plan: Mapping[str, Any], connection: sqlite3.Connection, state: Path,
+                        memory: sqlite3.Connection, deadline: float) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Hydrate only canonical evidence; loading it grants no current admission."""
+    from memory_vault_client import hook_capture_source
+    prepared = dict(plan)
+    if prepared["builder_profile"] == HOOK_FRAGMENT_PROFILE:
+        if not prepared["records"]:
+            records = []
+            for reference in prepared["record_refs"]:
+                database_backup._check_time(deadline)
+                row = memory.execute("SELECT record_json,record_sha256 FROM memories WHERE memory_id=?", (reference["memory_id"],)).fetchone()
+                _require(row is not None, "restored_control_memory_reference_missing")
+                record = validate_record(strict_json_loads(row["record_json"]))
+                _require(record["memory_id"] == reference["memory_id"]
+                         and record["record_sha256"] == row["record_sha256"] == reference["record_sha256"],
+                         "restored_control_memory_reference_missing")
+                records.append(record)
+            prepared["records"] = records
+        validate_hook_fragment_projection(prepared, prepared["records"])
+    documents = {}
+    for group in ("outbox", "done"):
+        path = state / group / (prepared["job_key"] + ".json")
+        if path.exists():
+            documents[group] = _hook_document(_read_json(path, deadline), group, memory,
+                                               key=prepared["job_key"], capture=connection)
+    # Canonical save -> durable done -> clear outbox -> mark saved may stop at
+    # any boundary. Done alone is sufficient, including for a pending plan.
+    _require(bool(documents), "hook_recovery_capture_evidence_missing")
+    facts = hook_capture_source(prepared, job=documents.get("outbox"), done=documents.get("done"))
+    return prepared, facts
+
+
+def _validate_hook_fragment_anchor(connection: sqlite3.Connection, state: Path, memory: sqlite3.Connection,
+                                   facts: Mapping[str, Any], deadline: float, *, plan: Mapping[str, Any] | None = None) -> None:
+    """Prove the exact local turn's initial fragment, never a guessed head.
+
+    An unaccepted outbox can precede its own plan, but its supplement must
+    already have a durable initial plan. A pending initial plan may hold the
+    anchor bytes before they exist in the Vault. Saved plans must hydrate from
+    canonical records. Neither evidence source restores execution or trust.
+    """
+    from memory_vault_client import FRAGMENT_STATE_SCHEMA
+    supplement = facts["supplement"]
+    if supplement is None:
+        return
+    primary = load_capture(connection, facts["turn_key"])
+    _require(primary is not None and primary["builder_profile"] == HOOK_FRAGMENT_PROFILE
+             and primary["scope_key"] == facts["scope_key"]
+             and (plan is None or primary["accepted_sequence"] < plan["accepted_sequence"]),
+             "hook_recovery_fragment_turn_changed")
+    primary, original = _hook_plan_evidence(primary, connection, state, memory, deadline)
+    _require(original["schema_version"] == FRAGMENT_STATE_SCHEMA
+             and original["turn_key"] == facts["turn_key"] and original["supplement"] is None
+             and original["scope_key"] == facts["scope_key"], "hook_recovery_fragment_turn_changed")
+    anchor = next(record for record in primary["records"] if record["memory_id"] == primary["episode_id"])
+    _require(all(anchor[name] == supplement[name] for name in ("memory_id", "record_sha256")),
+             "hook_recovery_fragment_anchor_changed")
+    parsed = parse_hook_fragment(anchor)
+    observed_role = "user" if facts["user_sha256"] is not None else "assistant"
+    _require(parsed["supplement"] is None and parsed["observed_role"] != observed_role,
+             "hook_recovery_fragment_anchor_changed")
+    present = memory.execute("SELECT record_json,record_sha256 FROM memories WHERE memory_id=?", (anchor["memory_id"],)).fetchone()
+    if present is not None:
+        canonical = validate_record(strict_json_loads(present["record_json"]))
+        _require(canonical == anchor and canonical["record_sha256"] == present["record_sha256"],
+                 "hook_recovery_fragment_anchor_changed")
+    else:
+        _require(primary["state"] == "pending", "restored_control_memory_reference_missing")
+
+
+def _validate_hook_capture_files(connection: sqlite3.Connection | None, state: Path,
+                                  memory: sqlite3.Connection, deadline: float, *, outbox_keys: Sequence[str] = ()) -> None:
+    from memory_vault_client import FRAGMENT_STATE_SCHEMA, _digest
+    for original in connection.execute("SELECT job_key FROM capture_jobs") if connection is not None else ():
         database_backup._check_time(deadline)
         plan = load_capture(connection, original[0])
         _require(plan is not None)
-        matched = False
-        for group in ("outbox", "done"):
-            path = state / group / (plan["job_key"] + ".json")
-            if path.exists():
-                value = _hook_document(_read_json(path, deadline), group, memory, key=plan["job_key"], capture=connection)
-                _validate_hook_plan_document(plan, value, group)
-                matched = True
-        # Canonical save -> durable done -> clear outbox -> mark saved can be
-        # interrupted between any steps. A matching done is sufficient even
-        # while the retained immutable plan still says pending.
-        _require(matched, "hook_recovery_capture_evidence_missing")
+        prepared, facts = _hook_plan_evidence(plan, connection, state, memory, deadline)
+        if facts["schema_version"] == FRAGMENT_STATE_SCHEMA:
+            _validate_hook_fragment_anchor(connection, state, memory, facts, deadline, plan=prepared)
+    for key in outbox_keys:
+        database_backup._check_time(deadline)
+        if connection is not None and load_capture(connection, key) is not None:
+            continue
+        # Publication of source bytes may precede freeze. Do not manufacture a
+        # timestamp/sequence/record ID just to validate that unaccepted outbox.
+        value = _hook_document(_read_json(state / "outbox" / (key + ".json"), deadline), "outbox", memory,
+                               key=key, capture=connection)
+        if value["schema_version"] != FRAGMENT_STATE_SCHEMA or value["supplement"] is None:
+            continue
+        _require(connection is not None, "hook_recovery_capture_plan_missing")
+        facts = {"schema_version": value["schema_version"], "scope_key": value["scope_key"],
+                 "turn_key": value["turn_key"], "supplement": value["supplement"],
+                 "user_sha256": _digest(value["user"]) if value["user"] is not None else None,
+                 "assistant_sha256": _digest(value["assistant"]) if value["assistant"] is not None else None}
+        _validate_hook_fragment_anchor(connection, state, memory, facts, deadline)
 
 
 def _host_document(value: Any, parts: tuple[str, ...], old_source: Mapping[str, Any], new_vault: Path,
@@ -1383,6 +1471,7 @@ def activate_recovery(recovery: Path, output_config: Path, *, include: Sequence[
         with contextlib.ExitStack() as stack:
             lifecycle = None
             hook_capture = None
+            hook_outbox_keys = []
             if "hosts" in selected and any(entry["component"] == "hosts" for entry in entries):
                 _require("lifecycle" in by_component, "host_recovery_requires_lifecycle_database")
                 lifecycle = stack.enter_context(database_backup.readonly_database(state / _DATABASE_NAMES["lifecycle"], deadline, immutable=True))
@@ -1397,13 +1486,15 @@ def activate_recovery(recovery: Path, output_config: Path, *, include: Sequence[
                 if entry["component"] == "hooks":
                     value = _hook_document(value, parts[2], memory, key=Path(parts[3]).stem, capture=hook_capture)
                     target = state / parts[2] / parts[3]
+                    if parts[2] == "outbox":
+                        hook_outbox_keys.append(Path(parts[3]).stem)
                 else:
                     assert lifecycle is not None
                     value = _host_document(value, parts[2:], manifest["source"], proposed.vault_path, lifecycle, memory)
                     target = state.joinpath("hosts-v1", *parts[2:])
                 _write_json(target, value, maximum=MAX_CONTROL_BYTES)
-            if hook_capture is not None:
-                _validate_hook_capture_files(hook_capture, state, memory, deadline)
+            if "hooks" in selected:
+                _validate_hook_capture_files(hook_capture, state, memory, deadline, outbox_keys=hook_outbox_keys)
     config: dict[str, Any] = {"schema_version": CONFIG_SCHEMA, "vault_path": str(proposed.vault_path), "capture_visible_turns": True}
     if signer is not None:
         config["identity_path"] = str(signer)

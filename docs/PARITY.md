@@ -24,7 +24,7 @@ accessed no private memory. This table is not production certification.
 | --- | --- | --- | --- |
 | Persistent memory | Canonical taskless records, immutable IDs, provenance and relations | All entries use the same configured Vault | Preserves useful memory; no Task/Project owner |
 | Goal continuity | Dynamic recall/handoff over evidence | MCP, protocol and host entry points | A goal is a record; host coordination is not ownership |
-| Visible-turn capture | Caller decides what to append and may explicitly reference earlier records | Opt-in Codex/Claude/Gemini/generic adapters, frozen acceptance, durable staging and exact retry | New per-turn episode/continuity captures retain a source-local `continues` edge; old pending jobs preserve their original identity. Neither old nor new automatically infers every semantic claim |
+| Visible-turn capture | Caller decides what to append and may explicitly reference earlier records | Opt-in Codex/Claude/Gemini/generic adapters, frozen acceptance, durable staging and exact retry; native Codex one-sided fragments and append-only late supplements | New per-turn episode/continuity captures retain a source-local `continues` edge; old pending jobs preserve their original identity. Neither old nor new automatically infers every semantic claim |
 | Local retrieval | CJK/Latin terms, full-text fragments, bounded BM25/concept/polarity explanations | Same retrieval through every entry | Explicit paginated reindex for preexisting short indexes; not a global exhaustive ranking or a measured speed claim |
 | Claim and graph views | `memory.views`, `memory.graph`, non-executing proposals | Same core through MCP; source/claim timelines | Current/superseded/conflicted/resolved state with bounded continuation and trust-aware edges |
 | Old host operations | Optional separate wire profile | `compat`: the ten production v0.21 operations, durable handles/receipts and old-ID mapping | Not the new lifecycle envelope; no fabricated Git commit or original author identity |
@@ -53,6 +53,13 @@ bytes, timestamps and the predecessor's full hash are frozen when a new job is
 accepted. Local scope/handle tables are correlation, never Session, Task or
 Project ownership. Old accepted queues without plans retain their original
 write domains and are not assigned guessed historical edges.
+
+The native v0.21 Stop path also accepted either visible side on its own. The
+new [visible-fragment profile](VISIBLE_FRAGMENTS.md) restores that distinct
+capability and adds a later opposite-side supplement without rewriting the
+initial episode. It does not confuse partial **input coverage** with an
+interrupted database write. Canonical records and signatures remain shared
+with protocol-only readers; only the producing client needs its local journal.
 
 The [twelve-case capture report](V0_25_CAPTURE_SMOKE.md) covers selected retry,
 recovery and signed-directory dependency behavior, not full P02/P05/P06

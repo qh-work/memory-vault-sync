@@ -25,6 +25,10 @@ and [old/new capability mapping](PARITY.md), not a smaller renamed subset.
   source-local predecessor at acceptance, then append an ordinary `continues`
   relation. Exact retry does not choose a new predecessor or become a task-owned
   memory. Previously pending v1 captures retain their original behavior.
+- Native Codex capture can now retain either visible side by itself. A late
+  opposite side appends a linked supplement, never edits the initial episode.
+  The [optional fragment profile](VISIBLE_FRAGMENTS.md) remains ordinary
+  canonical memory, readable without a plugin or source-session handles.
 - Signed chained synchronization includes receive-only/flush, reviewed
   exclusions, requeue, complete resumable fragment groups and directory/rclone
   backends. Optional v3 dependency reuse requires actual prior published members,
@@ -75,11 +79,15 @@ noncommittable old-host handles. The corresponding new fixtures are
 They are authored review material, **not executed results**. Older campaigns and
 the packages built from `91111c518d62` do not include or validate these repairs.
 
-One additional real v0.21 gap was identified in source: a native Stop event with
-only one visible side could retain `partial_active_turn` evidence. The current
-full-pair hook route still requires both sides. This is being implemented; it
-is different from retrying an interrupted two-write save and is not covered by
-the earlier partial-write result.
+The additional v0.21 single-sided native Stop gap has also been implemented:
+new frozen fragments, append-only late supplementation, the shared untrusted
+retrieval role hint, memory-only receipt validation and full-client recovery.
+Normal complete pairs and old accepted v1/v2 identities remain unchanged.
+Lock acquisition rechecks capture permission; existing prepared queues can be
+recovered one item at a time even if they exceed the new preparation budget.
+The four fragment fixture files contain authored cases only at this point;
+they are not covered by earlier partial-**write** campaign results. Visible
+input coverage and interrupted persistence are different requirements.
 
 The [workflow report](V0_25_WORKFLOW_SMOKE.md) records four passing methods on
 `c65fd82f863e4e05d9ec53622eceb584525fb52e`: all eleven embedded MCP tools, all ten

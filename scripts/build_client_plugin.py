@@ -35,6 +35,7 @@ PACKAGE_DOCUMENTS = (
     "docs/LEGACY_PACKS.md", "docs/SHARING.md", "docs/ENCRYPTION.md", "docs/PLATFORMS.md",
     "docs/V0_25_PARITY_PLAN.md", "docs/V0_25_SCOPED_SMOKE.md", "docs/V0_25_FOLLOWUP_SMOKE.md", "docs/V0_25_RECOVERY_SMOKE.md", "docs/V0_25_CAPTURE_SMOKE.md", "docs/V0_25_PARITY_REPAIR_SMOKE.md", "docs/V0_25_WORKFLOW_SMOKE.md", "docs/VALIDATION.md",
     "docs/V0_25_TRANSPORT_RECOVERY_SMOKE.md",
+    "docs/VISIBLE_FRAGMENTS.md",
 )
 TEMPLATE_FILES = (
     ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",

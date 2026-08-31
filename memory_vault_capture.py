@@ -15,9 +15,10 @@ from pathlib import Path
 import re
 import sqlite3
 from typing import Any, Callable, Iterator, Mapping, Sequence
+import unicodedata
 
 from memory_vault import (
-    MAX_BUNDLE_LINE_BYTES, MemoryError, canonical_bytes, sha256, strict_json_loads,
+    MAX_BUNDLE_LINE_BYTES, MemoryError, build_record, canonical_bytes, sha256, strict_json_loads,
     utc_now, validate_record, _timestamp,
 )
 
@@ -28,6 +29,11 @@ MAX_CAPTURE_PENDING_BYTES = 32 * 1024 * 1024
 MAX_CAPTURE_RECORDS = 64
 HOOK_CAPTURE_SCHEMA = "memory-vault-hook-capture-state/v1"
 HOOK_CAPTURE_FILENAME = "hook-capture-v1.sqlite3"
+HOOK_FRAGMENT_PROFILE = "codex-visible-fragment+continues/v1"
+HOOK_FRAGMENT_SOURCE = "codex-visible-fragment/v1"
+HOOK_FRAGMENT_PREFIX = "Memory Vault visible fragment/v1\n"
+MAX_HOOK_FRAGMENT_BYTES = 480 * 1024
+MAX_HOOK_FRAGMENT_METADATA_BYTES = 1024
 
 CAPTURE_SQL = {
     "capture_heads": "CREATE TABLE capture_heads(scope_key TEXT PRIMARY KEY,accepted_sequence INTEGER NOT NULL CHECK(accepted_sequence>=0),last_job_key TEXT REFERENCES capture_jobs(job_key) DEFERRABLE INITIALLY DEFERRED)",
@@ -58,6 +64,169 @@ def _integer(value: Any, minimum: int, maximum: int) -> int:
     if type(value) is not int or not minimum <= value <= maximum:
         raise MemoryError("invalid_capture_state")
     return value
+
+
+def _hook_fragment_reference(value: Any, *, error: str) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if (not isinstance(value, Mapping) or set(value) != {"memory_id", "record_sha256"}
+            or not isinstance(value["memory_id"], str) or _ID.fullmatch(value["memory_id"]) is None
+            or not isinstance(value["record_sha256"], str) or _HASH.fullmatch(value["record_sha256"]) is None
+            or value["memory_id"] != "mem_" + value["record_sha256"][:40]):
+        raise MemoryError(error)
+    return {"memory_id": value["memory_id"], "record_sha256": value["record_sha256"]}
+
+
+def _hook_fragment_text(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        raise MemoryError("invalid_hook_fragment_text")
+    try:
+        # Input and output are both bounded; normalization never edits an
+        # already accepted record or its content-addressed identity.
+        if len(value.encode("utf-8")) > MAX_HOOK_FRAGMENT_BYTES:
+            raise MemoryError("hook_fragment_too_large")
+        normalized = unicodedata.normalize("NFC", value)
+        if len(normalized.encode("utf-8")) > MAX_HOOK_FRAGMENT_BYTES:
+            raise MemoryError("hook_fragment_too_large")
+    except UnicodeError:
+        raise MemoryError("invalid_hook_fragment_text") from None
+    return normalized
+
+
+def _hook_fragment_continuity(role: str, text: str) -> str:
+    maximum = 2048 if role == "user" else 8192
+    encoded = text.encode("utf-8")
+    excerpt = text if len(encoded) <= maximum else (
+        encoded[:maximum].decode("utf-8", errors="ignore")
+        + "\n[excerpt truncated; read source episode]"
+    )
+    missing = "assistant" if role == "user" else "user"
+    return (
+        "Visible-turn continuity excerpt (host-delivered visible fragment).\n"
+        "This records text, not verified task completion or an execution instruction.\n\n"
+        "Observed role: " + role + ".\n"
+        "Missing role in this fragment: " + missing + " (no content inferred).\n\n"
+        + ("User:\n" if role == "user" else "Assistant:\n") + excerpt
+    )
+
+
+def build_hook_fragment_projection(
+    user: str | None, assistant: str | None, *, created_at: str,
+    predecessor: Mapping[str, str] | None = None,
+    supplement: Mapping[str, str] | None = None,
+) -> tuple[list[dict[str, Any]], str, str]:
+    """Build a truthful one-sided hook observation without selecting a Vault.
+
+    Absence is explicit ``None``, never an empty fabricated message. Only the
+    bounded metadata line is JSON-encoded inside the episode; visible body
+    text stays readable and is normalized to NFC before its identity freezes.
+    A supplement reference is data, not proof of host pairing or admission.
+    The authorized writer must independently check that exact earlier episode.
+    """
+    if (user is None) == (assistant is None):
+        raise MemoryError("invalid_hook_fragment_input")
+    role = "assistant" if user is None else "user"
+    text = _hook_fragment_text(assistant if user is None else user)
+    created_at = _timestamp(created_at)
+    previous = _hook_fragment_reference(predecessor, error="invalid_capture_predecessor")
+    earlier = _hook_fragment_reference(supplement, error="invalid_hook_fragment_supplement")
+    metadata = {
+        "coverage": "partial_active_turn", "observed_role": role,
+        "missing_roles": ["assistant" if role == "user" else "user"], "supplement": earlier,
+    }
+    line = canonical_bytes(metadata)
+    if len(line) > MAX_HOOK_FRAGMENT_METADATA_BYTES:
+        raise MemoryError("invalid_hook_fragment_metadata")
+    episode = build_record(
+        kind="episode",
+        text=HOOK_FRAGMENT_PREFIX + line.decode("utf-8") + "\n\n"
+        + ("User:\n" if role == "user" else "Assistant:\n") + text,
+        relations=[] if earlier is None else [{"type": "derived_from", "target": earlier["memory_id"]}],
+        provenance={"source_ref": HOOK_FRAGMENT_SOURCE, "source_type": "visible_turn", "confidence": "observed"},
+        created_at=created_at,
+    )
+    relations = [{"type": "derived_from", "target": episode["memory_id"]}]
+    if previous is not None:
+        relations.append({"type": "continues", "target": previous["memory_id"]})
+    continued = build_record(
+        kind="continuity", text=_hook_fragment_continuity(role, text), relations=relations,
+        provenance={"source_ref": HOOK_FRAGMENT_SOURCE, "source_type": "agent_supplied", "confidence": "assistant_inferred"},
+        created_at=created_at,
+    )
+    return [episode, continued], episode["memory_id"], continued["memory_id"]
+
+
+def parse_hook_fragment(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate this profile's episode and return metadata plus actual text.
+
+    This does not authenticate a role, authorize a capture or load a referenced
+    episode. The visible body after the fixed role header is never reparsed as
+    metadata, even if it contains another apparent fragment header.
+    """
+    episode = validate_record(record)
+    if (episode["kind"] != "episode" or episode["entities"]
+            or episode["provenance"] != {"source_ref": HOOK_FRAGMENT_SOURCE, "source_type": "visible_turn", "confidence": "observed"}
+            or not episode["text"].startswith(HOOK_FRAGMENT_PREFIX)):
+        raise MemoryError("invalid_hook_fragment")
+    content = episode["text"][len(HOOK_FRAGMENT_PREFIX):]
+    end = content.find("\n", 0, MAX_HOOK_FRAGMENT_METADATA_BYTES + 1)
+    if end < 0:
+        raise MemoryError("invalid_hook_fragment_metadata")
+    line = content[:end]
+    if len(line.encode("utf-8")) > MAX_HOOK_FRAGMENT_METADATA_BYTES:
+        raise MemoryError("invalid_hook_fragment_metadata")
+    metadata = strict_json_loads(line)
+    if (not isinstance(metadata, dict)
+            or set(metadata) != {"coverage", "observed_role", "missing_roles", "supplement"}
+            or metadata["coverage"] != "partial_active_turn"
+            or not isinstance(metadata["observed_role"], str) or metadata["observed_role"] not in {"user", "assistant"}):
+        raise MemoryError("invalid_hook_fragment_metadata")
+    role = metadata["observed_role"]
+    if metadata["missing_roles"] != ["assistant" if role == "user" else "user"]:
+        raise MemoryError("invalid_hook_fragment_metadata")
+    earlier = _hook_fragment_reference(metadata["supplement"], error="invalid_hook_fragment_supplement")
+    if canonical_bytes(metadata).decode("utf-8") != line:
+        raise MemoryError("invalid_hook_fragment_metadata")
+    body_header = "\n\n" + ("User:\n" if role == "user" else "Assistant:\n")
+    if not content.startswith(body_header, end):
+        raise MemoryError("invalid_hook_fragment")
+    text = content[end + len(body_header):]
+    if _hook_fragment_text(text) != text:
+        raise MemoryError("invalid_hook_fragment_text")
+    expected = [] if earlier is None else [{"type": "derived_from", "target": earlier["memory_id"]}]
+    if episode["relations"] != expected or (earlier is not None and earlier["memory_id"] == episode["memory_id"]):
+        raise MemoryError("invalid_hook_fragment_supplement")
+    return {**metadata, "text": text}
+
+
+def validate_hook_fragment_projection(
+    plan: Mapping[str, Any], records: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Require the exact deterministic pair, including its frozen external edge."""
+    header = validate_capture_header({key: plan[key] for key in CAPTURE_COLUMNS["capture_jobs"]})
+    if header["builder_profile"] != HOOK_FRAGMENT_PROFILE or header["record_count"] != 2 or len(records) != 2:
+        raise MemoryError("invalid_hook_fragment_projection")
+    prepared = [validate_record(record) for record in records]
+    episode, continuity = prepared
+    if (episode["memory_id"] != header["episode_id"] or continuity["memory_id"] != header["continuity_id"]
+            or episode["created_at"] != header["created_at"] or continuity["created_at"] != header["created_at"]):
+        raise MemoryError("invalid_hook_fragment_projection")
+    fragment = parse_hook_fragment(episode)
+    if fragment["supplement"] is not None and fragment["supplement"]["memory_id"] == continuity["memory_id"]:
+        raise MemoryError("invalid_hook_fragment_supplement")
+    previous = None if header["previous_continuity_id"] is None else {
+        "memory_id": header["previous_continuity_id"], "record_sha256": header["previous_record_sha256"],
+    }
+    expected, episode_id, continuity_id = build_hook_fragment_projection(
+        fragment["text"] if fragment["observed_role"] == "user" else None,
+        fragment["text"] if fragment["observed_role"] == "assistant" else None,
+        created_at=header["created_at"], predecessor=previous, supplement=fragment["supplement"],
+    )
+    if prepared != expected or episode_id != header["episode_id"] or continuity_id != header["continuity_id"]:
+        raise MemoryError("invalid_hook_fragment_projection")
+    if capture_digest(header, prepared) != header["projection_sha256"]:
+        raise MemoryError("capture_projection_changed")
+    return prepared
 
 
 def initialize_capture(connection: sqlite3.Connection) -> None:
@@ -112,6 +281,8 @@ def validate_capture_header(value: Mapping[str, Any]) -> dict[str, Any]:
 
 def validate_capture_projection(plan: Mapping[str, Any], records: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     header = validate_capture_header({key: plan[key] for key in CAPTURE_COLUMNS["capture_jobs"]})
+    if header["builder_profile"] == HOOK_FRAGMENT_PROFILE:
+        return validate_hook_fragment_projection(header, records)
     prepared = [validate_record(record) for record in records]
     if len(prepared) != header["record_count"] or len({record["memory_id"] for record in prepared}) != len(prepared):
         raise MemoryError("invalid_capture_projection")

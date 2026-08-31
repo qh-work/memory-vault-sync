@@ -57,8 +57,10 @@ open until evidence is recorded; it is not shortened to match finished work.
 - Its native Stop path could save only the user or assistant side when that was
   all the visible content actually received (`partial_active_turn`). That is a
   separate capability from recovering a partially written complete turn. The
-  full-pair-only current hook route is a confirmed remaining P02 implementation
-  gap; missing content must never be guessed from a transcript or another turn.
+  new [single-sided profile](VISIBLE_FRAGMENTS.md) restores this capability and
+  adds an immutable later supplement. Missing content must never be guessed
+  from a transcript or another turn. New authoring/recovery fixtures are not
+  execution evidence; old partial-write results do not prove partial coverage.
 - Its accepted host intent also froze the source sequence and preceding episode
   reference. New automatic capture restores that causal behavior with frozen
   projections and a `continues` relation between continuity records. Local
@@ -89,7 +91,7 @@ the development source, not the already published v0.24.1 artifact.
 | ID | Implementation / contract | Authored review evidence and remaining work |
 | --- | --- | --- |
 | P01 | `memory_vault.py`, `PROTOCOL.md`, `schemas/record.schema.json`; shared canonical `continues` records | Earlier core/client cases and the latest selected source-local chain case have separate evidence. Source handles do not enter canonical records as owners; independent implementation and full parity acceptance remain pending |
-| P02 | `memory_vault_capture.py`, `memory_vault_client.py`, `memory_vault_lifecycle.py`, `memory_vault_hosts.py` | Latest capture campaign covers frozen retry, bounded ancestors, old partial identities and a real temporary hot-journal exit. Earlier publication/cancellation evidence remains source-pinned separately; live-host and complete crash/race coverage remain pending |
+| P02 | `memory_vault_capture.py`, `memory_vault_client.py`, `memory_vault_lifecycle.py`, `memory_vault_hosts.py`; [one-sided fragments](VISIBLE_FRAGMENTS.md) | Earlier capture campaign covers frozen retry, bounded ancestors, old partial-write identities and a real temporary hot-journal exit. New single-sided native capture, late supplements, lock-boundary opt-out and prepared-queue draining have authored but unrun fixtures. Publication/cancellation evidence stays source-pinned; live-host and complete crash/race coverage remain pending |
 | P03 | Core full-record terms, fragments, concept expansion and ranking; `docs/RETRIEVAL.md` | Earlier direct-token and seven-large-record-tail cases remain source-pinned. New entity-only and one-scoring-slot priority cases pass in the parity-repair campaign; other retrieval/index/graph methods, comparative ranking and scale/performance acceptance remain pending |
 | P04 | Core `memory.views`, `memory.graph`, `memory.reindex`; `docs/GRAPH_VIEWS.md` | Parity-repair handoff filtering and the later embedded MCP claim-state, six-node graph, two-page timeline and derived-index repair workflow have separate passing evidence. Complete trust/frontier/pagination coverage and scale remain pending |
 | P05 | `memory_vault_compat.py`, eleven-tool MCP, separate host schemas; stateless capability discovery with strict request validation | The workflow campaign at `c65fd82` passes one integrated eleven-tool MCP case and one ten-operation old-envelope case, including exact retry and authorized flush recovery. Earlier capture/semantic cases stay separate. Complete schema/error combinations, physical journal recovery for this new route and real-host acceptance remain pending |
