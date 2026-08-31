@@ -24,6 +24,7 @@ if _SOURCE_DIRECTORY not in sys.path:
     sys.path.insert(0, _SOURCE_DIRECTORY)
 
 from memory_vault import MemoryError, canonical_bytes, failure, sha256, strict_json_loads, success, write_response
+from memory_vault_credentials import MAX_REFERENCE_BYTES, password_reference
 from memory_vault_remote import Budget, RcloneBackend, executable_sha256, peer_value, remote_path
 from memory_vault_transfer import DirectoryTransfer, MAX_CAPSULE_BYTES, MAX_REVIEW_DOCUMENT, _fragment_name, _path, _private_directory, _read, _read_fragment, _write
 from memory_vault_trust import TrustError
@@ -171,7 +172,12 @@ class SyncConfig:
                 raise MemoryError("private_state_inside_exchange")
             backend["exchange"] = str(exchange)
         elif backend.get("kind") == "rclone":
-            backend = _object(backend, {"kind", "executable", "executable_sha256", "config_file", "remote", "peers"})
+            keys = {"kind", "executable", "executable_sha256", "config_file", "remote", "peers"}
+            if "config_password_ref" in backend:
+                keys.add("config_password_ref")
+            backend = _object(backend, keys)
+            if "config_password_ref" in backend:
+                backend["config_password_ref"] = password_reference(backend["config_password_ref"])
             executable, config_file = _absolute(backend["executable"]), _absolute(backend["config_file"])
             if (config_file == executable
                     or any(item == other or item in other.parents or other in item.parents
@@ -792,8 +798,9 @@ def _configure(args: argparse.Namespace) -> Mapping[str, Any]:
         raise MemoryError("unsupported_private_sync_storage")
     protected_storage.require_supported_storage()
     selected = _absolute(args.config)
+    reference_path = getattr(args, "rclone_password_ref", None)
     if args.backend == "directory":
-        if args.exchange is None or any((args.rclone_executable, args.rclone_config, args.remote, args.peer)):
+        if args.exchange is None or any((args.rclone_executable, args.rclone_config, args.remote, args.peer, reference_path)):
             raise MemoryError("invalid_sync_backend_arguments")
         backend: dict[str, Any] = {"kind": "directory", "exchange": str(_absolute(args.exchange))}
     else:
@@ -808,6 +815,9 @@ def _configure(args: argparse.Namespace) -> Mapping[str, Any]:
         executable = _absolute(args.rclone_executable)
         backend = {"kind": "rclone", "executable": str(executable), "executable_sha256": executable_sha256(executable),
                    "config_file": str(_absolute(args.rclone_config)), "remote": remote_path(args.remote), "peers": peers}
+        if reference_path is not None:
+            backend["config_password_ref"] = password_reference(dict(_read(
+                _absolute(reference_path), maximum=MAX_REFERENCE_BYTES, private=True)))
     document = {"schema_version": CONFIG_SCHEMA, "vault": str(_absolute(args.vault)),
                 "identity": str(_absolute(args.identity)), "trust_store": str(_absolute(args.trust_store)),
                 "state_directory": str(_absolute(args.state_directory)), "enabled": not args.disabled,
@@ -837,6 +847,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure.add_argument("--exchange", type=Path)
     configure.add_argument("--rclone-executable", type=Path)
     configure.add_argument("--rclone-config", type=Path)
+    configure.add_argument("--rclone-password-ref", type=Path,
+                           help="explicit private JSON identifying an existing OS credential, not a password or command")
     configure.add_argument("--remote")
     configure.add_argument("--peer", action="append", default=[])
     configure.add_argument("--automatic", action="store_true")
