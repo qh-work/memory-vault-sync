@@ -16,8 +16,9 @@ recovery receipt progress and bounds rejected-content handling. Its final
 see the [current baseline](V0_26_PLAN.md). Subsequent committed checkpoints add
 full endpoint recovery, authenticated node migration and separately verified
 candidate archives. Current source also includes an independent TypeScript
-persistent endpoint; [its scope](NETWORK_TYPESCRIPT.md) explicitly excludes full
-retrieval/handoff parity and scale certification. No public alpha publication
+persistent endpoint and native six-operation facade with bounded retrieval and
+dynamic handoff. [Its scope](NETWORK_TYPESCRIPT.md) still excludes complete old
+graph/cloud-worker parity and scale certification. No public alpha publication
 or general installation claim is made by this source document. Actual package
 and local upgrade evidence is separate. Historical reports below do not become
 current-version validation by inclusion here.

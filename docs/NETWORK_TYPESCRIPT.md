@@ -1,15 +1,23 @@
 # Independent TypeScript endpoint preview
 
-The `clients/typescript/network` implementation provides `NetworkPeer` and
-`CanonicalVault`. It uses the existing Memory Vault record bytes, Ed25519 and
+The `clients/typescript/network` implementation provides the native `Agent`,
+`NetworkPeer` and `CanonicalVault`. It uses the existing Memory Vault record bytes, Ed25519 and
 X25519 identities, SQLite schemas and persistent network queues directly. It
 does not start a Python subprocess or delegate its cryptography, record checks,
 storage, or network delivery to a Python bridge.
 
-This is a scoped independent endpoint preview. Its local query method reports
-`ranking: "bounded_text_match"` and `python_ranking_equivalent: false`. It does
-not implement Python's complete ranking, graph views or dynamic handoff views,
-and does not claim full parity with all six agent operations. The current
+This is a scoped independent endpoint preview. Native `Agent.recall` uses the
+same bounded fragment BM25/concept ranking and structural handoff selection as
+Python. **Exact ordering at every floating-point boundary is not yet verified:**
+one real fixture still differs by one integer score after platform `exp`
+rounding and changes the first selected ID. The test records this as an open
+expected failure, not a pass; no epsilon hides it. The separate microsecond
+date-conversion defect is fixed. A future shared deterministic math profile
+must be reviewed before replacing the existing Python formula.
+`CanonicalVault.retrieve` exposes the current profile; the older low-level
+`CanonicalVault.recall` is still a bounded substring utility and explicitly
+reports `python_ranking_equivalent: false`. Full graph/view management and the
+legacy cloud worker have not been ported. The current
 network still has a 256-member roster limit; this is not a thousand-agent
 certification or evidence of unlimited shared storage.
 
@@ -19,6 +27,7 @@ certification or evidence of unlimited shared storage.
 | --- | --- | --- |
 | `clients/typescript/index.ts` | Dependency-free HTTP SDK for the six operations at `/v1/agent` | An explicitly trusted endpoint receives plaintext and uses the shared Python core. This entry remains supported. |
 | `clients/typescript/network/peer.ts` and `vault.ts` | Independent protocol, encryption, canonical records, private SQLite storage and persistent queues | Keys and plaintext stay at this endpoint; ordinary relays hold ciphertext and necessary routing metadata. |
+| `clients/typescript/network/agent.ts` | The six native operations over those same records, current trust and persistent queues, including local retrieval/handoff | No Python subprocess or trusted remote plaintext bridge is used by this native entry. |
 
 The first entry has not silently changed into a direct relay client. A host
 that can only issue HTTP requests still needs its explicitly trusted endpoint
@@ -44,6 +53,51 @@ Examples below assume a script run from the source checkout with an explicitly
 prepared dependency and private configuration. Node 22.19 uses
 `node --experimental-strip-types your-script.mts`. All paths, domains, request
 IDs and text below are synthetic placeholders.
+
+## Native six-operation entry
+
+```ts
+import { Agent } from './clients/typescript/network/agent.ts';
+const agent = new Agent('/absolute/private/client.json', '/absolute/private/network.json');
+const info = await agent.handle({op: 'discover'});
+const saved = await agent.handle({op: 'remember', kind: 'observation',
+  text: 'Synthetic historical attempt; current environment must be checked.',
+  request_id: 'req_synthetic_agent_note_01'});
+const recalled = await agent.handle({op: 'recall', query: 'historical attempt', handoff: true});
+```
+
+Construction and offline discovery do not read configuration, open files, load
+keys or access the network. Local reads do not create a missing Vault or load a
+signing private key. A configured signing failure never downgrades a write to
+unsigned; a client deliberately configured without an identity may save the
+same `local_unsigned` records as Python. The facade shares exact write receipts
+and frozen recall cursors with Python; query selection and each later page use
+current independent trust. Explicit ID inspection may return revoked historical
+evidence with `eligible_for_context: false`; query recall excludes it. Neither
+case grants execution authority.
+
+The native facade does not start the old Python cloud worker or emit its sync
+notification. Keep the existing Python client for automatic 0.25.x cloud sync;
+this preview does not silently rewrite that configuration or claim old-client
+feature parity. Local writes remain durable in the same Vault.
+
+Inherited attempts must be attributed to their known original source rather
+than called the reader's own experience. Unknown provenance stays unknown;
+signer verification does not independently verify claimed agent/model/session
+labels. Record creation time is not a fresh environment check. Revalidate old
+failure causes when relevant conditions change or applicability is uncertain,
+using only existing authorized tools. Recall and receive do not execute retries.
+See [the agent usage contract](../AI_START_HERE.md#attribute-inherited-evidence-and-recheck-old-failures).
+
+Recall hits include `recorded_at`, bounded `provenance_refs`, an explicit
+truncation flag and `provenance_status`. Recall and receive both include
+`evidence_usage`: historical evidence, no assumed personal experience, current
+environment not checked, and no automatic retry of remembered failures. The
+reference fields are claims; the original `verification` still separately
+reports signer admission. Their combined JSON budget is 256 bytes per hit;
+canonical records retain full provenance. Pagination accounts for JSON escapes
+and all metadata before consuming text, so a full page leaves the unconsumed
+ID and byte offset in `next_cursor`.
 
 ## Explicit provisioning
 
@@ -119,11 +173,15 @@ try {
 `new CanonicalVault({vaultPath, identity, trust})`. Its `trust` option accepts
 explicit public signing descriptors or a function returning the current set.
 Supplying a trust policy never implicitly adds the local key to that policy.
-Writing requires a trusted local signer; verified reads and share release use
+By default writing requires a trusted local signer; verified reads and share release use
 current independently selected trust. `get`, `verification`, `remember`,
 `recall`, `exportShare` and `importShare` preserve the existing record/signature
 domains. Untrusted share authors do not become trusted because a network member
 sent their records. Quarantined data does not grant execution permission.
+`retrieve({query, handoff, limit, maximum_context_bytes})` exposes the original
+bounded retrieval profile. Its disposable full-record index uses the same
+token frequencies, entities and timeline keys as Python. Read-only retrieval
+does not repair indexes or change canonical records.
 
 These network methods are separate explicit actions on an open `peer`:
 
@@ -162,7 +220,8 @@ agents, run received instructions, or subscribe to an unlimited background loop.
 | Peer queues | At most 1,024 outbox rows and 4,096 inbox rows, with 256 MiB content budgets; quarantine at most 128 rows / 16 MiB |
 | HTTP | No redirects or decompression; verified HTTPS except explicit loopback HTTP; at most ten seconds per built-in request or the earlier caller deadline |
 | Pump | Zero to 16 outgoing attempts, one to 60 seconds, zero to four incoming messages per call |
-| Local recall | One to 64 results, one to 1,024 scanned rows, one to 30 seconds, and an explicit result-byte limit; follow `nextAfter` when `partial` |
+| Native recall/handoff | At most 32 selected IDs, four hits per page, up to 768 UTF-8 text bytes per hit within the 8 KiB response; follow `next_cursor` |
+| Bounded substring utility | `CanonicalVault.recall`: one to 64 results, one to 1,024 scanned rows, one to 30 seconds, and an explicit result-byte limit; follow `nextAfter` when `partial` |
 | Local share | At most 256 records / 8 MiB, with bounded dependency closure and an explicit time limit; the peer's smaller network-share limit still applies |
 
 Filesystem-backed state uses explicit absolute paths, protected ownership and
@@ -212,6 +271,17 @@ using `strict`, `noEmit`, `NodeNext`, `allowImportingTsExtensions` and ES2022.
 The isolated development toolchain was integrity-checked and is not a runtime
 dependency or part of the distributed package.
 
-These checks do not establish full six-operation parity, Windows support,
+The subsequent native-agent campaign on the same runtime selected 89 tests:
+88 passed and the explicit `exp` ranking boundary remained one expected failure;
+there were no unexpected failures, errors or skips. It also checked all twelve
+network TS modules plus the parent HTTP SDK under the strict compiler settings
+above with zero diagnostics. The native facade tests cover both languages'
+source/freshness metadata, budget-aware complete pagination and signed/unsigned
+read/write behavior; two real-loopback cases exercise all six operations and
+offline recovery with original ciphertext and signed receipts. A separate
+review preserved the default signed receipt trust isolation.
+
+These checks do not establish exact cross-runtime ranking at all numerical
+boundaries, complete legacy-client parity, Windows support,
 three-model/two-provider acceptance, physical fault-domain durability, or
 large-cluster capacity. Those gates remain separate from this preview.

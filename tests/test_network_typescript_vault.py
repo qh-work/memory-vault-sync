@@ -105,7 +105,7 @@ class TypeScriptVaultTests(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory(prefix="memory-vault-ts-vault-synthetic-")
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.fixture = Path(cls.temporary.name).resolve()
-        for name in ("crypto.ts", "records.ts", "io.ts", "vault.ts", "package.json"):
+        for name in ("crypto.ts", "records.ts", "io.ts", "vault.ts", "retrieval.ts", "retrieval_text.ts", "package.json"):
             shutil.copyfile(ROOT / "clients/typescript/network" / name, cls.fixture / name)
         (cls.fixture / "node_modules").mkdir()
         (cls.fixture / "node_modules/jose").symlink_to(package, target_is_directory=True)
@@ -181,13 +181,32 @@ class TypeScriptVaultTests(unittest.TestCase):
             self.assertEqual(row["record_json"].encode(), canonical_bytes(result["record"]))
             self.assertEqual(row["normalized_text"], normalize_text(request["text"]))
             self.assertIsNotNone(Vault.dependency_epoch(connection))
-            self.assertFalse(Vault._retrieval_index_state(connection)["complete"])
+            self.assertTrue(Vault._retrieval_index_state(connection)["complete"])
             _validate_write_receipts(connection, time.monotonic() + 5)
             self.assertEqual(connection.execute("PRAGMA integrity_check").fetchone()[0], "ok")
             database_summary(connection)
         backup = backup_database(self.path, self.directory / "snapshot")
         self.assertIsInstance(backup, dict)
         self.assertEqual(self.path.stat().st_mode & 0o077, 0)
+
+    def test_signed_receipt_retry_does_not_bypass_current_record_trust(self) -> None:
+        request = self.request("scope_replay", "Synthetic evidence from the original signer")
+        first = self.successful(self.run_ts([{"op": "remember", "value": request}]))[0]
+        other_path = self.directory / "other-identity.json"
+        other = Identity.generate(other_path)
+        observed = self.run_ts([
+            {"op": "get", "id": first["memory_id"]},
+            {"op": "remember", "value": request},
+        ], identity=json.loads(other_path.read_text()), trust=[other.public_descriptor()])
+        self.assertTrue(observed["ok"], observed)
+        self.assertEqual(observed["results"][0], {"ok": True, "result": None})
+        self.assertFalse(observed["results"][1]["ok"], observed)
+        self.assertEqual(observed["results"][1]["error"], "memory_not_found")
+        with sqlite3.connect(self.path) as connection:
+            self.assertEqual(connection.execute("SELECT count(*) FROM receipts").fetchone()[0], 1)
+            admission = connection.execute("SELECT state,signer_key_id,attestation_json FROM record_admissions").fetchone()
+            self.assertEqual(admission[:2], ("verified", self.public["key_id"]))
+            self.assertEqual(json.loads(admission[2]), first["attestation"])
 
     def test_python_and_typescript_alternate_same_receipts_and_preserve_proofs(self) -> None:
         original = {"op": "remember", "request_id": "req_python_alternating", "kind": "fact", "text": "Python origin"}
@@ -281,7 +300,7 @@ class TypeScriptVaultTests(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT count(*) FROM memories").fetchone()[0], 0)
             self.assertEqual(connection.execute("SELECT count(*) FROM transfer_receipts").fetchone()[0], 0)
 
-    def test_recall_scan_result_budgets_and_python_index_repair(self) -> None:
+    def test_recall_scan_result_budgets_and_python_index_equivalence(self) -> None:
         requests = [self.request(str(index), "target " + str(index)) for index in range(4)]
         remembered = self.successful(self.run_ts([{"op": "remember", "value": value} for value in requests]))
         page = self.successful(self.run_ts([{"op": "recall", "query": "target", "options": {"limit": 1, "maximumScanned": 2}}]))[0]
@@ -295,10 +314,17 @@ class TypeScriptVaultTests(unittest.TestCase):
         scan = self.successful(self.run_ts([{"op": "recall", "query": "absent", "options": {"maximumScanned": 2}}]))[0]
         self.assertEqual(scan["scanned"], 2); self.assertTrue(scan["partial"])
         with contextlib.closing(self.python_vault()._connect()) as connection, connection:
-            self.assertFalse(Vault._retrieval_index_state(connection)["complete"])
+            self.assertTrue(Vault._retrieval_index_state(connection)["complete"])
+            statements = {
+                "terms": "SELECT token,memory_id,frequency FROM terms ORDER BY token,memory_id",
+                "entities": "SELECT entity,memory_id FROM memory_entities ORDER BY entity,memory_id",
+                "certificate": "SELECT memory_id,profile,token_count,timeline_key FROM retrieval_index ORDER BY memory_id",
+            }
+            before = {name: [tuple(row) for row in connection.execute(sql)] for name, sql in statements.items()}
             for result in remembered:
                 Vault.rebuild_record_index(connection, result["record"])
             self.assertTrue(Vault._retrieval_index_state(connection)["complete"])
+            self.assertEqual(before, {name: [tuple(row) for row in connection.execute(sql)] for name, sql in statements.items()})
         repaired = self.successful(self.run_ts([{"op": "recall", "query": "target"}]))[0]
         self.assertEqual(len(repaired["records"]), 4)
 

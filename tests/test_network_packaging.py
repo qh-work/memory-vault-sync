@@ -24,9 +24,11 @@ LAUNCHER = ROOT / "plugins/memory-vault-client/scripts/launcher.py"
 NEW_MODULES = {"memory_vault_nodes.py", "memory_vault_node.py", "memory_vault_network_recovery.py", "memory_vault_node_transfer.py"}
 TS_NETWORK = {"clients/typescript/network/" + name for name in
               ("README.md", "crypto.ts", "control.ts", "package.json", "package-lock.json",
-               "io.ts", "nodes.ts", "peer.ts", "records.ts", "transport.ts", "vault.ts", "setup.ts")}
+               "io.ts", "nodes.ts", "peer.ts", "records.ts", "transport.ts", "vault.ts", "setup.ts",
+               "agent.ts", "retrieval.ts", "retrieval_text.ts")}
 TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
-                     ("nodes", "records", "vault", "peer", "peer_race", "transport", "setup")}
+                     ("nodes", "records", "vault", "peer", "peer_race", "transport", "setup",
+                      "retrieval_text", "retrieval", "agent", "agent_network")}
 
 
 def literal(path, name):
@@ -71,8 +73,8 @@ class NetworkPackagingTests(unittest.TestCase):
         review = literal(RELEASE, "NETWORK_REVIEW_TESTS")
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
-        self.assertEqual(len(review), 25)
-        self.assertEqual(len(TS_NETWORK), 12)
+        self.assertEqual(len(review), 29)
+        self.assertEqual(len(TS_NETWORK), 15)
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
         self.assertIn("docs/NETWORK_TYPESCRIPT.md", documents)

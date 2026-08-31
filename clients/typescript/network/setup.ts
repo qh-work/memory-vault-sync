@@ -199,6 +199,17 @@ export function readTrustedKeys(trustPath: string): SigningPublicDescriptor[] {
     return keys;
   });
 }
+/** Preserve the existing local trust error distinction for configured writers.
+ * A second read is only used to explain rejection; it can never grant trust. */
+export function requireTrustedKey(trustPath: string, keyId: string): void {
+  if (readTrustedKeys(trustPath).some(key => key.key_id === keyId)) return;
+  const raw = readPrivate(trustPath, MAX_TRUST, true);
+  if (raw !== null) {
+    const value = trustDocument(raw), entry = (value.keys as Obj)[keyId] as Obj | undefined;
+    if (entry?.state === 'revoked') fail('key_revoked');
+  }
+  fail('unknown_key');
+}
 function overlaps(directory: string, file: string): boolean {
   return directory === file || file.startsWith(directory + path.sep) || directory.startsWith(file + path.sep);
 }

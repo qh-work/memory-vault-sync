@@ -1,6 +1,7 @@
 /** The existing canonical SQLite v2 Vault, independently implemented in Node.
  * No ambient path/key discovery, Python subprocess, network or second memory
- * store. Text recall is deliberately bounded and is not Python's full ranking.
+ * store. retrieve() uses the canonical recall/handoff profile; recall() retains
+ * the explicitly limited substring utility for existing low-level callers.
  */
 import { randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
@@ -9,11 +10,20 @@ import type { DocumentInput, SigningIdentityDocument, SigningPublicDescriptor } 
 import { NetworkError, openPrivateDatabase, transaction } from './io.ts';
 import { buildRecord, validateRecord, canonicalRecordBytes, signRecord, verifyRecord, parseShare, encodeShare, normalizeText } from './records.ts';
 import type { MemoryRecord, RecordAttestation, SignedMemory } from './records.ts';
+import { Retrieval, RETRIEVAL_INDEX_PROFILE } from './retrieval.ts';
+import type { RecallArguments } from './retrieval.ts';
+import { tokenize, timelineKey } from './retrieval_text.ts';
 
 type Admission = 'local_unsigned' | 'accepted_unsigned' | 'verified' | 'quarantined';
 type Row = Record<string, any>;
 export type VaultTrust = readonly SigningPublicDescriptor[] | (() => readonly SigningPublicDescriptor[]);
-export interface VaultOptions { vaultPath: string; identity?: SigningIdentityDocument; trust?: VaultTrust }
+export interface VaultOptions {
+  vaultPath: string; identity?: SigningIdentityDocument; trust?: VaultTrust;
+  readOnly?: boolean; allowUnsignedLocal?: boolean;
+  /** Match the core's historical admission inspection when no trust store is configured.
+   * Never enable this for network admission, sharing or encryption. */
+  historicalAdmissionOnly?: boolean;
+}
 export interface RememberInput {
   requestId: string; kind: string; text: string; entities?: string[];
   relations?: { type: string; target: string }[]; provenance?: Record<string, string>;
@@ -90,16 +100,9 @@ function sqlTokens(value: string): string {
   return (value.match(/'(?:''|[^'])*'|[A-Za-z_][A-Za-z_0-9]*|[0-9]+|[^\s]/g) || [])
     .map(token => token.startsWith("'") ? token : token.toUpperCase()).join('\0').replace(/\0;$/, '');
 }
-const STOP = new Set('about after also and are but can for from have into not that the their then this was were will with you your'.split(' '));
 function tokens(text: string): Map<string, number> {
-  const normalized = normalizeText(text), counts = new Map<string, number>();
-  const add = (token: string) => { counts.set(token, (counts.get(token) || 0) + 1); };
-  for (const match of normalized.matchAll(/[a-z0-9][a-z0-9_+.-]{0,63}/g)) if (!STOP.has(match[0])) add('w:' + match[0]);
-  for (const match of normalized.matchAll(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]+/gu)) {
-    const run = Array.from(match[0]);
-    if (run.length === 1) add('c:' + run[0]);
-    else { for (let i = 0; i + 1 < run.length; i++) add('c:' + run[i] + run[i + 1]); if (run.length <= 8) add('p:' + match[0]); }
-  }
+  const counts = new Map<string, number>();
+  for (const token of tokenize(text, {maximum: MAX_RECORD * 2, maximumInputBytes: MAX_RECORD})) counts.set(token, (counts.get(token) || 0) + 1);
   // A million unique terms would otherwise make one synchronous write unbounded.
   if (counts.size > 32768) fail('vault_index_work_limit');
   return counts;
@@ -110,16 +113,25 @@ export class CanonicalVault {
   #db: DatabaseSync;
   #identity?: SigningIdentityDocument;
   #trust: VaultTrust;
+  #readOnly: boolean;
+  #allowUnsigned: boolean;
+  #historical: boolean;
+  #retrievalTrust: readonly SigningPublicDescriptor[] = [];
   #closed = false;
 
   constructor(options: VaultOptions) {
     this.vaultPath = options.vaultPath;
+    this.#readOnly = options.readOnly === true;
+    this.#allowUnsigned = options.allowUnsignedLocal === true;
+    this.#historical = options.historicalAdmissionOnly === true && options.trust === undefined && options.identity === undefined;
     this.#identity = options.identity === undefined ? undefined : document(options.identity as unknown as DocumentInput, 4096) as unknown as SigningIdentityDocument;
     const self = this.#identity ? validateSigningIdentity(this.#identity) : undefined;
     // Never add self to an explicitly supplied trust policy (including []).
     this.#trust = options.trust ?? (self ? [self] : []);
-    try { this.#db = openPrivateDatabase(this.vaultPath); } catch (error) { storageFailure(error); }
+    try { this.#db = openPrivateDatabase(this.vaultPath, this.#readOnly); } catch (error) { storageFailure(error); }
     try {
+      this.#db.function('vault_admitted', (state, key) => this.#rank(state, key, this.#retrievalTrust));
+      if (this.#readOnly) { this.#run(false, () => undefined); return; }
       transaction(this.#db, () => {
         const empty = this.#db.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get() === undefined;
         if (empty) {
@@ -167,6 +179,7 @@ export class CanonicalVault {
   }
   #run<T>(write: boolean, operation: () => T): T {
     if (this.#closed) fail('vault_closed');
+    if (write && this.#readOnly) fail('read_only');
     try { this.#db.exec(write ? 'BEGIN IMMEDIATE' : 'BEGIN'); } catch (error) { storageFailure(error); }
     try { this.#schema(); const result = operation(); this.#db.exec('COMMIT'); return result; }
     catch (error) {
@@ -185,7 +198,7 @@ export class CanonicalVault {
     if (state === 'local_unsigned' || state === 'accepted_unsigned') return 1;
     if (state === 'quarantined') return 0;
     if (state !== 'verified' || typeof signer !== 'string') fail('stored_admission_invalid');
-    return trusted.some(key => key.key_id === signer) ? 2 : 0;
+    return this.#historical || trusted.some(key => key.key_id === signer) ? 2 : 0;
   }
   #row(id: string): Row | undefined {
     const size = this.#db.prepare('SELECT length(CAST(m.record_json AS BLOB)) AS record_size,length(CAST(a.attestation_json AS BLOB)) AS proof_size FROM memories m LEFT JOIN record_admissions a USING(memory_id) WHERE memory_id=?').get(id);
@@ -207,7 +220,7 @@ export class CanonicalVault {
     const row = this.#row(id); if (row === undefined) return null;
     if (!hidden && this.#rank(row.state, row.signer_key_id, trusted) === 0) return null;
     const value = this.#decode(row);
-    if (row.state === 'verified' && this.#rank(row.state, row.signer_key_id, trusted) > 0) verifyRecord(value.record, value.attestation!, trusted);
+    if (!this.#historical && row.state === 'verified' && this.#rank(row.state, row.signer_key_id, trusted) > 0) verifyRecord(value.record, value.attestation!, trusted);
     return value;
   }
   get(id: string, options: { includeQuarantined?: boolean } = {}): SignedMemory | null {
@@ -228,7 +241,7 @@ export class CanonicalVault {
     const row = this.#db.prepare('SELECT state,signer_key_id FROM record_admissions WHERE memory_id=?').get(id);
     if (row === undefined) fail('stored_admission_missing');
     return { admission: row.state, signer_key_id: row.signer_key_id, signature_verified_at_admission: row.state === 'verified',
-      current_trust_checked: row.state === 'verified', eligible_for_context: this.#rank(row.state, row.signer_key_id, trusted) > 0,
+      current_trust_checked: !this.#historical && row.state === 'verified', eligible_for_context: this.#rank(row.state, row.signer_key_id, trusted) > 0,
       claimed_provenance_is_authenticated: false, grants_authority: false };
   }
   #insert(record: MemoryRecord, pending: boolean): boolean {
@@ -245,8 +258,8 @@ export class CanonicalVault {
     for (const name of record.entities) entity.run(name, record.memory_id);
     const relation = this.#db.prepare('INSERT INTO relations(source_id,relation,target_id) VALUES(?,?,?)');
     for (const edge of record.relations) relation.run(record.memory_id, edge.type, edge.target);
-    // Deliberately no retrieval_index certificate: Python sees an incomplete
-    // disposable index and can rebuild it without changing canonical bytes.
+    this.#db.prepare('INSERT INTO retrieval_index(memory_id,profile,token_count,timeline_key) VALUES(?,?,?,?)')
+      .run(record.memory_id, RETRIEVAL_INDEX_PROFILE, [...indexed.values()].reduce((a,b) => a+b, 0), timelineKey(record.created_at));
     return true;
   }
   #admit(value: SignedMemory, state: Admission, trusted: readonly SigningPublicDescriptor[]): boolean {
@@ -276,7 +289,7 @@ export class CanonicalVault {
     for (const id of [...dependents].sort()) { const row = admission.get(id); if (row && this.#rank(row.state, row.signer_key_id, trusted) > 0) insert.run(id); }
   }
   remember(input: RememberInput): Row & SignedMemory {
-    if (!this.#identity) fail('vault_signing_identity_required');
+    if (!this.#identity && !this.#allowUnsigned) fail('vault_signing_identity_required');
     const value = document(input as unknown as DocumentInput, MAX_RECORD) as Row;
     if (Object.keys(value).some(key => !['requestId', 'kind', 'text', 'entities', 'relations', 'provenance'].includes(key)) ||
         typeof value.requestId !== 'string' || !/^req_[A-Za-z0-9_-]{8,96}$/.test(value.requestId)) fail('invalid_request_id');
@@ -286,7 +299,7 @@ export class CanonicalVault {
     const digest = sha256(canonicalBytes(request, MAX_RECORD)), deadline = performance.now() + 5000;
     return this.#run(true, () => {
       const trusted = this.#trusted();
-      if (!trusted.some(key => key.key_id === this.#identity!.key_id)) fail('unknown_key');
+      if (this.#identity && !trusted.some(key => key.key_id === this.#identity!.key_id)) fail('unknown_key');
       const prior = this.#db.prepare('SELECT request_sha256,length(CAST(response_json AS BLOB)) AS size FROM receipts WHERE request_id=?').get(value.requestId);
       if (prior) {
         if (prior.request_sha256 !== digest) fail('request_id_conflict');
@@ -297,8 +310,8 @@ export class CanonicalVault {
             json(response.authority) !== json(AUTHORITY) || !result || !['stored', 'duplicate'].includes(result.state)) fail('stored_receipt_invalid');
         const row = this.#row(memoryId(result.memory_id)); if (!row) fail('stored_receipt_invalid');
         const fresh = this.#trusted();
-        if (!fresh.some(key => key.key_id === this.#identity!.key_id)) fail('unknown_key');
-        const memory = this.#get(result.memory_id, fresh); if (!memory) fail('memory_not_found');
+        if (this.#identity && !fresh.some(key => key.key_id === this.#identity!.key_id)) fail('unknown_key');
+        const memory = this.#get(result.memory_id, fresh, this.#allowUnsigned && !this.#identity); if (!memory) fail('memory_not_found');
         return { ...result, verification: this.#verification(result.memory_id, fresh), ...memory };
       }
       const provenance = value.provenance ?? {};
@@ -306,16 +319,37 @@ export class CanonicalVault {
           Object.keys(provenance).some(key => !['source_ref', 'task_ref', 'project_ref', 'conversation_ref', 'model_ref', 'agent_ref', 'device_ref', 'request_ref'].includes(key))) fail('forbidden_provenance_field');
       const record = buildRecord({ kind: value.kind, text: value.text, entities: value.entities ?? [], relations: value.relations ?? [],
         provenance: { ...provenance, source_type: 'agent_supplied', confidence: 'assistant_inferred' } });
-      const attestation = signRecord(record, this.#identity!), signed = { record, attestation };
+      const attestation = this.#identity ? signRecord(record, this.#identity) : null, signed = { record, attestation };
       const inserted = this.#insert(record, false);
-      if (this.#admit(signed, 'verified', trusted)) this.#requeue([record.memory_id], trusted, deadline);
+      if (this.#admit(signed, this.#identity ? 'verified' : 'local_unsigned', trusted)) this.#requeue([record.memory_id], trusted, deadline);
       const result = { state: inserted ? 'stored' : 'duplicate', memory_id: record.memory_id, kind: record.kind,
         network_accessed: false, verification: this.#verification(record.memory_id, this.#trusted()) };
       const response = { schema_version: 'universal-agent-memory-result/v1', ok: true, authority: AUTHORITY, result, request_id: value.requestId };
       this.#db.prepare('INSERT INTO receipts(request_id,request_sha256,response_json,created_at) VALUES(?,?,?,?)').run(value.requestId, digest, json(response, 65536), now());
-      if (!this.#trusted().some(key => key.key_id === this.#identity!.key_id)) fail('unknown_key');
+      if (this.#identity && !this.#trusted().some(key => key.key_id === this.#identity!.key_id)) fail('unknown_key');
       if (performance.now() >= deadline) fail('vault_work_limit', true);
       return { ...result, ...signed };
+    });
+  }
+  /** The six-operation facade uses this existing fragment retrieval profile. */
+  retrieve(arguments_: RecallArguments): Row {
+    return this.#run(false, () => {
+      const trusted = this.#trusted(); this.#retrievalTrust = trusted;
+      const reader = new Retrieval(this.#db, {
+        recordFromRow: row => { const stored = this.#row(String(row.memory_id)); if (!stored) fail('not_found'); return this.#decode(stored).record; },
+        verification: id => this.#verification(id, trusted),
+      });
+      return reader.recall(arguments_);
+    });
+  }
+  /** Explicit local inspection matches core get: quarantined evidence remains
+   * visible with eligible_for_context=false. It is never a sharing grant. */
+  inspect(id: string): Row {
+    memoryId(id);
+    return this.#run(false, () => {
+      const trusted = this.#trusted(); this.#retrievalTrust = trusted;
+      const row = this.#row(id); if (!row) fail('not_found');
+      return { record: this.#decode(row).record, verification: this.#verification(id, trusted), network_accessed: false };
     });
   }
   recall(query: string, options: RecallOptions = {}): Row {

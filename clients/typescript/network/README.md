@@ -12,14 +12,32 @@ SQLite Vault and persistent network delivery; see the
 [endpoint guide](../../../docs/NETWORK_TYPESCRIPT.md) for those APIs and limits.
 No new memory or identity format is introduced.
 
-The endpoint is a scoped preview: local recall is bounded text matching, not
-Python's full ranking, graph or dynamic handoff implementation. It does not
-claim complete six-operation parity or an external security audit. Low-level
+The endpoint is a scoped preview. `agent.ts` exposes the native six operations
+and uses the existing bounded fragment ranking and dynamic handoff selection.
+`vault.retrieve` uses that profile; `vault.recall` remains a separately labelled
+substring utility. Full graph/view-management and the old cloud worker are not
+ported here. A known platform floating-point boundary can still change the top
+ranked ID; the explicit expected-failure regression remains an open parity gate.
+No external security audit or complete old-client parity is
+claimed. Low-level
 crypto callers must still supply authenticated trust and recipient associations;
 the peer checks fresh signed control, admission and persistent retries.
 Successful decryption is not permission to execute memory content.
 Plaintext and keys remain in the host process; JavaScript garbage
 collection cannot guarantee erasure or protect against a compromised host.
+
+```ts
+import { Agent } from './agent.ts';
+const agent = new Agent('/absolute/private/client.json', '/absolute/private/network.json');
+const capabilities = await agent.handle({op: 'discover'}); // no file or network access
+const evidence = await agent.handle({op: 'recall', query: 'current progress', handoff: true});
+```
+
+Recalled attempts belong to their recorded origin, not automatically to the
+receiving agent. Signer verification is distinct from claimed model/session
+labels. Changed or uncertain environments require fresh authorized checks of
+old failure causes; a memory timestamp is not evidence that such a check ran.
+See [agent usage rules](../../../AI_START_HERE.md#attribute-inherited-evidence-and-recheck-old-failures).
 
 ## Use
 

@@ -50,7 +50,8 @@ existence was not treated as completed delivery or production acceptance.
 
 | Work | Delivery criterion |
 |---|---|
-| Native interface | Same records and exact retry/error behavior through Python, NDJSON and HTTP; no new external adapter |
+| Native interface | Same records and exact retry/error behavior through Python, independent TypeScript, NDJSON and HTTP; no new external adapter |
+| Inherited evidence | Attribute prior attempts to known original sources; do not invent an origin or claim the reader performed them. Revalidate old failure causes when the environment changes or applicability is uncertain; no automatic execution or new permission. |
 | Trust and recovery | Separate authority/member keys; member cannot issue trusted rosters; old explicit configurations remain readable with warnings |
 | Delivery | Invited clients exchange selected memory, verify/save locally, acknowledge, retry offline and resume after transport-state recovery |
 | Private relay | Real loopback HTTP with two separately controlled relay processes; degradation and restart observed, without claiming independent hardware failure domains |
@@ -62,11 +63,15 @@ existence was not treated as completed delivery or production acceptance.
 The TypeScript companion now includes an independent persistent endpoint as
 well as the HTTP entry. It reuses the existing identity documents, canonical
 SQLite Vault and network queue schema; real loopback tests continue the same
-queue between Python and TypeScript. Its bounded local text matching does not
-yet implement complete ranking, graph or dynamic handoff parity. It is not a
-second implementation of the public six-operation facade.
+queue between Python and TypeScript. The native six-operation facade now uses
+the same bounded fragment ranking and structural handoff selection. It shares
+the Vault, identity, permissions and errors; it is not a second data system.
+Exact numerical ranking parity remains open: a reproducible platform `exp`
+rounding boundary changes the first selected ID. Preserve its expected-failure
+test and design a shared deterministic math profile separately; do not hide it
+with a larger tolerance or silently replace the stable Python formula.
 Whole-endpoint recovery includes committed transport state and has targeted
-synthetic recovery tests. Full TypeScript high-level parity, scheduled pumping,
+synthetic recovery tests. Complete legacy graph/view and cloud-worker parity, scheduled pumping,
 topics/subscriptions, resource leases and automatic replica repair/exit remain
 separate work. Interfaces or examples alone must not mark them delivered;
 see the [TypeScript scope](NETWORK_TYPESCRIPT.md) and current evidence below.

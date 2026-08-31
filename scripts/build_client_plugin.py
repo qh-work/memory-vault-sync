@@ -58,6 +58,8 @@ PACKAGE_DOCUMENTS = (
     "clients/typescript/network/peer.ts", "clients/typescript/network/records.ts",
     "clients/typescript/network/transport.ts", "clients/typescript/network/vault.ts",
     "clients/typescript/network/setup.ts",
+    "clients/typescript/network/agent.ts", "clients/typescript/network/retrieval.ts",
+    "clients/typescript/network/retrieval_text.ts",
 )
 TEMPLATE_FILES = (
     ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",

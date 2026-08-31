@@ -20,6 +20,45 @@ PROFILE = "network-v1"
 MAX_RESULT = 8192
 MAX_INPUT = 64 * 1024
 OPERATIONS = ("connect", "remember", "recall", "discover", "send", "receive")
+PROVENANCE_REFS = ("agent_ref", "conversation_ref", "source_ref", "model_ref",
+                   "device_ref", "request_ref", "project_ref", "task_ref")
+EVIDENCE_USAGE = {
+    "basis": "retrieved_historical_evidence",
+    "attribution": "recorded_source_not_assumed_reader_experience",
+    "provenance_claims_authenticated": False,
+    "environment": "current_environment_not_checked",
+    "prior_failure_policy": "revalidate_changed_or_uncertain_environment",
+    "automatic_retry": False,
+}
+
+
+def _evidence_metadata(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Bounded source claims, never a new assertion about who experienced text."""
+    provenance = record.get("provenance", {})
+    refs: dict[str, str] = {}
+    truncated = False
+    claimed = False
+    for key in PROVENANCE_REFS:
+        original = provenance.get(key)
+        if not isinstance(original, str):
+            continue
+        claimed = True
+        value = original.encode("utf-8")[:96].decode("utf-8", errors="ignore")
+        while value and len(canonical_bytes({**refs, key: value})) > 256:
+            value = value[:-1]
+        if value:
+            refs[key] = value
+        truncated = truncated or value != original
+    return {"recorded_at": record["created_at"], "provenance_refs": refs,
+            "provenance_refs_truncated": truncated,
+            "provenance_status": "claimed" if claimed else "unknown"}
+
+
+def _recall_result(hits: list[dict[str, Any]], remaining: list[Any], offset: int) -> Mapping[str, Any]:
+    cursor = base64.urlsafe_b64encode(canonical_bytes({"ids": remaining, "offset": offset})).decode().rstrip("=") if remaining else None
+    return success({"hits": hits, "next_cursor": cursor, "partial": bool(remaining),
+                    "query_candidate_limit": 32, "network_accessed": False,
+                    "evidence_usage": dict(EVIDENCE_USAGE)})
 
 
 def definitions() -> list[dict[str, Any]]:
@@ -112,23 +151,38 @@ class Agent:
             result = response["result"]
             record = result["record"]
             raw = record["text"].encode("utf-8")
-            if offset > len(raw):
+            if offset > len(raw) or (offset < len(raw) and raw[offset] & 0xC0 == 0x80):
                 raise MemoryError("invalid_recall_cursor")
-            fragment = raw[offset:offset + 768].decode("utf-8", errors="ignore")
-            next_offset = offset + len(fragment.encode("utf-8"))
-            hit = {"memory_id": record["memory_id"], "record_sha256": record["record_sha256"],
-                   "kind": record["kind"], "text": fragment, "text_offset_bytes": offset,
-                   "partial": next_offset < len(raw), "verification": result.get("verification"),
-                   "source_ids": [r["target"] for r in record["relations"] if r["type"] in {"derived_from", "supports"}][:8]}
+            fragment_bytes = 768
+            while True:
+                fragment = raw[offset:offset + fragment_bytes].decode("utf-8", errors="ignore")
+                next_offset = offset + len(fragment.encode("utf-8"))
+                if offset < len(raw) and next_offset == offset:
+                    raise MemoryError("agent_result_exceeds_budget")
+                hit = {"memory_id": record["memory_id"], "record_sha256": record["record_sha256"],
+                       "kind": record["kind"], "text": fragment, "text_offset_bytes": offset,
+                       "partial": next_offset < len(raw), "verification": result.get("verification"),
+                       "source_ids": [r["target"] for r in record["relations"] if r["type"] in {"derived_from", "supports"}][:8],
+                       **_evidence_metadata(record)}
+                after_ids = remaining if next_offset < len(raw) else remaining[1:]
+                after_offset = next_offset if next_offset < len(raw) else 0
+                candidate = _recall_result([*hits, hit], after_ids, after_offset)
+                if len(canonical_bytes(candidate)) <= MAX_RESULT:
+                    break
+                if hits:
+                    # The current record was inspected, but no bytes from it
+                    # were consumed. Carry its original ID and offset forward.
+                    return _recall_result(hits, remaining, offset)
+                fragment_bytes //= 2
+                if fragment_bytes < 1:
+                    raise MemoryError("agent_result_exceeds_budget")
             hits.append(hit)
             if next_offset < len(raw):
                 offset = next_offset
                 break
             remaining.pop(0)
             offset = 0
-        next_cursor = base64.urlsafe_b64encode(canonical_bytes({"ids": remaining, "offset": offset})).decode().rstrip("=") if remaining else None
-        return success({"hits": hits, "next_cursor": next_cursor, "partial": bool(remaining),
-                        "query_candidate_limit": 32, "network_accessed": False})
+        return _recall_result(hits, remaining, offset)
 
     def handle(self, request: Any) -> Mapping[str, Any]:
         request_id = request.get("request_id") if isinstance(request, dict) else None
@@ -155,6 +209,8 @@ class Agent:
             else:
                 with self._network() as network:
                     response = success(getattr(network, operation)(**arguments), request_id=request_id)
+                if operation == "receive":
+                    response["result"]["evidence_usage"] = dict(EVIDENCE_USAGE)
             if not response.get("ok"):
                 response = dict(response)
                 error = dict(response["error"])

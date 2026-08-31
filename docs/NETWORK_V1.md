@@ -14,8 +14,12 @@ adapters remain. The single-file core still uses only the standard library.
 
 The [independent TypeScript endpoint](NETWORK_TYPESCRIPT.md) reuses canonical
 records, identities, the local Vault and network queue schemas without invoking
-Python. It is a bounded protocol/storage preview; its local text matching does
-not yet implement full graph, ranking or dynamic handoff parity. The existing
+Python. Its native `Agent` uses the same bounded fragment retrieval and dynamic
+handoff selection as Python. Low-level `CanonicalVault.recall` retains its
+explicit substring utility; `retrieve` uses the canonical retrieval profile.
+One known platform floating-point boundary can still change selected order;
+exact ranking parity is an open test gate. Full graph/view-management and legacy cloud-worker parity remain outside this
+TypeScript preview. The existing
 TypeScript HTTP SDK continues to use the shared six-operation endpoint above.
 
 `remember` and `recall` use the original client Vault and local trust. A sent
@@ -29,7 +33,14 @@ Wire requests/polls have a separate 8 MiB cap. Alpha share attachments are at
 most 2 MiB, recipients at most 16, configured relays at most two. Existing large
 file-pack support is unchanged; larger network handoffs need a future chunked
 message profile, never silent truncation. The same 8 KiB operation-result limit
-applies to the native Python, NDJSON and trusted HTTP entries.
+applies to the native Python, native TypeScript, NDJSON and trusted HTTP entries.
+
+Recall results describe historical evidence, never the receiving agent's own
+experience or a newly verified environment. Preserve known original provenance;
+an unknown author stays unknown. Claimed agent/session labels and the verified
+signing key are distinct. Old failure evidence must be revalidated when relevant
+conditions change or its applicability is uncertain; no automatic retry or new
+execution permission is created. See the [agent usage rules](../AI_START_HERE.md#attribute-inherited-evidence-and-recheck-old-failures).
 
 Received text is a bounded preview. Where `text_memory_id` is provided for an
 imported record, native `recall(memory_id)` and subsequent `recall(cursor)`

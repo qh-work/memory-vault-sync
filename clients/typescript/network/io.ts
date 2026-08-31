@@ -59,9 +59,11 @@ export function readPrivate(value: string, maximum: number, optional = false): B
     return result;
   } finally { fs.closeSync(fd); }
 }
-export function openPrivateDatabase(value: string): DatabaseSync {
-  const selected = absolutePath(value); privateDirectory(path.dirname(selected), true);
-  let fd = fs.openSync(selected, fs.constants.O_CREAT | fs.constants.O_RDWR | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK, 0o600);
+export function openPrivateDatabase(value: string, readOnly = false): DatabaseSync {
+  const selected = absolutePath(value);
+  if (readOnly && !fs.existsSync(selected)) fail('not_initialized');
+  privateDirectory(path.dirname(selected), !readOnly);
+  let fd = fs.openSync(selected, (readOnly ? fs.constants.O_RDONLY : fs.constants.O_CREAT | fs.constants.O_RDWR) | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK, 0o600);
   let before: fs.Stats;
   try { before = regular(fd, true); } finally { fs.closeSync(fd); }
   for (const suffix of ['-wal', '-shm', '-journal']) {
@@ -69,11 +71,12 @@ export function openPrivateDatabase(value: string): DatabaseSync {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; throw error; }
     try { regular(fd, true); } finally { fs.closeSync(fd); }
   }
-  const db = new DatabaseSync(selected, { enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
+  const db = new DatabaseSync(selected, { readOnly, enableForeignKeyConstraints: true, enableDoubleQuotedStringLiterals: false });
   try {
     const named = fs.lstatSync(selected);
     if (named.ino !== before.ino || named.dev !== before.dev || !named.isFile() || named.isSymbolicLink()) fail('network_source_changed');
-    db.exec('PRAGMA busy_timeout=2000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF; PRAGMA max_page_count=262144;');
+    db.exec('PRAGMA busy_timeout=2000; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;');
+    if (!readOnly) db.exec('PRAGMA journal_mode=WAL; PRAGMA max_page_count=262144;');
     return db;
   } catch (error) { db.close(); throw error; }
 }
