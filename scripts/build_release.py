@@ -44,6 +44,7 @@ PROTOCOL_DOCUMENTS = (
     "docs/ARTIFACTS.md", "docs/V0_25_RAW_COPY_SMOKE.md",
     "docs/NETWORK_V1.md", "docs/NETWORK_QUICKSTART.md", "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
     "docs/V0_26_PLAN.md",
+    "docs/NETWORK_TOPICS.md",
     "docs/DEPENDENCIES_NETWORK.md",
     "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md", "docs/NETWORK_TYPESCRIPT.md",
 )
@@ -64,6 +65,8 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_network_typescript_retrieval_text.py", "tests/test_network_typescript_retrieval.py",
     "tests/test_network_typescript_agent.py", "tests/test_network_typescript_agent_network.py",
     "tests/test_network_worker.py", "tests/test_network_ranking_v2.py", "tests/test_network_storage_receipts.py",
+    "tests/test_network_topics.py", "tests/test_network_topic_store.py", "tests/test_network_typescript_topics.py",
+    "tests/test_network_topic_http.py",
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_PACKAGE_BYTES = 32 * 1024 * 1024

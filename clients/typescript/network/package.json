@@ -7,7 +7,7 @@
     ".": "./crypto.ts", "./crypto": "./crypto.ts", "./control": "./control.ts",
     "./nodes": "./nodes.ts", "./records": "./records.ts", "./vault": "./vault.ts",
     "./peer": "./peer.ts", "./setup": "./setup.ts", "./transport": "./transport.ts",
-    "./agent": "./agent.ts", "./retrieval": "./retrieval.ts"
+    "./agent": "./agent.ts", "./retrieval": "./retrieval.ts", "./topics": "./topics.ts"
   },
   "types": "./crypto.ts",
   "engines": { "node": ">=22.19.0" },

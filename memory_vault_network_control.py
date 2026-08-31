@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import asyncio
 from pathlib import Path
 import secrets
+import threading
 import time
 from typing import Any, Mapping, Sequence
 
@@ -31,6 +33,8 @@ RECOVERY_SCHEMA = "memory-vault-network-recovery/v1"
 MAX_CONTROL_BYTES = 1024 * 1024
 MAX_MEMBERS = 256
 MAX_VALIDITY_SECONDS = 300
+MAX_TOPIC_HTTP_CONCURRENCY = 8
+TOPIC_HTTP_BODY_SECONDS = 10
 
 
 def _now(value: int | None) -> int:
@@ -307,7 +311,7 @@ def import_recovery(value: Mapping[str, Any] | bytes, *, recovery_secret: str, n
 
 
 def create_authority_app(config_path: Path) -> Any:
-    """Optional read-only status signer; serve behind operator-owned HTTPS.
+    """Optional control authority; serve behind operator-owned HTTPS.
 
     Config: schema_version memory-vault-network-authority-config/v1, network_id,
     identity_path, trust_store_path, roster_path (explicit protected files).
@@ -316,9 +320,13 @@ def create_authority_app(config_path: Path) -> Any:
     does not enroll storage nodes as agent members.
     POST /v1/status accepts {network_id, nonce, request}; the signed request must
     prove an active member key in the local issuer roster. It cannot modify it.
+    Optional topic_state_path enables explicitly initialized topic control:
+    POST /v1/topic-status and POST /v1/topic-subscriptions. Only the latter
+    commits a member's signed subscription; neither changes canonical memories.
     """
     try:
         from starlette.applications import Starlette
+        from starlette.concurrency import run_in_threadpool
         from starlette.requests import Request
         from starlette.responses import JSONResponse
         from starlette.routing import Route
@@ -339,7 +347,7 @@ def create_authority_app(config_path: Path) -> Any:
                 raise NetworkCryptoError("network_authority_not_configured")
             config = document(raw_config, maximum=16 * 1024)
             required = {"schema_version", "network_id", "identity_path", "trust_store_path", "roster_path"}
-            if not required <= set(config) or set(config) - required - {"node_directory_path"}:
+            if not required <= set(config) or set(config) - required - {"node_directory_path", "topic_state_path"}:
                 raise NetworkCryptoError("network_authority_configuration_invalid")
             if config["schema_version"] != "memory-vault-network-authority-config/v1" or opaque(config["network_id"]) != query["network_id"]:
                 raise NetworkCryptoError("network_authority_configuration_invalid")
@@ -397,7 +405,65 @@ def create_authority_app(config_path: Path) -> Any:
         except Exception:
             return JSONResponse({"error": "network_authority_unavailable"}, status_code=503, headers={"Cache-Control": "no-store"})
 
-    return Starlette(routes=[Route(path, status, methods=["POST"]) for path in ("/v1/status", "/v1/node-status")])
+    topic_gate = threading.BoundedSemaphore(MAX_TOPIC_HTTP_CONCURRENCY)
+
+    def topic_error(code: str, retryable: bool, status_code: int) -> JSONResponse:
+        return JSONResponse({"error": {"code": code, "retryable": retryable}},
+                            status_code=status_code, headers={"Cache-Control": "no-store"})
+
+    async def topic(request: Request) -> JSONResponse:
+        if not topic_gate.acquire(blocking=False):
+            return topic_error("network_topic_busy", True, 429)
+        try:
+            from memory_vault_topic_store import TopicAuthorityStore
+            if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+                raise NetworkCryptoError("network_topic_json_required")
+            if request.headers.get("content-encoding", "identity") != "identity":
+                raise NetworkCryptoError("network_topic_content_encoding_rejected")
+            # The wrapper has a separate small allowance; the signed change
+            # still has its own stricter 16 KiB cap inside the store.
+            maximum = 20 * 1024
+            async def read_body() -> bytes:
+                data = bytearray()
+                async for chunk in request.stream():
+                    if len(data) + len(chunk) > maximum:
+                        raise NetworkCryptoError("network_request_too_large")
+                    data.extend(chunk)
+                return bytes(data)
+            try:
+                data = await asyncio.wait_for(read_body(), timeout=TOPIC_HTTP_BODY_SECONDS)
+            except asyncio.TimeoutError:
+                return topic_error("network_topic_request_timeout", True, 408)
+            query = document(data, maximum=maximum)
+            store = TopicAuthorityStore(config_path)
+            if request.url.path == "/v1/topic-status":
+                query = object_fields(query, {"network_id", "topic_id", "nonce", "request"})
+                network_id, topic_id, nonce = (opaque(query[name]) for name in ("network_id", "topic_id", "nonce"))
+                signed_request = object_fields(query["request"], {"payload", "proof"})
+                if not isinstance(signed_request["payload"], Mapping) or signed_request["payload"].get("network_id") != network_id:
+                    raise NetworkCryptoError("network_status_binding_mismatch")
+                response = await run_in_threadpool(store.status, topic_id, nonce, signed_request)
+            else:
+                query = object_fields(query, {"network_id", "change"})
+                network_id = opaque(query["network_id"])
+                change = object_fields(query["change"], {"payload", "proof"})
+                if not isinstance(change["payload"], Mapping) or change["payload"].get("network_id") != network_id:
+                    raise NetworkCryptoError("network_topic_binding_mismatch")
+                response = {"receipt": await run_in_threadpool(store.subscribe, change)}
+            return JSONResponse(response, headers={"Cache-Control": "no-store"})
+        except (MemoryError, TrustError) as exc:
+            retryable = getattr(exc, "retryable", False)
+            code = exc.code
+            status_code = 429 if code == "network_topic_busy" else 503 if retryable else 400
+            return topic_error(code, retryable, status_code)
+        except Exception:
+            return topic_error("network_authority_unavailable", True, 503)
+        finally:
+            topic_gate.release()
+
+    routes = [Route(path, status, methods=["POST"]) for path in ("/v1/status", "/v1/node-status")]
+    routes.extend(Route(path, topic, methods=["POST"]) for path in ("/v1/topic-status", "/v1/topic-subscriptions"))
+    return Starlette(routes=routes)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

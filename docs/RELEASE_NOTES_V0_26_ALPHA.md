@@ -228,6 +228,57 @@ post-publication changes are in existing alpha attachments or installed on
 any user's machine. It does not establish universal Unicode/runtime parity,
 model quality, live cloud authorization or cluster/fault-domain acceptance.
 
+## Development after publication: topic control foundation
+
+The [topic control contract](NETWORK_TOPICS.md) now has independent Python and
+TypeScript validators and signers. It reuses the existing identities, strict
+JSON and Ed25519 message proofs. Complete signed snapshots preserve withdrawn
+grants and member consent; only fresh, same-nonce issuer status can authorize
+current recipient selection or cross a checkpoint gap. The process-local
+authorization result has both a monotonic deadline and a five-minute maximum,
+including when a member's clock is slightly ahead.
+
+An explicitly configured private authority state commits policy/snapshot,
+subscription revision, historical idempotency receipt, clock and roster
+checkpoint together. Restoring only an old roster cannot revive revoked
+membership. New subscription acceptance checks current membership and grant;
+an exact old request can retrieve its historical receipt without renewing any
+permission. Member clock correction does not block a valid chained withdrawal.
+State, topic, request and recipient bounds reject work explicitly and never
+evict consent or revocation history to create capacity.
+
+Optional HTTP subscription/status routes reuse that store through a bounded
+worker entry, with JSON/encoding checks, body size/time limits and explicit
+retryable contention/unknown-commit results. Existing member/node status and
+administrative configuration remain compatible. Ordinary clients gain no
+server dependency, service startup or automatic installation.
+
+This is not encrypted topic delivery: the six-operation facade, frozen topic
+ciphertext, relay polling/acknowledgements and topic-aware recovery/transfer
+still need integration. Authorized proof readers can see the complete grant
+and consent lists. The next work order is refresh amortization, queue lifecycle,
+snapshot deduplication and relay concurrency before routing, complete topic
+delivery and node-driven replica repair; see the [development plan](V0_26_PLAN.md).
+
+Scoped integration validation passed **82 tests** with no failure, error, skip
+or expected failure; tested source hashes remained fixed. This includes the
+new topic control/store/HTTP and independent cross-language checks, plus the
+affected crypto, packaging, administration, node and synthetic cloud checks.
+All **15 TypeScript sources** passed strict TypeScript 5.9.3 checks. Noninteger
+host-object JSON errors now agree between implementations without changing
+valid wire bytes or pretending JavaScript distinguishes numeric `1` from `1.0`.
+A prior private runner lacked the multiprocessing entry guard; that failed
+attempt is retained separately and is not counted as passing evidence.
+
+The store checks include two real competing writer processes, injected durable
+write failures, 32 topics, 16 effective recipients and the 4 MiB incoming-state
+boundary. Cache exhaustion and complete-poststate capacity failures use reduced
+test budgets; they are not production-capacity or throughput certification.
+HTTP checks use in-process ASGI, not public services or actual topic ciphertext
+delivery. Real cloud authorization, models and physical failure domains remain
+outside this campaign. Final archive inspection/execution is separate from
+these source tests, and published alpha assets are unchanged.
+
 ## Open delivery and release gates
 
 The later native-agent campaign selected **89 tests: 88 passed and one known

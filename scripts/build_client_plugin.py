@@ -28,6 +28,7 @@ REQUIRED_MODULES = (
     "memory_vault_network_control.py", "memory_vault_network_admin.py", "memory_vault_relay.py",
     "memory_vault_network_worker.py", "memory_vault_nodes.py", "memory_vault_node.py",
     "memory_vault_network_recovery.py", "memory_vault_node_transfer.py",
+    "memory_vault_topics.py", "memory_vault_topic_store.py",
 )
 OPTIONAL_MODULES: tuple[str, ...] = ()
 PACKAGE_DOCUMENTS = (
@@ -48,11 +49,13 @@ PACKAGE_DOCUMENTS = (
     "requirements-network.txt", "requirements-network-server.txt", "docs/NETWORK_V1.md", "docs/NETWORK_QUICKSTART.md",
     "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
     "docs/V0_26_PLAN.md",
+    "docs/NETWORK_TOPICS.md",
     "requirements-network-lock.txt", "requirements-network-server-lock.txt", "docs/DEPENDENCIES_NETWORK.md",
     "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md", "docs/NETWORK_TYPESCRIPT.md",
     "clients/typescript/index.ts", "clients/typescript/README.md", "clients/typescript/package.json",
     "clients/typescript/network/README.md", "clients/typescript/network/crypto.ts",
     "clients/typescript/network/control.ts", "clients/typescript/network/package.json",
+    "clients/typescript/network/topics.ts",
     "clients/typescript/network/package-lock.json",
     "clients/typescript/network/io.ts", "clients/typescript/network/nodes.ts",
     "clients/typescript/network/peer.ts", "clients/typescript/network/records.ts",
