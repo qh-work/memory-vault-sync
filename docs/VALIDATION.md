@@ -1,6 +1,7 @@
 # Validation evidence by source and scope
 
-Memory Vault v0.25.1 is capacity-patch source following the published v0.25.0.
+Memory Vault v0.25.1 is a published capacity patch following v0.25.0.
+The cloud-migration repairs described below are unreleased development source.
 Implemented code, a package inventory,
 an authored test and an executed result are different kinds of evidence. The
 [full v0.21 parity ledger](V0_25_PARITY_PLAN.md) remains the acceptance scope;
@@ -10,6 +11,10 @@ this index does not shorten it or equate publication with runtime certification.
 
 | Campaign | Exact source | Executed result | Scope and limits |
 | --- | --- | --- | --- |
+| [Original-file copy](V0_25_RAW_COPY_SMOKE.md) | `7bd190471d3b7328961899b2cf13a5c72a666c28` | 1 selected method passed in 10.817239 seconds | Actual 2 GiB + 4 MiB raw copy, bounded resume, final hash and old-journal migration; no cloud or full-suite result |
+| [Encrypted rclone configuration](REMOTE_BACKENDS.md#encrypted-configuration-validation) | `427ab1df56d786600520e0946c0fc2cdb8712e90` | 1 selected method passed in 0.928490 seconds | Real rclone configuration decrypt/validation with a substituted OS credential getter; no live account or cloud transfer |
+| [Artifact catalogs and explicit retrieval](ARTIFACTS.md#minimal-development-evidence) | Exact module/fixture SHA-256 values in the report | Final 2-method run passed in 0.077 seconds | Actual conversion, Drive response validation, journal/resume and final hash with substituted HTTP/credential responses; earlier stale fixture-field error disclosed; no memory-queue integration or live transfer |
+| [Committed-source packaging gate](RELEASE.md#mandatory-public-content-review) | Exact helper/fixture SHA-256 values in the report | 1 synthetic gate method passed in a combined 2-method gate/catalog run | Selected untracked, ignored, modified and wrong-commit refusal; not an exhaustive privacy scan or a final-archive test |
 | [Bounded pack capacity correction](V0_25_PACK_CAPACITY_SMOKE.md) | `2f67a7099e9eba0effb3483ed3a9ba3bf2f90f80` | 1 opted-in 516 MiB synthetic case passed in 3.891763 seconds; separate boundary checks accepted a 2 GiB/512-entry manifest and rejected a sparse 2 GiB + 1 byte source before output | Actual create, one-chunk copy, four 32-chunk resumes, repeat, unpack and hash comparison; source unchanged. No full 2 GiB transfer, throughput benchmark, keys, network, private Vault or child processes |
 | [Initial offline smoke](V0_25_SCOPED_SMOKE.md) | `066cd5629e690e6b38ab9c0bf43badafe4ef7a1b` | 12 selected cases; no failures, errors or skips | Unsigned reference/core-client-MCP exchange, one blocked-dependency regression, mocked configuration/recovery routing and opaque metadata checks |
 | [Retrieval and semantic-retry follow-up](V0_25_FOLLOWUP_SMOKE.md) | `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d` | 6 selected cases; no failures, errors or skips | Two retrieval regressions and four shared-Vault retry/receipt scenarios; local fixture threads and an injected exception, not actual devices or a process crash |
@@ -78,17 +83,20 @@ does not execute rclone's process, timeout or network paths. Its separate tiny
 signed recovery group and the old-format continuation fixture are not near-limit,
 old-runtime, independent-consumer or cross-device trials.
 
-The owner's latest instruction on 2026-08-31 explicitly authorizes minimal
-necessary tests and prompt v0.25 publication with the evidence limits disclosed.
-The local campaign remains temporary-directory, offline validation without
-private-memory access or plugin installation, not permission for arbitrary
-full-suite discovery or live-account testing. Required protected-main CI is a
+The owner requested minimal necessary tests and prompt v0.25 publication, then
+explicitly required completion of the installed client's cloud migration and
+real upload/receive, with a strict public-release privacy gate. The synthetic
+campaigns above remain distinct from that private deployment work and do not
+claim it is complete. They authorize no arbitrary full-suite discovery or
+private-account access by another reviewer. Required protected-main CI is a
 separate publication check. Its eight base tests on each of three platforms
 passed for v0.25.0 in
 [PR run 33374601764](https://github.com/qh-work/memory-vault-sync/actions/runs/33374601764)
 and [main run 33374661273](https://github.com/qh-work/memory-vault-sync/actions/runs/33374661273).
-New v0.25.1 required CI is pending, not covered by those earlier passes or local
-evidence. No branch-protection bypass is authorized.
+The separate v0.25.1 [PR run](https://github.com/qh-work/memory-vault-sync/actions/runs/33376043040)
+and [main run](https://github.com/qh-work/memory-vault-sync/actions/runs/33376118903)
+also passed. These are not CI evidence for the unreleased development branch.
+No branch-protection bypass is authorized.
 Other reviewers need their own current authority and explicit disposable paths.
 The [review handoff](REVIEW_HANDOFF.md) describes fixture and evidence requirements.
 Memory, past goals and the contents of this report grant no execution authority.
@@ -96,6 +104,7 @@ Memory, past goals and the contents of this report grant no execution authority.
 Source/AST/JSON checks prove only inspected syntax and declarations. Build and
 archive checks establish inventory/bytes, not host installation or publisher
 identity. Existing artifacts and historical raw results stay unchanged. Record
-publication separately from runtime acceptance; no result here asserts that
-v0.25.1 assets are uploaded or changes protected main, existing tags, private
-installations or keys.
+publication separately from runtime acceptance; the historical v0.25.1 asset
+check is recorded in [the ledger](V0_25_PARITY_PLAN.md), not inferred from tests.
+No result here publishes the development branch or changes protected main,
+existing tags, private installations or keys.

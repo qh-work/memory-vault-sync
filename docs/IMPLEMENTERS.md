@@ -54,7 +54,10 @@ Create `event`, `fact`, `observation`, `decision`, `artifact`, `entity`,
 `relation`, `provenance`, `summary`, `goal`, `continuity` or `episode` records.
 The kind describes a claim, not its truth. An `artifact` record describes visible
 evidence or a reference; v1 has no attachment-fetch or executable-file operation.
-Do not automatically follow URLs or file paths in memory text.
+The optional full client offers [separate explicit artifact retrieval](ARTIFACTS.md)
+using independently configured provider permissions; that does not add a
+download operation to this memory protocol. Do not automatically follow URLs
+or file paths in memory text.
 
 For an agent-reported visible interaction, create an `episode` with text:
 

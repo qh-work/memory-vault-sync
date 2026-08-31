@@ -1,12 +1,42 @@
 # Retained small-ZIP migration tool
 
-For v0.25's complete v0.21 pack/network migration path, start with
+For v0.25's v0.21 memory pack/network migration path, start with
 [LEGACY_PACKS.md](LEGACY_PACKS.md). That separate implementation handles actual
 `memory-pack/v1`, the 2 GiB/250,000-document source envelope, lossless evidence,
 large visible records and ordered multipart bundles. The small tool documented
 here remains available for callers using its original single-bundle/report
 interface; its narrower limits and listed metadata losses are **not** the
 v0.25 parity implementation.
+
+## Old GitHub and Google Drive data are separate migration inputs
+
+The v0.21 deployment could keep memory records and authoritative indexes in a
+private GitHub repository while storing original files and backups in Google
+Drive. Removing the Git/Task binding does not migrate either store by itself.
+An empty current Drive configuration does not prove historical backups are
+absent, and a successful local memory import does not prove old attachments
+are available through the new client.
+
+Preserve the old private repository, backup catalogs, Drive object mappings and
+cloud files until they have been reconciled. Catalog entries, unique content
+hashes and Drive object IDs are different counts; match by explicit IDs and
+content identity, not just filenames. Fresh ID/size checks do not constitute a
+fresh content-hash check, and historical verification reports must remain
+identified as historical evidence.
+
+The memory converters do not include the old `memory/backup-catalogs/` and
+`migration/imported/drive-backup-*` catalogs. Development source now supplies
+a separate [artifact catalog conversion and explicit Drive-file-ID retrieval
+path](ARTIFACTS.md). These are not yet a deployed user migration or a configured
+cloud memory-sync queue. The memory conversion described below is **not a
+complete cloud/attachment migration**, and original-byte local copying is not
+a replacement for the provider-backed operation.
+
+The destination model remains independent artifact records with content hashes,
+relations and source provenance. Cloud object locations are references, not
+memory owners; old task/project names are migration provenance only. Provider
+credentials remain local runtime configuration. No old repository or cloud
+object should be deleted merely because the new runtime no longer needs Git.
 
 `memory_vault_migrate.py` is a one-way, offline converter from the exact v0.21
 `export-network` ZIP format to the shared core's current
