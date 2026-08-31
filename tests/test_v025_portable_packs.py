@@ -57,7 +57,7 @@ class PortablePackTests(_PackFixtures, unittest.TestCase):
         with self.assertRaises((MemoryError, FileExistsError)):
             packs.unpack(copied, output)
         self.assertEqual(output.read_bytes(), data)
-        self.assertEqual(packs.MAX_SOURCE_BYTES, 512 * 1024 * 1024)
+        self.assertEqual(packs.MAX_SOURCE_BYTES, 2 * 1024 * 1024 * 1024)
 
     def test_hardlinked_input_is_not_a_safe_selected_source(self) -> None:
         source = self.source_zip()

@@ -37,6 +37,7 @@ PACKAGE_DOCUMENTS = (
     "docs/V0_25_TRANSPORT_RECOVERY_SMOKE.md",
     "docs/VISIBLE_FRAGMENTS.md",
     "docs/V0_25_RELEASE_MINIMAL.md", "docs/RELEASE_NOTES_V0_25.md",
+    "docs/V0_25_PACK_CAPACITY_SMOKE.md", "docs/RELEASE_NOTES_V0_25_1.md",
 )
 TEMPLATE_FILES = (
     ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",
