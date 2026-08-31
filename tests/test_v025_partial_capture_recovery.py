@@ -42,7 +42,7 @@ class PartialCaptureRecoveryTests(unittest.TestCase):
         storage.atomic_write(self.config_path, canonical_bytes({
             "schema_version": client.CONFIG_SCHEMA, "vault_path": str(self.vault_path),
             "capture_visible_turns": True,
-        }) + b"\n")
+        }) + b"\n", replace=False)
 
     def config(self) -> client.ClientConfig:
         return client.ClientConfig.load(self.config_path)
