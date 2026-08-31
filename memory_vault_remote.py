@@ -19,11 +19,13 @@ import subprocess
 import time
 from typing import Any, Callable, Mapping
 
-from memory_vault import MemoryError
+from memory_vault import MemoryError, strict_json_loads
+from memory_vault_credentials import config_password, password_reference
 from memory_vault_transfer import MAX_CAPSULE_BYTES, _fragment_name, _group, _path
 import memory_vault_storage as protected_storage
 
 MAX_CONFIG_BYTES = 1024 * 1024
+MAX_CONFIG_DUMP_BYTES = 8 * MAX_CONFIG_BYTES
 MAX_EXECUTABLE_BYTES = 256 * 1024 * 1024
 MAX_LIST_BYTES = 16 * 1024
 MAX_PREFIX_CANDIDATES = 8
@@ -95,17 +97,34 @@ def executable_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def validate_rclone_config(path: Path, remote: str) -> None:
-    """Check only the explicitly selected existing config; never discover one.
-
-    Arbitrary wrapper backends, credential helper commands and external SSH
-    commands are not accepted. Actual credentials remain inside rclone.
-    """
-    fd, _ = _plain_file(path, private=True, maximum=MAX_CONFIG_BYTES)
+def _config_bytes(path: Path) -> bytes:
+    fd, before = _plain_file(path, private=True, maximum=MAX_CONFIG_BYTES)
     with os.fdopen(fd, "rb") as stream:
         raw = stream.read(MAX_CONFIG_BYTES + 1)
+        after = os.fstat(stream.fileno())
     if len(raw) > MAX_CONFIG_BYTES:
         raise MemoryError("remote_config_too_large")
+    if ((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+        raise MemoryError("remote_configuration_changed", retryable=True)
+    return raw
+
+
+def _encrypted_config(raw: bytes) -> bool:
+    # Match rclone's first meaningful line, including its normal comment header.
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith((b"#", b";")):
+            continue
+        if line == b"RCLONE_ENCRYPT_V0:":
+            return True
+        if line.startswith(b"RCLONE_ENCRYPT_V"):
+            raise MemoryError("unsupported_rclone_configuration_encryption")
+        return False
+    return False
+
+
+def _plain_config(raw: bytes) -> dict[str, dict[str, str]]:
     parser = configparser.ConfigParser(interpolation=None, strict=True)
     try:
         parser.read_string(raw.decode("utf-8"))
@@ -113,13 +132,27 @@ def validate_rclone_config(path: Path, remote: str) -> None:
         raise MemoryError("unsupported_rclone_configuration") from None
     if parser.defaults():
         raise MemoryError("unsupported_rclone_configuration")
+    return {name: dict(parser[name]) for name in parser.sections()}
+
+
+def _validate_config_sections(sections: Mapping[str, Any], remote: str) -> None:
+    if (not isinstance(sections, dict) or any(not isinstance(name, str) or not isinstance(section, dict)
+            or any(not isinstance(key, str) or not isinstance(value, str) for key, value in section.items())
+            for name, section in sections.items())):
+        raise MemoryError("unsupported_rclone_configuration")
+    # rclone's INI loader can fall back to DEFAULT keys not enumerated in an
+    # individual remote's dump. Keep the plaintext no-defaults rule here too.
+    if sections.get("DEFAULT"):
+        raise MemoryError("unsupported_rclone_configuration")
     name = remote_path(remote).split(":", 1)[0]
     seen: set[str] = set()
     for _ in range(4):
-        if name in seen or not parser.has_section(name):
+        if name in seen or name not in sections:
             raise MemoryError("invalid_remote_configuration_chain")
         seen.add(name)
-        section = dict(parser[name])
+        section = {key.lower(): value for key, value in sections[name].items()}
+        if len(section) != len(sections[name]):
+            raise MemoryError("unsupported_rclone_configuration")
         kind = section.get("type")
         if kind not in {"drive", "s3", "webdav", "sftp", "crypt"}:
             raise MemoryError("unsupported_remote_backend")
@@ -143,6 +176,18 @@ def validate_rclone_config(path: Path, remote: str) -> None:
             os.close(fd)
         return
     raise MemoryError("remote_configuration_chain_too_deep")
+
+
+def validate_rclone_config(path: Path, remote: str) -> None:
+    """Validate a plaintext config without a subprocess or credential access.
+
+    Encrypted configurations require the explicit credential reference and
+    pinned rclone executor owned by RcloneBackend; they are never decrypted here.
+    """
+    raw = _config_bytes(path)
+    if _encrypted_config(raw):
+        raise MemoryError("rclone_config_password_reference_required")
+    _validate_config_sections(_plain_config(raw), remote)
 
 
 class Budget:
@@ -188,9 +233,57 @@ class RcloneBackend:
         if executable_sha256(self.executable) != self.spec["executable_sha256"]:
             raise MemoryError("remote_executable_changed")
         self.executable_stat = self.executable.stat()
-        validate_rclone_config(self.config_file, self.remote)
+        reference = self.spec.get("config_password_ref")
+        self.password_reference = None if reference is None else password_reference(reference)
+        self._config_password: str | None = None
+        self._validated_config_digest: bytes | None = None
+        self._ensure_config()
+
+    def _ensure_config(self) -> None:
+        raw = _config_bytes(self.config_file)
+        digest = hashlib.sha256(raw).digest()
+        if digest == self._validated_config_digest:
+            return
+        if _encrypted_config(raw):
+            if self.password_reference is None:
+                raise MemoryError("rclone_config_password_reference_required")
+            if self._config_password is None:
+                self._config_password = config_password(self.password_reference,
+                    deadline=min(self.budget.deadline, time.monotonic() + 10), active_check=self.active_check)
+            try:
+                # This command only reads/decrypts configuration. Do not create
+                # a backend until its effective configuration has been checked.
+                dumped = self._execute(["config", "dump"], output_limit=MAX_CONFIG_DUMP_BYTES)
+                sections = strict_json_loads(dumped if dumped is not None else b"")
+            except MemoryError as exc:
+                if exc.code == "remote_command_failed":
+                    raise MemoryError("rclone_config_unlock_failed") from None
+                raise
+            finally:
+                # Never retain decoded configuration or include provider output
+                # in status, diagnostics, errors, logs or a disk file.
+                dumped = None
+            _validate_config_sections(sections, self.remote)
+            del sections
+        else:
+            if self.password_reference is not None:
+                # An explicitly encrypted profile must not silently downgrade
+                # after replacement of its selected configuration file.
+                raise MemoryError("rclone_config_encryption_required")
+            _validate_config_sections(_plain_config(raw), self.remote)
+        if hashlib.sha256(_config_bytes(self.config_file)).digest() != digest:
+            raise MemoryError("remote_configuration_changed", retryable=True)
+        self._validated_config_digest = digest
 
     def _run(self, arguments: list[str], *, output_limit: int, missing_ok: bool = False) -> bytes | None:
+        self._ensure_config()
+        result = self._execute(arguments, output_limit=output_limit, missing_ok=missing_ok)
+        # Drive may legitimately refresh and persist an OAuth token. Revalidate
+        # the encrypted replacement before acknowledging remote publication.
+        self._ensure_config()
+        return result
+
+    def _execute(self, arguments: list[str], *, output_limit: int, missing_ok: bool = False) -> bytes | None:
         self.active_check()
         self.budget.commands += 1
         if self.budget.commands > 128:
@@ -200,7 +293,6 @@ class RcloneBackend:
         if (current.st_ino, current.st_size, current.st_mtime_ns) != (
                 self.executable_stat.st_ino, self.executable_stat.st_size, self.executable_stat.st_mtime_ns):
             raise MemoryError("remote_executable_changed")
-        validate_rclone_config(self.config_file, self.remote)
         command = [str(self.executable), *arguments,
                    "--config", str(self.config_file), "--ask-password=false", "--password-command=",
                    "--cache-dir", str(self.work_directory / "cache"), "--temp-dir", str(self.work_directory / "tmp"),
@@ -230,9 +322,14 @@ class RcloneBackend:
         for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"):
             if key in os.environ:
                 environment[key] = os.environ[key]
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, shell=False, env=environment,
-                                   start_new_session=os.name != "nt", close_fds=True)
+        if self._config_password is not None:
+            environment["RCLONE_CONFIG_PASS"] = self._config_password
+        try:
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, shell=False, env=environment,
+                                       start_new_session=os.name != "nt", close_fds=True)
+        finally:
+            environment.pop("RCLONE_CONFIG_PASS", None)
         output = bytearray()
         error_bytes = 0
         finished = False
@@ -330,6 +427,7 @@ class RcloneBackend:
                 process.stdout.close()
             if process.stderr is not None:
                 process.stderr.close()
+            output[:] = b"\x00" * len(output)
 
     def _bucket(self, key_id: str, store_id: str, after: int) -> str:
         peer_value({"key_id": key_id, "store_id": store_id})
