@@ -59,8 +59,10 @@ open until evidence is recorded; it is not shortened to match finished work.
   separate capability from recovering a partially written complete turn. The
   new [single-sided profile](VISIBLE_FRAGMENTS.md) restores this capability and
   adds an immutable later supplement. Missing content must never be guessed
-  from a transcript or another turn. New authoring/recovery fixtures are not
-  execution evidence; old partial-write results do not prove partial coverage.
+  from a transcript or another turn. Selected native partial/complete and
+  recovery methods now have [source-pinned evidence](V0_25_RELEASE_MINIMAL.md);
+  unrun authoring/recovery fixtures and old partial-write results alone do not
+  prove partial coverage.
 - Its accepted host intent also froze the source sequence and preceding episode
   reference. New automatic capture restores that causal behavior with frozen
   projections and a `continues` relation between continuity records. Local
@@ -88,18 +90,27 @@ source. Results do not apply retroactively to a different source or combine
 into a whole-suite pass. Paths describe
 the development source, not the already published v0.24.1 artifact.
 
+The [minimal release campaign](V0_25_RELEASE_MINIMAL.md) selected six distinct
+methods. On `82ae4ac468007eed4555ea6f04a3a933899171df`, five passed and partial
+full-client recovery errored in fixture setup. A fixture-only `replace=False`
+correction in `cb477db6fd1f8a34671a5d8045f313ef6dfac15c` preceded the sole
+recovery-method rerun, which passed; runtime source hashes were unchanged.
+The first five methods were not rerun. These two runs do not constitute a
+whole-suite pass; no network, child process, private Vault or installed host
+was used.
+
 | ID | Implementation / contract | Authored review evidence and remaining work |
 | --- | --- | --- |
 | P01 | `memory_vault.py`, `PROTOCOL.md`, `schemas/record.schema.json`; shared canonical `continues` records | Earlier core/client cases and the latest selected source-local chain case have separate evidence. Source handles do not enter canonical records as owners; independent implementation and full parity acceptance remain pending |
-| P02 | `memory_vault_capture.py`, `memory_vault_client.py`, `memory_vault_lifecycle.py`, `memory_vault_hosts.py`; [one-sided fragments](VISIBLE_FRAGMENTS.md) | Earlier capture campaign covers frozen retry, bounded ancestors, old partial-write identities and a real temporary hot-journal exit. New single-sided native capture, late supplements, lock-boundary opt-out and prepared-queue draining have authored but unrun fixtures. Publication/cancellation evidence stays source-pinned; live-host and complete crash/race coverage remain pending |
-| P03 | Core full-record terms, fragments, concept expansion and ranking; `docs/RETRIEVAL.md` | Earlier direct-token and seven-large-record-tail cases remain source-pinned. New entity-only and one-scoring-slot priority cases pass in the parity-repair campaign; other retrieval/index/graph methods, comparative ranking and scale/performance acceptance remain pending |
-| P04 | Core `memory.views`, `memory.graph`, `memory.reindex`; `docs/GRAPH_VIEWS.md` | Parity-repair handoff filtering and the later embedded MCP claim-state, six-node graph, two-page timeline and derived-index repair workflow have separate passing evidence. Complete trust/frontier/pagination coverage and scale remain pending |
-| P05 | `memory_vault_compat.py`, eleven-tool MCP, separate host schemas; stateless capability discovery with strict request validation | The workflow campaign at `c65fd82` passes one integrated eleven-tool MCP case and one ten-operation old-envelope case, including exact retry and authorized flush recovery. Earlier capture/semantic cases stay separate. Complete schema/error combinations, physical journal recovery for this new route and real-host acceptance remain pending |
+| P02 | `memory_vault_capture.py`, `memory_vault_client.py`, `memory_vault_lifecycle.py`, `memory_vault_hosts.py`; [one-sided fragments](VISIBLE_FRAGMENTS.md) | Earlier capture/recovery evidence remains source-pinned. At `82ae4ac`, one synthetic native-hook method passes both single-sided arrival orders, late supplements and the complete-pair path. Other fragment methods, including lock-boundary opt-out and prepared-queue draining, remain unrun; live-host and complete crash/race coverage remain pending |
+| P03 | Core full-record terms, fragments, concept expansion and ranking; `docs/RETRIEVAL.md` | Earlier direct-token, long-tail, entity and scoring-slot cases remain source-pinned. At `82ae4ac`, one small-context traceability method and one near-duplicate retrieval method pass. Other retrieval/index methods, comparative ranking and scale/performance acceptance remain pending |
+| P04 | Core `memory.views`, `memory.graph`, `memory.reindex`; `docs/GRAPH_VIEWS.md` | Earlier handoff/graph/timeline/reindex evidence remains separate. At `82ae4ac`, one endpoint-specific conflict-resolution/history method passes. Complete trust/frontier/pagination coverage and scale remain pending |
+| P05 | `memory_vault_compat.py`, eleven-tool MCP, separate host schemas; stateless capability discovery with strict request validation | The workflow campaign at `c65fd82` passes one integrated eleven-tool MCP case and one ten-operation old-envelope case. At `82ae4ac`, one capture-disabled old/native recall method passes. Complete schema/error combinations, physical journal recovery for this route and real-host acceptance remain pending |
 | P06 | `memory_vault_sync.py`, `memory_vault_transfer.py`, `memory_vault_dependency.py`; self-contained v2 plus stream-proven v3 | Earlier signed directory/dependency evidence stays separate. The `fc35885` default two-fragment workflow adds exact upload/read resume, pre-admission cancellation and durable remote admission counts through a head-file rejection. Only provider commands are simulated. First-use/invalidated closure budgets stay explicit; live remote, near-limit group/scale/concurrent-writer acceptance remains pending |
 | P07 | Sync review/resolve/requeue and `memory_vault_privacy.py` | The `c65fd82` signed workflow passes content-free review, explicit keep/exclude, retained original evidence, signed dispositions, exact retry/requeue and receiver-side forwarding checks. A separate method passes 42 fake secret/path vectors. This is not exhaustive DLP, group recovery or real-user-data acceptance; no real content was scanned or uploaded |
 | P08 | `memory_vault_remote.py`, signed fragment groups, `memory_vault_pack.py` | Earlier small pack copy/resume/unpack evidence stays separate. The `fc35885` signed group covers real default splitting, constructor pins/config validation, exact member paths and read-back, with only the provider command runner replaced. Actual rclone process/network/per-command checks, near-limit groups and native platforms remain pending |
 | P09 | `memory_vault_legacy_pack.py`, required `memory_vault_migrate.py`, checked compat aliases | Earlier 20,001-message and publication cases remain separate. At `76b8c8b`, one independently encoded old-wire fixture passes a two-pack/checkpoint chain, repack/conversion, eight old-ID mappings, raw evidence, typed claim timeline and old-ID continuation. Other malformed graphs/checkpoints, actual old-runtime exports, independent consumers and 2 GiB acceptance remain pending |
-| P10 | `memory_vault_recovery.py`, `memory_vault_backup.py`, `memory_vault_manage.py`; v1/v2 control and frozen hook journal recovery | Earlier unsigned recovery stays source-pinned. At `fc35885`, an actual signed seed plus tiny staged v3 group passes operator snapshot/inert new-store restore, explicit current-trust import, exact retry and revocation. It does not restore old receipts/keys/active permissions. Other components, complete crash/concurrency/near-limit/native acceptance remain pending |
+| P10 | `memory_vault_recovery.py`, `memory_vault_backup.py`, `memory_vault_manage.py`; v1/v2 control and frozen hook journal recovery | Earlier unsigned and `fc35885` tiny signed staged-group recovery stay source-pinned. At `cb477db`, the selected partial-fragment full-client recovery method passes after its fixture-only setup repair; no runtime change or rerun of the five earlier passing methods. Other components, complete crash/concurrency/near-limit/native acceptance remain pending |
 | P11 | `memory_vault_update_trust.py`, `memory_vault_update.py`, `memory_vault_install.py`, pinned managed launcher | The unchanged integrated update method passes on `0be4c6d` after its initial runtime error: real public-test-root verification, stage/install, caught partial-write retry and explicit rollback. Other trust/install/edge methods remain unrun unless separately recorded. No production publisher root, actual download, host worker or hard-kill acceptance |
 | P12 | `memory_vault_sharing.py`, `memory_vault_crypto.py`, `memory_vault_device_trust.py`, `memory_vault_encrypted_replication.py`; explicit `device-trust init/status` and `envelope verify` operator entries | Earlier metadata/publication cases stay separate. The `fc35885` selective-share workflow uses two fresh Ed25519 keys for actual signed export/quarantine/independent trust/import/forward/replay/revocation and current-proof restoration without changing canonical bytes or old receipts. Key identity is not original authorship; full trust lifecycle, provider encryption and production/device-recovery ceremonies remain pending |
 | P13 | `memory_vault_storage.py` and configured client/transfer/recovery/pack/update consumers | Publication repairs include three controlled macOS child exits and in-process failures without tightening explicit POSIX parent modes. The separate update repair passes protected intermediate-directory creation and caught write retry. Native Windows/Linux, actual unsupported filesystems and the independent core exporter remain outside this verification; existing private aliases are not auto-repaired |
@@ -119,19 +130,24 @@ maintainer v0.25 campaigns. These results do not close this full ledger.
 
 ## Verification and release gate
 
-The owner previously requested no test execution, then explicitly allowed the
-minimal temporary-directory offline validation used for the campaigns above,
-without a one-time or 12-case limit. This was not permission for full-suite
-discovery, networking, installation, live hosts, cloud CI or release publication.
+The owner previously requested no test execution, then allowed minimal
+temporary-directory offline validation. On 2026-08-31 the owner explicitly
+requested minimal necessary tests and prompt v0.25 publication. This latest
+instruction permits publication with the exact validation limits disclosed;
+it does not authorize arbitrary full-suite discovery, private-account testing,
+installation or live-host changes. The existing protected-main CI requirement
+of eight base tests on three platforms remains pending and must not be bypassed.
 Source, schema, package and archive inspection are still separate from tests.
 No live/private Vault, real credential/signing key, host installation or remote
 account is used for development verification without separate authorization.
 
 Runtime verification is **partial and narrowly scoped**, not complete. Unrun
-requirements stay pending rather than being marked successful or dropped. Protected main and
-already published tags remain unchanged while this work is incomplete.
+requirements stay pending rather than being marked successful or dropped.
+Protected-main rules and already published tags are preserved; this ledger
+does not assert that v0.25 is already public.
 
 For each delivered slice, record the exact source paths, synthetic fixtures,
-verification actually performed, and remaining failures/unknowns. Publish a
-finished v0.25 only after this full ledger withstands a completion audit; a
-preview must be labeled as a preview.
+verification actually performed, and remaining failures/unknowns. The authorized
+v0.25 publication is distinct from full-goal completion: only the latter requires
+this entire ledger to withstand a completion audit. Neither a release tag nor
+the six selected methods closes unverified requirements.

@@ -1,7 +1,9 @@
-# Memory Vault v0.25.0 development — authorized full client
+# Memory Vault v0.25.0 — authorized full client
 
-This is the full-client **review build**, not a claim of a finished or
-runtime-verified stable release. The plugin is under
+This full-client package is built from **minimally validated v0.25.0 release
+source**, not a claim of complete runtime certification. Check the
+[tagged release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
+for publication status and matching assets. The plugin is under
 `plugins/memory-vault-client`; the local marketplace catalog is
 `.agents/plugins/marketplace.json`. All required runtime source modules listed
 in `runtime/MANIFEST.json` under the plugin are included. No Git checkout or
@@ -79,10 +81,14 @@ startup service or real Vault is changed by extracting this package.
 
 ## Evidence and independent review
 
+The [minimal release report](plugins/memory-vault-client/docs/V0_25_RELEASE_MINIMAL.md)
+records six distinct methods with passing evidence across two source-pinned
+runs: five initial passes, then one recovery-only pass after a fixture setup
+correction; application code was unchanged. This is not a full-suite pass.
 The packaged [validation index](plugins/memory-vault-client/docs/VALIDATION.md)
 pins limited offline synthetic evidence to exact source commits. Match those
 reports to this artifact; results from other versions do not certify its paths.
-v0.25 remains unreleased development source. The exercised entry paths share one
+The exercised entry paths share one
 Python reference, not independent implementations or models. Full P01–P14,
 signing/encryption, cloud, real-host/cross-device, native Windows and performance
 acceptance remain open; recorded checks installed no host plugin and accessed

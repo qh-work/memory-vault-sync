@@ -10,28 +10,32 @@ the optional client to automate the same operations. The record, relation,
 provenance and exchange contracts are shared; Python, SQLite, a particular
 model, and a particular plugin are not protocol requirements.
 
-## v0.25 development: full v0.21 workflows + lightweight protocol
+## v0.25 release source: full v0.21 workflows + lightweight protocol
 
-This branch targets **0.25.0**. It restores the useful taskless v0.21 workflows
-missing from v0.24.1 and keeps the independent protocol intact. It is not yet
-a completed/public v0.25 release. The previously published
-[v0.24.1 packages](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.24.1)
-do not contain these new additions.
+This is the **0.25.0 release source**. It restores the useful taskless v0.21
+workflows missing from v0.24.1 and keeps the independent protocol intact.
+Use the [v0.25.0 release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
+to check publication status and obtain the matching tagged assets. The prior
+v0.24.1 packages do not contain these additions.
 
 The build produces two usage packages and a separate review kit:
 
-- **Protocol-only package:** the specification, JSON Schemas and synthetic
+- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.0/memory-vault-protocol-v0.25.0.zip):** the specification, JSON Schemas and synthetic
   interchange examples. No executable, plugin or database dependency.
-- **Full plugin package:** local retrieval/graph views, old host compatibility,
+- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.0/memory-vault-client-v0.25.0.zip):** local retrieval/graph views, old host compatibility,
   visible-turn capture, queued signed sync, complete recovery, old packs,
   selected sharing and controlled signed updates; the shared runtime and a
   local marketplace catalog. No runtime build or repository login is needed after
   download; installation, hook trust and capture remain explicit user choices.
-- **Independent review kit:** public source and synthetic cases, with no
+- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.0/memory-vault-review-v0.25.0.zip):** public source and synthetic cases, with no
   automatic execution or private data; for reviewers to test with permission.
 - **Optional single-file reference:** [`memory_vault.py`](memory_vault.py),
   requiring only Python 3.10+ and its standard library.
 
+The [minimal release report](docs/V0_25_RELEASE_MINIMAL.md) records six distinct
+methods with passing evidence across two source-pinned runs: five initial
+passes, then one recovery-only pass after a fixture setup correction; application
+code was unchanged between those runs. This is not a full-suite pass.
 The [validation index](docs/VALIDATION.md) records the limited offline synthetic
 evidence and its exact source commits. Match those pinned sources to the checkout
 or artifact under review; results from different versions are not cumulative
@@ -40,8 +44,9 @@ reference, not independent implementations or AI models. Full P01–P14 acceptan
 signing/encryption, cloud, real-host/cross-device, native Windows and performance
 validation remain open. Recorded checks installed no host plugin and accessed
 no private memory.
-The protected main branch is not bypassed to avoid its required tests; use the
-exact source/version when reviewing. See [status](docs/STATUS.md),
+Protected main separately requires eight baseline protocol tests on each of
+three platforms, not the full v0.25 suite; check the linked GitHub run for its
+actual result. Use the exact source/version when reviewing. See [status](docs/STATUS.md),
 [release scope](docs/RELEASE.md) and [independent review tasks](docs/REVIEW_HANDOFF.md).
 
 **AI implementers: [start here](AI_START_HERE.md).** Compare the

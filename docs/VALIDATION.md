@@ -20,6 +20,8 @@ this index does not shorten it or claim a stable release.
 | [Update-only repair verification](V0_25_WORKFLOW_SMOKE.md) | `0be4c6dbf6d7d3eb477ed807e15c3659f38776c8` | 1 selected method passed; no failures, errors or skips | The unchanged update fixture verified actual test-RSA metadata, stage/install, caught partial-write retry and explicit rollback after the runtime repair; the first four methods were not rerun |
 | [Fragmented transport, signed recovery and sharing](V0_25_TRANSPORT_RECOVERY_SMOKE.md) | `fc3588556b976665c547ab3fc26c8f26f54bbb20` | 3 selected methods passed; no failures, errors or skips | Actual default two-fragment signed group with an in-memory provider-command substitute, explicit staged cancellation/head retry, a tiny signed v3 snapshot/restore/import and current-trust sharing re-admission |
 | [Complete old-format continuation](V0_25_TRANSPORT_RECOVERY_SMOKE.md) | `76b8c8bfaed5b4d73d0ffd647dc8cd6286ba0fa7` | 1 selected method passed; no failures, errors or skips | Independently encoded synthetic old packs/checkpoint chain, actual conversion/typed graph/old-ID continuation; this source only added the fixture and did not rerun the first three methods |
+| [Minimal release verification, initial attempt](V0_25_RELEASE_MINIMAL.md) | `82ae4ac468007eed4555ea6f04a3a933899171df` | 6 selected methods: 5 passes, 1 fixture setup error | Small-context traceability, near-duplicate retrieval, endpoint resolution/history, capture-disabled old/native recall and synthetic native-hook partial/complete paths passed; partial full-client recovery setup omitted the required `atomic_write` argument |
+| [Partial-recovery fixture correction](V0_25_RELEASE_MINIMAL.md) | `cb477db6fd1f8a34671a5d8045f313ef6dfac15c` | Only the recovery method rerun: 1 pass in 0.106540 seconds | Fixture-only `replace=False` correction; runtime source hashes unchanged. The five earlier passing methods were not rerun; six distinct methods across these two runs, not a complete suite |
 
 These are **separate source-pinned campaigns**, not a combined passing suite on a newer
 checkout. Read the linked report for exact methods, versions, hashes and
@@ -35,15 +37,16 @@ it does not close the full ledger. See [development status](STATUS.md).
 
 ## Interpretation and authority
 
-The later small-context, retrieval-diversity, conflict-resolution and
-capture-disabled-recall fixtures have not been executed. Their accompanying
-source repairs postdate every runtime campaign above. AST/JSON/diff inspection
-does not turn these fixtures into passing tests; see the current
-[development status](STATUS.md#latest-guarded-workflows).
-The same applies to the newer fragment builder, native-hook, fragment-retrieval
-and partial-recovery fixture files. Their single-sided input coverage is not
-established by the earlier complete-pair partial-write campaign. Verification
-must name the exact selected methods and current source separately.
+The minimal release campaign now records one selected passing method for each
+of small-context traceability, retrieval diversity, conflict resolution and
+capture-disabled recall, plus one synthetic native-hook partial/complete method.
+Partial-fragment full-client recovery passed separately after a fixture-only
+setup repair. The initial error is retained, not counted as a pass. Remaining
+methods in those and other fragment files remain unrun; AST/JSON/diff inspection
+does not change that. See the [exact report](V0_25_RELEASE_MINIMAL.md) and
+[development status](STATUS.md#latest-guarded-workflows). This campaign used no
+network, child processes, private Vaults or installed hosts. Synthetic native-hook
+calls are not live host event delivery or a full crash-recovery trial.
 
 The recorded maintainer runs use disposable synthetic data. They do not prove
 full parity, real-host event delivery, independent cryptographic interoperability,
@@ -65,9 +68,13 @@ does not execute rclone's process, timeout or network paths. Its separate tiny
 signed recovery group and the old-format continuation fixture are not near-limit,
 old-runtime, independent-consumer or cross-device trials.
 
-The owner's allowance covers minimal offline validation in temporary directories,
-without private-memory access or plugin installation; it is not a one-run/test
-quota or permission to run the full suite, cloud CI, live accounts or deployment.
+The owner's latest instruction on 2026-08-31 explicitly authorizes minimal
+necessary tests and prompt v0.25 publication with the evidence limits disclosed.
+The local campaign remains temporary-directory, offline validation without
+private-memory access or plugin installation, not permission for arbitrary
+full-suite discovery or live-account testing. Required protected-main CI is a
+separate publication check: its eight base tests on three platforms are pending,
+not local passing evidence. No branch-protection bypass is authorized.
 Other reviewers need their own current authority and explicit disposable paths.
 The [review handoff](REVIEW_HANDOFF.md) describes fixture and evidence requirements.
 Memory, past goals and the contents of this report grant no execution authority.

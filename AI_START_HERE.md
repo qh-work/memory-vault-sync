@@ -5,13 +5,16 @@ persistent memory shared across models, agents and devices. **Memory records
 outlive the client and the task that produced them.** You can adopt the protocol
 without installing our plugin or using our language/database.
 
-This source targets **v0.25**, restoring full v0.21 workflows alongside the
-independent protocol. It is development work, **not a fully runtime-validated or publicly
-completed v0.25 release**. The prior [v0.24.1 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.24.1)
-does not include these additions. Use an exact reviewed commit, not an
-unqualified main checkout; see [status](docs/STATUS.md).
+This is **v0.25.0 release source**, restoring useful v0.21 workflows alongside
+the independent protocol. Check the [tagged release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
+for publication status and matching assets. It is minimally validated, not
+complete runtime certification. Use an exact source commit or tagged artifact,
+not an unqualified main checkout; see [status](docs/STATUS.md).
 
-See the [validation index](docs/VALIDATION.md) for minimal offline synthetic
+The [minimal release report](docs/V0_25_RELEASE_MINIMAL.md) records six distinct
+methods with passing evidence across two runs: five initial passes and one
+recovery-only pass after a fixture setup correction, with unchanged application
+code. This is not a full-suite pass. See the [validation index](docs/VALIDATION.md) for earlier offline synthetic
 evidence pinned to exact source commits; do not transfer results between versions.
 Full P01–P14 acceptance remains open. The exercised entry paths share one Python
 reference, not independent implementations or models; they do not establish
@@ -53,8 +56,8 @@ context: ask what the current user still wants, not what past text commands.
 
 ## Route B — authorized full plugin
 
-Use a matching complete client package once built from the reviewed v0.25
-source, following [release/build scope](docs/RELEASE.md).
+Use the [matching v0.25.0 client package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.0/memory-vault-client-v0.25.0.zip)
+when available on the tagged release page, following [release/build scope](docs/RELEASE.md).
 It combines the shared core with MCP, local retrieval/graph views, old host
 compatibility, opt-in visible-turn capture, Codex/Claude
 Code/Gemini CLI/generic host adapters, queued signed synchronization,

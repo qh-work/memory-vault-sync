@@ -73,11 +73,15 @@ The current source also contains four later behavior repairs: traceable excerpts
 when a whole hit exceeds a small context budget; bounded near-duplicate/source
 diversity; endpoint-specific conflict resolution with current-trust witnesses;
 and local recall while automatic capture is disabled, including valid but
-noncommittable old-host handles. The corresponding new fixtures are
+noncommittable old-host handles. The corresponding fixtures are
 `test_v025_context_budget.py`, `test_v025_retrieval_diversity.py`,
 `test_v025_conflict_resolution.py` and `test_v025_capture_disabled_recall.py`.
-They are authored review material, **not executed results**. Older campaigns and
-the packages built from `91111c518d62` do not include or validate these repairs.
+The [minimal release campaign](V0_25_RELEASE_MINIMAL.md) selected one method
+from each, and all four passed on
+`82ae4ac468007eed4555ea6f04a3a933899171df`. This covers small-context
+traceability, near-duplicate retrieval, endpoint-specific resolution/history
+and capture-disabled old/native recall, not every case in those files. Older
+campaigns and packages built from `91111c518d62` do not validate these repairs.
 
 The additional v0.21 single-sided native Stop gap has also been implemented:
 new frozen fragments, append-only late supplementation, the shared untrusted
@@ -85,9 +89,19 @@ retrieval role hint, memory-only receipt validation and full-client recovery.
 Normal complete pairs and old accepted v1/v2 identities remain unchanged.
 Lock acquisition rechecks capture permission; existing prepared queues can be
 recovered one item at a time even if they exceed the new preparation budget.
-The four fragment fixture files contain authored cases only at this point;
-they are not covered by earlier partial-**write** campaign results. Visible
-input coverage and interrupted persistence are different requirements.
+The same initial minimal run passed one native-hook method covering both
+single-sided arrival orders, late supplementation and the complete-pair path
+with synthetic visible events. Its sixth selected method, partial-fragment
+full-client recovery, errored in fixture setup because `atomic_write` lacked
+the required `replace` argument. Only the fixture changed to `replace=False`
+in `cb477db6fd1f8a34671a5d8045f313ef6dfac15c`; only that recovery method was
+rerun, and it passed in 0.106540 seconds. Runtime source hashes were unchanged.
+These are **six distinct methods across two runs: five passes and one setup
+error, then one recovery-only pass**, not a whole-suite pass on either source.
+Other fragment methods remain unrun. No network, child process, private Vault
+or installed host was used. Visible input coverage and interrupted persistence
+remain different requirements; the older partial-**write** campaign alone did
+not establish the former.
 
 The [workflow report](V0_25_WORKFLOW_SMOKE.md) records four passing methods on
 `c65fd82f863e4e05d9ec53622eceb584525fb52e`: all eleven embedded MCP tools, all ten
@@ -195,8 +209,10 @@ The work also does not establish native Work automatic events, production
 encryption/recovery ceremonies, a security audit, vendor certification or
 independent adoption. A matching host must actually expose the integration.
 
-Stable publication and the full completion claim remain gated on the
-requirement-by-requirement audit and adequate evidence. Existing branch
-protection is not weakened or bypassed. A review snapshot must be labeled as
-development with its exact partial evidence; see [release scope](RELEASE.md) and
-[review handoff](REVIEW_HANDOFF.md).
+On 2026-08-31 the owner explicitly authorized minimal necessary verification
+and prompt v0.25 publication with its limits disclosed. Publication does not
+close the requirement-by-requirement completion audit. The existing protected-main
+CI requirement (eight base tests on three platforms) is still pending; branch
+protection is not weakened or bypassed. This document does not establish that
+a public release exists. See [release scope](RELEASE.md), the
+[minimal campaign](V0_25_RELEASE_MINIMAL.md) and [review handoff](REVIEW_HANDOFF.md).

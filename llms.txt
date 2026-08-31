@@ -12,7 +12,7 @@ Start here:
 - schemas/ and examples/protocol/ — public synthetic interchange material
 - memory_vault.py — zero-install single-file reference implementation
 - SECURITY.md — memory/authority boundary and threat model
-- docs/STATUS.md — v0.25 development implementation and unverified release gates
+- docs/STATUS.md — v0.25 release-source scope and remaining verification limits
 - docs/RELEASE.md — release assets, exact tag and protected-main distinction
 - docs/CLIENTS.md — optional shared-core MCP and explicit opt-in Codex hooks
 - docs/LIFECYCLE.md — optional session/turn profile, not old v0.21 wire compatibility
@@ -34,6 +34,10 @@ Start here:
 - docs/V0_25_PARITY_PLAN.md — full v0.21-to-v0.25 acceptance ledger, still open
 - docs/REVIEW_HANDOFF.md — bounded independent review tasks using synthetic data
 - docs/VALIDATION.md — source-pinned execution evidence, static checks and remaining acceptance limits
+- docs/V0_25_RELEASE_MINIMAL.md — six selected methods with passing evidence across two runs, not a full-suite pass
+- https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0 — tagged publication status and assets
+- https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.0/memory-vault-protocol-v0.25.0.zip — protocol-only package when published
+- https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.0/memory-vault-client-v0.25.0.zip — complete client package when published
 
 Key facts:
 - Memory never belongs to a task, project, conversation, model, or agent.
@@ -47,9 +51,14 @@ Key facts:
   implementations share the protocol, not a required library or database.
 - Unsigned imports are quarantined; signatures identify keys, not truth or permission.
 - Capture and automatic sync are off by default; do not self-install or bypass host approval or logs.
-- v0.25 is development source, not a completed release; v0.24.1 lacks its additions.
-  Pin the exact source/artifact and consult docs/VALIDATION.md for limited offline
+- v0.25.0 is minimally validated release source; check the tagged release page
+  for publication status. v0.24.1 lacks its additions. Five selected methods
+  passed initially; one recovery method passed after a fixture-only setup fix.
+  Application code was unchanged between the two runs. See docs/V0_25_RELEASE_MINIMAL.md.
+  Pin the exact source/artifact and consult docs/VALIDATION.md for earlier offline
   synthetic evidence; results from different versions are not cumulative acceptance.
+  Protected-main CI separately requires eight baseline protocol tests on three
+  platforms, not the full v0.25 suite; verify its actual result on GitHub.
   The exercised entry paths use one Python reference, not independent models.
   Full P01–P14, signing/encryption, cloud, real-host/cross-device, native Windows
   and performance acceptance remain open. Recorded checks installed no plugin

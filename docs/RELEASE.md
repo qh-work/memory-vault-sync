@@ -38,27 +38,37 @@ services; the source exposes explicit fail-closed boundaries.
 
 ## Publication is not certification
 
-The owner authorized minimal offline synthetic acceptance in temporary
-directories, without networking, plugin installation or private-memory access.
+On 2026-08-31 the owner explicitly authorized minimal necessary verification
+and prompt v0.25 publication. The local acceptance campaign uses temporary
+directories without networking, plugin installation or private-memory access.
 The [validation index](VALIDATION.md) records exact source commits and execution
 scope; match each report to the artifact rather than combining results across
 versions. Source/AST/JSON, package structure and archive-byte inspection are
 separate evidence. Recorded checks use disposable synthetic Vaults and state,
 not pre-existing private memory, installed plugins, production keys, existing
 host settings or remote accounts. The exercised paths share one Python
-reference, not independent implementations or models. Permission for bounded
-local acceptance does not itself authorize full-suite discovery, cloud CI,
-networking, installation or publication.
+reference, not independent implementations or models. The publication request
+does not authorize arbitrary full-suite discovery, private-account testing or
+changes to installed clients.
+
+The [minimal release report](V0_25_RELEASE_MINIMAL.md) records six distinct
+methods across two runs: five passes and one fixture setup error on
+`82ae4ac468007eed4555ea6f04a3a933899171df`, then the recovery-only pass on
+`cb477db6fd1f8a34671a5d8045f313ef6dfac15c` after a fixture-only correction.
+Runtime source hashes were unchanged; the first five methods were not rerun.
+This is scoped evidence, not a current-source whole-suite pass.
 
 Full P01–P14 acceptance, broader crash/concurrency coverage, production signing/encryption,
 real-host, native-platform, throughput and cross-device validation remain
-pending. Do not publish an unqualified stable/completed claim
-without auditing all requirements. Review material may be shared as development
-work with its precise validation limits; it does not replace a completion audit.
+pending. Under the latest owner instruction, v0.25 may be published with these
+explicit limits and exact source/artifact evidence. Publication is not an
+unqualified full-parity, production-readiness or native-platform certification,
+and does not close the complete acceptance ledger.
 
 Protected main and existing tags must not be rewritten or bypassed to obtain
-a green indicator. Tests are not silently triggered merely to manufacture a
-result. The public release state must be checked independently at publication
+a green indicator. Existing protected-main CI requires eight base tests on three
+platforms; those checks are pending and remain a separate publication gate.
+The public release state must be checked independently at publication
 time; this file does not assert current GitHub status.
 
 ## Build without running the application

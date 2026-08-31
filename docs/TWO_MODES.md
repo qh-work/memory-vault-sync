@@ -54,7 +54,14 @@ key auto-enrollment or high-privilege instruction channel is restored. New
 lifecycle and old `compat` envelopes remain explicitly separate. [PARITY.md](PARITY.md)
 maps old capabilities to their current replacements and limits.
 
-This is unreleased development source, not runtime certification. The
+This is minimally validated **v0.25.0 release source**, not runtime certification.
+Check the [tagged release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
+for publication status and the matching
+[protocol](https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.0/memory-vault-protocol-v0.25.0.zip)
+or [client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.0/memory-vault-client-v0.25.0.zip)
+package. The [minimal report](V0_25_RELEASE_MINIMAL.md) records six distinct
+methods with passing evidence across two runs, including a fixture-only recovery
+setup correction; it is not a full-suite pass. The
 [validation index](VALIDATION.md) pins the limited offline synthetic evidence
 to exact source commits; match those to the artifact under review. The exercised
 paths share one Python reference, not independent implementations or AI models.
