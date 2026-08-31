@@ -100,12 +100,14 @@ These exclusions do not justify omitting useful v0.21 features. Old ordinary
 records were hash-addressed, **not individually author-signed**; update
 signatures and Git commit identities are different evidence.
 
-An actual gap remains in automatic capture: its episode/continuity pair lacks
-the preceding turn's canonical continuity edge. Review acceptance-time freezing,
-exact retry, restored control state and bounded incremental dependency transfer
-together. A session/source handle can correlate requests, never own memories.
-Do not mistake a single saved turn or unlinked imported history for this full
-v0.21 behavior. See [current status](STATUS.md) and P01/P02/P05/P06 in the ledger.
+The former automatic-capture gap is now implemented: new accepted projections
+freeze the preceding turn's canonical continuity edge. Review acceptance-time
+freezing, exact retry, restored control state and bounded incremental dependency
+transfer together; the selected [capture evidence](V0_25_CAPTURE_SMOKE.md) does
+not certify every combination. A session/source handle correlates requests,
+never owns memories. Do not mistake a single saved turn or unlinked imported
+history for full v0.21 behavior. See [current status](STATUS.md) and
+P01/P02/P05/P06 in the ledger.
 
 ### External contribution intake: PR #11
 
@@ -149,12 +151,15 @@ core/client regressions too. Asserting a size constant is not a scale trial.
 | File under `tests/` | Main slice |
 | --- | --- |
 | `test_v025_compat.py` | Closed old envelopes, opaque handles, receipts, semantic/large-turn projection; shared-Vault cross-client first-write/retry and receipt/evidence validation |
+| `test_v025_compat_workflow.py` | Integrated ten-operation old-host workflow, pending receipts, explicit flush recovery, exact retries and evidence-backed semantic writes |
 | `test_v025_retrieval_views.py` | Bilingual/BM25/fragments, direct-query candidate retention and long-record tail budgets, claim timelines, trust-aware edges, graph bounds, reindex/requeue |
 | `test_v025_index_state.py` | One index-completeness check per views request; no stale cross-request cache |
 | `test_v025_mcp_bounds.py` | Transport-specific graph/view bounds, schema agreement and complete bounded MCP responses |
+| `test_v025_mcp_workflow.py` | Integrated eleven-tool embedded MCP workflow, a fresh caller, claim history, bounded timeline and derived-index-only recovery |
 | `test_v025_configuration_independence.py` | Strict stateless discovery; deferred/default configuration pinning; independent recovery/pack/operator routing without a lost old config |
 | `test_v025_protocol_client_interop.py` | Contributor-derived public-vector/core/MCP checks plus actual core → client write → new-core exchange; explicit unsigned admission and unchanged record identities |
-| `test_v025_sync_review.py` | Privacy review, explicit dispositions, chained streams, groups and interruption |
+| `test_v025_sync_review.py` | Privacy review, explicit dispositions, chained streams, groups and interruption; integrated signed review/requeue, independent receive and durable progress accounting |
+| `test_v025_privacy_parity.py` | 42 fake old/new token and path vectors, original/NFC checks, unchanged local memory and exact path approval |
 | `test_v025_legacy_pack.py` | Old wire fixtures, checkpoints, exact evidence, ordered parts and aliases |
 | `test_v025_legacy_pack_edges.py` | Escaped secrets, same-kind alias misdirection, cycles/missing targets, cross-part replay |
 | `test_v025_client_recovery.py` | Quiesced snapshots, inert restore, activation, queues and current-trust signed recovery |
@@ -163,6 +168,7 @@ core/client regressions too. Asserting a size constant is not a scale trial.
 | `test_v025_install.py` | Isolated install, pinned inventory, activation journal, rollback, automation gates |
 | `test_v025_update_trust.py` | RSA-PSS, independent verifier comparison, thresholds/rotation/expiry/rollback |
 | `test_v025_update_edges.py` | Activation expiry, complete runtime inventory, external bytecode paths and physical-key quorum uniqueness |
+| `test_v025_update_lifecycle.py` | Integrated test-RSA stage/install, signer/digest rejection, caught partial-write retry, activation and explicit rollback |
 | `test_v025_sharing.py` | Selection closure, atomic import, original proofs, current trust, large-share bounds |
 | `test_v025_device_trust.py` | Externally authorized enrollment/revocation/epochs/recovery transitions |
 | `test_v025_operator_metadata.py` | Explicit new-state init/status, no overwrite/default Vault dependency, new/old envelope inspection and no automatic decryption |
@@ -283,6 +289,28 @@ snapshot/restore; shared-file fixtures are not a complete signed sync session;
 the old conversation fixture is not a 2 GiB or performance trial. Source/raw
 hashes and the exact case names are in the report. Earlier campaigns remain
 separate and the complete ledger stays open.
+
+### Guarded full-client workflows — initial error and repair kept separate
+
+The [workflow report](V0_25_WORKFLOW_SMOKE.md) records five selected methods at
+`c65fd82f863e4e05d9ec53622eceb584525fb52e`: four passed and the update method
+errored during real staging because intermediate directories were not private.
+The passing methods cover all eleven embedded MCP tools, all ten old operations,
+signed directory review/resolve/requeue and 42 fake privacy vectors.
+
+After repairing runtime directory creation, only the unchanged update method
+ran again on `0be4c6dbf6d7d3eb477ed807e15c3659f38776c8` and passed. This is not a
+five-method pass on the newer source. It verifies actual public-test-root
+RSA-PSS, staging, inert installation, caught partial-write retry and explicit
+rollback, with substituted download bytes and no package execution. Unknown
+hard-kill leftovers still fail visibly rather than being automatically removed.
+
+Actual local Ed25519 signatures and independent temporary trust files do not
+prove cross-device or independent-implementation interoperability. Injected
+compatibility read errors validate recovery routing, not physical journal
+corruption. The report retains exact methods, source inventories, failures,
+raw hashes and isolation; no full suite, real Vault, host/plugin installation,
+provider, production-key ceremony or publication was performed.
 
 ## 3. Review campaigns — scoped authorization required
 

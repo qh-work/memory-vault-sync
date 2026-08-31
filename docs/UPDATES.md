@@ -31,8 +31,11 @@ symlinks, duplicates, encryption and excessive expansion are refused. A
 `STAGED.json` receipt is written only after the complete package is staged.
 
 Use the actually published version; `0.25.0` above denotes this development
-target. Source implementation and synthetic cases are included, but runtime
-tests and a production publisher-key ceremony have not been performed here.
+target. One [source-pinned synthetic update workflow](V0_25_WORKFLOW_SMOKE.md)
+passed after repairing a directory-creation defect exposed by its initial run.
+It used a fixed public test root, substituted download bytes and inert packages,
+not the operator commands above. The complete update suite, a live download,
+host installation and a production publisher-key ceremony remain unverified.
 
 ## Independently pinned publisher trust
 

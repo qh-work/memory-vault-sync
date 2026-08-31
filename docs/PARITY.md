@@ -14,7 +14,7 @@ was publicly released.** The [validation index](VALIDATION.md) identifies the
 limited offline synthetic evidence and its exact source commits; results do not
 transfer between versions. Full P01–P14 acceptance remains open. The exercised
 paths share one Python reference, not independent implementations or models, and
-do not certify real hosts, signing/encryption, cloud, cross-device behavior,
+do not certify real hosts, production signing/encryption, cloud, cross-device behavior,
 native Windows or performance. Recorded checks installed no host plugin and
 accessed no private memory. This table is not production certification.
 
@@ -68,6 +68,15 @@ selected crash-safe output paths without tightening explicit POSIX directory
 contracts. These fixes apply to the shared reference/client implementation;
 they add no task ownership and do not convert narrow verification into complete
 release acceptance.
+
+The [full-client workflow report](V0_25_WORKFLOW_SMOKE.md) adds four passing
+methods on `c65fd82`: all eleven embedded MCP tools, all ten old host operations,
+real signed directory review/resolve/requeue and 42 synthetic privacy vectors.
+The fifth method first exposed a runtime directory-permission defect. After
+repair, the unchanged update-only method passed on `0be4c6d`, including real
+public-test-root verification, inert install, caught write-failure retry and
+explicit rollback. That rerun does not retest the first four workflows or
+establish production publisher trust, live hosts, cloud carriage or full parity.
 
 ## Architecture that must not return
 

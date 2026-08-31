@@ -50,7 +50,7 @@ reference, not independent implementations or models. Permission for bounded
 local acceptance does not itself authorize full-suite discovery, cloud CI,
 networking, installation or publication.
 
-Full P01–P14 acceptance, broader crash/concurrency coverage, signing/encryption,
+Full P01–P14 acceptance, broader crash/concurrency coverage, production signing/encryption,
 real-host, native-platform, throughput and cross-device validation remain
 pending. Do not publish an unqualified stable/completed claim
 without auditing all requirements. Review material may be shared as development

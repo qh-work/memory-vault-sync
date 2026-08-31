@@ -30,6 +30,9 @@ and [old/new capability mapping](PARITY.md), not a smaller renamed subset.
   backends. Optional v3 dependency reuse requires actual prior published members,
   current trust and the receiving Vault's atomic prefix receipt. Public `changes`
   and v2 remain self-contained. Prompt/save/recall paths do not perform remote delivery.
+  A local publication-review block no longer prevents bounded incoming delivery;
+  durable received batches remain counted if the next read fails. The original
+  outgoing review error and frozen evidence remain visible.
 - Memory snapshots and separately selected full-client recovery preserve
   evidence. Reactivation is explicit, uses a new configuration and does not
   restore keys, remote publication permission or host trust.
@@ -56,6 +59,27 @@ and [old/new capability mapping](PARITY.md), not a smaller renamed subset.
   lifecycle cancellation receipt and pending requests. Cleanup is bounded and
   does not count as a successful memory save. Disabling capture still blocks
   new commits; the operator can reconcile already confirmed cancellation.
+  Explicit old-host `sync.flush` can recover existing local SQLite journals
+  after rechecking current capture permission/configuration; ordinary reads do
+  not silently acquire this recovery permission.
+
+## Latest guarded workflows
+
+The [workflow report](V0_25_WORKFLOW_SMOKE.md) records four passing methods on
+`c65fd82f863e4e05d9ec53622eceb584525fb52e`: all eleven embedded MCP tools, all ten
+old host operations, signed directory review/resolve/requeue with independent
+receiving, and 42 synthetic privacy vectors. Old secret/path families are
+restored as publication detection, not task routing or execution permissions.
+
+The fifth method exposed a real update extraction defect: newly created
+intermediate directories were not all private. After repairing that runtime
+path, only the unchanged update method was rerun on
+`0be4c6dbf6d7d3eb477ed807e15c3659f38776c8` and passed. It exercised real test-RSA
+verification, staging, inert installation, caught partial-write retry and
+explicit rollback. Existing modes are preserved; unknown leftovers after a hard
+kill still cause a visible refusal. These are separate runs, not a five-method
+pass on the newer source. No full-suite, live-host/provider or production-key
+acceptance follows, and the full ledger remains open.
 
 ## Evidence actually available
 

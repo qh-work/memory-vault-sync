@@ -1,8 +1,9 @@
 """Synthetic operator-review, chained-sync and atomic-group contracts.
 
-These tests are provided for independent execution. Preparing v0.25 did not
-execute them, generate keys, open a real Vault or invoke a provider. Fixtures
-create their own temporary keys/stores only when someone runs this module.
+Initially authored without execution; selected methods now have source-pinned
+results in docs/VALIDATION.md. Other methods remain unrun unless recorded there.
+Fixtures create their own temporary keys/stores only when explicitly executed;
+they must not use a real Vault or unapproved provider.
 """
 from __future__ import annotations
 

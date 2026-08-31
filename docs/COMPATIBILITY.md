@@ -15,9 +15,16 @@ suite was not run. The earlier [12-case campaign](V0_25_SCOPED_SMOKE.md) targete
 establish an 18-case pass on one source version. Other reviewers must follow
 their own execution authorization when extending or running these fixtures.
 
+The later [full-client workflow report](V0_25_WORKFLOW_SMOKE.md) records one
+integrated case on `c65fd82f863e4e05d9ec53622eceb584525fb52e` exercising all ten
+old operations, durable pending receipts, exact retry/conflict, explicit flush
+recovery and evidence-backed semantic writes. It uses actual envelopes and
+temporary stores, but injected save/read failures rather than a real host or
+physical hot journal. It does not establish full protocol conformance.
+
 The automatic capture-chain behavior below describes source commit
-`098b22c44ca299d1f889b41df9355511dfa2caf4`. The historical campaigns above predate
-that change. Its focused review cases are in
+`098b22c44ca299d1f889b41df9355511dfa2caf4`. The initial and six-case campaigns
+predate that change. Its focused review cases are in
 [`tests/test_v025_capture_compat.py`](../tests/test_v025_capture_compat.py);
 their presence is not a test result, performance measurement or release claim.
 
