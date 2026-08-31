@@ -105,10 +105,12 @@ the fixtures independent of user installations. Both runs used a 90-second
 deadline plus five-second cleanup grace; neither limit was reached.
 
 All disposable fixture data, including generated test identities, was cleaned.
-Source archives and raw reports remain separately retained:
+The original report listed separate source archives and raw reports at these
+evidence locations. Machine-specific paths are omitted; recorded results and
+source revisions are unchanged:
 
-- Initial: `/private/tmp/memory-vault-v025-workflows.y2dLBM`
-- Repair: `/private/tmp/memory-vault-v025-update-verified.o1JM6X`
+- Initial: `<private-initial-workflow-evidence>`
+- Repair: `<private-repair-workflow-evidence>`
 
 | Raw evidence | Initial SHA-256 | Repair SHA-256 |
 | --- | --- | --- |

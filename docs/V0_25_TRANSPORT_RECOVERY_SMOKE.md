@@ -113,11 +113,12 @@ neither occurred. Default Vault/config sentinels stayed unused. A 90-second
 deadline plus five-second cleanup grace was not reached.
 
 Disposable fixture data was cleaned, including four fresh test identities
-across the first three methods. The last method generated no keys. Source
-archives and raw results are separately retained at:
+across the first three methods. The last method generated no keys. The original report listed separate source archives and raw results at these
+evidence locations. Machine-specific paths are omitted; recorded results and
+source revisions are unchanged:
 
-- Transport / recovery / sharing: `/private/tmp/memory-vault-v025-transport-recovery.9PVCsy`
-- Old formats: `/private/tmp/memory-vault-v025-legacy-workflow.2GUpKE`
+- Transport / recovery / sharing: `<private-transport-recovery-evidence>`
+- Old formats: `<private-old-format-evidence>`
 
 | Raw evidence | Transport / recovery / sharing SHA-256 | Old-format SHA-256 |
 | --- | --- | --- |
