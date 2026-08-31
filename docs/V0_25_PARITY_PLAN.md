@@ -1,6 +1,7 @@
 # v0.25: complete the full client without sacrificing the independent protocol
 
-Status: **in development; not a completed release or a runtime certification**.
+Status: **v0.25.0 published; v0.25.1 capacity-patch source; full-goal acceptance
+is not established by publication or limited runtime checks**.
 
 The requested outcome is the useful, actually exposed v0.21 feature set plus an
 independent lightweight protocol, not a small subset relabeled as a full client.
@@ -115,6 +116,21 @@ was used.
 | P12 | `memory_vault_sharing.py`, `memory_vault_crypto.py`, `memory_vault_device_trust.py`, `memory_vault_encrypted_replication.py`; explicit `device-trust init/status` and `envelope verify` operator entries | Earlier metadata/publication cases stay separate. The `fc35885` selective-share workflow uses two fresh Ed25519 keys for actual signed export/quarantine/independent trust/import/forward/replay/revocation and current-proof restoration without changing canonical bytes or old receipts. Key identity is not original authorship; full trust lifecycle, provider encryption and production/device-recovery ceremonies remain pending |
 | P13 | `memory_vault_storage.py` and configured client/transfer/recovery/pack/update consumers | Publication repairs include three controlled macOS child exits and in-process failures without tightening explicit POSIX parent modes. The separate update repair passes protected intermediate-directory creation and caught write retry. Native Windows/Linux, actual unsupported filesystems and the independent core exporter remain outside this verification; existing private aliases are not auto-repaired |
 | P14 | Allowlisted build scripts, current docs/schema discovery, separate protocol/client/review packages | Packaging can establish source inventory and bytes only; exact artifact manifest is the record of completed static checks. Public availability and runtime acceptance must be recorded separately |
+
+Post-publication P08 correction: the v0.25.0 file-pack profile's 512 MiB source
+limit was narrower than the old taskless 2 GiB data range. The v0.25.1 patch
+raises the explicit source-file limit to 2 GiB without enlarging per-chunk work
+or ordinary sync. One [516 MiB resumed copy/unpack case](V0_25_PACK_CAPACITY_SMOKE.md)
+passes at `2f67a70`; full 2 GiB transfer and the old copy helper's unbounded
+file-size behavior are not thereby established.
+
+P14 publication evidence for v0.25.0: [PR #12](https://github.com/qh-work/memory-vault-sync/pull/12)
+merged as `7f27953b27b9ecd453be19084808357c89731d20`. Its three-platform eight-case
+base workflow passed on the PR and merged main. All seven public release assets
+were downloaded and compared byte-for-byte with the source-checked build;
+350 archive members matched the Git tree and the two generated inventories
+were verified. The plugin structure validator passed. The v0.25.1 publication
+is separate and must not overwrite that immutable tag or its assets.
 
 The review kit includes executable cases separately from the documentation-only
 protocol. Execution is limited to the exact methods and source versions in the

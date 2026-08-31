@@ -1,14 +1,34 @@
-# v0.25 development status
+# v0.25.1 capacity-patch status
 
-Source version: **0.25.0** on `feat/v0.25-parity`.
-This is development source, not a completed/public v0.25 release or a runtime
-certification. Previously published v0.24.1 does not contain the additions below.
-Existing private installations, real Vaults, keys, remote accounts and protected
-main have not been changed by this development work.
+Source target: **0.25.1**, a bounded file-pack capacity patch. The previous
+[v0.25.0 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
+was published at `7f27953b27b9ecd453be19084808357c89731d20` and remains immutable.
+This document does not assert that v0.25.1 assets are already uploaded or that
+the new required CI has passed. No private installation, real Vault, key or
+remote account is changed by preparing these sources.
 
 The target is the full useful v0.21 taskless feature set plus an independent
 lightweight protocol. See [the complete requirement ledger](V0_25_PARITY_PLAN.md)
 and [old/new capability mapping](PARITY.md), not a smaller renamed subset.
+
+## Capacity correction and bounded evidence
+
+The optional file-pack source limit rises from the published v0.25.0 ceiling of
+512 MiB to 2 GiB. Chunks remain 4 MiB, with at most 512 descriptors; copy still
+defaults to 32 uncached chunks per call and accepts an explicit maximum of 512.
+This restores the old taskless export byte range, not arbitrarily large copies,
+new record-size limits or a complete parity certification.
+
+One explicitly opted-in 516 MiB synthetic create/one-chunk-copy/four 32-chunk
+resumes/repeat/unpack/hash case passed in 3.891763 seconds on
+`2f67a7099e9eba0effb3483ed3a9ba3bf2f90f80`. Source bytes remained unchanged.
+A 2 GiB/512-entry manifest was accepted and a sparse 2 GiB + 1 byte source was
+rejected by its size before output. These boundary checks are **not a full
+2 GiB transfer**. No keys, network, private Vault or child processes were used;
+the timing is not a throughput benchmark. See the
+[capacity report](V0_25_PACK_CAPACITY_SMOKE.md) and
+[patch notes](RELEASE_NOTES_V0_25_1.md). Earlier reports below keep their original
+source pins and are not reclassified as patch validation.
 
 ## Implemented source
 
@@ -185,7 +205,7 @@ unverified; the later workflow covers a small default-split signed group only.
 
 The scoped campaigns did not cover live capture, installed-host compatibility,
 device/power-loss recovery, complete process/concurrency recovery, cryptographic
-interoperability, Windows/Linux native behavior, 2 GiB operation, throughput,
+interoperability, Windows/Linux native behavior, full 2 GiB transfer, throughput,
 two-device delivery or a cross-language round trip. Earlier configuration/recovery
 routing used mocks; the later actual unsigned hooks recovery case does not
 establish every restore component or real-installation recovery. Metadata checks
@@ -211,8 +231,11 @@ independent adoption. A matching host must actually expose the integration.
 
 On 2026-08-31 the owner explicitly authorized minimal necessary verification
 and prompt v0.25 publication with its limits disclosed. Publication does not
-close the requirement-by-requirement completion audit. The existing protected-main
-CI requirement (eight base tests on three platforms) is still pending; branch
-protection is not weakened or bypassed. This document does not establish that
-a public release exists. See [release scope](RELEASE.md), the
+close the requirement-by-requirement completion audit. The v0.25.0 protected-main
+requirement (eight base tests on each of three platforms) passed in
+[PR CI 33374601764](https://github.com/qh-work/memory-vault-sync/actions/runs/33374601764)
+and [main CI 33374661273](https://github.com/qh-work/memory-vault-sync/actions/runs/33374661273).
+The new v0.25.1 required CI is pending; earlier passes do not validate the patch.
+Branch protection and the published v0.25.0 tag remain unchanged.
+See [release scope](RELEASE.md), the
 [minimal campaign](V0_25_RELEASE_MINIMAL.md) and [review handoff](REVIEW_HANDOFF.md).
