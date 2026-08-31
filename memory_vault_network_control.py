@@ -311,6 +311,9 @@ def create_authority_app(config_path: Path) -> Any:
 
     Config: schema_version memory-vault-network-authority-config/v1, network_id,
     identity_path, trust_store_path, roster_path (explicit protected files).
+    Optional node_directory_path enables POST /v1/node-status for independently
+    authorized node keys and adds node control to member status responses; it
+    does not enroll storage nodes as agent members.
     POST /v1/status accepts {network_id, nonce, request}; the signed request must
     prove an active member key in the local issuer roster. It cannot modify it.
     """
@@ -334,7 +337,10 @@ def create_authority_app(config_path: Path) -> Any:
             raw_config = _read_private(config_path, 16 * 1024)
             if raw_config is None:
                 raise NetworkCryptoError("network_authority_not_configured")
-            config = object_fields(document(raw_config, maximum=16 * 1024), {"schema_version", "network_id", "identity_path", "trust_store_path", "roster_path"})
+            config = document(raw_config, maximum=16 * 1024)
+            required = {"schema_version", "network_id", "identity_path", "trust_store_path", "roster_path"}
+            if not required <= set(config) or set(config) - required - {"node_directory_path"}:
+                raise NetworkCryptoError("network_authority_configuration_invalid")
             if config["schema_version"] != "memory-vault-network-authority-config/v1" or opaque(config["network_id"]) != query["network_id"]:
                 raise NetworkCryptoError("network_authority_configuration_invalid")
             paths = [Path(config[name]) for name in ("identity_path", "trust_store_path", "roster_path")]
@@ -351,21 +357,47 @@ def create_authority_app(config_path: Path) -> Any:
             # Fresh status attests the old signed roster is still current; it
             # does not infer currentness from an untrusted relay response.
             roster = verify_roster(roster_doc, trust, network_id=config["network_id"], allow_expired=True)
-            callers = PublicKeyTrust([entry["signing_key"] for entry in roster["members"] if entry["status"] == "active"])
-            caller = verify_request(query["request"], callers, network_id=config["network_id"], action="status")
+            node_route = request.url.path == "/v1/node-status"
+            directory_doc = directory = None
+            if node_route or "node_directory_path" in config:
+                from memory_vault_nodes import authorized_node, issue_node_status, verify_directory, verify_node_request
+                directory_path = config.get("node_directory_path")
+                if not isinstance(directory_path, str) or not Path(directory_path).is_absolute():
+                    raise NetworkCryptoError("network_node_authority_not_configured")
+                directory_raw = _read_private(Path(directory_path), MAX_CONTROL_BYTES)
+                if directory_raw is None:
+                    raise NetworkCryptoError("network_node_directory_missing")
+                directory_doc = document(directory_raw, maximum=MAX_CONTROL_BYTES)
+                directory = verify_directory(directory_doc, trust, network_id=config["network_id"], allow_expired=True)
+            if node_route:
+                # This separate domain proves possession of a node signing key.
+                # No agent membership or X25519 decryption key is required.
+                key_id = query["request"].get("proof", {}).get("key_id")
+                entry = authorized_node(directory, key_id, "refresh")
+                caller = verify_node_request(query["request"], PublicKeyTrust([entry["signing_key"]]),
+                                             network_id=config["network_id"], action="refresh")
+            else:
+                callers = PublicKeyTrust([entry["signing_key"] for entry in roster["members"] if entry["status"] == "active"])
+                caller = verify_request(query["request"], callers, network_id=config["network_id"], action="status")
             if object_fields(caller["body"], {"nonce"})["nonce"] != nonce:
                 raise NetworkCryptoError("network_status_binding_mismatch")
             now = int(time.time())
             signed = issue_status(issuer, network_id=config["network_id"], nonce=nonce,
                                   roster_sha256=document_sha256(roster_doc), roster_version=roster["version"],
                                   issued_at=now, expires_at=now + MAX_VALIDITY_SECONDS)
-            return JSONResponse({"status": signed, "roster": roster_doc}, headers={"Cache-Control": "no-store"})
+            response = {"status": signed, "roster": roster_doc}
+            if directory_doc is not None:
+                response.update({"nodes": directory_doc, "node_status": issue_node_status(issuer,
+                    network_id=config["network_id"], nonce=nonce, roster_sha256=document_sha256(roster_doc),
+                    roster_version=roster["version"], directory_sha256=document_sha256(directory_doc),
+                    directory_version=directory["version"], issued_at=now, expires_at=now + MAX_VALIDITY_SECONDS)})
+            return JSONResponse(response, headers={"Cache-Control": "no-store"})
         except (MemoryError, TrustError) as exc:
             return JSONResponse({"error": exc.code}, status_code=400, headers={"Cache-Control": "no-store"})
         except Exception:
             return JSONResponse({"error": "network_authority_unavailable"}, status_code=503, headers={"Cache-Control": "no-store"})
 
-    return Starlette(routes=[Route("/v1/status", status, methods=["POST"])])
+    return Starlette(routes=[Route(path, status, methods=["POST"]) for path in ("/v1/status", "/v1/node-status")])
 
 
 def main(argv: Sequence[str] | None = None) -> int:

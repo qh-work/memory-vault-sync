@@ -1,0 +1,10 @@
+{
+  "name": "memory-vault-network-crypto",
+  "version": "0.26.0-candidate.1",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./crypto.ts", "./crypto": "./crypto.ts", "./control": "./control.ts" },
+  "types": "./crypto.ts",
+  "engines": { "node": ">=22.19.0" },
+  "dependencies": { "jose": "6.2.10" }
+}

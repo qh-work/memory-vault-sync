@@ -290,7 +290,7 @@ class NetworkClient:
         verify_status(response["status"], self.issuers, network_id=self.network_id, nonce=nonce,
                       roster_sha256=document_sha256(roster_doc), roster_version=roster["version"])
         if anchor is not None:
-            minimum, previous_hash = anchor
+            minimum, previous_hash, _ = anchor
             if roster["version"] < minimum or (roster["version"] == minimum and document_sha256(roster_doc) != previous_hash):
                 raise MemoryError("network_recovery_roster_rollback")
             if previous_hash is not None and roster["version"] == minimum + 1 and roster["previous_sha256"] != previous_hash:
@@ -310,37 +310,138 @@ class NetworkClient:
             if (not own or own["signing_key"] != self.identity.public_descriptor()
                     or own["encryption_key"] != self.encryption.public_descriptor()):
                 raise MemoryError("network_identity_not_active")
+            self._verify_nodes(connection, response, nonce, roster, recovery_nodes=anchor[2] if anchor else None)
             connection.execute("INSERT OR REPLACE INTO state VALUES('roster',?)", (canonical_bytes(roster_doc).decode(),))
         return response
 
-    def _recovery_anchor(self) -> tuple[int, str | None] | None:
+    def _verify_nodes(self, connection: sqlite3.Connection, response: Mapping[str, Any],
+                      nonce: str, roster: Mapping[str, Any], *, recovery_nodes: Mapping[str, Any] | None = None) -> None:
+        previous = connection.execute("SELECT value FROM state WHERE key='node_directory'").fetchone()
+        if "nodes" not in response and "node_status" not in response:
+            if previous is not None or recovery_nodes is not None:
+                raise MemoryError("network_node_directory_downgrade")
+            return
+        if "nodes" not in response or "node_status" not in response:
+            raise MemoryError("network_node_status_incomplete")
+        from memory_vault_nodes import verify_directory, verify_node_status
+        if recovery_nodes is not None:
+            verify_directory(response["nodes"], self.issuers, network_id=self.network_id,
+                             previous_directory=recovery_nodes, allow_expired=True)
+        nodes = verify_directory(response["nodes"], self.issuers, network_id=self.network_id,
+                                 previous_directory=strict_json_loads(previous["value"]) if previous else None,
+                                 allow_expired=True)
+        status = verify_node_status(response["node_status"], self.issuers, network_id=self.network_id, nonce=nonce,
+            roster_sha256=document_sha256(response["roster"]), roster_version=roster["version"],
+            directory_sha256=document_sha256(response["nodes"]), directory_version=nodes["version"])
+        last = connection.execute("SELECT value FROM state WHERE key='node_status_issued_at'").fetchone()
+        if last is not None and status["issued_at"] < integer(strict_json_loads(last["value"])):
+            raise MemoryError("network_node_status_rollback")
+        connection.execute("INSERT OR REPLACE INTO state VALUES('node_directory',?)", (canonical_bytes(response["nodes"]).decode(),))
+        connection.execute("INSERT OR REPLACE INTO state VALUES('node_status_issued_at',?)", (str(status["issued_at"]),))
+
+    def _bind_node(self, relay: str, challenge: Mapping[str, Any], response: Mapping[str, Any]) -> None:
+        """Authenticate a node incarnation before accepting its numeric cursor."""
+        from memory_vault_network_control import _window
+        from memory_vault_nodes import authorized_node
+        nodes = response.get("nodes")
+        signed = challenge.get("node_challenge")
+        if nodes is None:
+            if signed is not None:
+                raise MemoryError("network_node_directory_required")
+            return
+        directory = nodes["payload"]  # Already verified by _status.
+        at_address = [item for item in directory["nodes"] if item["base_url"] == relay
+                      and item["status"] in {"active", "draining"}]
+        if signed is None:
+            with self.db() as connection:
+                previous = connection.execute("SELECT value FROM state WHERE key=?", ("node:" + relay,)).fetchone()
+            if at_address or previous is not None:
+                raise MemoryError("network_node_identity_required")
+            return
+        raw = object_fields(signed, {"payload", "proof"})
+        payload = object_fields(raw["payload"], {"schema_version", "network_id", "node", "nonce", "issued_at", "expires_at"})
+        binding = object_fields(payload["node"], {"signing_key", "base_url", "storage_epoch"})
+        if (payload["schema_version"] != "memory-vault-node-challenge/v1" or payload["network_id"] != self.network_id
+                or payload["nonce"] != challenge["nonce"] or binding["base_url"] != relay):
+            raise MemoryError("network_node_challenge_mismatch")
+        _window(payload)
+        node = authorized_node(directory, binding["signing_key"]["key_id"], "refresh",
+                               base_url=relay, storage_epoch=binding["storage_epoch"])
+        if binding["signing_key"] != node["signing_key"]:
+            raise MemoryError("network_node_identity_changed")
+        PublicKeyTrust([node["signing_key"]]).verify_message(payload, raw["proof"])
+        with self.db() as connection:
+            key = "node:" + relay
+            previous = connection.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
+            if previous is None or strict_json_loads(previous["value"]) != binding:
+                # Reset only delivery bookkeeping, never memories/inbox/outbox
+                # bodies. A new incarnation can legitimately reuse this URL.
+                connection.execute("DELETE FROM state WHERE key=?", ("cursor:" + relay,))
+                for prefix in ("ack:" + relay + ":", "join:" + relay + ":"):
+                    connection.execute("DELETE FROM state WHERE substr(key,1,?)=?", (len(prefix), prefix))
+                for row in connection.execute("SELECT request_id,receipts FROM outbox").fetchall():
+                    receipts = strict_json_loads(row["receipts"])
+                    if relay in receipts:
+                        receipts.pop(relay)
+                        connection.execute("UPDATE outbox SET receipts=? WHERE request_id=?",
+                                           (canonical_bytes(receipts).decode(), row["request_id"]))
+                connection.execute("INSERT OR REPLACE INTO state VALUES(?,?)", (key, canonical_bytes(binding).decode()))
+
+    def _verify_storage_response(self, connection: sqlite3.Connection, relay: str, response: Mapping[str, Any]) -> None:
+        row = connection.execute("SELECT value FROM state WHERE key=?", ("node:" + relay,)).fetchone()
+        if row is None:
+            if "node_receipt" in response:
+                raise MemoryError("network_node_identity_required")
+            return
+        binding = strict_json_loads(row["value"])
+        raw = object_fields(response.get("node_receipt"), {"payload", "proof"})
+        payload = object_fields(raw["payload"], {"schema_version", "network_id", "node", "receipt"})
+        receipt = {key: value for key, value in response.items() if key != "node_receipt"}
+        if (payload["schema_version"] != "memory-vault-node-storage-receipt/v1" or payload["network_id"] != self.network_id
+                or payload["node"] != binding or payload["receipt"] != receipt):
+            raise MemoryError("network_node_receipt_mismatch")
+        PublicKeyTrust([binding["signing_key"]]).verify_message(payload, raw["proof"])
+
+    def _recovery_anchor(self) -> tuple[int, str | None, Mapping[str, Any] | None] | None:
         # Restoring keys is not activation. The private marker supplies only a
         # previously verified lower bound; independent fresh status is still
         # required before any send, receive or invitation-consumption request.
         raw = _read_private(self.config_path.parent / "recovery-state.json", 2 * 1024 * 1024)
         if raw is None:
             return None
-        marker = object_fields(strict_json_loads(raw), {"schema_version", "network_id", "activation_disabled",
+        marker = strict_json_loads(raw)
+        required = {"schema_version", "network_id", "activation_disabled",
             "requires_fresh_issuer_status", "minimum_roster_version", "last_verified_roster", "last_roster_sha256",
-            "old_delivery_cursors_restored", "offline_outbox_restored", "vault_restored_by_this_command"})
-        if (marker["schema_version"] != "memory-vault-network-restored-state/v1" or marker["network_id"] != self.network_id
+            "old_delivery_cursors_restored", "offline_outbox_restored", "vault_restored_by_this_command"}
+        if (not isinstance(marker, dict) or not required <= set(marker)
+                or set(marker) - required - {"last_verified_node_directory"}):
+            raise MemoryError("network_recovery_marker_invalid")
+        restored_profiles = {"memory-vault-network-restored-state/v1": False,
+                             "memory-vault-network-restored-endpoint/v1": True}
+        restored_transport = restored_profiles.get(marker["schema_version"])
+        if (marker["schema_version"] not in restored_profiles or marker["network_id"] != self.network_id
                 or marker["activation_disabled"] is not True or marker["requires_fresh_issuer_status"] is not True
-                or any(marker[key] is not False for key in ("old_delivery_cursors_restored", "offline_outbox_restored", "vault_restored_by_this_command"))):
+                or any(marker[key] is not restored_transport for key in ("old_delivery_cursors_restored", "offline_outbox_restored", "vault_restored_by_this_command"))):
             raise MemoryError("network_recovery_marker_invalid")
         minimum = integer(marker["minimum_roster_version"])
+        previous_nodes = marker.get("last_verified_node_directory")
+        if previous_nodes is not None:
+            from memory_vault_nodes import verify_directory
+            verify_directory(previous_nodes, self.issuers, network_id=self.network_id, allow_expired=True)
         if marker["last_verified_roster"] is None:
             if minimum != 0 or marker["last_roster_sha256"] is not None:
                 raise MemoryError("network_recovery_marker_invalid")
-            return minimum, None
+            return minimum, None, previous_nodes
         previous = verify_roster(marker["last_verified_roster"], self.issuers, network_id=self.network_id, allow_expired=True)
         previous_hash = document_sha256(marker["last_verified_roster"])
         if previous["version"] != minimum or previous_hash != digest(marker["last_roster_sha256"]):
             raise MemoryError("network_recovery_marker_invalid")
-        return minimum, previous_hash
+        return minimum, previous_hash, previous_nodes
 
     def _refresh(self, relay: str, *, deadline: float | None = None) -> Mapping[str, Any]:
         challenge = self._transport_request(relay, "GET", "/v1/status", deadline=deadline)
         response = self._status(challenge["nonce"], deadline=deadline)
+        self._bind_node(relay, challenge, response)
         self._transport_request(relay, "POST", "/v1/status", response, deadline=deadline)
         return response["roster"]
 
@@ -533,14 +634,22 @@ class NetworkClient:
                 if (response.get("state") != "stored" or response.get("message_id") != message_id
                         or response.get("envelope_sha256") != document_sha256(envelope)):
                     raise MemoryError("network_invalid_storage_receipt")
-                receipts[relay] = response
                 with self.db() as connection:
+                    self._verify_storage_response(connection, relay, response)
+                    # Another refresh may have invalidated a replaced node's
+                    # historical receipt while this request was in flight.
+                    # Merge with the current row, not a stale pre-I/O snapshot.
+                    latest = connection.execute("SELECT receipts FROM outbox WHERE request_id=?", (request_id,)).fetchone()
+                    receipts = {node: receipt for node, receipt in strict_json_loads(latest["receipts"]).items() if node in self.relays}
+                    receipts[relay] = response
                     connection.execute("UPDATE outbox SET receipts=? WHERE request_id=?", (canonical_bytes(receipts).decode(), request_id))
             except (MemoryError, TrustError) as exc:
                 errors.append({"node": self.relays.index(relay), "code": exc.code, "retryable": getattr(exc, "retryable", False)})
                 if exc.code == "network_budget_exhausted":
                     break
         with self.db() as connection:
+            latest = connection.execute("SELECT receipts FROM outbox WHERE request_id=?", (request_id,)).fetchone()
+            receipts = {node: receipt for node, receipt in strict_json_loads(latest["receipts"]).items() if node in self.relays}
             validated = [row[0] for row in connection.execute("SELECT recipient FROM acknowledgements WHERE message_id=?", (message_id,))]
         return {"state": "stored" if len(receipts) == len(self.relays) else "queued_local", "message_id": message_id,
                 "stored_nodes": len(receipts), "configured_nodes": len(self.relays), "degraded": len(receipts) < len(self.relays),

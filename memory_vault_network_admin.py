@@ -135,20 +135,31 @@ def initialize(directory: Path, *, network_id: str, relay_url: str = "http://127
     roster = issue_roster(issuer, network_id=network_id, version=1, previous_sha256="0" * 64,
                           members=[created["member"]], issued_at=now, expires_at=now + 300)
     _new(selected / "roster.json", roster)
+    from memory_vault_nodes import issue_directory
+    node_identity = Identity.generate(selected / "relay-identity.json")
+    storage_epoch = secrets.token_hex(24)
+    nodes = issue_directory(issuer, network_id=network_id, version=1, previous_sha256="0" * 64,
+        nodes=[{"signing_key": node_identity.public_descriptor(), "base_url": relay_url,
+                "storage_epoch": storage_epoch, "scope": ["export", "import", "node.status"], "status": "active"}],
+        issued_at=now, expires_at=now + 300)
+    _new(selected / "nodes.json", nodes)
     _new(selected / "authority.json", {"schema_version": "memory-vault-network-authority-config/v1", "network_id": network_id,
-         "identity_path": str(selected / "authority-identity.json"), "trust_store_path": str(selected / "authority-trust.json"), "roster_path": str(selected / "roster.json")})
+         "identity_path": str(selected / "authority-identity.json"), "trust_store_path": str(selected / "authority-trust.json"),
+         "roster_path": str(selected / "roster.json"), "node_directory_path": str(selected / "nodes.json")})
     # No content or issuer private key paths enter this configuration. Deploy
-    # just this config and the public signed roster to a separate relay host;
+    # only this config, its node signing key and the public signed roster;
     # same-OS-user processes are not a key isolation boundary.
     _new(selected / "relay.json", {"schema_version": "memory-vault-relay-config/v1", "network_id": network_id,
          "issuer_public_key": issuer.public_descriptor(), "roster_path": str(selected / "roster.json"),
          "state_directory": str(selected / "relay-state"), "base_url": relay_url, "authority_url": authority_url,
+         "node_identity_path": str(selected / "relay-identity.json"), "storage_epoch": storage_epoch,
          "init_member_key_ids": [created["identity"].key_id], "require_join_key_ids": []})
     configure_network(client_config=selected / "client.json", encryption_key=selected / "encryption.json",
                       issuer_public=selected / "issuer-public.json", network_id=network_id, authority_url=authority_url,
                       relays=[relay_url], output=selected / "network.json")
     return {"state": "network_initialized", "network_id": network_id, "owner_key_id": created["identity"].key_id,
             "issuer_key_id": issuer.key_id, "issuer_key_shared_with_endpoint": False,
+            "node_key_id": node_identity.key_id, "node_is_agent_member": False,
             "network_config": str(selected / "network.json"), "authority_config": str(selected / "authority.json"),
             "relay_config": str(selected / "relay.json"), "public_issuer_file": str(selected / "issuer-public.json"),
             "capture_visible_turns": False, "vault_created": False, "network_accessed": False,
@@ -158,8 +169,10 @@ def initialize(directory: Path, *, network_id: str, relay_url: str = "http://127
 def invite_candidate(*, authority_config: Path, candidate: Path, output: Path,
                      handoff_envelope: Path | None = None, scope: Sequence[str] = ("receive", "send"),
                      lifetime_seconds: int = 86400) -> Mapping[str, Any]:
-    config = object_fields(_read(authority_config, private=True, maximum=16 * 1024),
-                           {"schema_version", "network_id", "identity_path", "trust_store_path", "roster_path"})
+    config = _read(authority_config, private=True, maximum=16 * 1024)
+    required = {"schema_version", "network_id", "identity_path", "trust_store_path", "roster_path"}
+    if not required <= set(config) or set(config) - required - {"node_directory_path"}:
+        raise NetworkCryptoError("network_authority_configuration_invalid")
     if config["schema_version"] != "memory-vault-network-authority-config/v1":
         raise NetworkCryptoError("network_authority_configuration_invalid")
     network_id = opaque(config["network_id"])
@@ -217,8 +230,8 @@ def invite_candidate(*, authority_config: Path, candidate: Path, output: Path,
 
 
 def _checkpoint(client: Any) -> dict[str, Any]:
-    """Read only three indexed control values, never queue/message bodies."""
-    result: dict[str, Any] = {"last_verified_roster": None, "delivery_cursors": {}}
+    """Read indexed control checkpoints and cursors, never message bodies."""
+    result: dict[str, Any] = {"last_verified_roster": None, "last_verified_node_directory": None, "delivery_cursors": {}}
     database = _path(client.directory / "network.sqlite3")
     if not os.path.lexists(database):
         return result
@@ -240,7 +253,7 @@ def _checkpoint(client: Any) -> dict[str, Any]:
             deadline = time.monotonic() + 2
             connection.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
             connection.execute("BEGIN")
-            for key in ["roster", *("cursor:" + relay for relay in client.relays)]:
+            for key in ["roster", "node_directory", *("cursor:" + relay for relay in client.relays)]:
                 # substr(BLOB) bounds allocation even if a local control value
                 # is corrupt. No SELECT from outbox/inbox/acknowledgements.
                 row = connection.execute("SELECT substr(CAST(value AS BLOB),1,1048577) FROM state WHERE key=?", (key,)).fetchone()
@@ -250,6 +263,10 @@ def _checkpoint(client: Any) -> dict[str, Any]:
                 if key == "roster":
                     verify_roster(value, client.issuers, network_id=client.network_id, allow_expired=True)
                     result["last_verified_roster"] = value
+                elif key == "node_directory":
+                    from memory_vault_nodes import verify_directory
+                    verify_directory(value, client.issuers, network_id=client.network_id, allow_expired=True)
+                    result["last_verified_node_directory"] = value
                 else:
                     result["delivery_cursors"][key[len("cursor:"):]] = value
         finally:
@@ -262,6 +279,107 @@ def _checkpoint(client: Any) -> dict[str, Any]:
     finally:
         os.close(fd)
     return result
+
+
+def initialize_node(directory: Path, *, network_id: str, issuer_public: Path, roster_path: Path,
+                    authority_url: str, node_url: str, maximum_messages: int = 4096,
+                    maximum_object_bytes: int = 256 * 1024 * 1024) -> Mapping[str, Any]:
+    """Prepare an unregistered storage node without an agent or issuer key."""
+    from memory_vault_network import origin
+    from memory_vault_nodes import _base_url
+    from memory_vault_relay import DEFAULT_LIMITS
+    network_id = opaque(network_id)
+    authority_url, node_url = _base_url(origin(authority_url)), _base_url(origin(node_url))
+    issuer = public_signing_key(_read(issuer_public, maximum=16384))
+    roster = _read(roster_path)
+    verify_roster(roster, PublicKeyTrust([issuer]), network_id=network_id, allow_expired=True)
+    for name, value in (("maximum_messages", maximum_messages), ("maximum_object_bytes", maximum_object_bytes)):
+        if type(value) is not int or not 1 <= value <= DEFAULT_LIMITS[name]:
+            raise NetworkCryptoError("relay_invalid_limits")
+    selected = _new_directory(directory)
+    identity = Identity.generate(selected / "node-identity.json")
+    descriptor = {"signing_key": identity.public_descriptor(), "base_url": node_url,
+                  "storage_epoch": "epoch_" + secrets.token_hex(24)}
+    payload = {"schema_version": "memory-vault-node-registration/v1", "network_id": network_id,
+               "issuer_key_id": issuer["key_id"], "node": descriptor}
+    _new(selected / "node-public.json", {"payload": payload, "proof": identity.sign_message(payload)})
+    _new(selected / "roster.json", roster)
+    _new(selected / "relay.json", {"schema_version": "memory-vault-relay-config/v1", "network_id": network_id,
+         "issuer_public_key": issuer, "roster_path": str(selected / "roster.json"),
+         "state_directory": str(selected / "relay-state"), "base_url": node_url, "authority_url": authority_url,
+         "node_identity_path": str(selected / "node-identity.json"), "storage_epoch": descriptor["storage_epoch"],
+         "init_member_key_ids": [], "limits": {"maximum_messages": maximum_messages, "maximum_object_bytes": maximum_object_bytes}})
+    return {"state": "node_prepared_unregistered", "node_key_id": identity.key_id,
+            "registration_file": str(selected / "node-public.json"), "relay_config": str(selected / "relay.json"),
+            "limits": {"maximum_messages": maximum_messages, "maximum_object_bytes": maximum_object_bytes},
+            "agent_identity_created": False, "plaintext_keys_created": False, "network_accessed": False,
+            "services_started": False, "issuer_authorization_required": True}
+
+
+def authorize_node(*, authority_config: Path, candidate: Path,
+                   scope: Sequence[str] = ("export", "import", "node.status")) -> Mapping[str, Any]:
+    """Explicit issuer enrollment of a storage key, never an agent member."""
+    from memory_vault_nodes import issue_directory, node, verify_directory
+    config = _read(authority_config, private=True, maximum=16 * 1024)
+    object_fields(config, {"schema_version", "network_id", "identity_path", "trust_store_path", "roster_path", "node_directory_path"})
+    if config["schema_version"] != "memory-vault-network-authority-config/v1":
+        raise NetworkCryptoError("network_authority_configuration_invalid")
+    network_id = opaque(config["network_id"])
+    issuer = Identity.load(_path(config["identity_path"]))
+    trusted = TrustStore(_path(config["trust_store_path"]))
+    trusted.require_trusted(issuer.key_id)
+    registration = object_fields(_read(candidate, maximum=16384), {"payload", "proof"})
+    payload = object_fields(registration["payload"], {"schema_version", "network_id", "issuer_key_id", "node"})
+    descriptor = object_fields(payload["node"], {"signing_key", "base_url", "storage_epoch"})
+    if (payload["schema_version"] != "memory-vault-node-registration/v1" or payload["network_id"] != network_id
+            or payload["issuer_key_id"] != issuer.key_id):
+        raise NetworkCryptoError("network_node_registration_binding_mismatch")
+    entry = node({**descriptor, "status": "active", "scope": sorted(scope)})
+    PublicKeyTrust([entry["signing_key"]]).verify_message(payload, registration["proof"])
+    directory_path = _path(config["node_directory_path"])
+    with _exclusive_store(directory_path):
+        previous_document = _read(directory_path, private=True)
+        previous = verify_directory(previous_document, trusted, network_id=network_id, allow_expired=True)
+        existing = next((item for item in previous["nodes"] if item["signing_key"]["key_id"] == entry["signing_key"]["key_id"]), None)
+        if existing is not None:
+            if existing != entry:
+                raise NetworkCryptoError("network_node_already_listed_with_different_authority")
+            return {"state": "node_already_authorized", "node_key_id": entry["signing_key"]["key_id"],
+                    "directory_version": previous["version"], "agent_membership_granted": False, "network_accessed": False}
+        now = int(time.time())
+        updated = issue_directory(issuer, network_id=network_id, version=previous["version"] + 1,
+            previous_sha256=document_sha256(previous_document), nodes=[*previous["nodes"], entry], issued_at=now, expires_at=now + 300)
+        verify_directory(updated, trusted, network_id=network_id, previous_directory=previous_document)
+        atomic_write(directory_path, canonical_bytes(updated) + b"\n", replace=True)
+    return {"state": "node_authorized", "node_key_id": entry["signing_key"]["key_id"],
+            "directory_version": updated["payload"]["version"], "agent_membership_granted": False,
+            "network_accessed": False, "services_started": False}
+
+
+def authorize_node_transfer(*, authority_config: Path, snapshot: Path,
+                            target_node_key_id: str, output: Path) -> Mapping[str, Any]:
+    """Approve one exact frozen node snapshot and its admission-state transfer."""
+    from memory_vault_node_transfer import issue_transfer_grant
+    from memory_vault_nodes import authorized_node, verify_directory
+    config = _read(authority_config, private=True, maximum=16 * 1024)
+    object_fields(config, {"schema_version", "network_id", "identity_path", "trust_store_path", "roster_path", "node_directory_path"})
+    if config["schema_version"] != "memory-vault-network-authority-config/v1":
+        raise NetworkCryptoError("network_authority_configuration_invalid")
+    issuer = Identity.load(_path(config["identity_path"]))
+    trusted = TrustStore(_path(config["trust_store_path"]))
+    trusted.require_trusted(issuer.key_id)
+    frozen = _read(snapshot, private=True, maximum=6 * 1024 * 1024)
+    roster = _read(_path(config["roster_path"]), private=True)
+    nodes = _read(_path(config["node_directory_path"]), private=True)
+    directory = verify_directory(nodes, trusted, network_id=config["network_id"], allow_expired=True)
+    target = authorized_node(directory, opaque(target_node_key_id), "import")
+    descriptor = {name: target[name] for name in ("signing_key", "base_url", "storage_epoch")}
+    grant = issue_transfer_grant(issuer, frozen, descriptor, roster, nodes)
+    _new(output, grant)
+    return {"state": "node_transfer_authorized", "grant_file": str(_path(output)),
+            "snapshot_sha256": document_sha256(frozen), "target_node_key_id": target_node_key_id,
+            "network_accessed": False, "services_started": False,
+            "authorization_scope": "exact_snapshot_including_prior_admission_state"}
 
 
 def backup_keys(*, network_config: Path, output: Path, secret_file: Path) -> Mapping[str, Any]:
@@ -338,12 +456,20 @@ def restore_keys(*, package: Path, secret_file: Path, directory: Path, vault: Pa
             raise NetworkCryptoError("network_recovery_existing_vault_required")
     finally:
         os.close(descriptor)
-    checkpoint = object_fields(payload["checkpoint"], {"last_verified_roster", "delivery_cursors"})
+    checkpoint = payload["checkpoint"]
+    required = {"last_verified_roster", "delivery_cursors"}
+    if (not isinstance(checkpoint, dict) or not required <= set(checkpoint)
+            or set(checkpoint) - required - {"last_verified_node_directory"}):
+        raise NetworkCryptoError("network_recovery_checkpoint_invalid")
     previous_roster = checkpoint["last_verified_roster"]
     minimum_version, previous_hash = 0, None
     if previous_roster is not None:
         checked = verify_roster(previous_roster, PublicKeyTrust([independent_issuer]), network_id=network_id, allow_expired=True)
         minimum_version, previous_hash = checked["version"], document_sha256(previous_roster)
+    previous_nodes = checkpoint.get("last_verified_node_directory")
+    if previous_nodes is not None:
+        from memory_vault_nodes import verify_directory
+        verify_directory(previous_nodes, PublicKeyTrust([independent_issuer]), network_id=network_id, allow_expired=True)
     encryption = EncryptionIdentity.from_private_document(payload["encryption_identity"])
     selected = _new_directory(selected)
     _new(selected / "identity.json", payload["signing_identity"])
@@ -359,6 +485,7 @@ def restore_keys(*, package: Path, secret_file: Path, directory: Path, vault: Pa
     _new(selected / "recovery-state.json", {"schema_version": RESTORED_STATE_SCHEMA, "network_id": network_id,
          "activation_disabled": True, "requires_fresh_issuer_status": True, "minimum_roster_version": minimum_version,
          "last_verified_roster": previous_roster, "last_roster_sha256": previous_hash,
+         "last_verified_node_directory": previous_nodes,
          "old_delivery_cursors_restored": False, "offline_outbox_restored": False, "vault_restored_by_this_command": False})
     configure_network(client_config=selected / "client.json", encryption_key=selected / "encryption.json",
                       issuer_public=selected / "issuer-public.json", network_id=network_id, authority_url=authority_url,
@@ -379,6 +506,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     init.add_argument("--network-id", required=True)
     init.add_argument("--relay-url", default="http://127.0.0.1:8765")
     init.add_argument("--authority-url", default="http://127.0.0.1:8767")
+    node_init = commands.add_parser("node-init", help="prepare a separate unregistered storage node within local quotas")
+    node_init.add_argument("--directory", type=Path, required=True)
+    node_init.add_argument("--network-id", required=True)
+    node_init.add_argument("--issuer-public", type=Path, required=True)
+    node_init.add_argument("--roster", type=Path, required=True)
+    node_init.add_argument("--authority-url", required=True)
+    node_init.add_argument("--node-url", default="http://127.0.0.1:8766")
+    node_init.add_argument("--maximum-messages", type=int, default=4096)
+    node_init.add_argument("--maximum-object-bytes", type=int, default=256 * 1024 * 1024)
+    node_authorize = commands.add_parser("node-authorize", help="explicitly add a signed node registration to the issuer directory")
+    node_authorize.add_argument("--authority-config", type=Path, required=True)
+    node_authorize.add_argument("--candidate", type=Path, required=True)
+    node_authorize.add_argument("--scope", choices=["export", "import", "node.status"], action="append")
+    transfer_authorize = commands.add_parser("node-transfer-authorize", help="explicitly approve one exact frozen snapshot and admission transfer")
+    transfer_authorize.add_argument("--authority-config", type=Path, required=True)
+    transfer_authorize.add_argument("--snapshot", type=Path, required=True)
+    transfer_authorize.add_argument("--target-node-key-id", required=True)
+    transfer_authorize.add_argument("--output", type=Path, required=True)
     invite = commands.add_parser("invite", help="explicitly authorize a candidate public descriptor; never generates their key")
     invite.add_argument("--authority-config", type=Path, required=True)
     invite.add_argument("--candidate", type=Path, required=True)
@@ -413,6 +558,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = create_identity(args.directory)
         elif args.action == "init":
             result = initialize(args.directory, network_id=args.network_id, relay_url=args.relay_url, authority_url=args.authority_url)
+        elif args.action == "node-init":
+            result = initialize_node(args.directory, network_id=args.network_id, issuer_public=args.issuer_public,
+                roster_path=args.roster, authority_url=args.authority_url, node_url=args.node_url,
+                maximum_messages=args.maximum_messages, maximum_object_bytes=args.maximum_object_bytes)
+        elif args.action == "node-authorize":
+            result = authorize_node(authority_config=args.authority_config, candidate=args.candidate,
+                                    scope=args.scope or ["export", "import", "node.status"])
+        elif args.action == "node-transfer-authorize":
+            result = authorize_node_transfer(authority_config=args.authority_config, snapshot=args.snapshot,
+                                            target_node_key_id=args.target_node_key_id, output=args.output)
         elif args.action == "invite":
             result = invite_candidate(authority_config=args.authority_config, candidate=args.candidate, output=args.output,
                                        handoff_envelope=args.handoff_envelope, scope=args.scope or ["receive", "send"], lifetime_seconds=args.lifetime_seconds)

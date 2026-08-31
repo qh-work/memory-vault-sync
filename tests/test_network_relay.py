@@ -6,7 +6,9 @@ Generated fixture keys are temporary. This is not a production security audit.
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
+import stat
 import tempfile
 import time
 import unittest
@@ -21,6 +23,44 @@ from memory_vault_trust import Identity
 
 
 class NetworkRelayTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "directory fsync fault injection is POSIX-specific")
+    def test_orphan_retry_requires_successful_durable_publication_before_storage_receipt(self):
+        from tests.test_network_worker import fixture
+        with fixture() as (sender, recipient, transport):
+            roster = sender._refresh(sender.relays[0])
+            relay = transport.clients[sender.relays[0]].app.state.relay
+            envelope = seal(b"Synthetic durable orphan recovery", signer=sender.identity,
+                network_id=sender.network_id, message_id="synthetic-orphan-fsync-message",
+                recipients=[{"signing_key_id": recipient.identity.key_id,
+                             "encryption_key": recipient.encryption.public_descriptor()}],
+                roster_version=roster["payload"]["version"], roster_sha256=document_sha256(roster))
+            request = {"envelope": envelope, "roster": roster}
+            object_path = relay.object_directory / (envelope_sha256(envelope) + ".json")
+            directory = relay.object_directory.stat()
+            original_fsync = os.fsync
+            directory_attempts = []
+
+            def interrupted_directory_flush(fd):
+                info = os.fstat(fd)
+                if stat.S_ISDIR(info.st_mode) and (info.st_dev, info.st_ino) == (directory.st_dev, directory.st_ino):
+                    directory_attempts.append(fd)
+                    raise OSError("synthetic directory persistence failure")
+                return original_fsync(fd)
+
+            with patch("os.fsync", side_effect=interrupted_directory_flush):
+                for _ in range(2):
+                    with self.assertRaises(OSError):
+                        relay.post_message(request)
+                    self.assertEqual(object_path.read_bytes(), canonical_bytes(envelope))
+                    with relay._transaction() as db:
+                        self.assertEqual(db.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 0)
+            self.assertEqual(len(directory_attempts), 2)
+            saved = relay.post_message(request)
+            self.assertEqual(saved["state"], "stored")
+            self.assertEqual(saved["sequence"], 1)
+            self.assertEqual(relay.post_message(request), saved)
+            self.assertEqual(object_path.read_bytes(), canonical_bytes(envelope))
+
     def test_encrypted_invite_delivery_receipt_retry_and_revocation(self) -> None:
         from starlette.testclient import TestClient
 

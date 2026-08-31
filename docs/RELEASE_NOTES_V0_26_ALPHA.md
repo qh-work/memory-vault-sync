@@ -38,6 +38,28 @@ This report is not an immutable release attestation.
   locks; the separate TypeScript crypto fixture has its npm integrity lock.
 - Align repository discovery and onboarding with the actual alpha source.
   The introductory agent guide remains below 4 KiB.
+- Full endpoint recovery now includes the existing canonical Vault, committed
+  offline outbox, frozen ciphertext, inbox and historical delivery receipts.
+  Two SQLite write reservations and configuration rechecks bound the snapshot;
+  current operator-selected memory trust takes precedence over archived trust.
+- Independent nodes have their own signing identity, signed directory and
+  fresh issuer control. Node replacement at the same URL invalidates transport
+  cursors and storage confirmations without deleting canonical memories.
+  `node-init` and `node-authorize` separate storage enrollment from agent
+  membership; `inspect`, `refresh` and persistent draining need no member key.
+- A callable independent TypeScript crypto module implements the fixed wire
+  profile. Its single-recipient path uses only supported jose APIs; its README
+  records the library-specific construction and the tested runtime scope.
+- The independent TypeScript control layer validates issuer state, member
+  keys/scopes, invitations, signed requests and join proofs. It does not yet
+  implement a persistent peer, transport loop or an independent Vault store.
+- Directed node transfer uses a frozen source snapshot and explicit issuer
+  grant. It preserves admission history, original ciphertext and signed
+  receipts, resumes bounded HTTP passes and verifies a target completion
+  receipt. It neither deletes source data nor automatically redirects clients.
+- Matching crash-orphan ciphertext is republished through the storage
+  durability barrier before a new message reference is committed. An injected
+  directory-flush failure cannot produce a successful save acknowledgement.
 
 ## Verified scope
 
@@ -71,8 +93,30 @@ The loopback check confirms termination of all child processes it created. It
 does not establish HTTPS, separate machines, power-loss behavior, physical
 failure domains, a production deployment or any model's understanding.
 
-The observed test runtime is Python 3.12 with cryptography 50.0.1, joserfc 1.7.5,
-Starlette 1.6.0, Uvicorn 0.52.4 and HTTPX 0.28.1. Independent crypto uses Node
+A later scoped source run completed **15 tests, zero failures/errors/skips**
+in 5.673 seconds on CPython 3.11.4: eight complete endpoint-recovery checks,
+four existing setup/recovery checks and three node-runtime checks. A separate
+three-test node setup run passed in 0.285 seconds. These cover recovery through
+the shared client CLI and standalone restore, selected-client mismatch refusal,
+real cross-process snapshot write locks, revoked/absent authority, immutable
+record bytes, private node registration and real loopback node replacement.
+They are source checks, not a new archive or installed-plugin attestation.
+
+The integrated node/recovery candidate completed **70 targeted tests, zero
+failures/errors/skips**, in 35.188 seconds on CPython 3.11.4 / Node 22.19.0.
+The selected campaign covered the changed network modules and three existing
+MCP/canonical-record compatibility checks; it did not run the entire old suite.
+Source fingerprints were unchanged during the run. The added checks include
+15 independent TypeScript crypto/control tests, eight real-loopback node
+transfer tests, the actual prepare/authorize/partial/complete migration CLI,
+and file/directory flush fault injection. All test-owned services terminated.
+Runtime duration is a local observation, not capacity or throughput evidence.
+Static TypeScript compilation, TLS deployment, physical power loss, real cloud
+authorization and real-model collaboration were not established by this run.
+
+The earlier base-alpha run used Python 3.12 with cryptography 50.0.1, joserfc 1.7.5,
+Starlette 1.6.0, Uvicorn 0.52.4 and HTTPX 0.28.1; the later integrated candidate
+used the separately recorded CPython 3.11.4 environment. Independent crypto uses Node
 22.19.0 and the existing jose 6.2.10 installation. A supplied interoperability
 module now fails explicitly if Node or that module is unavailable. The test
 fixture's Starlette/HTTPX deprecation warning is not a test failure; no automatic
@@ -84,15 +128,20 @@ dependency upgrade was performed.
   is preserved. Native Drive queue checks substitute HTTP; actual account
   authorization, upload, independent download and readback remain unverified.
 - **No independent full TypeScript peer or real-model acceptance.** The native
-  TS HTTP entry shares the Python core; a separate TS crypto fixture verifies
-  the wire primitives. Three actual models, two providers
+  TS HTTP entry shares the Python core; the separate independent crypto module
+  verifies wire primitives but is not a full persistent peer. Three actual models, two providers
   and a local/open-weight runtime still need all-direction handoff tests.
 - **No scale certification.** The alpha currently bounds its roster at 256,
   outbox at 1,024 and inbox at 4,096 entries. Those limits do not satisfy the
   planned 1,000 active agents / 72 hours or real multi-day collaboration gate.
-- **No automatic replica repair or complete endpoint backup.** Two nodes are
-  explicitly sent the same ciphertext by a client. Replaying old delivery state
-  does not recover never-uploaded outbox data. Keep original offline queues.
+- **No automatic replica repair certification.** Two nodes are explicitly sent
+  the same ciphertext by a client. Full endpoint recovery now includes
+  never-uploaded committed outbox data; the smaller identity-only backup does
+  not. Retain original queues until the selected recovery is verified. A drain
+  fence or node identity test alone does not demonstrate complete node exit.
+  The directed transfer requires an empty target and explicit snapshot-bound
+  issuer grant; automatic repair into a nonempty peer and client rerouting
+  still require separate implementation and verification.
 - **Bounded rejection, not unlimited resilience to malicious peers.** Local
   rejected-ciphertext bookkeeping is limited to 128 entries / 16 MiB. A full
   quarantine stops cursor advancement. Deeper share structure, record signature

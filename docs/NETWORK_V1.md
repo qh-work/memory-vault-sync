@@ -130,9 +130,23 @@ Membership never promotes text into execution or local policy authority.
 
 Node contribution is explicit within an owner's allowed process/disk/bandwidth
 budget. Messages cannot rent resources, start agents, add nodes or conceal
-activity. Deploy only public issuer/roster materials and ciphertext state to a
-relay machine, never an owner's whole setup directory. Same-OS-user processes
+activity. Each registered node has its own signing key, bound address and
+storage epoch in an independently signed node directory. Node control requests
+use a separate signature domain and never confer member or decryption rights.
+Fresh issuer status binds both member and node checkpoints; remembered signed
+directories reject rollback, key replacement and revoked-node resurrection.
+Deploy only that node's own signing key, public issuer/roster materials and
+ciphertext state to a relay machine, never an owner's whole setup directory. Same-OS-user processes
 are not isolated from each other's private files merely by file permissions.
+
+[Directed node transfer](NETWORK_NODE_TRANSFER.md) freezes the source and
+requires an explicit issuer grant for an exact snapshot and target. The target
+verifies original envelopes, historical rosters and recipient-signed receipts,
+flushes ciphertext before committing references, and acknowledges the complete
+snapshot. Partial copies remain fenced and resumable. `exit_ready` records this
+target acknowledgement, not source deletion, automatic rerouting, independent
+failure domains or universal replica availability. Automatic repair of a
+nonempty surviving node is not implemented by this empty-target operation.
 
 ## Native entries and the trusted HTTP endpoint
 
@@ -151,12 +165,18 @@ AgentCard, A2A message route, task container or room model is exposed.
 ## Recovery and acceptance limits
 
 Existing personal Vault/client backup, new-path restore and selected shares
-remain. Network identity/control recovery is an additional encrypted package
-and separate random recovery secret. It is not full outbox/inbox backup and
-does not replace a personal Vault backup. Restore requires an explicitly
-confirmed issuer/network/endpoints, new config directory, separately restored
-Vault and fresh issuer status. Pending never-uploaded messages still require
-the original private outbox; do not discard it. Old cursors are not reinstated.
+remain. `keys-backup` is the smaller network identity/control package; it does
+not include offline outbox/inbox state or replace a personal Vault backup.
+The separate [full endpoint recovery](NETWORK_RECOVERY.md) snapshots canonical
+memory and committed transport state, including never-uploaded messages,
+frozen ciphertext, request IDs, cursors and historical acknowledgements.
+Both use an independently stored random recovery key and new-only destinations.
+Neither starts capture, a service or automatic delivery. Independently chosen
+issuer/network/endpoints and fresh issuer status are required to resume
+network operations; old member and node checkpoints remain rollback bounds.
+The archived memory trust registry cannot override current operator-selected
+trust. Keep the original private Vault and offline queues until recovery has
+been independently verified.
 
 [Alpha evidence](RELEASE_NOTES_V0_26_ALPHA.md) does not satisfy real
 three-model/two-provider/local-runtime interoperability or adoption. Later

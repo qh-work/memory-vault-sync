@@ -59,11 +59,13 @@ existence was not treated as completed delivery or production acceptance.
 | 0.25.x cloud maintenance | Keep current directory/rclone behavior; verify optional native encrypted Drive separately; real authorization/upload/readback is a distinct open gate |
 | Release preparation | Review public allowlist, exact source, pinned dependencies/hashes and package contents; do not weaken the committed-source gate or include private material |
 
-The TypeScript companion is currently a cryptographic interoperability tool,
-not a complete second client. A complete independent TypeScript client,
-bounded scheduled pumping, topics/subscriptions, resource leases, automatic
-replica repair/exit and whole-endpoint transport-state recovery remain separate
-work; interfaces or examples alone must not mark them delivered.
+The TypeScript companion now includes an independent callable cryptographic
+module as well as the HTTP entry; it is not yet a complete second client.
+Whole-endpoint recovery includes committed transport state and has targeted
+synthetic recovery tests. A complete independent TypeScript peer, bounded
+scheduled pumping, topics/subscriptions, resource leases and automatic replica
+repair/exit remain separate work. Interfaces or examples alone must not mark
+them delivered; see the current source evidence and limits below.
 
 ## Sequence and limits
 

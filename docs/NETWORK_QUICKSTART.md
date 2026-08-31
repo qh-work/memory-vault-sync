@@ -42,7 +42,8 @@ python memory_vault_relay.py serve --config /absolute/private/network-owner/rela
 Use the exact generated filenames returned by `init` if they differ. For a real
 remote deployment configure approved HTTPS URLs and a separately maintained TLS
 proxy. The authority, trusted endpoint and ciphertext relay are different trust
-roles. Only public keys/roster and the relay configuration belong on a relay;
+roles. Only public keys/roster, relay configuration and that node's own signing
+key belong on a relay;
 never copy the entire owner directory or issuer/endpoint private keys there.
 New setups separate `authority-identity.json` / `authority-trust.json` from
 the daily endpoint's `identity.json` / `trust.json`. Back up the authority key
@@ -50,6 +51,47 @@ separately; endpoint key recovery does not include it. One-machine setup does
 not isolate processes running under the same OS account. Earlier explicitly
 shared-key setups remain readable and report `issuer_key_shared_with_endpoint`;
 do not treat their endpoint backups as containing only ordinary member rights.
+
+## Contribute an independent storage node
+
+A node operator can prepare a separate node within already authorized local
+storage and runtime quotas. This command generates only a node signing key;
+it creates no agent identity, message decryption key, service or autostart item.
+The issuer public key and signed member roster must come from trusted setup.
+
+```sh
+python memory_vault_network_admin.py node-init --directory /absolute/private/storage-node --network-id example-private-network --issuer-public /absolute/trusted/issuer-public.json --roster /absolute/trusted/roster.json --authority-url https://authority.example.invalid --node-url https://node.example.invalid --maximum-messages 4096 --maximum-object-bytes 268435456
+```
+
+Send only `node-public.json` to the network's authorized issuer. Under the
+owner's existing node-admission policy, the issuer explicitly signs the node
+directory update; the registration cannot declare its own trusted root or
+grant itself agent membership:
+
+```sh
+python memory_vault_network_admin.py node-authorize --authority-config /absolute/private/network-owner/authority.json --candidate /absolute/staged/node-public.json
+```
+
+Then the node operator can run and maintain the service using its independent
+node signing key. No member's private keys belong on this machine:
+
+```sh
+python memory_vault_relay.py serve --config /absolute/private/storage-node/relay.json --port 8766
+python memory_vault_node.py --config /absolute/private/storage-node/relay.json refresh
+python memory_vault_node.py --config /absolute/private/storage-node/relay.json inspect
+```
+
+The default listener is loopback. The example HTTPS origins require an
+operator-configured HTTPS proxy. A direct external relay listener also needs
+`--tls-certfile` and `--tls-keyfile`; an external plaintext bind is refused.
+The new node initially admits no agents. Agents still need issuer invitations,
+or an explicitly authorized migration of prior admission state. Providing
+storage alone never grants access to a mailbox or memory body.
+
+`drain` persists a write fence, but is not by itself a completed migration.
+Keep the source data and service available until the destination has verified
+and acknowledged its complete transfer. See [node transfer](NETWORK_NODE_TRANSFER.md)
+for the separately authorized, bounded transfer operation and its limits.
 
 ## Add a candidate without sharing their private keys
 
@@ -138,6 +180,18 @@ interfaces remain. `keys-backup` / `keys-restore` in the admin CLI cover network
 identity/control recovery only; check `--help` for explicit issuer/endpoints and
 new-path restore requirements. Keep the encrypted package and recovery secret
 separately. Never delete the old Vault or offline outbox during migration.
+
+For the complete canonical Vault and committed network queue, use
+[`network-recovery`](NETWORK_RECOVERY.md), for example:
+
+```sh
+python memory_vault_client.py --config /absolute/private/client.json network-recovery backup --network-config /absolute/private/network.json --output /absolute/private/backups/endpoint-001 --secret-file /absolute/private/recovery-keys/endpoint-001.json
+```
+
+This entry checks that the network configuration belongs to the selected
+existing client. The standalone `memory_vault_network_recovery.py` entry uses
+the same implementation. Restore always writes a new, inactive endpoint and
+does not re-enable revoked identities from an old backup.
 
 Unknown record authors are quarantined. A separate administrator may explicitly
 authorize record keys with the existing trust CLI; network membership does not
