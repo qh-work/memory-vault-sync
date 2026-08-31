@@ -159,10 +159,13 @@ core/client regressions too. Asserting a size constant is not a scale trial.
 | `test_v025_configuration_independence.py` | Strict stateless discovery; deferred/default configuration pinning; independent recovery/pack/operator routing without a lost old config |
 | `test_v025_protocol_client_interop.py` | Contributor-derived public-vector/core/MCP checks plus actual core → client write → new-core exchange; explicit unsigned admission and unchanged record identities |
 | `test_v025_sync_review.py` | Privacy review, explicit dispositions, chained streams, groups and interruption; integrated signed review/requeue, independent receive and durable progress accounting |
+| `test_v025_fragmented_remote_workflow.py` | Default signed two-fragment group, simulated provider commands, exact resume, pre-admission cancellation and durable remote progress after head rejection |
 | `test_v025_privacy_parity.py` | 42 fake old/new token and path vectors, original/NFC checks, unchanged local memory and exact path approval |
 | `test_v025_legacy_pack.py` | Old wire fixtures, checkpoints, exact evidence, ordered parts and aliases |
 | `test_v025_legacy_pack_edges.py` | Escaped secrets, same-kind alias misdirection, cycles/missing targets, cross-part replay |
+| `test_v025_legacy_workflow.py` | Independently encoded old pack/checkpoint chain, complete typed graph conversion, old-ID mapping and post-migration semantic continuation |
 | `test_v025_client_recovery.py` | Quiesced snapshots, inert restore, activation, queues and current-trust signed recovery |
+| `test_v025_signed_recovery_workflow.py` | Actual staged tiny v3 group, operator snapshot/new-store restore/import, original evidence, exact retry and current revocation |
 | `test_v025_host_recovery.py` | Exact durable cancellation proof, bounded stale-job cleanup, disabled-capture safety and later-final progress |
 | `test_v025_publication_recovery.py` | One bounded synthetic child exiting after publication, no-clobber fixture threads, exact retries, aliases and unsupported-native failure |
 | `test_v025_install.py` | Isolated install, pinned inventory, activation journal, rollback, automation gates |
@@ -170,6 +173,7 @@ core/client regressions too. Asserting a size constant is not a scale trial.
 | `test_v025_update_edges.py` | Activation expiry, complete runtime inventory, external bytecode paths and physical-key quorum uniqueness |
 | `test_v025_update_lifecycle.py` | Integrated test-RSA stage/install, signer/digest rejection, caught partial-write retry, activation and explicit rollback |
 | `test_v025_sharing.py` | Selection closure, atomic import, original proofs, current trust, large-share bounds |
+| `test_v025_sharing_workflow.py` | Signed selected closure, default quarantine, independent trust, one-proof replacement/restoration, stable retries and revoked-key rejection |
 | `test_v025_device_trust.py` | Externally authorized enrollment/revocation/epochs/recovery transitions |
 | `test_v025_operator_metadata.py` | Explicit new-state init/status, no overwrite/default Vault dependency, new/old envelope inspection and no automatic decryption |
 | `test_v025_encryption.py` | Provider framing, authenticated-data bindings, ciphertext catalogs |
@@ -311,6 +315,22 @@ compatibility read errors validate recovery routing, not physical journal
 corruption. The report retains exact methods, source inventories, failures,
 raw hashes and isolation; no full suite, real Vault, host/plugin installation,
 provider, production-key ceremony or publication was performed.
+
+### Fragmented transport, signed recovery, sharing and old-format continuation
+
+The [transport/recovery report](V0_25_TRANSPORT_RECOVERY_SMOKE.md) records three
+passing methods on `fc3588556b976665c547ab3fc26c8f26f54bbb20` and one separate
+old-format method on `76b8c8bfaed5b4d73d0ffd647dc8cd6286ba0fa7`; no failures,
+errors or skips. The latter source only adds its fixture; the first three were
+not rerun. The report lists exact methods, hashes, real paths and substitutions.
+
+The signed transport uses the actual default two-fragment splitter and real
+adapter constructor/path/read-back logic, but replaces its provider command
+runner. The signed recovery group is tiny and deliberately assembled, while
+the selective share uses real alternate attester proofs. Old wire is separately
+encoded from the inspected contract, not produced by running v0.21. None of this
+establishes real providers/hosts/devices, native Windows/Linux, near-limit scale,
+process/power crashes, independent consumers or the full ledger.
 
 ## 3. Review campaigns — scoped authorization required
 

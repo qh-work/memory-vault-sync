@@ -78,6 +78,14 @@ public-test-root verification, inert install, caught write-failure retry and
 explicit rollback. That rerun does not retest the first four workflows or
 establish production publisher trust, live hosts, cloud carriage or full parity.
 
+The [transport/recovery/continuation report](V0_25_TRANSPORT_RECOVERY_SMOKE.md)
+adds three passing workflows at `fc35885` and one separate old-format workflow
+at `76b8c8b`. It covers default two-fragment signed sync over simulated provider
+commands, tiny signed recovery into a new store, current-trust selective sharing
+and old checkpoint/graph/ID continuation. Only the last fixture was added in the
+second source; these are not a combined current-source suite or a real cloud,
+cross-device, independent-consumer or full-parity result.
+
 ## Architecture that must not return
 
 Task, Project, conversation, model, device and runtime IDs are optional

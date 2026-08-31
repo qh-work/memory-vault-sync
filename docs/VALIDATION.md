@@ -18,6 +18,8 @@ this index does not shorten it or claim a stable release.
 | [Entity, old-format and publication repairs](V0_25_PARITY_REPAIR_SMOKE.md) | `9d98ce0d56394adc275915a0ea1fd39b6ca06254` | 12 selected cases; no failures, errors or skips | Entity-only recall, handoff quarantine filtering, a 20,001-message old export, three actual temporary publication exits, in-process output/rollback failures and existing POSIX directory-mode compatibility; no keys/providers |
 | [Guarded full-client workflows, initial attempt](V0_25_WORKFLOW_SMOKE.md) | `c65fd82f863e4e05d9ec53622eceb584525fb52e` | 5 selected methods: 4 passes, 1 error; no failures or skips | All eleven embedded MCP tools, all ten old operations, signed directory review/requeue and 42 fake privacy vectors passed; update staging exposed a real private-directory creation defect |
 | [Update-only repair verification](V0_25_WORKFLOW_SMOKE.md) | `0be4c6dbf6d7d3eb477ed807e15c3659f38776c8` | 1 selected method passed; no failures, errors or skips | The unchanged update fixture verified actual test-RSA metadata, stage/install, caught partial-write retry and explicit rollback after the runtime repair; the first four methods were not rerun |
+| [Fragmented transport, signed recovery and sharing](V0_25_TRANSPORT_RECOVERY_SMOKE.md) | `fc3588556b976665c547ab3fc26c8f26f54bbb20` | 3 selected methods passed; no failures, errors or skips | Actual default two-fragment signed group with an in-memory provider-command substitute, explicit staged cancellation/head retry, a tiny signed v3 snapshot/restore/import and current-trust sharing re-admission |
+| [Complete old-format continuation](V0_25_TRANSPORT_RECOVERY_SMOKE.md) | `76b8c8bfaed5b4d73d0ffd647dc8cd6286ba0fa7` | 1 selected method passed; no failures, errors or skips | Independently encoded synthetic old packs/checkpoint chain, actual conversion/typed graph/old-ID continuation; this source only added the fixture and did not rerun the first three methods |
 
 These are **separate source-pinned campaigns**, not a combined passing suite on a newer
 checkout. Read the linked report for exact methods, versions, hashes and
@@ -47,6 +49,11 @@ interfaces, not native host delivery. Its update rerun uses a fixed public test
 root and substituted download bytes; it does not establish a production signing
 channel. Recovery-route exceptions and the caught update write failure are not
 physical journal corruption, hard-kill or power-loss trials.
+The newer transport/recovery/sharing campaign uses actual local signatures and
+the default fragment splitter, but substitutes the remote command runner; it
+does not execute rclone's process, timeout or network paths. Its separate tiny
+signed recovery group and the old-format continuation fixture are not near-limit,
+old-runtime, independent-consumer or cross-device trials.
 
 The owner's allowance covers minimal offline validation in temporary directories,
 without private-memory access or plugin installation; it is not a one-run/test

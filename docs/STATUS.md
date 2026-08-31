@@ -46,7 +46,7 @@ and [old/new capability mapping](PARITY.md), not a smaller renamed subset.
   APIs whose unconfigured defaults refuse work.
 - Publisher verification, isolated managed installation, journaled activation,
   retained rollback and separately opted-in finite automatic updates are
-  present. A production publisher root/channel is not provisioned.
+present. A production publisher root/channel is not provisioned.
 - Native Windows local-fixed-NTFS protection is implemented alongside POSIX
   protection. It does not isolate a hostile process running as the same user.
 - Client control, transfer, sharing, pack, migration and backup publication use
@@ -80,6 +80,24 @@ explicit rollback. Existing modes are preserved; unknown leftovers after a hard
 kill still cause a visible refusal. These are separate runs, not a five-method
 pass on the newer source. No full-suite, live-host/provider or production-key
 acceptance follows, and the full ledger remains open.
+
+## Fragmented transport, signed recovery and old-format continuation
+
+The [next workflow report](V0_25_TRANSPORT_RECOVERY_SMOKE.md) records three
+passing methods on `fc3588556b976665c547ab3fc26c8f26f54bbb20`: the real default
+two-fragment splitter and signed sync using a simulated provider command runner,
+a tiny signed v3 staged-group snapshot/restore/import, and selective sharing
+with current-trust re-admission and revocation. Remote progress survives a
+post-admission head-file failure, and cancellation is checked before admission.
+Verified share retry can restore currently acceptable proof without rewriting
+canonical memory or old receipts; default/unsigned retries cannot do so.
+
+One old-format method separately passed on
+`76b8c8bfaed5b4d73d0ffd647dc8cd6286ba0fa7`, which only added that fixture. It
+checks two distinct packs/checkpoints, original-byte preservation, typed claim
+relations, old-ID mapping and continued semantic writes. The first three methods
+were not rerun. Actual rclone processes, live accounts/devices, near-limit scale,
+native Windows/Linux and full recovery/compatibility acceptance remain pending.
 
 ## Evidence actually available
 
@@ -121,8 +139,9 @@ stream, with current trust/epoch validation and receiving-store receipt checks.
 The small signed fixture confirms four pages of a 32-record chain and rejects
 copied heads or newly untrusted ancestors. This is not a throughput benchmark:
 cache loss and trust changes can still require bounded full revalidation and
-return `dependency_revalidation_required`. First-use large closures, fragment
-groups, real remote providers and independent receivers remain unverified.
+return `dependency_revalidation_required`. First-use near-limit closures, large
+fragment groups, real remote providers and independent receivers remain
+unverified; the later workflow covers a small default-split signed group only.
 
 ## Still unverified / release gate
 
