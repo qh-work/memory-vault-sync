@@ -1873,6 +1873,7 @@ def build_parser() -> argparse.ArgumentParser:
         "install": "explicit managed runtime installation, activation and rollback; never configure a host",
         "share": "review, export, verify or explicitly import a content-selected evidence subgraph",
         "legacy-pack": "verify or convert original v0.21 memory packs and checkpoints offline",
+        "copy-pack": "resume an original file byte copy with a private journal; never repackage or import",
         "pack": "explicit compressed chunk packing, resumable copy and unpack",
         "device-trust": "explicit independent device trust initialization and status",
         "envelope": "inspect an encrypted envelope without client configuration or decryption",
@@ -1884,7 +1885,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args, remaining = parser.parse_known_args(argv)
-    forwarded = {"sync", "manage", "host", "compat", "update", "install", "pack", "share", "legacy-pack", "device-trust", "envelope"}
+    forwarded = {"sync", "manage", "host", "compat", "update", "install", "pack", "copy-pack", "share", "legacy-pack", "device-trust", "envelope"}
     if remaining and args.command not in forwarded:
         parser.error("unrecognized arguments: " + " ".join(remaining))
     try:
@@ -1916,6 +1917,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "pack":
             from memory_vault_pack import main as pack_main
             return pack_main(remaining)
+        if args.command == "copy-pack":
+            from memory_vault_file_copy import main as file_copy_main
+            return file_copy_main(remaining)
         if args.command == "device-trust":
             from memory_vault_device_trust import main as device_trust_main
             return device_trust_main(remaining)

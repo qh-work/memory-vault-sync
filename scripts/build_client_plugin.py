@@ -15,7 +15,7 @@ REQUIRED_MODULES = (
     "memory_vault.py", "memory_vault_client.py", "memory_vault_lifecycle.py", "memory_vault_trust.py",
     "memory_vault_transfer.py", "memory_vault_sync.py", "memory_vault_remote.py",
     "memory_vault_hosts.py", "memory_vault_manage.py", "memory_vault_backup.py",
-    "memory_vault_update.py", "memory_vault_pack.py", "memory_vault_privacy.py",
+    "memory_vault_update.py", "memory_vault_pack.py", "memory_vault_file_copy.py", "memory_vault_privacy.py",
     "memory_vault_update_trust.py", "memory_vault_install.py", "memory_vault_managed_launcher.py",
     "memory_vault_compat.py",
     "memory_vault_recovery.py", "memory_vault_legacy_pack.py", "memory_vault_metadata.py", "memory_vault_storage.py",
