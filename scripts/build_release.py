@@ -61,6 +61,8 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_network_typescript_vault.py", "tests/test_network_typescript_peer.py",
     "tests/test_network_typescript_peer_race.py", "tests/test_network_typescript_transport.py",
     "tests/test_network_typescript_setup.py",
+    "tests/test_network_typescript_retrieval_text.py", "tests/test_network_typescript_retrieval.py",
+    "tests/test_network_typescript_agent.py", "tests/test_network_typescript_agent_network.py",
     "tests/test_network_worker.py",
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024

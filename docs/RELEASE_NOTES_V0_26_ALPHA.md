@@ -55,7 +55,14 @@ This report is not an immutable release attestation.
   local setup, the existing canonical SQLite Vault, bounded HTTP transport and
   persistent queues. Python and TypeScript can resume each other's queue and
   read the same records without conversion or a Python subprocess in Node.
-  Full ranking, graph and dynamic handoff parity remain unimplemented.
+  The native six-operation facade adds the same bounded retrieval and structural
+  handoff selection. Complete graph/view management and old cloud-worker parity
+  remain unimplemented.
+- Recall and receive label historical evidence, preserve bounded original
+  provenance claims and distinguish record time from a current environment
+  check. Prior failures require revalidation when relevant conditions change;
+  these outputs do not execute retries. Recall accounts for escaped text and
+  metadata within its 8 KiB page without discarding remaining content.
 - Directed node transfer uses a frozen source snapshot and explicit issuer
   grant. It preserves admission history, original ciphertext and signed
   receipts, resumes bounded HTTP passes and verifies a target completion
@@ -152,13 +159,30 @@ dependency upgrade was performed.
 
 ## Open delivery and release gates
 
+The later native-agent campaign selected **89 tests: 88 passed and one known
+ranking test remained an expected failure**, with no unexpected failures,
+errors or skips (66.611 seconds, CPython 3.11.4 and Node 22.19.0). It includes
+source attribution/freshness metadata, escaped-text pagination, private-key-free
+reads, the shared canonical Vault and receipts, real two-node native six-operation
+exchange, offline retry, and the unchanged legacy interface checks. The tested
+runtime source hashes stayed fixed. A fresh strict check of all twelve network
+TS modules plus the parent HTTP SDK passed with zero diagnostics under
+TypeScript 5.9.3 / Node types 22.18.6. These are source checks, not proof of a
+new plugin installation or real-model behavior. The expected failure below is
+not counted as a pass.
+
+- **No exact cross-runtime ranking guarantee.** A timestamp precision defect
+  is fixed, but a separate real fixture still changes first-hit selection at a
+  platform floating-point `exp` boundary. Its strict expected-failure regression
+  is an open gate, never a passing case. No epsilon or widened score tolerance
+  masks the difference. A shared deterministic math profile is separate work.
 - **No 0.25.2 live-cloud acceptance.** Existing directory/rclone configuration
   is preserved. Native Drive queue checks substitute HTTP; actual account
   authorization, upload, independent download and readback remain unverified.
-- **No full TypeScript high-level parity or real-model acceptance.** The native
-  TS HTTP entry shares the Python core; the separate independent endpoint has
-  persistent storage and delivery, but its bounded local text matching is not
-  Python ranking, graph or dynamic handoff parity. Three actual models, two
+- **No complete old-client parity or real-model acceptance.** The TS HTTP entry
+  shares the Python core; the separate independent endpoint now has a native
+  six-operation facade and bounded fragment recall/handoff. Old cloud-worker
+  notifications and complete graph/view management are not ported. Three actual models, two
   providers and a local/open-weight runtime still need all-direction handoff tests.
 - **No scale certification.** The alpha currently bounds its roster at 256,
   outbox at 1,024 and inbox at 4,096 entries. Those limits do not satisfy the
