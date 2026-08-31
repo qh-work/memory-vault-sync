@@ -9,6 +9,9 @@ import type { GeneralJWE, JWK } from 'jose';
 
 export const MAX_PLAINTEXT_BYTES = 4 * 1024 * 1024;
 export const MAX_ENVELOPE_BYTES = 6 * 1024 * 1024;
+// A poll page may contain several envelopes. This explicit document ceiling
+// does not change the default or per-envelope cryptographic profile.
+export const MAX_DOCUMENT_BYTES = 8 * 1024 * 1024;
 export const MAX_RECIPIENTS = 32;
 export const ALG = 'ECDH-ES+A256KW';
 export const ENC = 'A256GCM';
@@ -159,7 +162,7 @@ export { fields as objectFields, integer as safeInteger, opaque as opaqueId,
  * bytes therefore stays exact even when it cannot be represented by JS Number.
  */
 export function canonicalBytes(value: unknown, maximum = MAX_ENVELOPE_BYTES): Uint8Array {
-  if (!Number.isSafeInteger(maximum) || maximum < 0 || maximum > MAX_ENVELOPE_BYTES) fail('network_document_too_large');
+  if (!Number.isSafeInteger(maximum) || maximum < 0 || maximum > MAX_DOCUMENT_BYTES) fail('network_document_too_large');
   const chunks: string[] = [];
   let size = 0;
   function emit(chunk: string): void {
@@ -330,6 +333,14 @@ function publicEncryptionJWK(descriptor: EncryptionPublicDescriptor): JWK {
   return { kty: 'OKP', crv: 'X25519', x: descriptor.public_key, kid: descriptor.key_id };
 }
 
+/** Validate the existing private document and its actual provider-derived pair. */
+export function validateSigningIdentity(value: SigningIdentityDocument): SigningPublicDescriptor {
+  return signingIdentity(value).descriptor;
+}
+export function validateEncryptionIdentity(value: EncryptionIdentityDocument): EncryptionPublicDescriptor {
+  return encryptionIdentity(value).descriptor;
+}
+
 /** Existing universal-memory message proof, also used by network control. */
 export function signMessage(value: DocumentInput, signer: SigningIdentityDocument): MessageProof {
   const payload = document(value);
@@ -356,8 +367,8 @@ export function verifyMessage(value: DocumentInput, valueProof: MessageProof | D
     trusted.set(key.key_id, key);
   }
   if (proof.schema_version !== PROOF_SCHEMA) fail('unsupported_proof_schema');
-  signingId(proof.key_id); digest(proof.payload_sha256);
-  const descriptor = trusted.get(proof.key_id);
+  const keyId = signingId(proof.key_id); digest(proof.payload_sha256);
+  const descriptor = trusted.get(keyId);
   if (!descriptor) fail('unknown_key');
   if (proof.payload_sha256 !== hash(canonicalBytes(payload))) fail('payload_digest_mismatch');
   const signature = unbase64(proof.signature, 64, 'invalid_signature');
@@ -369,7 +380,7 @@ export function verifyMessage(value: DocumentInput, valueProof: MessageProof | D
     valid = edVerify(null, Buffer.concat([MESSAGE_DOMAIN, canonicalBytes(proofBody)]), publicKey, signature);
   } catch { fail('invalid_signature'); }
   if (!valid) fail('invalid_signature');
-  return proof.key_id;
+  return keyId;
 }
 function contextBytes(value: DocumentInput): Uint8Array { return canonicalBytes(document(value, CONTEXT_LIMIT), CONTEXT_LIMIT); }
 

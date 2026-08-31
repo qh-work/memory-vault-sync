@@ -296,15 +296,10 @@ class NetworkClient:
             if previous_hash is not None and roster["version"] == minimum + 1 and roster["previous_sha256"] != previous_hash:
                 raise MemoryError("network_recovery_roster_chain_mismatch")
         with self.db() as connection:
-            existing = connection.execute("SELECT value FROM state WHERE key='roster'").fetchone()
-            if existing:
-                previous = strict_json_loads(existing["value"])
-                if (roster["version"] < previous["payload"]["version"] or
-                        (roster["version"] == previous["payload"]["version"] and document_sha256(previous) != document_sha256(roster_doc))):
-                    raise MemoryError("network_roster_rollback")
-                if (roster["version"] == previous["payload"]["version"] + 1
-                        and roster["previous_sha256"] != document_sha256(previous)):
-                    raise MemoryError("network_roster_chain_mismatch")
+            # The initialization transaction in db() has already completed.
+            # Compare and update checkpoints under one explicit writer lock.
+            connection.execute("BEGIN IMMEDIATE")
+            self._check_roster_checkpoint(connection, roster_doc)
             members = {item["signing_key"]["key_id"]: item for item in roster["members"] if item["status"] == "active"}
             own = members.get(self.identity.key_id)
             if (not own or own["signing_key"] != self.identity.public_descriptor()
@@ -313,6 +308,20 @@ class NetworkClient:
             self._verify_nodes(connection, response, nonce, roster, recovery_nodes=anchor[2] if anchor else None)
             connection.execute("INSERT OR REPLACE INTO state VALUES('roster',?)", (canonical_bytes(roster_doc).decode(),))
         return response
+
+    @staticmethod
+    def _check_roster_checkpoint(connection: sqlite3.Connection, roster_doc: Mapping[str, Any]) -> None:
+        existing = connection.execute("SELECT value FROM state WHERE key='roster'").fetchone()
+        if existing is None:
+            return
+        previous = strict_json_loads(existing["value"])
+        roster = roster_doc["payload"]
+        if (roster["version"] < previous["payload"]["version"] or
+                (roster["version"] == previous["payload"]["version"] and document_sha256(previous) != document_sha256(roster_doc))):
+            raise MemoryError("network_roster_rollback")
+        if (roster["version"] == previous["payload"]["version"] + 1
+                and roster["previous_sha256"] != document_sha256(previous)):
+            raise MemoryError("network_roster_chain_mismatch")
 
     def _verify_nodes(self, connection: sqlite3.Connection, response: Mapping[str, Any],
                       nonce: str, roster: Mapping[str, Any], *, recovery_nodes: Mapping[str, Any] | None = None) -> None:
@@ -339,38 +348,49 @@ class NetworkClient:
         connection.execute("INSERT OR REPLACE INTO state VALUES('node_directory',?)", (canonical_bytes(response["nodes"]).decode(),))
         connection.execute("INSERT OR REPLACE INTO state VALUES('node_status_issued_at',?)", (str(status["issued_at"]),))
 
-    def _bind_node(self, relay: str, challenge: Mapping[str, Any], response: Mapping[str, Any]) -> None:
+    def _bind_node(self, relay: str, challenge: Mapping[str, Any], response: Mapping[str, Any]) -> Mapping[str, Any] | None:
         """Authenticate a node incarnation before accepting its numeric cursor."""
         from memory_vault_network_control import _window
         from memory_vault_nodes import authorized_node
-        nodes = response.get("nodes")
-        signed = challenge.get("node_challenge")
-        if nodes is None:
-            if signed is not None:
-                raise MemoryError("network_node_directory_required")
-            return
-        directory = nodes["payload"]  # Already verified by _status.
-        at_address = [item for item in directory["nodes"] if item["base_url"] == relay
-                      and item["status"] in {"active", "draining"}]
-        if signed is None:
-            with self.db() as connection:
-                previous = connection.execute("SELECT value FROM state WHERE key=?", ("node:" + relay,)).fetchone()
-            if at_address or previous is not None:
-                raise MemoryError("network_node_identity_required")
-            return
-        raw = object_fields(signed, {"payload", "proof"})
-        payload = object_fields(raw["payload"], {"schema_version", "network_id", "node", "nonce", "issued_at", "expires_at"})
-        binding = object_fields(payload["node"], {"signing_key", "base_url", "storage_epoch"})
-        if (payload["schema_version"] != "memory-vault-node-challenge/v1" or payload["network_id"] != self.network_id
-                or payload["nonce"] != challenge["nonce"] or binding["base_url"] != relay):
-            raise MemoryError("network_node_challenge_mismatch")
-        _window(payload)
-        node = authorized_node(directory, binding["signing_key"]["key_id"], "refresh",
-                               base_url=relay, storage_epoch=binding["storage_epoch"])
-        if binding["signing_key"] != node["signing_key"]:
-            raise MemoryError("network_node_identity_changed")
-        PublicKeyTrust([node["signing_key"]]).verify_message(payload, raw["proof"])
+        roster = verify_roster(response["roster"], self.issuers, network_id=self.network_id, allow_expired=True)
+        verify_status(response["status"], self.issuers, network_id=self.network_id, nonce=challenge["nonce"],
+                      roster_sha256=document_sha256(response["roster"]), roster_version=roster["version"])
         with self.db() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            # A different process can refresh the same endpoint while our
+            # status request is in flight. Old verified data must not rebind
+            # an incarnation after a newer directory has already committed.
+            self._check_roster_checkpoint(connection, response["roster"])
+            anchor = self._recovery_anchor()
+            self._verify_nodes(connection, response, challenge["nonce"], roster,
+                               recovery_nodes=anchor[2] if anchor else None)
+            nodes = response.get("nodes")
+            signed = challenge.get("node_challenge")
+            if nodes is None:
+                if signed is not None:
+                    raise MemoryError("network_node_directory_required")
+                self._assert_node(connection, relay, None)
+                return None
+            directory = nodes["payload"]
+            at_address = [item for item in directory["nodes"] if item["base_url"] == relay
+                          and item["status"] in {"active", "draining"}]
+            if signed is None:
+                previous = connection.execute("SELECT value FROM state WHERE key=?", ("node:" + relay,)).fetchone()
+                if at_address or previous is not None:
+                    raise MemoryError("network_node_identity_required")
+                return None
+            raw = object_fields(signed, {"payload", "proof"})
+            payload = object_fields(raw["payload"], {"schema_version", "network_id", "node", "nonce", "issued_at", "expires_at"})
+            binding = object_fields(payload["node"], {"signing_key", "base_url", "storage_epoch"})
+            if (payload["schema_version"] != "memory-vault-node-challenge/v1" or payload["network_id"] != self.network_id
+                    or payload["nonce"] != challenge["nonce"] or binding["base_url"] != relay):
+                raise MemoryError("network_node_challenge_mismatch")
+            _window(payload)
+            node = authorized_node(directory, binding["signing_key"]["key_id"], "refresh",
+                                   base_url=relay, storage_epoch=binding["storage_epoch"])
+            if binding["signing_key"] != node["signing_key"]:
+                raise MemoryError("network_node_identity_changed")
+            PublicKeyTrust([node["signing_key"]]).verify_message(payload, raw["proof"])
             key = "node:" + relay
             previous = connection.execute("SELECT value FROM state WHERE key=?", (key,)).fetchone()
             if previous is None or strict_json_loads(previous["value"]) != binding:
@@ -386,6 +406,14 @@ class NetworkClient:
                         connection.execute("UPDATE outbox SET receipts=? WHERE request_id=?",
                                            (canonical_bytes(receipts).decode(), row["request_id"]))
                 connection.execute("INSERT OR REPLACE INTO state VALUES(?,?)", (key, canonical_bytes(binding).decode()))
+            return binding
+
+    @staticmethod
+    def _assert_node(connection: sqlite3.Connection, relay: str, binding: Mapping[str, Any] | None) -> None:
+        row = connection.execute("SELECT value FROM state WHERE key=?", ("node:" + relay,)).fetchone()
+        current = strict_json_loads(row["value"]) if row else None
+        if current != binding:
+            raise MemoryError("network_node_changed", retryable=True)
 
     def _verify_storage_response(self, connection: sqlite3.Connection, relay: str, response: Mapping[str, Any]) -> None:
         row = connection.execute("SELECT value FROM state WHERE key=?", ("node:" + relay,)).fetchone()
@@ -439,11 +467,18 @@ class NetworkClient:
         return minimum, previous_hash, previous_nodes
 
     def _refresh(self, relay: str, *, deadline: float | None = None) -> Mapping[str, Any]:
+        # Keep the established roster-only API for direct callers.
+        return self._refresh_bound(relay, deadline=deadline)[0]
+
+    def _refresh_bound(self, relay: str, *, deadline: float | None = None) -> tuple[Mapping[str, Any], Mapping[str, Any] | None]:
         challenge = self._transport_request(relay, "GET", "/v1/status", deadline=deadline)
         response = self._status(challenge["nonce"], deadline=deadline)
-        self._bind_node(relay, challenge, response)
+        binding = self._bind_node(relay, challenge, response)
         self._transport_request(relay, "POST", "/v1/status", response, deadline=deadline)
-        return response["roster"]
+        with self.db() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._assert_node(connection, relay, binding)
+        return response["roster"], binding
 
     @staticmethod
     def _members(roster: Mapping[str, Any]) -> dict[str, Any]:
@@ -483,10 +518,12 @@ class NetworkClient:
         joined, errors = [], []
         for relay in self.relays:
             try:
-                current = self._refresh(relay)
+                current, node_binding = self._refresh_bound(relay)
                 if invitation is not None:
                     join_key = "join:" + relay + ":" + invite["invite_id"]
                     with self.db() as connection:
+                        connection.execute("BEGIN IMMEDIATE")
+                        self._assert_node(connection, relay, node_binding)
                         saved = connection.execute("SELECT value FROM state WHERE key=?", (join_key,)).fetchone()
                     if saved:
                         proof = strict_json_loads(saved["value"])
@@ -500,6 +537,8 @@ class NetworkClient:
                         proof = self._request("join", {"invite_sha256": document_sha256(invite_doc),
                                                        "challenge_id": challenge["challenge_id"], "challenge_answer": answer}, request_id=request_id)
                         with self.db() as connection:
+                            connection.execute("BEGIN IMMEDIATE")
+                            self._assert_node(connection, relay, node_binding)
                             connection.execute("INSERT OR IGNORE INTO state VALUES(?,?)", (join_key, canonical_bytes(proof).decode()))
                             proof = strict_json_loads(connection.execute("SELECT value FROM state WHERE key=?", (join_key,)).fetchone()[0])
                     try:
@@ -514,6 +553,8 @@ class NetworkClient:
                         fresh_proof = self._request("join", {"invite_sha256": document_sha256(invite_doc),
                             "challenge_id": challenge["challenge_id"], "challenge_answer": answer})
                         with self.db() as connection:
+                            connection.execute("BEGIN IMMEDIATE")
+                            self._assert_node(connection, relay, node_binding)
                             connection.execute("UPDATE state SET value=? WHERE key=? AND value=?",
                                 (canonical_bytes(fresh_proof).decode(), join_key, canonical_bytes(proof).decode()))
                             proof = strict_json_loads(connection.execute("SELECT value FROM state WHERE key=?", (join_key,)).fetchone()[0])
@@ -524,6 +565,9 @@ class NetworkClient:
                 else:
                     # A status refresh is not proof the member has joined.
                     self.transport.request(relay, "POST", "/v1/poll", self._request("poll", {"cursor": 0, "receipt_cursor": 0, "limit": 1, "maximum_bytes": MAX_WIRE_BYTES}))
+                with self.db() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._assert_node(connection, relay, node_binding)
                 joined.append(relay)
             except (MemoryError, TrustError) as exc:
                 errors.append({"node": self.relays.index(relay), "code": exc.code})
@@ -612,7 +656,7 @@ class NetworkClient:
             if pending_only and relay in receipts:
                 continue
             try:
-                current = self._refresh(relay, deadline=deadline)
+                current, node_binding = self._refresh_bound(relay, deadline=deadline)
                 if deadline is not None and time.monotonic() >= deadline:
                     raise MemoryError("network_budget_exhausted", retryable=True)
                 members = self._members(current)
@@ -635,6 +679,8 @@ class NetworkClient:
                         or response.get("envelope_sha256") != document_sha256(envelope)):
                     raise MemoryError("network_invalid_storage_receipt")
                 with self.db() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._assert_node(connection, relay, node_binding)
                     self._verify_storage_response(connection, relay, response)
                     # Another refresh may have invalidated a replaced node's
                     # historical receipt while this request was in flight.
@@ -890,11 +936,16 @@ class NetworkClient:
             if len(received) >= limit:
                 break
             try:
-                current = self._refresh(relay, deadline=_deadline)
+                current, node_binding = self._refresh_bound(relay, deadline=_deadline)
                 with self.db() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._assert_node(connection, relay, node_binding)
                     row = connection.execute("SELECT value FROM state WHERE key=?", ("cursor:" + relay,)).fetchone()
                     cursors = strict_json_loads(row["value"]) if row else {"cursor": 0, "receipt_cursor": 0}
                 response = self._transport_request(relay, "POST", "/v1/poll", self._request("poll", {**cursors, "limit": limit - len(received), "maximum_bytes": MAX_WIRE_BYTES}), deadline=_deadline)
+                with self.db() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._assert_node(connection, relay, node_binding)
                 object_fields(response, {"messages", "cursor", "receipts", "receipt_cursor", "has_more"})
                 if (not isinstance(response["messages"], list) or not isinstance(response["receipts"], list)
                         or len(response["messages"]) > limit - len(received) or len(response["receipts"]) > limit - len(received)
@@ -918,6 +969,8 @@ class NetworkClient:
                         continue
                     ack_key = "ack:" + relay + ":" + envelope["message_id"]
                     with self.db() as connection:
+                        connection.execute("BEGIN IMMEDIATE")
+                        self._assert_node(connection, relay, node_binding)
                         stored = connection.execute("SELECT value FROM state WHERE key=?", (ack_key,)).fetchone()
                         if stored:
                             ack = strict_json_loads(stored["value"])
@@ -934,6 +987,8 @@ class NetworkClient:
                             raise
                         fresh_ack = self._request("ack", expected_ack)
                         with self.db() as connection:
+                            connection.execute("BEGIN IMMEDIATE")
+                            self._assert_node(connection, relay, node_binding)
                             connection.execute("UPDATE state SET value=? WHERE key=? AND value=?",
                                 (canonical_bytes(fresh_ack).decode(), ack_key, canonical_bytes(ack).decode()))
                             ack = strict_json_loads(connection.execute("SELECT value FROM state WHERE key=?", (ack_key,)).fetchone()[0])
@@ -944,6 +999,8 @@ class NetworkClient:
                         raise MemoryError("network_invalid_ack_receipt")
                 peers = PublicKeyTrust([m["signing_key"] for m in self._members(current).values()])
                 with self.db() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._assert_node(connection, relay, node_binding)
                     for receipt in response["receipts"]:
                         body = object_fields(receipt.get("payload", {}).get("body"), {"message_id", "envelope_sha256", "state"})
                         opaque(body["message_id"])
@@ -985,7 +1042,13 @@ class NetworkClient:
                         # signed requests for the same validated-save claim.
                         # Preserve the first accepted proof; do not overwrite it.
                         connection.execute("INSERT OR IGNORE INTO acknowledgements VALUES(?,?,?)", (body["message_id"], recipient, canonical_bytes(receipt)))
-                    connection.execute("INSERT OR REPLACE INTO state VALUES(?,?)", ("cursor:" + relay, canonical_bytes(next_cursors).decode()))
+                    latest = connection.execute("SELECT value FROM state WHERE key=?", ("cursor:" + relay,)).fetchone()
+                    latest_cursors = strict_json_loads(latest["value"]) if latest else {"cursor": 0, "receipt_cursor": 0}
+                    # A slower page from the same incarnation can commit after
+                    # a faster client. Its valid numeric cursor never rewinds
+                    # already durable progress on either delivery stream.
+                    advanced = {key: max(integer(latest_cursors[key]), value) for key, value in next_cursors.items()}
+                    connection.execute("INSERT OR REPLACE INTO state VALUES(?,?)", ("cursor:" + relay, canonical_bytes(advanced).decode()))
             except (MemoryError, TrustError) as exc:
                 errors.append({"node": self.relays.index(relay), "code": exc.code, "retryable": getattr(exc, "retryable", False)})
                 if exc.code == "network_budget_exhausted":

@@ -10,6 +10,7 @@ existing compatibility range in `requirements-integrations.txt`.
 | `requirements-network-lock.txt` | Client: `cryptography`, `joserfc`, `httpx`, and every required transitive dependency |
 | `requirements-network-server-lock.txt` | Includes the client lock, then adds base `starlette`, `uvicorn`, and `click` |
 | `examples/network-interop/package-lock.json` | Independent TypeScript fixture: `jose@6.2.10`, with npm artifact integrity |
+| `clients/typescript/network/package-lock.json` | Independent TypeScript endpoint: the same `jose@6.2.10` artifact; built-in Node crypto and SQLite add no npm runtime dependency |
 
 The unlocked requirements files remain useful declarations of optional
 dependencies. The lock files are the reproducible installation inputs; do not
@@ -179,6 +180,13 @@ the interoperability fixture ran, nor that every Node release supports it.
 For an explicitly approved fixture environment, `npm ci --ignore-scripts
 --no-audit --no-fund --registry=https://registry.npmjs.org` consumes the lock.
 The package is separate from the Python client and server profiles.
+
+The independent endpoint's lock pins the same artifact and integrity. Its
+development-only static check used an isolated TypeScript 5.9.3 compiler,
+`@types/node` 22.18.6 and `undici-types` 6.21.0, each checked against official
+npm integrity metadata. That private compiler installation is not distributed
+or added to ordinary endpoint runtime dependencies. Runtime and storage
+platform limits are recorded in [the endpoint guide](NETWORK_TYPESCRIPT.md).
 
 ## Updates and remaining risks
 

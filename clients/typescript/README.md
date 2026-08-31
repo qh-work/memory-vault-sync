@@ -5,8 +5,9 @@ This dependency-free client exposes `connect`, `remember`, `recall`, `discover`,
 `POST /v1/agent`. The endpoint receives plaintext and uses the same core Vault,
 identity, permissions, encryption and message semantics as the Python entry.
 It is not a direct ciphertext-relay client, offline store, or independent
-cryptographic implementation. The separate `examples/network-interop` fixture
-continues to cover independent cryptographic interoperability.
+cryptographic implementation. The separate [independent network endpoint](../../docs/NETWORK_TYPESCRIPT.md)
+implements encryption, canonical storage and delivery locally, with explicit
+limits on retrieval and handoff parity; this HTTP SDK still uses the shared core.
 
 Use Node 22.19+ with built-in TypeScript stripping for the tested entry path:
 

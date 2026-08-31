@@ -13,9 +13,14 @@ The takeover iteration preserves existing code and configuration, removes
 unshipped external network adapters, separates new issuer/member keys, fixes
 recovery receipt progress and bounds rejected-content handling. Its final
 16-test targeted campaign passed, including real loopback relay processes;
-see the [current baseline](V0_26_PLAN.md). Source is still uncommitted and no
-alpha package was published or installed. The historical reports below do not
-become current-version validation by inclusion here.
+see the [current baseline](V0_26_PLAN.md). Subsequent committed checkpoints add
+full endpoint recovery, authenticated node migration and separately verified
+candidate archives. Current source also includes an independent TypeScript
+persistent endpoint; [its scope](NETWORK_TYPESCRIPT.md) explicitly excludes full
+retrieval/handoff parity and scale certification. No public alpha publication
+or general installation claim is made by this source document. Actual package
+and local upgrade evidence is separate. Historical reports below do not become
+current-version validation by inclusion here.
 
 ## Historical v0.25.1 capacity-patch status
 

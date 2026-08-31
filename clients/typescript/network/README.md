@@ -1,19 +1,24 @@
-# Independent network-v1 cryptography and control candidate
+# Independent network-v1 endpoint candidate
 
 This optional Node TypeScript package implements the existing Memory Vault
 network-v1 envelope without invoking Python. It is separate from the zero
 dependency HTTP SDK in the parent directory. It uses `jose` 6.2.10 for X25519
 ECDH-ES+A256KW / A256GCM JWE and Node's crypto provider for Ed25519 signatures,
 SHA256 and private/public key pair checks. It has no Python bridge or protocol
-adapter and does not create identities, files, databases or network connections.
+adapter. Its `crypto` and `control` modules are stateless and do not create
+identities, files, databases or network connections. The optional `setup`,
+`vault` and `peer` modules add explicit provisioning, the existing canonical
+SQLite Vault and persistent network delivery; see the
+[endpoint guide](../../../docs/NETWORK_TYPESCRIPT.md) for those APIs and limits.
+No new memory or identity format is introduced.
 
-These are components for a future independent peer, **not a complete
-independent peer or relay/storage client**. It is not an external security audit.
-The host must supply already provisioned keys in memory and authenticated trust
-and recipient associations. It must integrate the control checks into operation
-authorization and enforce enrollment, nonce freshness, replay/idempotency,
-quotas, durable state and relay authentication. Successful decryption is not permission to execute memory
-content. Plaintext and keys remain in the host process; JavaScript garbage
+The endpoint is a scoped preview: local recall is bounded text matching, not
+Python's full ranking, graph or dynamic handoff implementation. It does not
+claim complete six-operation parity or an external security audit. Low-level
+crypto callers must still supply authenticated trust and recipient associations;
+the peer checks fresh signed control, admission and persistent retries.
+Successful decryption is not permission to execute memory content.
+Plaintext and keys remain in the host process; JavaScript garbage
 collection cannot guarantee erasure or protect against a compromised host.
 
 ## Use
@@ -26,6 +31,9 @@ stripping (`node --experimental-strip-types` where required). Consumers that
 compile TypeScript need their own compiler and Node type declarations; this
 package does not bundle a build toolchain. Browser, Deno and Bun support is not
 claimed or tested because this implementation uses Node's crypto provider.
+Redistributions of this subdirectory must also carry the repository's `LICENSE`
+and `NOTICE`, including the Unicode data attribution and permission notice for
+the Unicode 14 tables in `records.ts`.
 
 ```ts
 import { seal, verify, open, canonicalBytes } from './crypto.ts';
@@ -72,8 +80,9 @@ only plain, dense JSON data is accepted (no getters, symbols, prototypes, sparse
 arrays or `toJSON` conversion). Inputs are copied before asynchronous provider
 calls. Output is a fresh document/byte array; the host owns its subsequent use.
 `NetworkCryptoError.code` is content-free and suitable for controlled error
-mapping; provider errors, keys and plaintext are not included. This package
-does not log or retry.
+mapping; provider errors, keys and plaintext are not included. These crypto
+functions do not log or retry; explicit peer operations can retry persisted
+requests and ciphertext within their supplied budget.
 
 ## Byte and validation contract
 
@@ -208,7 +217,8 @@ directories, node incarnations, HTTP transport, quotas, replay databases and
 atomic admission are outside this control module and must be checked by the
 complete peer. Limits remain the current Python profile (1 MiB control document,
 512 KiB request body, 1–256 roster members); this does not claim a 1,000-member
-network, unlimited collective storage, or a complete independently running peer.
+network or unlimited collective storage. The separate `peer.ts` module adds
+durable endpoint state and delivery on top of these control checks.
 
 `tests/test_network_typescript_control.py` uses the same explicit installed-jose
 test setting as the crypto tests. It checks Python-signed valid and adversarial
