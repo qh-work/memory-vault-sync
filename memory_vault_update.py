@@ -91,17 +91,23 @@ def read_file(path: Path, maximum: int) -> bytes:
 
 def write_file(path: Path, data: bytes) -> None:
     selected = _absolute(path)
-    _private_directory(selected.parent)
-    # Preserve the POSIX no-clobber error even for a pre-existing public file;
-    # no existing bytes or permissions are adopted, repaired or overwritten.
-    if os.name == "posix" and os.path.lexists(selected):
-        raise FileExistsError(errno.EEXIST, "update_output_exists")
-    from memory_vault_storage import StorageError, atomic_write
+    from memory_vault_storage import StorageError, atomic_write, private_directory
     try:
+        # mkdir(parents=True, mode=0700) protects only the final directory.
+        # Archive order can later write to an intermediate directory, so every
+        # directory we create must be private from the start. Existing ancestor
+        # modes are never repaired or silently tightened.
+        private_directory(selected.parent)
+        # Preserve the POSIX no-clobber error for a pre-existing public file;
+        # no existing bytes or permissions are adopted or overwritten.
+        if os.name == "posix" and os.path.lexists(selected):
+            raise FileExistsError(errno.EEXIST, "update_output_exists")
         # A handled write failure must not leave a truncated immutable member
         # which _materialize would correctly refuse on an exact install retry.
         atomic_write(selected, data, replace=False)
     except StorageError as exc:
+        if exc.code == "unprotected_private_directory":
+            raise MemoryError("client_directory_not_private") from None
         raise MemoryError(exc.code, retryable=exc.retryable) from None
 
 

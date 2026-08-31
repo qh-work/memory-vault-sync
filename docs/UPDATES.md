@@ -102,7 +102,9 @@ even if metadata has since expired. If the pointer never moved, activation
 still requires a currently valid candidate. Neither case replays a past
 authorization to select new code.
 
-New staged/installed files use protected temporary-file publication rather than
+New staged/installed files create each missing directory with private modes,
+including intermediate archive directories; pre-existing modes are never
+silently repaired. Files use protected temporary-file publication rather than
 writing a partial final member. A caught write error cleans up that temporary
 file, allowing the exact approved archive to be retried without poisoning an
 immutable member path. This does not repair already truncated files, silently
