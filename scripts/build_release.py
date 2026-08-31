@@ -45,6 +45,18 @@ PROTOCOL_DOCUMENTS = (
     "docs/NETWORK_V1.md", "docs/NETWORK_QUICKSTART.md", "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
     "docs/V0_26_PLAN.md",
     "docs/DEPENDENCIES_NETWORK.md",
+    "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md",
+)
+# Each executable network review fixture is selected deliberately. A matching
+# filename alone never enrolls a new local test into the public review kit.
+NETWORK_REVIEW_TESTS = (
+    "tests/test_network_agent.py", "tests/test_network_admin.py", "tests/test_network_client.py",
+    "tests/test_network_cloud_compat.py", "tests/test_network_crypto.py", "tests/test_network_http.py",
+    "tests/test_network_node_runtime.py", "tests/test_network_node_setup.py", "tests/test_network_node_transfer.py",
+    "tests/test_network_nodes.py", "tests/test_network_packaging.py",
+    "tests/test_network_recovery.py", "tests/test_network_relay.py", "tests/test_network_typescript.py",
+    "tests/test_network_typescript_crypto.py", "tests/test_network_typescript_control.py",
+    "tests/test_network_worker.py",
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_PACKAGE_BYTES = 32 * 1024 * 1024
@@ -106,7 +118,7 @@ def review_sources(material: list[Path], source_tree: ReleaseSource) -> list[Pat
         "tests/test_memory_vault.py", "tests/test_release_source_gate.py", "packaging/REVIEW_README.md",
     ))
     paths.extend(sorted((ROOT / "tests").glob("test_v025_*.py")))
-    paths.extend(sorted((ROOT / "tests").glob("test_network_*.py")))
+    paths.extend(ROOT / name for name in NETWORK_REVIEW_TESTS)
     paths.extend(ROOT / "examples/network-interop" / name for name in ("README.md", "package.json", "package-lock.json", "interop.ts"))
     paths.extend(material)
     result = sorted(set(paths))
@@ -142,8 +154,9 @@ def inspect_sources(material: list[Path], review: list[Path], source_tree: Relea
         *(ROOT / "plugins/memory-vault-client" / name for name in TEMPLATE_FILES if name.endswith(".json")),
         *(path for path in material if path.suffix == ".json"),
         *sorted((ROOT / "adapters").rglob("*.json")),
+        *(path for path in review if path.suffix == ".json"),
     ]
-    for source in json_sources:
+    for source in dict.fromkeys(json_sources):
         value = parse_json(read_public(source, source_tree=source_tree))
         json_count += 1
         if source.name == "plugin.json" and (

@@ -24,6 +24,7 @@ from typing import Any, Iterator, Mapping
 from urllib.parse import urlsplit
 
 from memory_vault import MemoryError, canonical_bytes, strict_json_loads
+from memory_vault_trust import Identity
 import memory_vault_storage as storage
 from memory_vault_network_crypto import (
     MAX_ENVELOPE_BYTES, PublicKeyTrust, digest, document, document_sha256,
@@ -125,7 +126,7 @@ class Relay:
         config = document(_read(self.config_path, 1024 * 1024), maximum=1024 * 1024)
         _wrapper(config, {"schema_version", "network_id", "issuer_public_key", "roster_path",
                           "state_directory", "base_url", "init_member_key_ids"},
-                 {"require_join_key_ids", "authority_url", "limits"})
+                 {"require_join_key_ids", "authority_url", "limits", "node_identity_path", "storage_epoch"})
         if config["schema_version"] != CONFIG_SCHEMA:
             raise RelayError("relay_config_schema")
         self.network_id = opaque(config["network_id"])
@@ -133,6 +134,11 @@ class Relay:
         self.issuers = PublicKeyTrust([self.issuer])
         self.base_url = _url(config["base_url"])
         self.authority_url = _url(config["authority_url"]) if config.get("authority_url") else None
+        if ("node_identity_path" in config) != ("storage_epoch" in config):
+            raise RelayError("relay_node_identity_configuration_invalid")
+        self.node_identity = (Identity.load(storage.validate_path(Path(config["node_identity_path"])))
+                              if "node_identity_path" in config else None)
+        self.storage_epoch = opaque(config["storage_epoch"]) if self.node_identity is not None else None
         self.limits = dict(DEFAULT_LIMITS)
         custom = config.get("limits", {})
         if not isinstance(custom, dict) or set(custom) - set(self.limits):
@@ -172,6 +178,67 @@ class Relay:
             elif (self._get(db, "network_id") != self.network_id or self._get(db, "issuer") != self.issuer
                   or self._get(db, "initial_members") != sorted(self.initial)):
                 raise RelayError("relay_state_configuration_mismatch")
+            node_binding = self.node_descriptor()
+            saved_binding = self._get(db, "node_binding")
+            if saved_binding is None and node_binding is not None:
+                # Explicitly adding a node identity to an older local relay is
+                # allowed; replacing an already bound key/epoch is not.
+                self._set(db, "node_binding", node_binding)
+            elif saved_binding != node_binding:
+                raise RelayError("relay_node_identity_changed")
+
+    def node_descriptor(self) -> dict[str, Any] | None:
+        if self.node_identity is None:
+            return None
+        return {"signing_key": self.node_identity.public_descriptor(),
+                "base_url": self.base_url, "storage_epoch": self.storage_epoch}
+
+    def _node_current(self, db: sqlite3.Connection, action: str) -> Mapping[str, Any]:
+        from memory_vault_nodes import authorized_node, verify_directory, verify_node_status
+        if self.node_identity is None:
+            raise RelayError("relay_node_identity_required")
+        roster_doc, roster = self._current(db)
+        directory, status = self._get(db, "node_directory"), self._get(db, "node_status")
+        if directory is None or status is None:
+            raise RelayError("relay_node_fresh_status_required", retryable=True)
+        nodes = verify_directory(directory, self.issuers, network_id=self.network_id, allow_expired=True)
+        verify_node_status(status, self.issuers, network_id=self.network_id, nonce=status["payload"]["nonce"],
+                           roster_sha256=document_sha256(roster_doc), roster_version=roster["version"],
+                           directory_sha256=document_sha256(directory), directory_version=nodes["version"])
+        return authorized_node(nodes, self.node_identity.key_id, action,
+                               base_url=self.base_url, storage_epoch=self.storage_epoch)
+
+    def drain(self) -> Mapping[str, Any]:
+        """Persist a write fence; never claim the node is safe to remove yet."""
+        with self._transaction() as db:
+            self._node_current(db, "export")
+            existing = self._get(db, "draining")
+            if existing is None:
+                existing = {"state": "draining", "started_at": int(time.time()),
+                            "messages": db.execute("SELECT COUNT(*) FROM messages").fetchone()[0],
+                            "receipts": db.execute("SELECT COUNT(*) FROM receipts").fetchone()[0],
+                            "members": db.execute("SELECT COUNT(*) FROM members").fetchone()[0]}
+                self._set(db, "draining", existing)
+            return {**existing, "safe_to_remove": False, "migration_required": True,
+                    "source_data_deleted": False}
+
+    def _writable(self, db: sqlite3.Connection) -> None:
+        if self._get(db, "draining") is not None:
+            raise RelayError("relay_draining", retryable=True)
+        incoming = self._get(db, "node_transfer_import")
+        if incoming is not None and incoming.get("state") == "receiving":
+            raise RelayError("relay_node_import_in_progress", retryable=True)
+
+    def transfer(self, value: Mapping[str, Any]) -> dict[str, Any]:
+        from memory_vault_node_transfer import receive_transfer
+        return receive_transfer(self, value)
+
+    def _stored_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        if self.node_identity is None:
+            return result
+        payload = {"schema_version": "memory-vault-node-storage-receipt/v1", "network_id": self.network_id,
+                   "node": self.node_descriptor(), "receipt": result}
+        return {**result, "node_receipt": {"payload": payload, "proof": self.node_identity.sign_message(payload)}}
 
     @staticmethod
     def _key_ids(values: Any) -> set[str]:
@@ -282,14 +349,21 @@ class Relay:
             roster, payload = self._current(db, fresh=False)
             nonce = secrets.token_hex(32)
             db.execute("INSERT INTO status_nonces(nonce,expires_at) VALUES (?,?)", (nonce, now + 300))
-            return {"nonce": nonce, "expires_at": now + 300, "current_roster_version": payload["version"],
-                    "current_roster_sha256": document_sha256(roster)}
+            result = {"nonce": nonce, "expires_at": now + 300, "current_roster_version": payload["version"],
+                      "current_roster_sha256": document_sha256(roster)}
+            if self.node_identity is not None:
+                challenge = {"schema_version": "memory-vault-node-challenge/v1", "network_id": self.network_id,
+                             "node": self.node_descriptor(), "nonce": nonce, "issued_at": now, "expires_at": now + 300}
+                result["node_challenge"] = {"payload": challenge, "proof": self.node_identity.sign_message(challenge)}
+            return result
 
     def update_status(self, value: Mapping[str, Any]) -> dict[str, Any]:
-        raw = _wrapper(document(value, maximum=2 * 1024 * 1024), {"status"}, {"roster"})
+        raw = _wrapper(document(value, maximum=4 * 1024 * 1024), {"status"}, {"roster", "nodes", "node_status"})
+        if ("nodes" in raw) != ("node_status" in raw):
+            raise RelayError("relay_node_status_incomplete")
         status_doc = document(raw["status"], maximum=1024 * 1024)
         nonce = opaque(status_doc.get("payload", {}).get("nonce"))
-        status_hash = document_sha256(status_doc)
+        status_hash = document_sha256({"status": status_doc, "nodes": raw["nodes"], "node_status": raw["node_status"]}) if "nodes" in raw else document_sha256(status_doc)
         with self._transaction() as db:
             old_doc, old = self._current(db, fresh=False)
             candidate = raw.get("roster", old_doc)
@@ -311,6 +385,19 @@ class Relay:
                 raise RelayError("relay_status_nonce_required")
             status = verify_status(status_doc, self.issuers, network_id=self.network_id, nonce=nonce,
                                    roster_sha256=candidate_hash, roster_version=roster["version"])
+            if "nodes" in raw:
+                from memory_vault_nodes import authorized_node, verify_directory, verify_node_status
+                nodes = verify_directory(raw["nodes"], self.issuers, network_id=self.network_id,
+                    previous_directory=self._get(db, "node_directory"), allow_expired=True)
+                node_status = verify_node_status(raw["node_status"], self.issuers, network_id=self.network_id,
+                    nonce=nonce, roster_sha256=candidate_hash, roster_version=roster["version"],
+                    directory_sha256=document_sha256(raw["nodes"]), directory_version=nodes["version"])
+                old_node_status = self._get(db, "node_status")
+                if old_node_status and node_status["issued_at"] < old_node_status["payload"]["issued_at"]:
+                    raise RelayError("relay_node_status_rollback")
+                if self.node_identity is not None:
+                    authorized_node(nodes, self.node_identity.key_id, "refresh",
+                                    base_url=self.base_url, storage_epoch=self.storage_epoch)
             if challenge["status_sha256"] is not None:
                 if challenge["status_sha256"] != status_hash:
                     raise RelayError("relay_status_nonce_conflict")
@@ -322,6 +409,9 @@ class Relay:
                       "roster_sha256": candidate_hash, "expires_at": status["expires_at"]}
             self._set(db, "roster", candidate)
             self._set(db, "status", status_doc)
+            if "nodes" in raw:
+                self._set(db, "node_directory", raw["nodes"])
+                self._set(db, "node_status", raw["node_status"])
             db.execute("UPDATE status_nonces SET status_sha256=?,result=? WHERE nonce=?",
                        (status_hash, canonical_bytes(result), nonce))
             return result
@@ -343,6 +433,7 @@ class Relay:
                 result = strict_json_loads(consumed["result"])
                 self._member(db, current, result["member_key_id"])
                 return result
+            self._writable(db)
             invite = verify_invite(raw["invite"], self.issuers, network_id=self.network_id)
             roster_hash = document_sha256(raw["roster"])
             roster = verify_roster(raw["roster"], self.issuers, network_id=self.network_id, allow_expired=True)
@@ -446,8 +537,9 @@ class Relay:
             if existing:
                 if not hmac.compare_digest(_read(object_path, self.limits["maximum_envelope_bytes"]), encoded):
                     raise RelayError("relay_stored_object_corrupt")
-                return {"state": "stored", "message_id": payload["message_id"], "envelope_sha256": content_hash,
-                        "sequence": existing["sequence"]}
+                return self._stored_result({"state": "stored", "message_id": payload["message_id"], "envelope_sha256": content_hash,
+                                            "sequence": existing["sequence"]})
+            self._writable(db)
             count, size = self._object_usage()
             orphan_exists = object_path.exists()
             if ((count + (0 if orphan_exists else 1)) > self.limits["maximum_messages"]
@@ -456,6 +548,10 @@ class Relay:
             if object_path.exists():
                 if not hmac.compare_digest(_read(object_path, self.limits["maximum_envelope_bytes"]), encoded):
                     raise RelayError("relay_stored_object_corrupt")
+                # An earlier rename can have succeeded before directory fsync
+                # failed. Matching orphan bytes alone are not a durability
+                # barrier: republish the exact bytes before committing a row.
+                storage.atomic_write(object_path, encoded, replace=True)
             else:
                 # fsync + no-replace publication precede the SQLite commit.
                 # A crash may leave a counted orphan, never a successful DB row
@@ -464,8 +560,8 @@ class Relay:
             cursor = db.execute("INSERT INTO messages(message_id,envelope_sha256,object_bytes,sender_key_id,roster) VALUES (?,?,?,?,?)",
                 (payload["message_id"], content_hash, len(encoded), payload["sender_key_id"], canonical_bytes(historical)))
             db.executemany("INSERT INTO recipients VALUES (?,?)", [(payload["message_id"], key) for key in payload["recipient_key_ids"]])
-            return {"state": "stored", "message_id": payload["message_id"], "envelope_sha256": content_hash,
-                    "sequence": cursor.lastrowid}
+            return self._stored_result({"state": "stored", "message_id": payload["message_id"], "envelope_sha256": content_hash,
+                                        "sequence": cursor.lastrowid})
 
     def _request(self, db: sqlite3.Connection, current: Mapping[str, Any], value: Mapping[str, Any],
                  action: str, *, scope: str | None = None) -> tuple[str, dict[str, Any]]:
@@ -542,6 +638,7 @@ class Relay:
             exact = db.execute("SELECT * FROM receipts WHERE key_id=? AND request_sha256=?", (key, request_hash)).fetchone()
             if exact:
                 return strict_json_loads(exact["result"])
+            self._writable(db)
             key, request = self._request(db, current, raw, "ack", scope="receive")
             body = object_fields(request["body"], {"message_id", "envelope_sha256", "state"})
             message_id, content_hash = opaque(body["message_id"]), digest(body["envelope_sha256"])
@@ -608,7 +705,8 @@ def create_app(config_path: Path) -> Any:
                 raise RelayError("relay_request_timeout", retryable=True) from None
             value = document(data, maximum=relay.limits["maximum_request_bytes"])
             operation = {"/v1/status": relay.update_status, "/v1/join": relay.join,
-                         "/v1/messages": relay.post_message, "/v1/poll": relay.poll, "/v1/ack": relay.ack}[request.url.path]
+                         "/v1/messages": relay.post_message, "/v1/poll": relay.poll, "/v1/ack": relay.ack,
+                         "/v1/node-transfer": relay.transfer}[request.url.path]
             return JSONResponse(await run_in_threadpool(operation, value), headers={"Cache-Control": "no-store"})
         except (MemoryError, storage.StorageError) as exc:
             code = exc.code
@@ -624,7 +722,7 @@ def create_app(config_path: Path) -> Any:
 
     app = Starlette(routes=[Route("/.well-known/agent-memory.json", endpoint, methods=["GET"]),
                             Route("/v1/status", endpoint, methods=["GET", "POST"]),
-                            *[Route("/v1/" + name, endpoint, methods=["POST"]) for name in ("join", "messages", "poll", "ack")]])
+                            *[Route("/v1/" + name, endpoint, methods=["POST"]) for name in ("join", "messages", "poll", "ack", "node-transfer")]])
     app.state.relay = relay
     return app
 
@@ -636,17 +734,42 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--config", type=Path, required=True)
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument("--tls-certfile", type=Path)
+    serve.add_argument("--tls-keyfile", type=Path)
     args = parser.parse_args(argv)
     try:
         if not 1024 <= args.port <= 65535:
             raise RelayError("relay_nonprivileged_port_required")
+        try:
+            loopback = ipaddress.ip_address(args.host).is_loopback
+        except ValueError:
+            loopback = args.host == "localhost"
+        if (args.tls_certfile is None) != (args.tls_keyfile is None):
+            raise RelayError("relay_tls_certificate_and_key_required")
+        if not loopback and args.tls_certfile is None:
+            raise RelayError("relay_external_listener_requires_tls")
+        tls: dict[str, str] = {}
+        if args.tls_certfile is not None:
+            import ssl
+            cert = storage.validate_path(args.tls_certfile)
+            key = storage.validate_path(args.tls_keyfile)
+            for path, private in ((cert, False), (key, True)):
+                descriptor = storage.open_file(path, os.O_RDONLY, private=private)
+                os.close(descriptor)
+            try:
+                ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert, key)
+            except (OSError, ssl.SSLError):
+                raise RelayError("relay_tls_configuration_invalid") from None
+            tls = {"ssl_certfile": str(cert), "ssl_keyfile": str(key)}
         app = create_app(args.config)
+        if tls and not app.state.relay.base_url.startswith("https://"):
+            raise RelayError("relay_tls_public_url_required")
         try:
             from uvicorn import run
         except ImportError:
             raise RelayError("relay_web_dependency_unavailable") from None
         run(app, host=args.host, port=args.port, access_log=False, limit_concurrency=app.state.relay.limits["maximum_concurrency"],
-            timeout_keep_alive=5, proxy_headers=False)
+            timeout_keep_alive=5, proxy_headers=False, **tls)
         return 0
     except (MemoryError, storage.StorageError) as exc:
         sys.stderr.write(canonical_bytes({"error": {"code": exc.code, "retryable": getattr(exc, "retryable", False)}}).decode() + "\n")

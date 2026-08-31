@@ -1880,6 +1880,7 @@ def build_parser() -> argparse.ArgumentParser:
         "envelope": "inspect an encrypted envelope without client configuration or decryption",
         "agent": "six native operations over this same client; optional network config, NDJSON/trusted HTTP",
         "network-pump": "explicit bounded network outbox retry and inbox receive; no background service",
+        "network-recovery": "explicit encrypted endpoint backup and inactive new-directory restore",
     }.items():
         sub.add_parser(name, help=description, add_help=False)
     return parser
@@ -1888,7 +1889,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args, remaining = parser.parse_known_args(argv)
-    forwarded = {"sync", "manage", "host", "compat", "update", "install", "pack", "copy-pack", "share", "legacy-pack", "artifact", "device-trust", "envelope", "agent", "network-pump"}
+    forwarded = {"sync", "manage", "host", "compat", "update", "install", "pack", "copy-pack", "share", "legacy-pack", "artifact", "device-trust", "envelope", "agent", "network-pump", "network-recovery"}
     if remaining and args.command not in forwarded:
         parser.error("unrecognized arguments: " + " ".join(remaining))
     try:
@@ -1904,6 +1905,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "network-pump":
             from memory_vault_network_worker import main as network_pump_main
             return network_pump_main(remaining, client_config=args.config or default_config_path())
+        if args.command == "network-recovery":
+            from memory_vault_network_recovery import main as network_recovery_main
+            return network_recovery_main(remaining, client_config=args.config or default_config_path())
         if args.command == "manage":
             from memory_vault_manage import main as manage_main
             return manage_main(remaining, config_path=args.config)

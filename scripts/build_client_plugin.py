@@ -26,7 +26,8 @@ REQUIRED_MODULES = (
     "memory_vault_artifact_catalog.py", "memory_vault_artifacts.py", "memory_vault_drive.py",
     "memory_vault_agent.py", "memory_vault_network.py", "memory_vault_network_crypto.py",
     "memory_vault_network_control.py", "memory_vault_network_admin.py", "memory_vault_relay.py",
-    "memory_vault_network_worker.py",
+    "memory_vault_network_worker.py", "memory_vault_nodes.py", "memory_vault_node.py",
+    "memory_vault_network_recovery.py", "memory_vault_node_transfer.py",
 )
 OPTIONAL_MODULES: tuple[str, ...] = ()
 PACKAGE_DOCUMENTS = (
@@ -48,7 +49,11 @@ PACKAGE_DOCUMENTS = (
     "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
     "docs/V0_26_PLAN.md",
     "requirements-network-lock.txt", "requirements-network-server-lock.txt", "docs/DEPENDENCIES_NETWORK.md",
+    "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md",
     "clients/typescript/index.ts", "clients/typescript/README.md", "clients/typescript/package.json",
+    "clients/typescript/network/README.md", "clients/typescript/network/crypto.ts",
+    "clients/typescript/network/control.ts", "clients/typescript/network/package.json",
+    "clients/typescript/network/package-lock.json",
 )
 TEMPLATE_FILES = (
     ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",

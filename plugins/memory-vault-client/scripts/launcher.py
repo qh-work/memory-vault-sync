@@ -28,7 +28,8 @@ ALLOWED_MODULES = {
     "memory_vault_artifacts.py", "memory_vault_drive.py",
     "memory_vault_agent.py", "memory_vault_network.py", "memory_vault_network_crypto.py",
     "memory_vault_network_control.py", "memory_vault_network_admin.py", "memory_vault_relay.py",
-    "memory_vault_network_worker.py",
+    "memory_vault_network_worker.py", "memory_vault_nodes.py", "memory_vault_node.py",
+    "memory_vault_network_recovery.py", "memory_vault_node_transfer.py",
 }
 REQUIRED_MODULES = ALLOWED_MODULES
 MAX_MODULE_BYTES = 1024 * 1024
