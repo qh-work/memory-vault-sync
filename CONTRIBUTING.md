@@ -1,5 +1,14 @@
 # Contributing
 
+For the 0.26 network alpha, start with [the short agent entry](AI_START_HERE.md)
+and [network contract](docs/NETWORK_V1.md). Useful contributions include an
+independent language endpoint, a real three-model handoff report, or a bounded
+fault/recovery review. Report source commit, runtime/provider, supported profile,
+exact commands, observed outcome and limitations. Measure avoided repeated
+exploration and transferred context, not invented adoption from stars or clones.
+Use only synthetic or explicitly shareable records. Never attach real keys,
+invitations, recovery secrets, cloud configuration, user memories or host logs.
+
 Universal Agent Memory defines one language- and storage-independent protocol.
 The Python reference keeps one readable standard-library core; its optional
 clients, trust and transfer modules reuse it. Independent implementations are

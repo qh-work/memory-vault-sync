@@ -42,6 +42,9 @@ PROTOCOL_DOCUMENTS = (
     "docs/V0_25_RELEASE_MINIMAL.md", "docs/RELEASE_NOTES_V0_25.md",
     "docs/V0_25_PACK_CAPACITY_SMOKE.md", "docs/RELEASE_NOTES_V0_25_1.md",
     "docs/ARTIFACTS.md", "docs/V0_25_RAW_COPY_SMOKE.md",
+    "docs/NETWORK_V1.md", "docs/NETWORK_QUICKSTART.md", "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
+    "docs/V0_26_PLAN.md",
+    "docs/DEPENDENCIES_NETWORK.md",
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_PACKAGE_BYTES = 32 * 1024 * 1024
@@ -98,10 +101,13 @@ def review_sources(material: list[Path], source_tree: ReleaseSource) -> list[Pat
     paths.extend(ROOT / "plugins/memory-vault-client" / name for name in TEMPLATE_FILES)
     paths.extend(ROOT / name for name in (
         "scripts/build_client_plugin.py", "scripts/build_release.py", "scripts/release_source.py",
+        "scripts/verify_client_package.py",
         "packaging/marketplace.json", "packaging/PROTOCOL_README.md", "packaging/CLIENT_README.md",
         "tests/test_memory_vault.py", "tests/test_release_source_gate.py", "packaging/REVIEW_README.md",
     ))
     paths.extend(sorted((ROOT / "tests").glob("test_v025_*.py")))
+    paths.extend(sorted((ROOT / "tests").glob("test_network_*.py")))
+    paths.extend(ROOT / "examples/network-interop" / name for name in ("README.md", "package.json", "package-lock.json", "interop.ts"))
     paths.extend(material)
     result = sorted(set(paths))
     if not any(path.name == "test_v025_install.py" for path in result):

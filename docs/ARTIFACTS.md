@@ -143,9 +143,11 @@ records. A lost POST response is an uncertain outcome that needs reconciliation;
 Drive names are not a uniqueness transaction and concurrent creators may race.
 An upload response is not a verified readback or an acknowledged memory cursor.
 
-This provider API alone does **not** wire the full memory-sync queue to Drive
-or configure a user's login. Until those steps and a real minimal round trip
-are delivered, the cloud-sync requirement remains incomplete.
+This artifact provider API alone does **not** run the memory-sync queue or
+configure a user's login. The separate [native Drive sync backend](NATIVE_DRIVE.md)
+now connects signed capsules/fragments through mandatory content encryption and
+explicit recipient keys. Its synthetic queue checks do not establish a real
+OAuth/account round trip; the artifact API itself does not imply encryption.
 
 ## Minimal development evidence
 
@@ -178,5 +180,5 @@ release tag:
 
 This is not live OAuth, Keychain access, a cloud upload/download, a physical
 crash experiment, native-platform certification, installed-client acceptance
-or a completed memory-queue integration. No private memory, real catalog,
+or evidence for the separately tested native memory queue. No private memory, real catalog,
 cloud ID or account credential is included in these fixtures or this report.

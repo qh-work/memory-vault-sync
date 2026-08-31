@@ -39,6 +39,12 @@ integrations can carry these records without becoming their owner.
 
 ### Profiles and public artifacts
 
+The optional [network-v1 carrier](docs/NETWORK_V1.md), introduced in the 0.26
+alpha, adds private transport, invitations and endpoint adapters **outside**
+core-v1. Core operations remain local and its original record/hash/authority
+contract is unchanged. Ordinary users can consume the
+[six-operation endpoint](AI_START_HERE.md) without implementing this protocol.
+
 `core-v1` is the baseline record, authority, append/retry, recall/handoff and
 bundle agreement in this document. Section 5 defines its standard JSON request
 binding; implementing an always-running process, stdin transport or a particular

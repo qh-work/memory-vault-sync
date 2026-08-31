@@ -60,7 +60,7 @@ import unicodedata
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 
-VERSION = "0.25.1"
+VERSION = "0.26.0-alpha.1"
 REQUEST_SCHEMA = "universal-agent-memory-request/v1"
 RESULT_SCHEMA = "universal-agent-memory-result/v1"
 RECORD_SCHEMA = "universal-memory-record/v1"

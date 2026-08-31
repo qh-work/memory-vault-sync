@@ -10,10 +10,12 @@ upload/receive through the new client. Temporary directory and source-pinned wor
 [VALIDATION.md](VALIDATION.md). The following describes the implemented contract,
 not a tested cloud support matrix or a deployment report.
 
-The development-source [native Drive provider and explicit artifact entry](ARTIFACTS.md)
-add root-scoped file-ID retrieval without rclone or Git. That separate entry
-does not yet connect native Drive to the memory-sync queue or configure OAuth.
-It must not be described as a third working `sync configure --backend` choice.
+The development-source [native Drive queue backend](NATIVE_DRIVE.md) is a third
+explicit `sync configure --backend native-drive` choice. It encrypts complete
+capsules/fragments with configured X25519 recipients before using the root-scoped
+Drive API, independently of the [artifact file-ID entry](ARTIFACTS.md). It does
+not configure OAuth or replace an existing rclone `crypt` remote. Its verification
+uses synthetic Drive carriage and real cryptography, not a real-account round trip.
 
 ## Directory exchange
 

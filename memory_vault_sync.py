@@ -25,7 +25,7 @@ if _SOURCE_DIRECTORY not in sys.path:
 
 from memory_vault import MemoryError, canonical_bytes, failure, sha256, strict_json_loads, success, write_response
 from memory_vault_credentials import MAX_REFERENCE_BYTES, password_reference
-from memory_vault_remote import Budget, RcloneBackend, executable_sha256, peer_value, remote_path
+from memory_vault_remote import Budget, NativeDriveBackend, RcloneBackend, executable_sha256, native_drive_specification, peer_value, remote_path
 from memory_vault_transfer import DirectoryTransfer, MAX_CAPSULE_BYTES, MAX_REVIEW_DOCUMENT, _fragment_name, _path, _private_directory, _read, _read_fragment, _write
 from memory_vault_trust import TrustError
 import memory_vault_storage as protected_storage
@@ -192,6 +192,15 @@ class SyncConfig:
             if len({(value["key_id"], value["store_id"]) for value in peers}) != len(peers):
                 raise MemoryError("duplicate_sync_peer")
             backend.update(executable=str(executable), config_file=str(config_file), peers=peers)
+        elif backend.get("kind") == "native-drive":
+            backend = native_drive_specification(backend)
+            config_file, encryption_key = (_absolute(backend[key]) for key in ("config_file", "encryption_key_path"))
+            if (config_file == encryption_key
+                    or config_file in encryption_key.parents or encryption_key in config_file.parents
+                    or any(item == other or item in other.parents or other in item.parents
+                           for item in (config_file, encryption_key) for other in [*private_files, state])):
+                raise MemoryError("sync_path_conflict")
+            backend.update(config_file=str(config_file), encryption_key_path=str(encryption_key))
         else:
             raise MemoryError("unsupported_sync_backend")
         limits = _object(raw["limits"], set(DEFAULT_LIMITS))
@@ -200,6 +209,10 @@ class SyncConfig:
                                ("maximum_seconds", 5, 60), ("record_limit", 1, 256),
                                ("batch_bytes", 4096, 3 * 1024 * 1024)):
             _bounded_int(limits[key], low, high)
+        if backend["kind"] == "native-drive" and (limits["maximum_files"] < 8 or limits["maximum_bytes"] < 24 * 1024 * 1024):
+            # One maximal original may require two ciphertext chunks, a commit
+            # and exact read-backs. Keep the general/rclone limits unchanged.
+            raise MemoryError("native_drive_window_too_small")
         return cls(selected, vault, identity, trust, state, raw["enabled"], raw["automatic"], raw["background"], backend, limits)
 
     @property
@@ -207,9 +220,12 @@ class SyncConfig:
         # Stream cursors belong to a storage destination, not to the current
         # peer roster or binary version. Those still invalidate a live window
         # below, but an explicit upgrade must not silently reset stream history.
-        destination = ({"kind": "directory", "exchange": self.backend["exchange"]}
-                       if self.backend["kind"] == "directory" else
-                       {"kind": "rclone", "config_file": self.backend["config_file"], "remote": self.backend["remote"]})
+        if self.backend["kind"] == "directory":
+            destination = {"kind": "directory", "exchange": self.backend["exchange"]}
+        elif self.backend["kind"] == "rclone":
+            destination = {"kind": "rclone", "config_file": self.backend["config_file"], "remote": self.backend["remote"]}
+        else:
+            destination = {key: self.backend[key] for key in ("kind", "config_file", "root_folder_id", "encryption_key_path")}
         return sha256(canonical_bytes({"vault": str(self.vault), "identity": str(self.identity),
                                        "trust_store": str(self.trust_store), "state_directory": str(self.state_directory),
                                        "backend": destination}))
@@ -382,7 +398,7 @@ def _remote_receipt(config: SyncConfig) -> dict[str, Any]:
     return raw
 
 
-def _push_pending(config: SyncConfig, endpoint: DirectoryTransfer, remote: RcloneBackend) -> bool:
+def _push_pending(config: SyncConfig, endpoint: DirectoryTransfer, remote: RcloneBackend | NativeDriveBackend) -> bool:
     state = endpoint._state()
     receipt = _remote_receipt(config)
     if state["published_cursor"] == receipt["sent_cursor"]:
@@ -454,7 +470,7 @@ def _push_pending(config: SyncConfig, endpoint: DirectoryTransfer, remote: Rclon
 
 
 def _pull_peer(
-    endpoint: DirectoryTransfer, remote: RcloneBackend, peer: Mapping[str, str], *,
+    endpoint: DirectoryTransfer, remote: RcloneBackend | NativeDriveBackend, peer: Mapping[str, str], *,
     active_check: Callable[[], None] | None = None,
     on_progress: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> Mapping[str, Any] | None:
@@ -538,7 +554,7 @@ def _window(
     endpoint = DirectoryTransfer(vault=config.vault, exchange=exchange, state_directory=config.state_directory / "transfer",
                                  trust_store=config.trust_store, identity=None if direction == "receive" else config.identity)
     maximum = config.limits["maximum_batches"]
-    remote: RcloneBackend | None = None
+    remote: RcloneBackend | NativeDriveBackend | None = None
     if config.backend["kind"] == "rclone":
         _private_directory(exchange)
         work = config.state_directory / "rclone"
@@ -546,10 +562,23 @@ def _window(
         _private_directory(work / "cache")
         _private_directory(work / "tmp")
         remote = RcloneBackend(config.backend, work_directory=work, budget=budget, active_check=active)
+    elif config.backend["kind"] == "native-drive":
+        _private_directory(exchange)
+        remote = NativeDriveBackend(config.backend, work_directory=config.state_directory / "native-drive",
+                                    budget=budget, active_check=active)
 
     def publication_guard(payload: Mapping[str, Any]) -> None:
         active()
         _publication_guard(endpoint.records_for_payload(payload)[0], endpoint=endpoint, payload=payload)
+        if config.backend["kind"] == "native-drive":
+            # The generic shared-directory publisher may create intermediate
+            # POSIX parents with the process umask. A private cloud staging tree
+            # must instead protect every new level for offline client backup.
+            peer_value({"key_id": payload["sender_key_id"], "store_id": payload["source_store_id"]})
+            directory = exchange / payload["sender_key_id"] / payload["source_store_id"]
+            protected_storage.private_directory(directory)
+            if payload.get("group") is not None:
+                protected_storage.private_directory(directory / "groups" / payload["group"]["group_id"])
         if remote is None:
             # Reserve the full supported capsule ceiling, including signature
             # and closure overhead; never guess a smaller size from record text.
@@ -727,7 +756,7 @@ def run(
         pending = latest is not None and latest["generation"] != state["completed_generation"]
         return {"state": state["state"], "last_error": state["last_error"], "counts": dict(state["counts"]),
                 "more_work_possible": more, "pending": pending, "remote_ai_read_verified": False,
-                "memory_content_included": False, "network_backend": config.backend["kind"] == "rclone",
+                "memory_content_included": False, "network_backend": config.backend["kind"] != "directory",
                 "direction": direction, "remote_latest_proven": False,
                 "outbound_attempted": direction != "receive"}
 
@@ -763,7 +792,7 @@ def resolve(
     with _lock(config.state_directory / "worker.lock"):
         _state(config)
         endpoint = _endpoint(config, writing=True)
-        if config.backend["kind"] == "rclone" and endpoint.pending_path.exists():
+        if config.backend["kind"] != "directory" and endpoint.pending_path.exists():
             pending, _ = endpoint._verify_capsule(_read(endpoint.pending_path, private=True), verify_records=False)
             if _remote_receipt(config)["sent_cursor"] > pending["after"]:
                 raise MemoryError("review_remote_publication_already_recorded")
@@ -799,25 +828,41 @@ def _configure(args: argparse.Namespace) -> Mapping[str, Any]:
     protected_storage.require_supported_storage()
     selected = _absolute(args.config)
     reference_path = getattr(args, "rclone_password_ref", None)
+    drive_config = getattr(args, "drive_config", None)
+    encryption_key = getattr(args, "encryption_key", None)
+    recipient_keys = getattr(args, "recipient_key", [])
+    native_arguments = (drive_config, encryption_key, recipient_keys)
+    peers = []
+    for value in args.peer:
+        parts = value.split("/")
+        if len(parts) != 2:
+            raise MemoryError("invalid_sync_peer")
+        peers.append(peer_value({"key_id": parts[0], "store_id": parts[1]}))
     if args.backend == "directory":
-        if args.exchange is None or any((args.rclone_executable, args.rclone_config, args.remote, args.peer, reference_path)):
+        if args.exchange is None or any((args.rclone_executable, args.rclone_config, args.remote, args.peer, reference_path, *native_arguments)):
             raise MemoryError("invalid_sync_backend_arguments")
         backend: dict[str, Any] = {"kind": "directory", "exchange": str(_absolute(args.exchange))}
-    else:
-        if args.exchange is not None or not all((args.rclone_executable, args.rclone_config, args.remote)):
+    elif args.backend == "rclone":
+        if args.exchange is not None or any(native_arguments) or not all((args.rclone_executable, args.rclone_config, args.remote)):
             raise MemoryError("invalid_sync_backend_arguments")
-        peers = []
-        for value in args.peer:
-            parts = value.split("/")
-            if len(parts) != 2:
-                raise MemoryError("invalid_sync_peer")
-            peers.append(peer_value({"key_id": parts[0], "store_id": parts[1]}))
         executable = _absolute(args.rclone_executable)
         backend = {"kind": "rclone", "executable": str(executable), "executable_sha256": executable_sha256(executable),
                    "config_file": str(_absolute(args.rclone_config)), "remote": remote_path(args.remote), "peers": peers}
         if reference_path is not None:
             backend["config_password_ref"] = password_reference(dict(_read(
                 _absolute(reference_path), maximum=MAX_REFERENCE_BYTES, private=True)))
+    elif args.backend == "native-drive":
+        from memory_vault_drive import DriveConfig
+        if (any((args.exchange, args.rclone_executable, args.rclone_config, args.remote, reference_path))
+                or not all(native_arguments)):
+            raise MemoryError("invalid_sync_backend_arguments")
+        config_file = _absolute(drive_config)
+        selected_drive = DriveConfig.from_file(config_file)
+        backend = {"kind": "native-drive", "config_file": str(config_file),
+                   "root_folder_id": selected_drive.root_folder_id, "encryption_key_path": str(_absolute(encryption_key)),
+                   "recipient_keys": [dict(_read(_absolute(path), maximum=4096)) for path in recipient_keys], "peers": peers}
+    else:
+        raise MemoryError("unsupported_sync_backend")
     document = {"schema_version": CONFIG_SCHEMA, "vault": str(_absolute(args.vault)),
                 "identity": str(_absolute(args.identity)), "trust_store": str(_absolute(args.trust_store)),
                 "state_directory": str(_absolute(args.state_directory)), "enabled": not args.disabled,
@@ -843,12 +888,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure = commands.add_parser("configure", help="explicit private configuration; no network or installation")
     for name in ("vault", "identity", "trust-store", "state-directory"):
         configure.add_argument("--" + name, type=Path, required=True)
-    configure.add_argument("--backend", choices=("directory", "rclone"), required=True)
+    configure.add_argument("--backend", choices=("directory", "rclone", "native-drive"), required=True)
     configure.add_argument("--exchange", type=Path)
     configure.add_argument("--rclone-executable", type=Path)
     configure.add_argument("--rclone-config", type=Path)
     configure.add_argument("--rclone-password-ref", type=Path,
                            help="explicit private JSON identifying an existing OS credential, not a password or command")
+    configure.add_argument("--drive-config", type=Path, help="explicit protected native Drive configuration")
+    configure.add_argument("--encryption-key", type=Path, help="explicit local X25519 private key; required for native Drive")
+    configure.add_argument("--recipient-key", type=Path, action="append", default=[],
+                           help="explicit public X25519 descriptor JSON; repeat for self and other backup recipients")
     configure.add_argument("--remote")
     configure.add_argument("--peer", action="append", default=[])
     configure.add_argument("--automatic", action="store_true")

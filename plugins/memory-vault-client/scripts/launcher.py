@@ -24,6 +24,11 @@ ALLOWED_MODULES = {
     "memory_vault_recovery.py", "memory_vault_legacy_pack.py", "memory_vault_metadata.py", "memory_vault_storage.py",
     "memory_vault_sharing.py", "memory_vault_crypto.py", "memory_vault_device_trust.py", "memory_vault_encrypted_replication.py",
     "memory_vault_capture.py", "memory_vault_dependency.py",
+    "memory_vault_credentials.py", "memory_vault_file_copy.py", "memory_vault_artifact_catalog.py",
+    "memory_vault_artifacts.py", "memory_vault_drive.py",
+    "memory_vault_agent.py", "memory_vault_network.py", "memory_vault_network_crypto.py",
+    "memory_vault_network_control.py", "memory_vault_network_admin.py", "memory_vault_relay.py",
+    "memory_vault_network_worker.py",
 }
 REQUIRED_MODULES = ALLOWED_MODULES
 MAX_MODULE_BYTES = 1024 * 1024

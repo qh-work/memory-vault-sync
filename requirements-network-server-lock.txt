@@ -1,0 +1,18 @@
+# Optional relay/authority/trusted endpoint server lock; ordinary clients do not need this.
+# Generated from official PyPI release metadata on 2026-08-31.
+# Includes the complete client dependency closure and only base server requirements.
+# No uvicorn[standard], Starlette[full], build dependencies, or unlocked requirements.
+# See docs/DEPENDENCIES_NETWORK.md; all artifacts must be wheels with recorded hashes.
+-r requirements-network-lock.txt
+
+# https://pypi.org/pypi/click/8.5.0/json
+click==8.5.0 \
+    --hash=sha256:255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360
+
+# https://pypi.org/pypi/starlette/1.6.0/json
+starlette==1.6.0 \
+    --hash=sha256:a86dd39d14bb45f85a3d18525215a9ef0cfd1f192ac793220e72598c90335f0c
+
+# https://pypi.org/pypi/uvicorn/0.52.4/json
+uvicorn==0.52.4 \
+    --hash=sha256:f86e41a149d7d05a9969337e3946a9c171c06a5d42680896daaba624aeac8da1

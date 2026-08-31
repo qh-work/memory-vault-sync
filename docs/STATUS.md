@@ -1,4 +1,23 @@
-# v0.25.1 capacity-patch status
+# Memory Vault development status
+
+Current source: **0.26.0-alpha.1**. The optional communication-memory network
+has a six-operation endpoint, independent issuer control, signed invitations,
+JWE encryption, two-node delivery, durable retries and endpoint receipts.
+Existing core records, personal backups, handoff packages and plugin entrypoints
+remain. Native encrypted Drive is wired to the existing queue; live cloud
+credentials/upload/readback remain unverified. See
+[current alpha evidence](RELEASE_NOTES_V0_26_ALPHA.md) and
+[network setup](NETWORK_QUICKSTART.md). No real-model or scale acceptance is claimed.
+
+The takeover iteration preserves existing code and configuration, removes
+unshipped external network adapters, separates new issuer/member keys, fixes
+recovery receipt progress and bounds rejected-content handling. Its final
+16-test targeted campaign passed, including real loopback relay processes;
+see the [current baseline](V0_26_PLAN.md). Source is still uncommitted and no
+alpha package was published or installed. The historical reports below do not
+become current-version validation by inclusion here.
+
+## Historical v0.25.1 capacity-patch status
 
 Source target: **0.25.1**, a bounded file-pack capacity patch. The previous
 [v0.25.0 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
