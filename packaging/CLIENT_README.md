@@ -1,8 +1,9 @@
-# Memory Vault v0.25.0 — authorized full client
+# Memory Vault v0.25.1 — authorized full client
 
-This full-client package is built from **minimally validated v0.25.0 release
-source**, not a claim of complete runtime certification. Check the
-[tagged release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
+This full-client package is built from **minimally validated v0.25.1 capacity-patch
+source**, not a claim of complete runtime certification. The previous v0.25.0
+release remains immutable. Check the
+[tagged release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.1)
 for publication status and matching assets. The plugin is under
 `plugins/memory-vault-client`; the local marketplace catalog is
 `.agents/plugins/marketplace.json`. All required runtime source modules listed
@@ -81,7 +82,16 @@ startup service or real Vault is changed by extracting this package.
 
 ## Evidence and independent review
 
-The [minimal release report](plugins/memory-vault-client/docs/V0_25_RELEASE_MINIMAL.md)
+The [capacity report](plugins/memory-vault-client/docs/V0_25_PACK_CAPACITY_SMOKE.md)
+records one opted-in actual 516 MiB synthetic create/copy/resume/repeat/unpack/hash
+case, a 2 GiB/512-entry manifest check and rejection of a sparse 2 GiB + 1 byte
+source before output. No full 2 GiB transfer or throughput benchmark was run.
+The file-pack limit is now 2 GiB; 4 MiB chunks and the default 32-uncached-chunk
+copy budget remain unchanged. New patch CI is pending; prior v0.25.0 baseline
+CI does not validate this patch. See the packaged
+[patch notes](plugins/memory-vault-client/docs/RELEASE_NOTES_V0_25_1.md).
+
+The earlier [minimal release report](plugins/memory-vault-client/docs/V0_25_RELEASE_MINIMAL.md)
 records six distinct methods with passing evidence across two source-pinned
 runs: five initial passes, then one recovery-only pass after a fixture setup
 correction; application code was unchanged. This is not a full-suite pass.

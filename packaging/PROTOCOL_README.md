@@ -1,4 +1,4 @@
-# Memory Vault v0.25.0 — independent protocol
+# Memory Vault v0.25.1 — independent protocol
 
 This archive is an agreement and implementation material, not an installed
 program. No Python, database, plugin, account or network service is required
@@ -22,14 +22,21 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package is built from v0.25.0
-release source, not the previous v0.24.1 source. Check the
-[tagged release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
+artifacts described in `docs/RELEASE.md`. This package is built from v0.25.1
+capacity-patch source; the previous v0.25.0 release remains immutable. The patch
+raises only the optional client's file-pack capacity, not the core protocol.
+Check the
+[tagged release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.1)
 for publication status and matching assets, including the
-[full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.0/memory-vault-client-v0.25.0.zip).
+[full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.1/memory-vault-client-v0.25.1.zip).
 Verify the source commit and validation scope in the release manifest.
 
-The [minimal release report](docs/V0_25_RELEASE_MINIMAL.md) records six distinct
+The [capacity report](docs/V0_25_PACK_CAPACITY_SMOKE.md) records one 516 MiB
+synthetic client pack round trip and separate 2 GiB boundary checks, not a full
+2 GiB transfer, benchmark or independent protocol implementation. New patch CI
+is pending; see [patch notes](docs/RELEASE_NOTES_V0_25_1.md).
+
+The earlier [minimal release report](docs/V0_25_RELEASE_MINIMAL.md) records six distinct
 methods with passing evidence across two source-pinned runs, including a
 fixture-only recovery setup correction. This is not a full-suite pass.
 The [validation index](docs/VALIDATION.md) records minimal offline synthetic

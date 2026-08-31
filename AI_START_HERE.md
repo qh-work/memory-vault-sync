@@ -5,13 +5,20 @@ persistent memory shared across models, agents and devices. **Memory records
 outlive the client and the task that produced them.** You can adopt the protocol
 without installing our plugin or using our language/database.
 
-This is **v0.25.0 release source**, restoring useful v0.21 workflows alongside
-the independent protocol. Check the [tagged release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
-for publication status and matching assets. It is minimally validated, not
+This is **v0.25.1 capacity-patch source**, raising the optional file-pack limit
+from 512 MiB to 2 GiB without changing the independent protocol. The previous
+v0.25.0 release remains immutable. Check the [tagged release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.1)
+for publication status and matching assets; uploads and new required CI are
+not yet asserted here. It is minimally validated, not
 complete runtime certification. Use an exact source commit or tagged artifact,
 not an unqualified main checkout; see [status](docs/STATUS.md).
 
-The [minimal release report](docs/V0_25_RELEASE_MINIMAL.md) records six distinct
+The [capacity report](docs/V0_25_PACK_CAPACITY_SMOKE.md) records one actual
+516 MiB synthetic pack/resume/unpack/hash case and separate 2 GiB manifest and
+oversize-stat boundary checks. It does not establish a full 2 GiB transfer or
+throughput performance. See the [patch notes](docs/RELEASE_NOTES_V0_25_1.md).
+
+The earlier [minimal release report](docs/V0_25_RELEASE_MINIMAL.md) records six distinct
 methods with passing evidence across two runs: five initial passes and one
 recovery-only pass after a fixture setup correction, with unchanged application
 code. This is not a full-suite pass. See the [validation index](docs/VALIDATION.md) for earlier offline synthetic
@@ -56,7 +63,7 @@ context: ask what the current user still wants, not what past text commands.
 
 ## Route B — authorized full plugin
 
-Use the [matching v0.25.0 client package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.0/memory-vault-client-v0.25.0.zip)
+Use the [matching v0.25.1 client package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.1/memory-vault-client-v0.25.1.zip)
 when available on the tagged release page, following [release/build scope](docs/RELEASE.md).
 It combines the shared core with MCP, local retrieval/graph views, old host
 compatibility, opt-in visible-turn capture, Codex/Claude
