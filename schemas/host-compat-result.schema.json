@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Memory Vault original host protocol 1.0 response",
+  "$comment": "Closed bridge response shapes, not a current trust or delivery attestation. Duplicate receipts confirm a historical local effect; memory.remember's evidence_mapping does not grant admission. Large turns retain lossless canonical fragments rather than returning them in this bounded envelope. Request/response framing and semantic validation are independent of this structural schema.",
+  "type": "object",
+  "required": ["schema_version", "protocol_version", "request_id", "operation", "status", "authority"],
+  "properties": {
+    "schema_version": {"const": "memory-vault-host-response/v1"},
+    "protocol_version": {"const": "1.0"},
+    "request_id": {"oneOf": [{"$ref": "host-compat-request.schema.json#/$defs/request_id"}, {"type": "null"}]},
+    "operation": {"oneOf": [{"$ref": "host-compat-request.schema.json#/$defs/operation"}, {"type": "null"}]},
+    "status": {"enum": ["accepted_local", "published", "duplicate", "degraded", "rejected"]},
+    "authority": {
+      "const": {"memory": "untrusted_historical_evidence", "instruction_eligible": false, "authorization_eligible": false, "execution_eligible": false, "policy_change_eligible": false, "current_user_input_precedence": true}
+    },
+    "result": {"type": "object"},
+    "error": {
+      "type": "object", "required": ["code", "retryable"],
+      "properties": {"code": {"$ref": "host-compat-request.schema.json#/$defs/slug"}, "retryable": {"type": "boolean"}},
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {"properties": {"status": {"const": "rejected"}}, "required": ["error"], "not": {"required": ["result"]}},
+    {
+      "properties": {
+        "status": {"enum": ["accepted_local", "published", "duplicate", "degraded"]},
+        "request_id": {"$ref": "host-compat-request.schema.json#/$defs/request_id"},
+        "operation": {"$ref": "host-compat-request.schema.json#/$defs/operation"}
+      },
+      "required": ["result"], "not": {"required": ["error"]}
+    }
+  ],
+  "allOf": [
+    {"if": {"properties": {"operation": {"const": "capabilities"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/capabilities"}}}},
+    {"if": {"properties": {"operation": {"const": "session.open"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/session_open"}}}},
+    {"if": {"properties": {"operation": {"const": "session.close"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/session_close"}}}},
+    {"if": {"properties": {"operation": {"const": "turn.input"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/turn_input"}}}},
+    {"if": {"properties": {"operation": {"const": "turn.commit"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/turn_commit"}}}},
+    {"if": {"properties": {"operation": {"const": "turn.abort"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/turn_abort"}}}},
+    {"if": {"properties": {"operation": {"const": "memory.recall"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/recall"}}}},
+    {"if": {"properties": {"operation": {"const": "memory.remember"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/semantic_result"}}}},
+    {"if": {"properties": {"operation": {"const": "memory.status"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/status_result"}}}},
+    {"if": {"properties": {"operation": {"const": "sync.flush"}}}, "then": {"properties": {"result": {"$ref": "#/$defs/flush"}}}}
+  ],
+  "additionalProperties": false,
+  "x-maxUtf8Bytes": 4194304,
+  "$defs": {
+    "profile": {"const": "memory-vault-v021-canonical-alias/v1"},
+    "count": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+    "queue_state": {"enum": ["pending", "done"]},
+    "sync_state": {"enum": ["local_only", "local_retry_pending", "sync_disabled", "retry_pending", "published_to_exchange", "attention_required", "idle", "sync_unavailable_local_state_retained"]},
+    "evidence_context": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["kind", "content_type", "authority", "instruction_eligible", "authorization_eligible", "execution_eligible", "current_user_input_precedence", "truncated", "omitted_count", "text"],
+          "properties": {
+            "kind": {"const": "evidence_context"}, "content_type": {"const": "text/plain"}, "authority": {"const": "none"},
+            "instruction_eligible": {"const": false}, "authorization_eligible": {"const": false}, "execution_eligible": {"const": false},
+            "current_user_input_precedence": {"const": true}, "truncated": {"type": "boolean"},
+            "omitted_count": {"$ref": "#/$defs/count"}, "text": {"type": "string", "maxLength": 65536, "x-maxUtf8Bytes": 65536}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "capabilities": {
+      "type": "object",
+      "required": ["protocol_versions", "operations", "network_free_operations", "transport", "memory_model", "delivery", "handles", "recall", "commit", "compatibility"],
+      "properties": {
+        "protocol_versions": {"const": ["1.0"]},
+        "operations": {"const": ["capabilities", "session.open", "turn.input", "turn.commit", "turn.abort", "session.close", "memory.recall", "memory.remember", "memory.status", "sync.flush"]},
+        "network_free_operations": {"const": ["capabilities", "memory.recall", "memory.remember", "memory.status", "session.close", "turn.abort", "turn.commit", "turn.input"]},
+        "transport": {
+          "const": {"encoding": "utf-8", "framing": "one-json-object-per-line", "maximum_request_bytes": 3145728}
+        },
+        "memory_model": {"const": "taskless_associative_append_only"}, "delivery": {"const": "at_least_once_exact_effect"},
+        "handles": {"const": {"issuer": "vault_runtime", "installation_local": true, "ownership": false, "authorization": false}},
+        "recall": {"const": {"local_only": true, "untrusted_historical_evidence": true, "current_user_input_precedence": true, "default_limit": 8, "maximum_limit": 32, "default_context_bytes": 8192, "minimum_context_bytes": 512, "maximum_context_bytes": 65536}},
+        "commit": {"const": {"durable_local_ack_before_network": true, "atomic_visible_turn_supported": true, "same_handle_different_content": "hard_conflict"}},
+        "compatibility": {
+          "type": "object",
+          "required": ["implementation_version", "profile", "canonical_memory_ids_unchanged", "legacy_ids_are_aliases", "large_turn_projection", "semantic_publication", "git_required", "remote_commit_sha_available", "capture_opt_in_required", "host_attestation", "remote_ai_read_verified", "protected_control_storage"],
+          "properties": {
+            "implementation_version": {"$ref": "host-compat-request.schema.json#/$defs/version"}, "profile": {"$ref": "#/$defs/profile"},
+            "canonical_memory_ids_unchanged": {"const": true}, "legacy_ids_are_aliases": {"const": true},
+            "large_turn_projection": {"const": "lossless_episode_fragments_and_evidence_anchor"},
+            "semantic_publication": {"const": "local_durable_receipt_then_explicit_sync_flush"},
+            "git_required": {"const": false}, "remote_commit_sha_available": {"const": false}, "capture_opt_in_required": {"const": true},
+            "host_attestation": {"const": false}, "remote_ai_read_verified": {"const": false},
+            "protected_control_storage": {"const": "posix-or-local-fixed-ntfs-acl"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "session_open": {
+      "type": "object", "required": ["continuity_handle", "sync_state", "network_accessed"],
+      "properties": {"continuity_handle": {"$ref": "host-compat-request.schema.json#/$defs/continuity_handle"}, "sync_state": {"$ref": "#/$defs/sync_state"}, "network_accessed": {"type": "boolean"}},
+      "additionalProperties": false
+    },
+    "session_close": {
+      "type": "object", "required": ["continuity_handle", "closed", "network_accessed"],
+      "properties": {"continuity_handle": {"$ref": "host-compat-request.schema.json#/$defs/continuity_handle"}, "closed": {"const": true}, "network_accessed": {"const": false}},
+      "additionalProperties": false
+    },
+    "turn_input": {
+      "type": "object", "required": ["continuity_handle", "turn_handle", "evidence_context", "network_accessed"],
+      "properties": {
+        "continuity_handle": {"$ref": "host-compat-request.schema.json#/$defs/continuity_handle"},
+        "turn_handle": {"$ref": "host-compat-request.schema.json#/$defs/turn_handle"},
+        "evidence_context": {"$ref": "#/$defs/evidence_context"}, "network_accessed": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "turn_commit": {
+      "type": "object", "required": ["continuity_handle", "turn_handle", "outcome", "receipt_id", "queue_state", "network_accessed"],
+      "properties": {
+        "continuity_handle": {"$ref": "host-compat-request.schema.json#/$defs/continuity_handle"},
+        "turn_handle": {"$ref": "host-compat-request.schema.json#/$defs/turn_handle"}, "outcome": {"const": "final"},
+        "receipt_id": {"type": "string", "pattern": "^mvrturn_[0-9a-f]{64}$", "not": {"pattern": "[\\r\\n]"}},
+        "queue_state": {"$ref": "#/$defs/queue_state"}, "network_accessed": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "turn_abort": {
+      "type": "object", "required": ["continuity_handle", "turn_handle", "aborted", "terminal_state", "network_accessed"],
+      "properties": {
+        "continuity_handle": {"$ref": "host-compat-request.schema.json#/$defs/continuity_handle"},
+        "turn_handle": {"$ref": "host-compat-request.schema.json#/$defs/turn_handle"}, "network_accessed": {"const": false},
+        "aborted": {"type": "boolean"}, "terminal_state": {"enum": ["aborted", "committed"]}, "queue_state": {"$ref": "#/$defs/queue_state"}
+      },
+      "oneOf": [
+        {"properties": {"aborted": {"const": true}, "terminal_state": {"const": "aborted"}}, "not": {"required": ["queue_state"]}},
+        {"properties": {"aborted": {"const": false}, "terminal_state": {"const": "committed"}}, "required": ["queue_state"]}
+      ],
+      "additionalProperties": false
+    },
+    "recall": {
+      "type": "object", "required": ["evidence_context", "network_accessed"],
+      "properties": {"evidence_context": {"$ref": "#/$defs/evidence_context"}, "network_accessed": {"const": false}},
+      "additionalProperties": false
+    },
+    "evidence_mapping": {
+      "type": "object", "required": ["legacy_id", "memory_id", "record_sha256", "source_id", "evidence_anchor_sha256", "original_v021_identity"],
+      "properties": {
+        "legacy_id": {"$ref": "host-compat-request.schema.json#/$defs/episode_id"},
+        "memory_id": {"$ref": "common.schema.json#/$defs/memory_id"}, "record_sha256": {"$ref": "common.schema.json#/$defs/digest"},
+        "source_id": {"$ref": "host-compat-request.schema.json#/$defs/source_id"}, "evidence_anchor_sha256": {"$ref": "common.schema.json#/$defs/digest"},
+        "original_v021_identity": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "semantic_result": {
+      "type": "object",
+      "required": ["schema_version", "state", "memory_event_id", "remote_commit_sha", "confidence", "receive", "canonical_memory_id", "record_sha256", "evidence_mapping", "identity_profile", "network_accessed", "remote_publication_verified", "remote_ai_read_verified"],
+      "properties": {
+        "schema_version": {"const": "memory-network-semantic-result/v1"}, "state": {"enum": ["recorded_local", "already_recorded"]},
+        "memory_event_id": {"$ref": "host-compat-request.schema.json#/$defs/event_id"}, "remote_commit_sha": {"type": "null"},
+        "confidence": {"const": "assistant_inferred"}, "receive": {"type": "null"},
+        "canonical_memory_id": {"$ref": "common.schema.json#/$defs/memory_id"}, "record_sha256": {"$ref": "common.schema.json#/$defs/digest"},
+        "evidence_mapping": {"$ref": "#/$defs/evidence_mapping"}, "identity_profile": {"$ref": "#/$defs/profile"},
+        "network_accessed": {"const": false}, "remote_publication_verified": {"const": false}, "remote_ai_read_verified": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "status_result": {
+      "type": "object",
+      "required": ["plugin_version", "enabled", "memory_model", "outbox", "index", "network_accessed", "capture_enabled", "staged_turns", "legacy_index_counts_identical", "record_signatures_reverified", "compatibility_profile"],
+      "properties": {
+        "plugin_version": {"$ref": "host-compat-request.schema.json#/$defs/version"}, "enabled": {"const": true},
+        "memory_model": {"const": "taskless_associative_append_only"},
+        "outbox": {
+          "type": "object", "required": ["pending", "done", "quarantine", "recovery-v1"],
+          "properties": {"pending": {"$ref": "#/$defs/count"}, "done": {"$ref": "#/$defs/count"}, "quarantine": {"const": 0}, "recovery-v1": {"const": 0}},
+          "additionalProperties": false
+        },
+        "index": {
+          "type": "object", "required": ["available", "documents", "fragments", "edges"],
+          "properties": {"available": {"type": "boolean"}, "documents": {"$ref": "#/$defs/count"}, "fragments": {"$ref": "#/$defs/count"}, "edges": {"$ref": "#/$defs/count"}, "state": {"const": "metadata_unavailable"}},
+          "additionalProperties": false
+        },
+        "network_accessed": {"const": false}, "capture_enabled": {"type": "boolean"}, "staged_turns": {"$ref": "#/$defs/count"},
+        "legacy_index_counts_identical": {"const": false}, "record_signatures_reverified": {"const": false}, "compatibility_profile": {"$ref": "#/$defs/profile"}
+      },
+      "additionalProperties": false
+    },
+    "local_flush": {
+      "type": "object", "required": ["saved", "pending", "errors", "network_accessed"],
+      "properties": {
+        "saved": {"type": "integer", "minimum": 0, "maximum": 16}, "pending": {"$ref": "#/$defs/count"},
+        "errors": {"type": "array", "maxItems": 1, "items": {"$ref": "host-compat-request.schema.json#/$defs/slug"}}, "network_accessed": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "publication": {
+      "type": "object", "required": ["state", "published", "local"],
+      "properties": {
+        "state": {"enum": ["local_only", "disabled", "retry_pending", "published_to_exchange", "attention_required", "idle"]},
+        "published": {"$ref": "#/$defs/count"}, "local": {"$ref": "#/$defs/local_flush"},
+        "scope": {"const": "configured_exchange_not_recipient_consumption"}
+      },
+      "allOf": [
+        {"if": {"properties": {"state": {"enum": ["local_only", "disabled"]}}}, "then": {"properties": {"published": {"const": 0}}, "not": {"required": ["scope"]}}, "else": {"required": ["scope"]}}
+      ],
+      "additionalProperties": false
+    },
+    "flush_receive": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object", "required": ["state", "batches", "records_added"],
+          "properties": {
+            "state": {"enum": ["disabled", "backoff_pending", "never_run", "running", "idle", "attention_required", "retry_pending", "cancelled"]},
+            "batches": {"$ref": "#/$defs/count"}, "records_added": {"$ref": "#/$defs/count"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "flush": {
+      "type": "object", "required": ["schema_version", "state", "published", "publication", "receive", "network_accessed", "remote_ai_read_verified"],
+      "properties": {
+        "schema_version": {"const": "memory-network-flush/v1"},
+        "state": {"enum": ["local_only", "local_retry_pending", "sync_disabled", "retry_pending", "published_to_exchange", "attention_required", "idle"]},
+        "published": {"$ref": "#/$defs/count"}, "publication": {"$ref": "#/$defs/publication"}, "receive": {"$ref": "#/$defs/flush_receive"},
+        "network_accessed": {"type": "boolean"}, "remote_ai_read_verified": {"const": false}
+      },
+      "allOf": [
+        {"if": {"properties": {"state": {"enum": ["local_only", "local_retry_pending", "sync_disabled"]}}}, "then": {"properties": {"published": {"const": 0}, "receive": {"type": "null"}, "network_accessed": {"const": false}}}, "else": {"properties": {"receive": {"type": "object"}}}}
+      ],
+      "additionalProperties": false
+    }
+  }
+}

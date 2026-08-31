@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Universal Memory Lifecycle Request v1",
+  "description": "A new optional local lifecycle profile, not the legacy v0.21 wire contract. All frames must additionally fit 2097152 UTF-8 bytes. Mutating request IDs are stable and may not be reused with changed arguments.",
+  "$defs": {
+    "requestId": {"type": "string", "pattern": "^req_[A-Za-z0-9_-]{8,96}$"},
+    "sessionHandle": {"type": "string", "pattern": "^ses_[0-9a-f]{32}$"},
+    "turnHandle": {"type": "string", "pattern": "^turn_[0-9a-f]{32}$"},
+    "visibleText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 491520,
+      "pattern": "\\S",
+      "not": {"pattern": "\u0000"},
+      "description": "Nonblank caller-reported visible text, without NUL. The normative runtime limit is 491520 UTF-8 bytes, not characters. Never supply hidden reasoning, unrelated transcripts or unauthorized content.",
+      "x-maxUtf8Bytes": 491520
+    },
+    "continuity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768,
+      "pattern": "\\S",
+      "not": {"pattern": "\u0000"},
+      "description": "Optional visible continuity summary. Normative additional limit: 32768 UTF-8 bytes. Omission freezes a bounded excerpt, not an inferred claim of completion.",
+      "x-maxUtf8Bytes": 32768
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "op"],
+      "properties": {
+        "schema_version": {"const": "universal-memory-lifecycle-request/v1"},
+        "op": {"const": "capabilities"},
+        "request_id": {"$ref": "#/$defs/requestId"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "op", "request_id"],
+      "properties": {
+        "schema_version": {"const": "universal-memory-lifecycle-request/v1"},
+        "op": {"const": "session.open"},
+        "request_id": {"$ref": "#/$defs/requestId"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "op", "request_id", "session_handle", "user"],
+      "properties": {
+        "schema_version": {"const": "universal-memory-lifecycle-request/v1"},
+        "op": {"const": "turn.input"},
+        "request_id": {"$ref": "#/$defs/requestId"},
+        "session_handle": {"$ref": "#/$defs/sessionHandle"},
+        "user": {"$ref": "#/$defs/visibleText"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "op", "request_id", "turn_handle", "assistant"],
+      "properties": {
+        "schema_version": {"const": "universal-memory-lifecycle-request/v1"},
+        "op": {"const": "turn.commit"},
+        "request_id": {"$ref": "#/$defs/requestId"},
+        "turn_handle": {"$ref": "#/$defs/turnHandle"},
+        "assistant": {"$ref": "#/$defs/visibleText"},
+        "continuity": {"$ref": "#/$defs/continuity"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "op", "request_id", "turn_handle"],
+      "properties": {
+        "schema_version": {"const": "universal-memory-lifecycle-request/v1"},
+        "op": {"const": "turn.abort"},
+        "request_id": {"$ref": "#/$defs/requestId"},
+        "turn_handle": {"$ref": "#/$defs/turnHandle"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "op", "request_id", "session_handle"],
+      "properties": {
+        "schema_version": {"const": "universal-memory-lifecycle-request/v1"},
+        "op": {"const": "session.close"},
+        "request_id": {"$ref": "#/$defs/requestId"},
+        "session_handle": {"$ref": "#/$defs/sessionHandle"}
+      }
+    }
+  ]
+}

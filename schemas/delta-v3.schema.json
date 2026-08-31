@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UAMP signed incremental dependency delta v3 envelope",
+  "$comment": "Transport only, never a Memory request or authorization. All external dependencies are derived from canonical relations, not a sender-provided possession list. prior_stream requires the exact locally accepted previous head, its same-Vault atomic transfer receipt, and bounded current-trust validation of the full real dependency closure in the admission transaction. A sender may shorten only actual published members of this same stream. Cache positives require unchanged protected trust policy and SQL-backed admission/canonical invalidation epoch. Missing or oversized validation leaves the cursor unchanged. v1/v2 retain their existing wire shapes.",
+  "type": "object",
+  "required": ["payload", "proof"],
+  "properties": {
+    "payload": {"$ref": "#/$defs/payload"},
+    "proof": {
+      "allOf": [
+        {"$ref": "signed.schema.json"},
+        {"properties": {"schema_version": {"const": "universal-memory-message-signature/v1"}}}
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "x-maxUtf8Bytes": 4194304,
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "required": ["schema_version", "source_store_id", "sender_key_id", "after", "cursor", "records", "attestations", "blocked", "previous_batch_sha256", "publication_review", "group", "dependency_mode"],
+      "properties": {
+        "schema_version": {"const": "universal-memory-delta/v3"},
+        "source_store_id": {"$ref": "common.schema.json#/$defs/store_id"},
+        "sender_key_id": {"$ref": "common.schema.json#/$defs/key_id"},
+        "after": {"type": "integer", "minimum": 0, "maximum": 9223372036854775806},
+        "cursor": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+        "records": {"type": "array", "maxItems": 1024, "items": {"$ref": "record.schema.json"}},
+        "attestations": {
+          "type": "object",
+          "maxProperties": 1024,
+          "propertyNames": {"$ref": "common.schema.json#/$defs/memory_id"},
+          "additionalProperties": {
+            "allOf": [
+              {"$ref": "signed.schema.json"},
+              {"properties": {"schema_version": {"const": "universal-memory-attestation/v1"}}}
+            ]
+          }
+        },
+        "blocked": {"type": "array", "maxItems": 1024, "items": {
+          "allOf": [
+            {"$ref": "delta-v2.schema.json#/$defs/disposition"},
+            {"properties": {"reason": {"enum": ["dependency_not_admitted", "unsigned_dependency", "operator_excluded"]}}}
+          ]
+        }},
+        "previous_batch_sha256": {"oneOf": [{"type": "null"}, {"$ref": "common.schema.json#/$defs/digest"}]},
+        "publication_review": {"oneOf": [{"type": "null"}, {"$ref": "delta-v2.schema.json#/$defs/publication_review"}]},
+        "group": {"oneOf": [{"type": "null"}, {"$ref": "fragment-group.schema.json"}]},
+        "dependency_mode": {"enum": ["closure", "prior_stream"]}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"after": {"const": 0}}},
+          "then": {"properties": {"previous_batch_sha256": {"type": "null"}, "dependency_mode": {"const": "closure"}}},
+          "else": {"properties": {"previous_batch_sha256": {"$ref": "common.schema.json#/$defs/digest"}}}
+        },
+        {
+          "if": {"properties": {"group": {"type": "object"}}},
+          "then": {"properties": {"records": {"maxItems": 0}, "attestations": {"maxProperties": 0}}}
+        },
+        {
+          "if": {"properties": {"blocked": {"contains": {"properties": {"reason": {"const": "operator_excluded"}}, "required": ["reason"]}}}},
+          "then": {"properties": {"publication_review": {"$ref": "delta-v2.schema.json#/$defs/publication_review"}}}
+        }
+      ]
+    }
+  }
+}

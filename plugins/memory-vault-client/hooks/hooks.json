@@ -1,0 +1,46 @@
+{
+  "description": "Optional local-only visible-turn capture. Requires capture_visible_turns=true and the host's explicit hook trust review. Never reads transcripts or blocks/continues a turn.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I -B \"${PLUGIN_ROOT}/scripts/launcher.py\" hook session-start",
+            "commandWindows": "py -3 -I -B \"$env:PLUGIN_ROOT/scripts/launcher.py\" hook session-start",
+            "timeout": 5,
+            "additionalContextLimit": 2500,
+            "statusMessage": "Reading local memory context"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I -B \"${PLUGIN_ROOT}/scripts/launcher.py\" hook user-prompt-submit",
+            "commandWindows": "py -3 -I -B \"$env:PLUGIN_ROOT/scripts/launcher.py\" hook user-prompt-submit",
+            "timeout": 5,
+            "additionalContextLimit": 2500,
+            "statusMessage": "Staging this visible prompt and recalling local memory"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I -B \"${PLUGIN_ROOT}/scripts/launcher.py\" hook stop",
+            "commandWindows": "py -3 -I -B \"$env:PLUGIN_ROOT/scripts/launcher.py\" hook stop",
+            "timeout": 10,
+            "statusMessage": "Saving this visible turn to local memory"
+          }
+        ]
+      }
+    ]
+  }
+}

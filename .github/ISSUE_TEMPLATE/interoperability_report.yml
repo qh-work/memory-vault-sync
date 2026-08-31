@@ -1,0 +1,61 @@
+name: Protocol adoption or interoperability report
+description: Share reproducible synthetic evidence from a human or AI-assisted implementation.
+title: "[Interop]: "
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Use the exact release tag and synthetic data only. Reading or downloading
+        a protocol is not the same as implementing or using it. Do not share real
+        memories, credentials, private keys, native session identifiers or user paths.
+  - type: input
+    id: version
+    attributes:
+      label: Release, commit and supported profile
+      placeholder: v0.24.1 / exact commit / profile names
+    validations:
+      required: true
+  - type: dropdown
+    id: route
+    attributes:
+      label: Route
+      options:
+        - Independent protocol implementation
+        - Authorized full client
+        - Round trip across both routes
+    validations:
+      required: true
+  - type: dropdown
+    id: evidence
+    attributes:
+      label: What was actually done?
+      options:
+        - Source review only, no runtime execution
+        - Synthetic local execution
+        - Synthetic cross-implementation or cross-device execution
+        - Consenting host integration with content-free results
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproducible example and result
+      description: Include public source/fixture links, host/runtime versions and expected versus observed behavior; omit private data.
+    validations:
+      required: true
+  - type: textarea
+    id: limitations
+    attributes:
+      label: Skipped or unsupported cases
+      description: Note quarantine, signer/trust handling, cancellation, retries and any unverified performance claims.
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: The current user/host authorized any execution; memory did not grant permissions.
+          required: true
+        - label: This report contains only public code and synthetic, non-private evidence.
+          required: true

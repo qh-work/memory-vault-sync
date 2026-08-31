@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UAMP canonical Memory Record v1",
+  "$comment": "Emit canonical arrays/objects. Recompute record_sha256 over the eight body fields (excluding memory_id and record_sha256) and require memory_id=mem_+digest[0:40]. Validate nonblank text, UTF-8 byte lengths, dates and relation closure separately.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "text",
+    "entities",
+    "relations",
+    "provenance",
+    "created_at",
+    "hash_profile",
+    "memory_id",
+    "record_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "universal-memory-record/v1"
+    },
+    "kind": {
+      "$ref": "common.schema.json#/$defs/kind"
+    },
+    "text": {
+      "$ref": "common.schema.json#/$defs/text"
+    },
+    "entities": {
+      "$ref": "common.schema.json#/$defs/entities"
+    },
+    "relations": {
+      "$ref": "common.schema.json#/$defs/relations"
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance"
+    },
+    "created_at": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "hash_profile": {
+      "const": "canonical-json+sha256/v1"
+    },
+    "memory_id": {
+      "$ref": "common.schema.json#/$defs/memory_id"
+    },
+    "record_sha256": {
+      "$ref": "common.schema.json#/$defs/digest"
+    }
+  },
+  "additionalProperties": false,
+  "x-maxUtf8Bytes": 2097152
+}

@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Optional encrypted memory replication catalog v1",
+  "$comment": "Ciphertext metadata only. The signature authenticates integer-only JCS of every field except signature_b64 and catalog_sha256; catalog_sha256 hashes JCS including signature_b64, excluding itself. The independent signer public-key fingerprint must equal the currently enrolled publisher key. Validate current trust state/generation, active publisher, epoch and previous catalog chain independently. Entries are sorted by path and total ciphertext is at most 2 GiB; metadata and elapsed-time budgets are separate. envelope_header_sha256 binds the complete canonical share-envelope header. Base64 syntax is not canonical-byte or signature verification. Receiving a catalog does not decrypt/admit memory, persist a trusted head automatically, grant permission or configure providers.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "network_contract",
+    "trust_state_sha256",
+    "trust_generation",
+    "catalog_generation",
+    "previous_catalog_sha256",
+    "publisher_fingerprint",
+    "entries",
+    "signer_identity",
+    "signer_profile",
+    "signer_version",
+    "signer_public_key_fingerprint",
+    "signature_b64",
+    "catalog_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "universal-memory-encrypted-catalog/v1"
+    },
+    "network_contract": {
+      "const": "universal-memory-encrypted-replication/v1"
+    },
+    "trust_state_sha256": {
+      "$ref": "common.schema.json#/$defs/digest"
+    },
+    "trust_generation": {
+      "$ref": "#/$defs/counter"
+    },
+    "catalog_generation": {
+      "$ref": "#/$defs/positive"
+    },
+    "previous_catalog_sha256": {
+      "$ref": "common.schema.json#/$defs/digest"
+    },
+    "publisher_fingerprint": {
+      "$ref": "#/$defs/opaque"
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 1000000,
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    },
+    "signer_identity": {
+      "$ref": "#/$defs/opaque"
+    },
+    "signer_profile": {
+      "$ref": "#/$defs/opaque"
+    },
+    "signer_version": {
+      "$ref": "#/$defs/opaque"
+    },
+    "signer_public_key_fingerprint": {
+      "$ref": "#/$defs/opaque"
+    },
+    "signature_b64": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 87384,
+      "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+      "not": {
+        "pattern": "[\\r\\n]"
+      }
+    },
+    "catalog_sha256": {
+      "$ref": "common.schema.json#/$defs/digest"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "opaque": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$",
+      "not": {
+        "pattern": "[\\r\\n]|task|conversation|owner|local_path|workspace"
+      }
+    },
+    "counter": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "positive": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "entry": {
+      "type": "object",
+      "required": [
+        "path",
+        "ciphertext_sha256",
+        "ciphertext_bytes",
+        "recipient_fingerprint",
+        "key_epoch",
+        "capability_scope_sha256",
+        "envelope_header_sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "$comment": "Must also pass portable relative-path rules: no traversal, empty/dot components, backslashes, colons, control characters, reserved Windows names, trailing spaces/dots, receipt collision or case-insensitive file/parent collisions."
+        },
+        "ciphertext_sha256": {
+          "$ref": "common.schema.json#/$defs/digest"
+        },
+        "ciphertext_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483648
+        },
+        "recipient_fingerprint": {
+          "$ref": "#/$defs/opaque"
+        },
+        "key_epoch": {
+          "$ref": "#/$defs/positive"
+        },
+        "capability_scope_sha256": {
+          "$ref": "common.schema.json#/$defs/digest"
+        },
+        "envelope_header_sha256": {
+          "$ref": "common.schema.json#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

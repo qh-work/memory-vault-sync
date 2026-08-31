@@ -1,0 +1,335 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UAMP core and configured-client response envelope v1",
+  "$comment": "The envelope fixes authority and success/error exclusivity. The configured MCP client may add client metadata or a failed visible-turn write's partial_result; neither is a canonical record field. MCP JSON-RPC framing is separate and may omit the duplicate text rendering while retaining the complete structuredContent envelope. Optional views/graph details are defined in docs/GRAPH_VIEWS.md and ranking in docs/RETRIEVAL.md. A valid envelope does not establish successful durable execution, truth or permission.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "ok",
+    "authority"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "universal-agent-memory-result/v1"
+    },
+    "request_id": {
+      "$ref": "common.schema.json#/$defs/request_id"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "authority": {
+      "$ref": "common.schema.json#/$defs/authority"
+    },
+    "client": {
+      "oneOf": [
+        {"$ref": "#/$defs/client_capabilities"},
+        {"$ref": "#/$defs/client_health"}
+      ]
+    },
+    "partial_result": {
+      "type": "object",
+      "required": ["episode_saved", "episode_id", "continuity_saved", "retry_same_request"],
+      "properties": {
+        "episode_saved": {"const": true},
+        "episode_id": {"$ref": "common.schema.json#/$defs/memory_id"},
+        "continuity_saved": {"const": false},
+        "retry_same_request": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "allOf": [
+        {
+          "if": {"required": ["schema_version"], "properties": {"schema_version": {"const": "universal-memory-views/v1"}}},
+          "then": {"$ref": "#/$defs/views_result"}
+        },
+        {
+          "if": {"required": ["schema_version"], "properties": {"schema_version": {"const": "universal-memory-graph/v1"}}},
+          "then": {"$ref": "#/$defs/graph_result"}
+        }
+      ]
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "code",
+        "retryable"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{1,63}$",
+          "not": {"pattern": "[\\r\\n]"}
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "ok": {
+          "const": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "not": {
+        "required": [
+          "error"
+        ]
+      }
+    },
+    {
+      "properties": {
+        "ok": {
+          "const": false
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "not": {
+        "required": [
+          "result"
+        ]
+      }
+    }
+  ],
+  "allOf": [
+    {
+      "if": {"required": ["partial_result"]},
+      "then": {"properties": {"ok": {"const": false}}, "required": ["error"]}
+    }
+  ],
+  "$defs": {
+    "client_capabilities": {
+      "type": "object",
+      "required": ["mcp_protocol", "transport", "automatic_capture_default", "network_accessed", "work_automatic_hooks_verified", "optional_full_mode", "external_provider_contracts", "response_limits"],
+      "properties": {
+        "mcp_protocol": {"const": "2025-06-18"},
+        "transport": {"const": "stdio"},
+        "automatic_capture_default": {"const": false},
+        "network_accessed": {"const": false},
+        "work_automatic_hooks_verified": {"const": false},
+        "optional_full_mode": {
+          "type": "array", "uniqueItems": true, "maxItems": 11,
+          "items": {"enum": ["automatic_sync", "remote_backends", "host_adapters", "v021_host_compatibility", "backup_restore", "diagnostics", "staged_updates", "publisher_update_verification", "managed_activation_and_rollback", "chunk_packs", "selective_signed_evidence_sharing"]}
+        },
+        "external_provider_contracts": {
+          "type": "object",
+          "required": ["authenticated_share_encryption", "device_trust_transitions", "encrypted_catalogs", "production_providers_configured_by_default"],
+          "properties": {
+            "authenticated_share_encryption": {"const": true},
+            "device_trust_transitions": {"const": true},
+            "encrypted_catalogs": {"const": true},
+            "production_providers_configured_by_default": {"const": false}
+          },
+          "additionalProperties": false
+        },
+        "response_limits": {
+          "type": "object",
+          "required": ["maximum_frame_bytes", "views_maximum_nodes", "graph_maximum_nodes", "graph_maximum_edges", "complete_structured_content_fallback"],
+          "properties": {
+            "maximum_frame_bytes": {"const": 4194304},
+            "views_maximum_nodes": {"const": 64},
+            "graph_maximum_nodes": {"const": 64},
+            "graph_maximum_edges": {"const": 512},
+            "complete_structured_content_fallback": {"const": true}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "client_health": {
+      "type": "object",
+      "required": ["configured", "capture_visible_turns", "signing_configured", "sync_configured", "work_automatic_hooks_verified"],
+      "properties": {
+        "configured": {"const": true},
+        "capture_visible_turns": {"type": "boolean"},
+        "signing_configured": {"type": "boolean"},
+        "sync_configured": {"type": "boolean"},
+        "work_automatic_hooks_verified": {"const": false},
+        "sync": {"$ref": "#/$defs/sync_health"}
+      },
+      "additionalProperties": false
+    },
+    "sync_health": {
+      "type": "object",
+      "required": ["state", "memory_content_included", "remote_ai_read_verified", "network_accessed"],
+      "properties": {
+        "state": {"enum": ["never_run", "running", "idle", "attention_required", "retry_pending", "cancelled", "interrupted_retry_pending", "sync_unavailable"]},
+        "enabled": {"type": "boolean"},
+        "automatic": {"type": "boolean"},
+        "background": {"type": "boolean"},
+        "backend": {"enum": ["directory", "rclone"]},
+        "pending": {"type": "boolean"},
+        "worker_lease_active": {"type": "boolean"},
+        "attempts": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+        "failures": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+        "next_retry_at": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+        "last_error": {"type": ["string", "null"], "maxLength": 64},
+        "last_success_at": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+        "counts": {
+          "type": "object",
+          "required": ["published_batches", "uploaded_batches", "received_batches", "records_added", "blocked_records", "rejected_batches", "receipt_replays", "peer_failures"],
+          "properties": {
+            "published_batches": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+            "uploaded_batches": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+            "received_batches": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+            "records_added": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+            "blocked_records": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+            "rejected_batches": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+            "receipt_replays": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+            "peer_failures": {"$ref": "common.schema.json#/$defs/nonnegative_integer"}
+          },
+          "additionalProperties": false
+        },
+        "memory_content_included": {"const": false},
+        "remote_ai_read_verified": {"const": false},
+        "network_accessed": {"const": false}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"state": {"const": "sync_unavailable"}}},
+          "then": {"maxProperties": 4},
+          "else": {"required": ["enabled", "automatic", "background", "backend", "pending", "worker_lease_active", "attempts", "failures", "next_retry_at", "last_error", "last_success_at", "counts"]}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "node": {
+      "type": "object",
+      "required": ["memory_id", "kind", "created_at", "text", "text_truncated", "status", "verification"],
+      "properties": {
+        "memory_id": {"$ref": "common.schema.json#/$defs/memory_id"},
+        "kind": {"$ref": "common.schema.json#/$defs/kind"},
+        "created_at": {"$ref": "common.schema.json#/$defs/timestamp"},
+        "text": {"type": "string", "maxLength": 1024},
+        "text_truncated": {"type": "boolean"},
+        "status": {"enum": ["current", "superseded", "conflicted", "resolved"]},
+        "verification": {"type": "object", "required": ["eligible_for_context", "grants_authority"], "properties": {"eligible_for_context": {"const": true}, "grants_authority": {"const": false}}},
+        "state_relations": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/edge"}},
+        "state_relations_truncated": {"type": "boolean"}
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["source_id", "target_id", "type", "state_effective", "source_state_effective", "state_effective_reason", "resolution_memory_id", "resolution_target_id"],
+      "properties": {
+        "source_id": {"$ref": "common.schema.json#/$defs/memory_id"},
+        "target_id": {"$ref": "common.schema.json#/$defs/memory_id"},
+        "type": {"enum": ["related_to", "derived_from", "supports", "supersedes", "conflicts_with", "resolves", "continues"]},
+        "state_effective": {"type": "boolean"},
+        "source_state_effective": {"type": "boolean"},
+        "state_effective_reason": {"enum": ["non_state_relation", "weaker_than_target", "explicit_endpoint_resolution", "admitted_relation"]},
+        "resolution_memory_id": {"anyOf": [{"$ref": "common.schema.json#/$defs/memory_id"}, {"type": "null"}]},
+        "resolution_target_id": {"anyOf": [{"$ref": "common.schema.json#/$defs/memory_id"}, {"type": "null"}]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"state_effective_reason": {"const": "explicit_endpoint_resolution"}}},
+          "then": {
+            "properties": {
+              "type": {"const": "conflicts_with"}, "state_effective": {"const": false},
+              "resolution_memory_id": {"$ref": "common.schema.json#/$defs/memory_id"},
+              "resolution_target_id": {"$ref": "common.schema.json#/$defs/memory_id"}
+            }
+          },
+          "else": {"properties": {"resolution_memory_id": {"type": "null"}, "resolution_target_id": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"state_effective_reason": {"const": "admitted_relation"}}},
+          "then": {"properties": {"state_effective": {"const": true}, "type": {"enum": ["supersedes", "conflicts_with", "resolves"]}}},
+          "else": {"properties": {"state_effective": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "conflicts_with"}, "state_effective_reason": {"not": {"const": "explicit_endpoint_resolution"}}}},
+          "then": {"properties": {"source_state_effective": {"const": true}}},
+          "else": {"properties": {"source_state_effective": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"state_effective_reason": {"const": "non_state_relation"}}},
+          "then": {"properties": {"type": {"enum": ["related_to", "derived_from", "supports", "continues"]}}},
+          "else": {"properties": {"type": {"enum": ["supersedes", "conflicts_with", "resolves"]}}}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "proposal": {
+      "type": "object",
+      "required": ["proposal_id", "view_id", "action", "evidence_memory_ids", "current_memory_ids", "historical_memory_ids", "status", "executable", "authority", "reason"],
+      "properties": {
+        "proposal_id": {"type": "string", "pattern": "^proposal_[0-9a-f]{40}$"},
+        "view_id": {"type": "string", "pattern": "^view_[0-9a-f]{40}$"},
+        "action": {"const": "retain_current_with_historical_evidence"},
+        "evidence_memory_ids": {"type": "array", "maxItems": 512, "uniqueItems": true, "items": {"$ref": "common.schema.json#/$defs/memory_id"}},
+        "current_memory_ids": {"type": "array", "maxItems": 512, "uniqueItems": true, "items": {"$ref": "common.schema.json#/$defs/memory_id"}},
+        "historical_memory_ids": {"type": "array", "maxItems": 512, "uniqueItems": true, "items": {"$ref": "common.schema.json#/$defs/memory_id"}},
+        "status": {"const": "proposal_only"},
+        "executable": {"const": false},
+        "authority": {"const": "none"},
+        "reason": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "views_result": {
+      "type": "object",
+      "required": ["schema_version", "views", "consolidation_proposals", "through", "truncated", "next_request", "network_accessed", "records_changed", "authority"],
+      "properties": {
+        "schema_version": {"const": "universal-memory-views/v1"},
+        "views": {
+          "type": "array", "maxItems": 32,
+          "items": {
+            "type": "object",
+            "required": ["view_id", "state", "current_memory_ids", "timeline", "truncated", "authority", "next_request"],
+            "properties": {
+              "view_id": {"type": "string", "pattern": "^view_[0-9a-f]{40}$"},
+              "state": {"enum": ["current", "superseded", "conflicted", "resolved"]},
+              "state_is_page_local": {"type": "boolean"},
+              "current_memory_ids": {"type": "array", "maxItems": 512, "uniqueItems": true, "items": {"$ref": "common.schema.json#/$defs/memory_id"}},
+              "timeline": {"type": "array", "maxItems": 512, "items": {"$ref": "#/$defs/node"}},
+              "truncated": {"type": "boolean"},
+              "has_more": {"type": "boolean"},
+              "earlier_pages_omitted": {"type": "boolean"},
+              "authority": {"const": "none"},
+              "next_request": {"type": ["object", "null"]}
+            }
+          }
+        },
+        "consolidation_proposals": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/proposal"}},
+        "through": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+        "truncated": {"type": "boolean"},
+        "next_request": {"type": ["object", "null"]},
+        "network_accessed": {"const": false},
+        "records_changed": {"const": false},
+        "authority": {"const": "none"}
+      }
+    },
+    "graph_result": {
+      "type": "object",
+      "required": ["schema_version", "root_memory_id", "nodes", "edges", "through", "truncated", "cycle_detected", "network_accessed", "records_changed", "authority"],
+      "properties": {
+        "schema_version": {"const": "universal-memory-graph/v1"},
+        "root_memory_id": {"$ref": "common.schema.json#/$defs/memory_id"},
+        "nodes": {"type": "array", "maxItems": 512, "items": {"$ref": "#/$defs/node"}},
+        "edges": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/edge"}},
+        "through": {"$ref": "common.schema.json#/$defs/nonnegative_integer"},
+        "truncated": {"type": "boolean"},
+        "cycle_detected": {"type": "boolean"},
+        "network_accessed": {"const": false},
+        "records_changed": {"const": false},
+        "authority": {"const": "none"}
+      }
+    }
+  },
+  "additionalProperties": false,
+  "x-maxUtf8Bytes": 4194304
+}

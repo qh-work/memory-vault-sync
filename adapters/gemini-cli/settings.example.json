@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "SessionStart": [{"matcher":"*","hooks":[{"name":"memory-vault-session-start","type":"command","command":"python3 \"/absolute/path/to/memory-vault-sync/memory_vault_hosts.py\" --config \"/absolute/path/to/private/client.json\" --host gemini-cli --event SessionStart","timeout":20000}]}],
+    "BeforeAgent": [{"matcher":"*","hooks":[{"name":"memory-vault-visible-input","type":"command","command":"python3 \"/absolute/path/to/memory-vault-sync/memory_vault_hosts.py\" --config \"/absolute/path/to/private/client.json\" --host gemini-cli --event BeforeAgent","timeout":20000}]}],
+    "AfterAgent": [{"matcher":"*","hooks":[{"name":"memory-vault-visible-final","type":"command","command":"python3 \"/absolute/path/to/memory-vault-sync/memory_vault_hosts.py\" --config \"/absolute/path/to/private/client.json\" --host gemini-cli --event AfterAgent","timeout":20000}]}],
+    "PreCompress": [{"matcher":"*","hooks":[{"name":"memory-vault-compaction-boundary","type":"command","command":"python3 \"/absolute/path/to/memory-vault-sync/memory_vault_hosts.py\" --config \"/absolute/path/to/private/client.json\" --host gemini-cli --event PreCompress","timeout":20000}]}],
+    "SessionEnd": [{"matcher":"*","hooks":[{"name":"memory-vault-session-close","type":"command","command":"python3 \"/absolute/path/to/memory-vault-sync/memory_vault_hosts.py\" --config \"/absolute/path/to/private/client.json\" --host gemini-cli --event SessionEnd","timeout":20000}]}]
+  }
+}

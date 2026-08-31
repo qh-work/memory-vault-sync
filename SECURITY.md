@@ -38,6 +38,11 @@ and confidence labels itself, and rejects nested or authority-shaped metadata.
 It cannot identify every secret embedded in free text; the calling agent remains
 responsible for sending only appropriate visible content.
 
+Manual protocol/MCP `observe` is caller-reported. Only the configured host-hook
+path selects a host-visible source label; this is still not a cryptographic
+attestation by the host. Imported labels remain claims. The verification result
+is separate from the canonical record and never upgrades text into instructions.
+
 ## Local storage
 
 The reference implementation uses the current OS user's local application-data
@@ -45,9 +50,14 @@ directory, SQLite WAL, `synchronous=FULL`, transactions, foreign keys, bounded
 input, strict JSON, parameterized SQL, and append-only triggers on canonical
 memory records.
 
-On POSIX systems it attempts `0700` on the directory and `0600` on the database.
-Python's standard library cannot reliably configure strict Windows ACLs, so the
-default is the current user's LocalAppData directory.
+The single-file reference attempts `0700` on its directory and `0600` on its
+database on POSIX. Its Windows default is the user's LocalAppData directory;
+the independent core alone does not provision a strict Windows ACL.
+The optional full client has a separate native local-fixed-NTFS storage adapter
+for explicit private directories/files, handle checks, locks and atomic
+publication. It fails closed on unsupported storage and does not repair or
+elevate existing permissions. Native source is not a Windows execution result;
+see [platform limits](docs/PLATFORMS.md).
 
 Do not use the SQLite file as a multi-host network filesystem database. Use a
 logical bundle to move memory across devices.
@@ -83,6 +93,94 @@ confidentiality or sender identity. Use an external user-approved encrypted
 transport for sensitive bundles. Importing a bundle imports historical evidence
 only; it never imports permission, policy, execution rights, plugin state,
 account state, Task ownership, or Git state.
+
+In v0.24, unsigned imports are quarantined by default. Explicit
+`--accept-unsigned` admits them without authenticating a signer. Default recall
+and handoff exclude quarantined records; explicitly fetching an ID permits
+review without admission. Unsigned corrections cannot change the status of a
+verified target. The optional client checks current key trust while reading;
+a bare core with no trust registry reports verification at admission only.
+
+## Optional signing and delivery
+
+[Ed25519 signatures](docs/TRUST.md) are supplied by PyCA cryptography, not custom
+cryptography. An independently managed public-key registry controls which keys
+may authenticate imported bytes. Memory, MCP tools and transfer packets cannot
+create a key, enroll a sender, restore a revoked key or change policy. A signer
+callback that fails must not downgrade a configured signed write to unsigned.
+
+A signature establishes possession of a registered key and commitment to exact
+bytes. It does not prove the text's truth, original human/model identity, task
+completion, permission or execution authority. A publisher explicitly attesting
+an old unsigned record becomes its attester, not its original author. This
+release stores one accepted proof per record, not a multi-signature history.
+
+The optional trust/key storage and signed directory adapter currently require
+protected POSIX storage. They fail closed on Windows until an actual ACL-backed
+implementation is available. The unsigned core is still standard-library and
+cross-platform. Protect identities outside the exchange directory and outside
+shared memory. Same-OS-user file access is not a hostile-agent isolation boundary.
+
+[Directory delivery](docs/TRANSFER.md) signs both the envelope and the records,
+uses independent sender/store cursors and atomic local receipts, and refuses
+unregistered senders. Invalid files do not gain ordering authority by their
+names; a genuinely signed fork requires operator resolution. Bounded discovery
+and input limits mitigate resource exhaustion but do not make a malicious shared
+filesystem available or confidential. Transport access control/encryption belongs
+to the separately authorized sharing mechanism.
+
+Missing or revoked dependencies and over-budget closures are reported as
+`blocked`, not silently represented as delivered. Their records remain in the
+Vault and can be requeued explicitly. A successful local save, published batch,
+or receiver commit is not proof that another model consumed or accepted memory.
+
+## Full-mode transport and operations
+
+The full client's [sync layer](docs/SYNC.md) is outside the memory protocol's
+authority boundary. Configuration, destination, identity, independent trust and
+automatic/background opt-in are operator-controlled files, never memory fields.
+Client and sync bindings must agree; staging/queues/keys cannot be placed in the
+exchange. A saved-local acknowledgement does not depend on network success.
+Finite workers preserve pending work and content-free visible receipts; no
+always-on agent or host audit-log suppression is installed.
+
+Directory exchange is not confidential by itself. Optional rclone transport
+uses an explicitly selected binary pinned by digest and a private configuration;
+it does not discover credentials, delete remote files or enroll received keys.
+Transport credentials and remote access policies remain the operator's concern.
+Only bounded, known sender/store cursor prefixes are fetched; a hostile remote
+can still deny availability. A crypt backend can supply encryption, but this
+release does not independently certify every cloud provider or rclone build.
+
+Automatic publication checks common credential/private-key patterns and local
+paths before a batch is published, and again before rclone upload. A rejection
+preserves local memory and pending work. This is best-effort screening, not a
+privacy guarantee: unknown secret formats and personal information can pass.
+Explicit low-level export/transfer commands remain operator-controlled;
+select and review what you share. The guard is not a mandatory protocol field
+and does not scan or suppress host audit logs.
+
+[Backups](docs/BACKUP.md) preserve memory, not private keys or a consistent image
+of all client queues. Restoring uses a new database and replication identity;
+independent current trust is required to re-admit signed evidence. A hash alone
+does not authenticate a backup. [Chunk packs](docs/PACKS.md) are compression and
+integrity, not encryption or signing; unpack verifies bytes again rather than
+trusting the resumable-copy cache. [Update staging](docs/UPDATES.md) is explicit,
+fixed-repository HTTPS with bounded archive validation. It never imports,
+executes or activates downloaded modules; hashes are not publisher signatures.
+
+## Transparent optional capture
+
+The [client](docs/CLIENTS.md) does not install, enable or trust its own hooks.
+Visible-turn capture defaults off. When enabled through ordinary host/user
+controls, it reads only documented visible event fields, never transcript files,
+hidden prompts or hidden reasoning. Its prompt path is local-only. Private
+pending files and content-free receipts support retries; no host logs are erased
+or suppressed and persistence is not hidden from the user. A Stop hook cannot
+block termination or ask the agent to continue merely to save memory.
+
+This release has not undergone runtime testing, a security audit or production
+certification. See [the independent review handoff](docs/REVIEW_HANDOFF.md).
 
 ## Reporting vulnerabilities
 
