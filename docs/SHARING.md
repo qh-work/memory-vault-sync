@@ -102,6 +102,21 @@ changes cannot be made atomic with a separate database transaction, so later
 recall continues to enforce current trust. No import
 starts a worker, opens a network or proves another AI read/agreed with memory.
 
+A historical verified receipt is not proof of current usability. If another
+independently configured client has replaced the one stored attestation, a
+verified retry first verifies every incoming signature and the complete share,
+checks the unchanged canonical bytes, then restores current admission where
+needed using the newly verified input. It reports `admissions_restored` and
+`current_admission_rechecked` separately from `receipt_replayed`; it does not
+rewrite the original receipt, change trust or sign records anew. Default and
+unsigned historical retries do not restore admission. The store still holds
+one current attestation per record, not a multi-attester registry; different
+trust configurations can therefore have different effective visibility.
+
+Unknown/revoked keys and invalid signatures return their specific trust error,
+not a generic retryable transport failure. Key enrollment remains a separate
+operator action; a share cannot enroll its signer.
+
 Plaintext shares are not encrypted. They are written only to a new private
 local file. Use a separately approved transport or the explicit
 [encryption provider boundary](ENCRYPTION.md) for confidentiality outside it.

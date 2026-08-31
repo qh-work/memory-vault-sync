@@ -34,6 +34,7 @@ from memory_vault import (
 )
 from memory_vault_client import ClientConfig, _absolute, _private_directory
 from memory_vault_privacy import assert_publishable, review_records
+from memory_vault_trust import TrustError
 
 
 SELECTOR_SCHEMA = "universal-memory-selection/v1"
@@ -490,7 +491,29 @@ def import_share(config_path: Path, source: Path, *, verify_signatures: bool = F
             raise MemoryError("share_independent_trust_required")
         from memory_vault_trust import TrustStore
         trust = TrustStore(config.trust_path)
-    summary = _scan(source, deadline)
+    signer_keys: set[str] = set()
+
+    def verify_incoming(record: Mapping[str, Any], proof: Mapping[str, Any] | None) -> None:
+        if trust is not None:
+            if proof is None:
+                raise MemoryError("share_record_signature_required")
+            trust.verify_record(record, proof)
+            signer_keys.add(proof["key_id"])
+
+    def check_current_signers() -> None:
+        # This is a current trust checkpoint, not an atomic transaction with
+        # the independently administered registry or a past receipt's authority.
+        if trust is not None:
+            for key_id in sorted(signer_keys):
+                _check_time(deadline)
+                trust.require_trusted(key_id)
+
+    # Verify the whole incoming share before any admission can change. The
+    # second scan below must reproduce these exact bytes before commit; a
+    # changed source rolls the transaction back rather than admitting new data
+    # under signatures checked against an earlier file.
+    summary = _scan(source, deadline, visitor=verify_incoming if trust is not None else None)
+    check_current_signers()
     admission = "verified" if verify_signatures else "accepted_unsigned" if accept_unsigned else "quarantined"
     transfer_id = "xfer_" + sha256(canonical_bytes({"operation": "share-import/v1", "share_sha256": summary.sha256, "admission": admission}))
     vault = config.vault(storage_write=True)  # no private signing identity is loaded
@@ -501,17 +524,26 @@ def import_share(config_path: Path, source: Path, *, verify_signatures: bool = F
             raise MemoryError("share_import_receipt_conflict")
         added = 0
         upgraded: set[str] = set()
-        signer_keys: set[str] = set()
 
         def receive(record: Mapping[str, Any], proof: Mapping[str, Any] | None) -> None:
             nonlocal added
             _check_time(deadline)
-            if trust is not None:
-                if proof is None:
-                    raise MemoryError("share_record_signature_required")
-                trust.verify_record(record, proof)
-                signer_keys.add(proof["key_id"])
             if prior is not None:
+                if trust is not None:
+                    # One Vault can be read through independent local trust
+                    # configurations. Another valid attester may have replaced
+                    # the single stored proof since this historical receipt.
+                    # Restore current admission only from the freshly verified
+                    # input, never from the receipt, and never recreate or alter
+                    # canonical bytes supposedly covered by that old effect.
+                    existing = connection.execute(
+                        "SELECT * FROM memories WHERE memory_id=?", (record["memory_id"],)
+                    ).fetchone()
+                    if (existing is None or Vault._record_from_row(existing) != record
+                            or existing["record_json"] != canonical_bytes(record).decode("utf-8")):
+                        raise MemoryError("share_import_receipt_records_changed")
+                    if vault._set_admission(connection, record, "verified", proof):
+                        upgraded.add(record["memory_id"])
                 return
             _, inserted = vault._insert_record(connection, record, allow_pending_relations=True)
             if vault._set_admission(connection, record, admission, proof if verify_signatures else None):
@@ -521,18 +553,15 @@ def import_share(config_path: Path, source: Path, *, verify_signatures: bool = F
         observed = _scan(source, deadline, visitor=receive)
         if observed != summary:
             raise MemoryError("share_source_changed")
-        def check_current_signers() -> None:
-            # A bounded long import must not rely solely on an early record's
-            # admission check. This is a final trust checkpoint, not an atomic
-            # transaction with the independently managed trust file.
-            if trust is not None:
-                for key_id in sorted(signer_keys):
-                    _check_time(deadline)
-                    trust.require_trusted(key_id)
         if prior is not None:
+            vault._requeue_dependents(connection, upgraded)
             check_current_signers()
+            _check_time(deadline)
             result = strict_json_loads(prior["result_json"])
             return {**result, "records_added": 0, "receipt_replayed": True,
+                    "historical_receipt_is_current_admission": False,
+                    "current_admission_rechecked": verify_signatures,
+                    "admissions_restored": len(upgraded),
                     "current_trust_checked": verify_signatures, "network_accessed": False}
         vault._requeue_dependents(connection, upgraded)
         result = {"state": "share_imported", "records_seen": summary.records, "records_added": added,
@@ -590,6 +619,10 @@ def main(argv: Sequence[str] | None = None, *, config_path: Path | None = None) 
         return 0
     except MemoryError as exc:
         write_response(failure(exc.code, retryable=exc.retryable))
+    except TrustError as exc:
+        # Unknown/revoked keys and invalid signatures require an independent
+        # operator decision, not a blind retry or enrollment from packet text.
+        write_response(failure(exc.code))
     except Exception:
         write_response(failure("sharing_unavailable", retryable=True))
     return 1

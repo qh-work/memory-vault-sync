@@ -5,9 +5,10 @@ records as the light [protocol](../PROTOCOL.md). Its job is bounded delivery,
 not account creation, trust enrollment, Git synchronization or task ownership.
 See [SYNC.md](SYNC.md) for opt-in, queues, receipts, limits and cancellation.
 
-This code was not run against real directories or cloud accounts during this
-development pass. The following describes the implemented contract, not a
-tested support matrix or a deployment report.
+This development work has not used live shared folders or real cloud accounts.
+Temporary synthetic directory and source-pinned workflow evidence is listed in
+[VALIDATION.md](VALIDATION.md). The following describes the implemented contract,
+not a tested cloud support matrix or a deployment report.
 
 ## Directory exchange
 
@@ -121,8 +122,9 @@ memoryremote:dedicated-memory-prefix/
 This bucket layer differs from the flat directory exchange. Pointing an rclone
 backend at a directory exchange does not convert its layout. Peers sharing one
 rclone stream must use this cursor-bucket transport contract. The capsules
-inside use `universal-memory-delta/v2` and the standard record/message
-attestations; v1 remains receive-compatible during explicit chain upgrade.
+inside use `universal-memory-delta/v2` or the stream-proven v3 dependency profile
+and the standard record/message attestations; v1 remains receive-compatible
+during explicit chain upgrade.
 No task or database path is embedded in an address. `groups/` is a sibling of
 cursor buckets, not a remotely listed directory or an address selected by
 memory text.

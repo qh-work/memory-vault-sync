@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 import uuid
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 _SOURCE_DIRECTORY = str(Path(__file__).resolve().parent)
 if _SOURCE_DIRECTORY not in sys.path:
@@ -447,7 +447,11 @@ def _push_pending(config: SyncConfig, endpoint: DirectoryTransfer, remote: Rclon
     return True
 
 
-def _pull_peer(endpoint: DirectoryTransfer, remote: RcloneBackend, peer: Mapping[str, str]) -> Mapping[str, Any] | None:
+def _pull_peer(
+    endpoint: DirectoryTransfer, remote: RcloneBackend, peer: Mapping[str, str], *,
+    active_check: Callable[[], None] | None = None,
+    on_progress: Callable[[Mapping[str, Any]], None] | None = None,
+) -> Mapping[str, Any] | None:
     key, store = peer["key_id"], peer["store_id"]
     endpoint.trust.require_trusted(key)  # Before even listing the remote prefix.
     state = endpoint._state()
@@ -493,9 +497,14 @@ def _pull_peer(endpoint: DirectoryTransfer, remote: RcloneBackend, peer: Mapping
         if rejected:
             raise MemoryError("remote_prefix_not_verified")
         return None
+    def progress(result: Mapping[str, Any]) -> None:
+        if on_progress is not None:
+            on_progress({**result, "rejected_candidates": rejected})
+
     result = dict(endpoint.receive_capsule(next(iter(authenticated.values())), sender_key_id=key,
                                            source_store_id=store, after=after,
-                                           fragment_loader=lambda group, fragment: remote.download_fragment(key, store, group, fragment)))
+                                           fragment_loader=lambda group, fragment: remote.download_fragment(key, store, group, fragment),
+                                           active_check=active_check, on_progress=progress))
     result["rejected_candidates"] = rejected
     return result
 
@@ -591,12 +600,30 @@ def _window(
         for peer in config.backend["peers"]:
             for _ in range(maximum - received):
                 active()
+                accounted = False
+
+                def remote_progress(result: Mapping[str, Any]) -> None:
+                    nonlocal received, accounted
+                    if accounted or result["state"] != "received":
+                        return
+                    received += 1
+                    counts["received_batches"] += 1
+                    counts["records_added"] += int(result["records_added"])
+                    counts["receipt_replays"] += int(result["receipt_replayed"])
+                    counts["blocked_records"] += int(result["blocked_records"])
+                    counts["rejected_batches"] += int(result["rejected_candidates"])
+                    accounted = True
+
                 try:
-                    result = _pull_peer(endpoint, remote, peer)
+                    result = _pull_peer(endpoint, remote, peer, active_check=active,
+                                        on_progress=remote_progress)
                 except (MemoryError, TrustError) as exc:
                     code = _error_code(exc)
-                    if code.startswith("sync_"):
-                        raise  # Shared time/byte/cancellation bounds still win.
+                    if accounted or code.startswith("sync_"):
+                        # A local head-write failure after durable admission is
+                        # not a malformed/offline peer. Preserve its completed
+                        # count and let the atomic receipt make retry exact.
+                        raise  # Shared time/byte/cancellation bounds also win.
                     counts["peer_failures"] += 1
                     peer_error = peer_error or code
                     break  # Other explicitly configured peers remain eligible.
@@ -605,12 +632,7 @@ def _window(
                 if result["state"] == "group_receiving_pending":
                     more = True
                     break
-                received += 1
-                counts["received_batches"] += 1
-                counts["records_added"] += result["records_added"]
-                counts["receipt_replays"] += int(result["receipt_replayed"])
-                counts["blocked_records"] += result["blocked_records"]
-                counts["rejected_batches"] += result["rejected_candidates"]
+                remote_progress(result)
             if received >= maximum:
                 break
     elif exchange.is_dir():

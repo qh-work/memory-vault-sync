@@ -1115,6 +1115,8 @@ class DirectoryTransfer:
         source_store_id: str, after: int,
         fragment_loader: Callable[[Mapping[str, Any], Mapping[str, Any]], bytes] | None = None,
         maximum_fragments: int = 8,
+        active_check: Callable[[], None] | None = None,
+        on_progress: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> Mapping[str, Any]:
         """Admit one explicitly fetched signed prefix, never a directory trust hint.
 
@@ -1122,7 +1124,14 @@ class DirectoryTransfer:
         candidate exists at this prefix before calling this method. An explicit
         bounded fragment loader may do remote reads while the nonblocking local
         transfer lock prevents another receiver from committing the same prefix.
+        Optional trusted in-process checks revalidate the current operation
+        before admission. The progress observer receives one content-free
+        per-capsule receipt after durable admission, before a separate head write
+        can fail; consumers must not count it again on normal return. Neither
+        callback is supplied by the received memory or a wire message.
         """
+        if active_check is not None:
+            active_check()
         with _lock(self.state_directory):
             state = self._state()
             self._bind_vault(state, missing_ok=True)
@@ -1141,8 +1150,13 @@ class DirectoryTransfer:
                     row = connection.execute("SELECT payload_sha256 FROM transfer_receipts WHERE transfer_id=?", ("xfer_" + digest,)).fetchone()
                 if row is None or row[0] != digest:
                     raise MemoryError("receive_receipt_missing")
-                return {"state": "received", "records_added": 0, "receipt_replayed": True,
-                        "blocked_records": len(payload["blocked"]), "cursor": payload["cursor"]}
+                result = {"state": "received", "records_added": 0, "receipt_replayed": True,
+                          "blocked_records": len(payload["blocked"]), "cursor": payload["cursor"]}
+                if active_check is not None:
+                    active_check()
+                if on_progress is not None:
+                    on_progress(dict(result))
+                return result
             if int(state["received"].get(peer, 0)) != after:
                 raise MemoryError("receive_cursor_changed")
             if peer not in state["received"] and len(state["received"]) >= MAX_PEERS:
@@ -1156,13 +1170,21 @@ class DirectoryTransfer:
                     return {"state": "group_receiving_pending", "records_added": 0, "receipt_replayed": False,
                             "blocked_records": len(payload["blocked"]), "cursor": after,
                             "group_id": payload["group"]["group_id"], "cursor_advanced": False}
-            result = self._admit_payload(payload, digest)
+            # The final provider read/fragment validation can outlive the last
+            # command-level permission check. Recheck this local operation,
+            # including cancellation and its shared budget, before admission.
+            if active_check is not None:
+                active_check()
+            admitted = self._admit_payload(payload, digest)
+            result = {"state": "received", "records_added": int(admitted["records_added"]),
+                      "receipt_replayed": bool(admitted.get("receipt_replayed", False)),
+                      "blocked_records": len(payload["blocked"]), "cursor": payload["cursor"]}
+            if on_progress is not None:
+                on_progress(dict(result))
             self._bind_vault(state, missing_ok=False)
             self._remember_head(state, payload, digest)
             _write(self.state_path, state, replace=True)
-            return {"state": "received", "records_added": int(result["records_added"]),
-                    "receipt_replayed": bool(result.get("receipt_replayed", False)),
-                    "blocked_records": len(payload["blocked"]), "cursor": payload["cursor"]}
+            return result
 
     def acknowledge_published(self) -> Mapping[str, Any]:
         """Explicit crash recovery: acknowledge an identical, already present file.

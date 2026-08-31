@@ -129,12 +129,16 @@ so this is not a guarantee of eventual delivery without a later event.
 | `blocked_records` | Signed non-delivery dispositions, including operator exclusions; never a count of records received by a peer. |
 | `remote_ai_read_verified=false` | Neither upload nor local admission proves that any remote AI read, understood or used memory. |
 
-For the directory backend, completed local admissions are counted immediately
+For both directory and rclone backends, completed local admissions are counted immediately
 after their atomic Vault receipt, before the separate stream-head save or next
 read. A later work-budget/storage error preserves those completed counts and
 the pending generation; it does not report zero progress or count a batch twice
 on normal return. Exact replay can still be needed if the stream head was not
 saved. This is local progress reporting, not a remote-read acknowledgment.
+The remote receiver also rechecks the current operation's configuration and
+shared budget after fragment staging, immediately before admission. Cancellation
+can leave verified staged evidence for an explicit later retry; it does not
+silently commit that group or grant permission to resume it.
 
 Before local publication the exact signed pending capsule is durable. A crash
 after publication but before the local cursor update retries those bytes rather
