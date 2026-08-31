@@ -5,10 +5,15 @@ records as the light [protocol](../PROTOCOL.md). Its job is bounded delivery,
 not account creation, trust enrollment, Git synchronization or task ownership.
 See [SYNC.md](SYNC.md) for opt-in, queues, receipts, limits and cancellation.
 
-This development work has not used live shared folders or real cloud accounts.
-Temporary synthetic directory and source-pinned workflow evidence is listed in
+The implementation evidence below uses synthetic providers, not a real cloud
+upload/receive through the new client. Temporary directory and source-pinned workflow evidence is listed in
 [VALIDATION.md](VALIDATION.md). The following describes the implemented contract,
 not a tested cloud support matrix or a deployment report.
+
+The development-source [native Drive provider and explicit artifact entry](ARTIFACTS.md)
+add root-scoped file-ID retrieval without rclone or Git. That separate entry
+does not yet connect native Drive to the memory-sync queue or configure OAuth.
+It must not be described as a third working `sync configure --backend` choice.
 
 ## Directory exchange
 
@@ -88,10 +93,65 @@ a sandbox for arbitrary executables.
 
 The rclone config must be an ordinary current-user-owned 0600 file on POSIX,
 or a file with a validated private native ACL on Windows; no symlink/reparse or
-hard-link alias, at most 1 MiB. The adapter rejects encrypted config containers
-that require a password helper; this is distinct from a supported `crypt`
-**remote**. Use a separate protected configuration file when necessary. It is
-not copied into capsules, and the adapter never prints its contents.
+hard-link alias, at most 1 MiB. Plaintext configurations remain supported.
+Encrypted `RCLONE_ENCRYPT_V0` configuration containers are supported in the
+development source through an explicit reference to an existing OS credential;
+the published v0.25.0/v0.25.1 clients do not yet include this repair. Configuration
+encryption is distinct from a `crypt` **remote**, which encrypts remote content.
+Neither configuration bytes nor its password are copied into capsules.
+
+### Encrypted configuration unlock
+
+Add `--rclone-password-ref /absolute/private/provider/password-reference.json`
+to `configure`. That private JSON file contains **only lookup metadata**, for
+example an existing macOS generic-password item:
+
+```json
+{"kind":"macos-generic","service":"memory-vault-rclone","account":"primary"}
+```
+
+The sync configuration retains that reference, not the password or a password
+file path. `configure` and `status` do not retrieve credentials. During a worker
+window, the adapter reads only the explicitly selected OS item and supplies the
+password to the pinned rclone child through its environment. Normal OS access
+controls still apply; there is no bypass of a Keychain approval. The adapter
+does not create credentials or change a password.
+
+The implementation also accepts exact `macos-internet` references (server,
+account, protocol, path and port), `windows-credential` references (target), and
+`linux-secret-service` references (attributes). These provider paths need native
+platform verification; source support is not a claim that a user's credential
+store has been tested. No arbitrary shell/password helper or ambient
+`RCLONE_CONFIG_PASS` is accepted.
+
+Before any transfer, the pinned rclone decrypts its configuration in memory
+using `config dump`. The adapter validates the same selected backend chain and
+command restrictions as for plaintext configuration. The dump is bounded to
+8 MiB and is not written to disk, printed, or included in provider errors.
+An unchanged config is validated once per worker window; a token refresh or
+other config change causes revalidation. A password reference paired with a
+plaintext replacement is rejected rather than silently downgrading protection.
+The short-lived worker still holds the password in process memory, and its
+selected child receives it in its environment; this is not a same-user/root
+process isolation or guaranteed memory-zeroization claim.
+
+### Encrypted configuration validation
+
+At source commit `427ab1df56d786600520e0946c0fc2cdb8712e90`, the single opt-in
+case in `tests/test_v025_encrypted_config.py` passed in 0.928490 seconds using
+the official rclone v1.75.0 macOS arm64 binary. It creates three synthetic
+encrypted configs, then exercises real `config dump` calls for successful
+unlock, unchanged-config caching, changed-config revalidation, wrong-password
+refusal and decrypted helper rejection. Old plaintext compatibility and
+explicit-encryption downgrade refusal also pass. The OS password lookup alone
+is substituted with synthetic values. Production and fixture hashes were
+unchanged during the run.
+
+This is not a cloud transfer, real Keychain/Secret Service/Credential Manager,
+OAuth-refresh or cross-device result. The first invocation stopped in the
+test's own write guard because it misclassified the OS null device; after that
+fixture-only correction, the same case was rerun once. Both results were kept.
+No production fix was made to obtain that pass and no full suite was run.
 
 The selected configuration chain cannot use arbitrary command/password/SSH
 helpers or ambient cloud credential discovery. WebDAV requires HTTPS, custom S3

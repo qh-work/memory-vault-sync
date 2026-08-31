@@ -7,8 +7,9 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import sys
+
+from release_source import ReleaseSource
 
 
 REQUIRED_MODULES = (
@@ -22,6 +23,7 @@ REQUIRED_MODULES = (
     "memory_vault_sharing.py", "memory_vault_crypto.py", "memory_vault_device_trust.py", "memory_vault_encrypted_replication.py",
     "memory_vault_migrate.py",
     "memory_vault_capture.py", "memory_vault_dependency.py",
+    "memory_vault_artifact_catalog.py", "memory_vault_artifacts.py", "memory_vault_drive.py",
 )
 OPTIONAL_MODULES: tuple[str, ...] = ()
 PACKAGE_DOCUMENTS = (
@@ -38,6 +40,7 @@ PACKAGE_DOCUMENTS = (
     "docs/VISIBLE_FRAGMENTS.md",
     "docs/V0_25_RELEASE_MINIMAL.md", "docs/RELEASE_NOTES_V0_25.md",
     "docs/V0_25_PACK_CAPACITY_SMOKE.md", "docs/RELEASE_NOTES_V0_25_1.md",
+    "docs/ARTIFACTS.md", "docs/V0_25_RAW_COPY_SMOKE.md",
 )
 TEMPLATE_FILES = (
     ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",
@@ -49,8 +52,15 @@ def plain(path: Path) -> bool:
     return path.is_file() and not path.is_symlink() and not any(parent.is_symlink() for parent in path.parents)
 
 
-def build(output: Path) -> Path:
+def build(output: Path, *, source_tree: ReleaseSource | None = None) -> Path:
     root = Path(__file__).absolute().parent.parent
+    verified = source_tree if source_tree is not None else ReleaseSource(root)
+    if verified.root != root:
+        raise ValueError("release_source_root_mismatch")
+    # Build code is part of the declared source boundary too, even when these
+    # helpers are not included inside the optional runtime package.
+    verified.read(root / "scripts/build_client_plugin.py")
+    verified.read(root / "scripts/release_source.py")
     template = root / "plugins" / "memory-vault-client"
     destination = output.expanduser()
     if not destination.is_absolute() or ".." in destination.parts or destination.name != "memory-vault-client":
@@ -74,6 +84,20 @@ def build(output: Path) -> Path:
     for name in PACKAGE_DOCUMENTS:
         if not plain(root / name):
             raise ValueError("required_package_document_missing")
+    protocol_sources = []
+    for directory in ("schemas", "examples/protocol", "adapters"):
+        for source in sorted((root / directory).rglob("*")):
+            if source.is_dir() and not source.is_symlink():
+                continue
+            if not plain(source) or source.suffix not in {".json", ".ndjson", ".md"}:
+                raise ValueError("unsafe_protocol_document")
+            # This checks tracked membership before reading a candidate. An
+            # ignored or untracked .ndjson is not a public example by default.
+            verified.read(source)
+            protocol_sources.append(source)
+    for source in [*(path for path, _ in source_files), *(root / name for name in PACKAGE_DOCUMENTS),
+                   *(root / name for name in modules)]:
+        verified.read(source)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.mkdir(mode=0o755)  # exclusive: never replace another package
     # If interrupted, the directory is intentionally retained for inspection.
@@ -81,32 +105,29 @@ def build(output: Path) -> Path:
     for source, relative in source_files:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+        with target.open("xb") as stream:
+            stream.write(verified.read(source))
     for name in PACKAGE_DOCUMENTS:
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(root / name, target)
-    for directory in ("schemas", "examples/protocol", "adapters"):
-        for source in sorted((root / directory).rglob("*")):
-            if source.is_dir() and not source.is_symlink():
-                continue
-            if not plain(source) or source.suffix not in {".json", ".ndjson", ".md"}:
-                raise ValueError("unsafe_protocol_document")
-            if source.stat().st_size > 2 * 1024 * 1024:
-                raise ValueError("protocol_document_too_large")
-            target = destination / source.relative_to(root)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, target)
+        with target.open("xb") as stream:
+            stream.write(verified.read(root / name))
+    for source in protocol_sources:
+        target = destination / source.relative_to(root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("xb") as stream:
+            stream.write(verified.read(source))
     runtime = destination / "runtime"
     runtime.mkdir()
     hashes = {}
     for name in modules:
-        data = (root / name).read_bytes()
+        data = verified.read(root / name)
         if len(data) > 1024 * 1024:
             raise ValueError("source_module_too_large")
         with (runtime / name).open("xb") as stream:
             stream.write(data)
         hashes[name] = hashlib.sha256(data).hexdigest()
+    verified.assert_current()
     inventory = {"schema_version": "memory-vault-client-runtime/v1", "modules": hashes}
     with (runtime / "MANIFEST.json").open("x", encoding="utf-8") as stream:
         json.dump(inventory, stream, ensure_ascii=False, sort_keys=True, indent=2)
@@ -123,7 +144,9 @@ def main() -> int:
     except (OSError, ValueError):
         print("Plugin build failed. Existing paths are never replaced; inspect any new incomplete output before retrying.", file=sys.stderr)
         return 1
-    print(json.dumps({"state": "built_not_installed", "path": str(path), "runtime_inventory_is_publisher_signature": False}))
+    print(json.dumps({"state": "built_not_installed", "path": str(path),
+                      "source_commit_verified": True, "source_tree_matching": True,
+                      "runtime_inventory_is_publisher_signature": False}))
     return 0
 
 

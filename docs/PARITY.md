@@ -1,22 +1,26 @@
 # v0.25: v0.21 workflows plus an independent lightweight protocol
 
-This development branch is restoring the useful, actually exposed v0.21 taskless
-workflows around the current canonical record contract. It is not a rollback
-to the old monolith. Both usage modes are first-class: a full authorized
-client, or an independent implementation of the open protocol.
+The next v0.25 patch restores original-file resumed copying, but the requested
+full-client delivery is not complete: real cloud setup, migration and verified
+upload/receive remain a required gap. It is not a rollback to the old
+monolith. Both usage modes are first-class: a full authorized client, or an
+independent implementation of the open protocol.
 
 The baseline is v0.21.0 commit
 `030ed411ed9ddb969a03f0b5caec87dac9b0dd57`; the starting release was v0.24.1
 commit `de349ef8453b0aa0ebf68ae18484d0c1355cf91b`.
-The [full completion ledger](V0_25_PARITY_PLAN.md) is the acceptance scope.
-**Source present does not mean a test passed, a host was installed or v0.25
-was publicly released.** The [validation index](VALIDATION.md) identifies the
-limited offline synthetic evidence and its exact source commits; results do not
-transfer between versions. Full P01–P14 acceptance remains open. The exercised
-paths share one Python reference, not independent implementations or models, and
-do not certify real hosts, production signing/encryption, cloud, cross-device behavior,
-native Windows or performance. Recorded checks installed no host plugin and
-accessed no private memory. This table is not production certification.
+The [complete ledger](V0_25_PARITY_PLAN.md) records implementation coverage,
+proportionate evidence and the remaining deployment-verification limits for
+P01–P14. A source/interface mapping missed the user-facing cloud deployment
+gap and must not be presented as completion. **Cloud backend code and mocked
+transport do not establish usable cloud synchronization.** The [validation index](VALIDATION.md)
+identifies the limited offline evidence and its exact source commits; results
+do not transfer between versions. The exercised paths share one Python
+reference, not independent implementations or models, and do not certify real
+hosts, production signing/encryption, cloud, cross-device behavior, native
+protected storage or performance. Recorded checks installed no host plugin and
+accessed no private memory. v0.25.0 and v0.25.1 are published; the next patch's
+release is paused while the authorized local cloud migration is completed.
 
 ## Capability mapping
 
@@ -32,12 +36,13 @@ accessed no private memory. This table is not production certification.
 | Incremental transfer | Logical records and signed transfer profile | Self-contained v2 and stream-proven v3 dependencies, receive-only/flush, current trust, replay/fork/gap handling | Replaces mandatory Git, not memory semantics; a cursor alone never proves possession. Old heads require explicit anchoring when evidence is missing |
 | Privacy-blocked delivery | Local records remain unchanged | Read-only review, explicit keep/exclude, idempotent decisions, signed dispositions, requeue | An exclusion means not delivered; original pending evidence is retained |
 | Large transfer | Complete dependency closure | Signed resumable fragment groups up to the core's 64 MiB / 100,000 records | Receiver commits only a complete validated group; no size-only silent skip |
-| Cloud carriage | Implementation chooses permitted transport | Directory or explicitly pinned/configured rclone remote and crypt | Replaces old native Drive/Git control-plane machinery; no credentials acquired automatically |
+| Cloud carriage | Implementation chooses permitted transport | Directory or explicitly pinned/configured rclone remote and crypt; development source restores explicit encrypted-config unlock, old artifact catalogs and native Drive file retrieval | Memory transport no longer requires Git. Native Drive integration with the memory queue, local login and real cloud round-trip acceptance remain incomplete; no credentials acquired automatically |
 | Diagnosis/reindex | Content-free status; explicit index repair | Doctor, scoped retry and bounded state summaries | Does not search private conversations or mutate canonical history |
 | Memory-only recovery | Portable bundles | Consistent snapshot, current-trust restore into a new Vault identity | No in-place data rollback or copied replication identity |
 | Full client recovery | Optional operator workflow | Quiesced selected-state snapshot, inert evidence restore, explicit local reactivation and reverified received capsules | No inherited keys, sync publication permission or host hook trust; no false global multi-file atomicity |
 | Old export/pack/checkpoint | Explicit compatibility/conversion profile | Real old pack/ZIP repack, checkpoint chains, 2 GiB / 250,000-object conversion, split canonical parts and mapping | Preserves original bytes/evidence and relationships; cyclic old graphs and invalid formats fail explicitly |
 | File packs | Optional byte carriage | Compression, resumable copy and verified new-path unpack | Separate from old pack wire compatibility, which is provided by `legacy-pack` |
+| Original-file copying | Optional opaque byte carriage | Config-free `copy-pack --pack --output --journal`, bounded resume and verified old five-field journal migration | No repackaging or application total-file-size ceiling; explicit private output/journal paths, hashes are integrity checks rather than authentication |
 | Selected sharing | Content selectors and complete portable shares | Review/export/import preserving canonical bytes and proofs; quarantine by default | Selected roots plus all reachable dependencies, not a Task-owned export |
 | Software updates | Follow compatible protocol revisions | Independently pinned RSA-PSS metadata, bounded stage, isolated activation journal, retained rollback, separately opted-in finite updater | Real old verifier capability restored without Git; no production signing channel provisioned by default |
 | Encryption/device contracts | Optional transport metadata profiles | Explicit device metadata init/status and new/old envelope inspection; fail-closed providers, device transitions and key-bound signed ciphertext catalogs | Restores old operator and provider boundaries; old envelope inspection is hash-only, not new-format decryption or a deployed cipher/recovery service |
@@ -92,6 +97,35 @@ commands, tiny signed recovery into a new store, current-trust selective sharing
 and old checkpoint/graph/ID continuation. Only the last fixture was added in the
 second source; these are not a combined current-source suite or a real cloud,
 cross-device, independent-consumer or full-parity result.
+
+The [original-file copy report](V0_25_RAW_COPY_SMOKE.md) closes the concrete raw
+byte-carriage gap. One selected method passed at
+`7bd190471d3b7328961899b2cf13a5c72a666c28`: an actual 2 GiB + 4 MiB sparse source
+was copied through the client entry without repackaging, first 4 MiB then eight
+256 MiB resumptions, with an independent final hash and a zero-write completed
+retry. The same method checks old five-field journal migration and unchanged
+refusal of unknown or corrupt completed outputs. This is not a throughput,
+cloud or native-platform certification. The copy budget limits writes, not
+whole-file integrity reads: first use, changed-source or old-journal acceptance
+requires a full source hash, and completion verifies the full destination.
+
+The encrypted-rclone-config repair is committed at
+`427ab1df56d786600520e0946c0fc2cdb8712e90`, not yet published or installed.
+One actual-rclone configuration case passed with synthetic credentials and an
+OS-lookup substitute. It checks decryption, wrong-password refusal, selected
+helper rejection, changed-config revalidation and plaintext compatibility.
+It does not exercise a cloud transfer, real credential store or OAuth refresh;
+see [the precise scope](REMOTE_BACKENDS.md#encrypted-configuration-validation).
+Development source now adds old artifact-catalog conversion, canonical artifact
+and location records, and explicit native Drive file-ID retrieval with bounded
+resume and final SHA-256 verification. Two synthetic methods exercise catalog
+conversion and the fetch path with only provider responses and credential
+lookup substituted; see [ARTIFACTS.md](ARTIFACTS.md#minimal-development-evidence).
+The converter neither opens a Vault nor changes old cloud objects. This closes
+the source-entry gap, not the end-to-end cloud requirement: native Drive still
+needs memory-queue integration, a configured local login and a real verified
+upload/receive. The new source has not been published or installed; see
+[MIGRATION.md](MIGRATION.md).
 
 ## Architecture that must not return
 

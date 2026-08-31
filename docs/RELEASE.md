@@ -1,4 +1,4 @@
-# v0.25.1 distribution scope and publication gate
+# Distribution scope and publication gates
 
 ## One protocol, two complete usage paths
 
@@ -6,8 +6,9 @@ The protocol is independent of language, storage, model, session, device and
 task. The authorized full client automates the same canonical record contract;
 an independent implementation is not required to install it or import Python.
 
-This source target is **0.25.1**, a bounded file-pack capacity patch. It is not
-evidence that the patch tag, release assets or installed client already exist.
+The last published patch is **0.25.1**, a bounded file-pack capacity patch.
+Unreleased cloud-migration and packaging repairs in this development branch
+must not be attributed to that immutable release or to an installed client.
 Previously published [v0.25.0](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
 at `7f27953b27b9ecd453be19084808357c89731d20` remains immutable. Check the
 [v0.25.1 release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.1)
@@ -83,8 +84,11 @@ a green indicator. Existing protected-main CI requires eight base tests on each
 of three platforms. The v0.25.0
 [PR run 33374601764](https://github.com/qh-work/memory-vault-sync/actions/runs/33374601764)
 and [main run 33374661273](https://github.com/qh-work/memory-vault-sync/actions/runs/33374661273)
-passed. New v0.25.1 required CI is pending and remains a separate publication
-gate; earlier passes are not patch evidence.
+passed. The subsequent v0.25.1
+[PR run 33376043040](https://github.com/qh-work/memory-vault-sync/actions/runs/33376043040)
+and [main run 33376118903](https://github.com/qh-work/memory-vault-sync/actions/runs/33376118903)
+also passed; [the ledger](V0_25_PARITY_PLAN.md) records its downloaded-asset check.
+Any next patch requires its own checks; earlier passes are not current-branch evidence.
 The public release state must be checked independently at publication
 time; this file does not assert current GitHub status.
 
@@ -100,8 +104,44 @@ The builder copies only public allowlists, parses source/JSON, builds both
 usage packages and the separate review kit, then verifies archive member bytes.
 It does not import the application, initialize memory, generate keys, connect
 a host, run tests or install anything. Existing output paths are not overwritten.
-The caller-supplied commit must actually identify the reviewed source; the
-manifest explicitly states that the builder does not validate Git ancestry.
+The development builders verify that the supplied commit is the actual current
+HEAD and that every selected input is a regular, tracked file with exactly the
+committed bytes. Untracked or ignored files found by a selected glob are refused
+before their contents are read; modified selected files and a different commit
+are also refused. Unrelated working changes do not enter the build. The builder
+rechecks selected files and HEAD before completing. Git is only a build-source
+provenance tool here, not a memory runtime or task-binding requirement.
+Each ZIP is also limited to an exact independently declared member inventory:
+committed source hashes plus explicitly generated manifest bytes. Extra or
+missing staging files are refused, and archived bytes are checked against that
+declaration, not merely against the same mutable staging directory. This
+archive gate is separate from the source-helper test recorded below.
+
+### Mandatory public-content review
+
+The source gate does not detect private values that were already committed.
+Both the selected source changes and the actual final archives require a
+separate privacy review before any push or release. Publish only generic code,
+documentation and deliberately synthetic fixtures. Real memories, transcripts,
+artifacts, migrated catalogs/maps, cloud object IDs, local account paths,
+configuration and credentials stay outside the public source/export directory.
+Previously approved public publisher metadata is not private runtime state.
+
+`private_state_included: false` is an inventory claim, not a privacy certificate.
+The manifest explicitly limits its exclusion claim to selected public source
+paths. Hold publication if any selected content has uncertain provenance or a
+possible private value; a successful build or passing test does not waive this
+gate. Never use an actual private catalog as a public test fixture.
+
+One synthetic source-gate method passed on 2026-08-31 with Python 3.12.13 on
+macOS. It creates a disposable Git repository and checks current committed
+inputs, wrong existing commit, unrelated changes, selected same-size changes,
+and selected untracked/ignored inputs. The tested helper SHA-256 is
+`a5095740c8c69db0be1d502f446a7bf697c649357bcdb9dbc6c1c7c3cb36c7d0`;
+the fixture SHA-256 is
+`e37dab2f6a69fdf70522fa1cd797d33e2a34ad471a0f49c91a7398619463f5b6`.
+The combined gate/catalog run passed two methods in 0.350 seconds. This did not
+test real private data or prove the contents of a future release archive.
 
 For review evidence, report the exact commit, OS/runtime/provider versions,
 synthetic input and observed result. See [REVIEW_HANDOFF.md](REVIEW_HANDOFF.md).
