@@ -111,12 +111,15 @@ class AgentTests(unittest.TestCase):
             with recipient.db() as connection:
                 for message in messages:
                     legacy = {**message, "text": "😀" * 512, "text_partial": True}
+                    legacy.pop("text_memory_id")
                     connection.execute("UPDATE inbox SET result=? WHERE message_id=?",
                                        (canonical_bytes(legacy).decode(), message["message_id"]))
             replay = agent.handle({"op": "receive", "limit": 4})
             self.assertTrue(replay["ok"], replay)
             self.assertEqual(len(replay["result"]["messages"]), 4)
             self.assertLessEqual(len(canonical_bytes(replay)), 8192)
+            self.assertEqual([item["text_memory_id"] for item in replay["result"]["messages"]],
+                             [item["text_memory_id"] for item in messages])
 
 
 if __name__ == "__main__":
