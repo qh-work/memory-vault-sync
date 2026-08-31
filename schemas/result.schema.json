@@ -40,6 +40,9 @@
     },
     "result": {
       "type": "object",
+      "properties": {
+        "retrieval": {"$ref": "#/$defs/retrieval_metadata"}
+      },
       "allOf": [
         {
           "if": {"required": ["schema_version"], "properties": {"schema_version": {"const": "universal-memory-views/v1"}}},
@@ -109,6 +112,21 @@
     }
   ],
   "$defs": {
+    "retrieval_metadata": {
+      "type": "object",
+      "required": ["profile"],
+      "properties": {"profile": {"type": "string"}},
+      "allOf": [{
+        "if": {"properties": {"profile": {"const": "bounded-fragment-bm25+deterministic-concepts/v2"}}},
+        "then": {
+          "required": ["math_profile", "ranking_time_ms"],
+          "properties": {
+            "math_profile": {"const": "mv-rank-q64/1"},
+            "ranking_time_ms": {"type": "integer", "minimum": -62135596800000, "maximum": 253402300799999}
+          }
+        }
+      }]
+    },
     "client_capabilities": {
       "type": "object",
       "required": ["mcp_protocol", "transport", "automatic_capture_default", "network_accessed", "work_automatic_hooks_verified", "optional_full_mode", "external_provider_contracts", "response_limits"],

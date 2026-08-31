@@ -1,4 +1,4 @@
-# Memory Vault v0.26.0-alpha.1 — independent protocol
+# Memory Vault v0.26.0-alpha.2 — independent protocol
 
 This archive is an agreement and implementation material, not an installed
 program. No Python, database, plugin, account or network service is required
@@ -22,7 +22,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.26.0-alpha.1;
+artifacts described in `docs/RELEASE.md`. This package targets v0.26.0-alpha.2;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility

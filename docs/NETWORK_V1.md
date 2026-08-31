@@ -1,6 +1,6 @@
 # network-v1: optional private communication carrier
 
-Status: 0.26.0-alpha.1 reference implementation. Core canonical records and
+Status: 0.26.0-alpha.2 reference implementation. Core canonical records and
 share-v1 are unchanged. This independently defined network has no MCP, A2A,
 Matrix, Nostr or Graphiti adapter or compatibility claim. These projects are
 design references only, with no imported task/room/relay/database model.
@@ -17,8 +17,9 @@ records, identities, the local Vault and network queue schemas without invoking
 Python. Its native `Agent` uses the same bounded fragment retrieval and dynamic
 handoff selection as Python. Low-level `CanonicalVault.recall` retains its
 explicit substring utility; `retrieve` uses the canonical retrieval profile.
-One known platform floating-point boundary can still change selected order;
-exact ranking parity is an open test gate. Full graph/view-management and legacy cloud-worker parity remain outside this
+The default v1 has a known platform floating-point boundary that can change
+selected order. Post-alpha source adds an explicit [deterministic v2 profile](RETRIEVAL_V2.md)
+without replacing that default or changing canonical memory. Full graph/view-management and legacy cloud-worker parity remain outside this
 TypeScript preview. The existing
 TypeScript HTTP SDK continues to use the shared six-operation endpoint above.
 
@@ -100,6 +101,17 @@ limits fail explicitly. Endpoints freeze ciphertext in a durable outbox for
 retries; changed bytes under one ID conflict. Polling is at-least-once with
 durable cursors; recipient acknowledgment follows verification and local save.
 Signed `validated_saved` is not proof of understanding, execution or truth.
+Post-alpha clients also share strict node storage-response validation: closed
+`state`, `message_id`, `envelope_sha256`, `sequence` fields with only an optional
+`node_receipt`, at most 16 KiB total, and a positive JSON safe-integer sequence.
+The signed response must match an independently authenticated node identity;
+the low-level verifier requires an explicit flag for an unsigned response.
+Native peers preserve the existing unbound legacy-node path, without adding a
+new configuration or operator approval. A bound node cannot downgrade to that
+path. Historical per-outbox receipt JSON is checked at 64 KiB per row,
+16 MiB aggregate and 1,024 rows before payload materialization. Invalid or
+oversized old receipts fail explicitly and remain stored; this does not
+silently erase acknowledgments, reseal ciphertext or authorize new recipients.
 After identity recovery with empty transport state, authenticated old receipts
 with no matching local outbox are reported as `unmatched_receipts`, never as
 confirmed local sends. The cursor can advance past them. A repeated valid
@@ -115,6 +127,34 @@ cooperative deadline starts no new requests after expiry and bounds owned HTTP
 timeouts, but does not forcibly interrupt in-flight system calls or borrowed
 transports. Permanent per-item errors are distinguished from retryable errors,
 and queue rotation prevents one blocked item from starving other queued sends.
+
+In the development source after `v0.26.0-alpha.1`, a nonzero outbound budget
+also refreshes up to two configured nodes with historical outbox receipts
+**before** selecting pending sends. An issuer-authorized replacement key or
+storage epoch invalidates only that node's delivery bookkeeping; the same pass
+can then resend the original persisted ciphertext within its message/time
+budget, including when `receive_limit=0`. Checks use at most the first half of
+the cooperative time budget, leaving time for queued sends. The configured
+starting node rotates once per outbound pass for both checking and delivery,
+even when no previous receipt exists. `maximum_messages=0` disables these
+extra checks and leaves the rotation position unchanged.
+For each selected outbox row, the pump divides remaining delivery time among
+the configured nodes still missing receipts. A slow node's individual
+`network_replica_send_budget` is retryable and does not prevent attempting the
+next node while whole-pass time remains. This uses the same cooperative I/O
+limits; it is not a hard interruption guarantee for borrowed transports.
+
+`replica_checks` reports selected node indexes as `current`, `failed`, or
+`deferred` when the check budget prevented an attempt. The retryable
+`network_replica_check_budget` code is separate from exhaustion of the whole
+pass; failed/deferred checks also appear in `errors`.
+Successful legacy nodes without signed node identities explicitly report
+`node_identity_verified: false`. An unreachable node does not yield an
+unqualified completed pass. Unavailability
+alone does not erase historical storage receipts. These checks establish the
+current authorized node incarnation, not continued possession of every object.
+Repaired sends still require current sender/recipient authorization and node
+admission; no fresh invitation or enrollment is silently created.
 
 The pump uses persisted request IDs, plaintext content and frozen ciphertext;
 it does not re-export or rewrite canonical memory. New rows save the original
@@ -136,9 +176,13 @@ quarantine requires operator attention; it is not an unbounded spam sink.
 
 Two nodes can receive identical ciphertext, with actual storage acknowledgment
 counts and degraded results. This is not quorum replication, independent
-failure-domain certification, automatic repair, garbage collection, anonymous
+failure-domain certification, general node-to-node repair, garbage collection, anonymous
 discovery or federation. A malicious relay can withhold/discard data: signatures
 and encryption do not prove completeness or availability.
+The bounded sender repair above needs retained outbox ciphertext and a
+configured address. It cannot recover discarded sender queues, discover a new
+address, repair undetected loss under an unchanged storage epoch, or bypass
+an expired/revoked member's authorization. It starts no background service.
 
 Receiving shares does not enroll authors in the personal trust registry.
 Independently trusted signatures admit normally; unknown authors remain

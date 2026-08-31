@@ -13,6 +13,9 @@ export const NODE_STATUS_SCHEMA = 'memory-vault-node-status/v1';
 export const NODE_CHALLENGE_SCHEMA = 'memory-vault-node-challenge/v1';
 export const STORAGE_RECEIPT_SCHEMA = 'memory-vault-node-storage-receipt/v1';
 export const MAX_NODES = 256;
+export const MAX_STORAGE_RECEIPT_BYTES = 16 * 1024;
+export const MAX_OUTBOX_RECEIPT_ROW_BYTES = 64 * 1024;
+export const MAX_OUTBOX_RECEIPTS_BYTES = 16 * 1024 * 1024;
 const MAX_CONTROL_BYTES = 1024 * 1024;
 type Obj = Record<string, unknown>;
 type Window = { readonly issued_at: number; readonly expires_at: number };
@@ -273,16 +276,21 @@ export function verifyNodeChallenge(value: DocumentInput, options: {
  * not current retention, fault-domain independence, understanding or execution.
  */
 export function verifyStorageReceipt(value: DocumentInput, options: {
-  node: NodeDescriptor; network_id: string; message_id: string; envelope_sha256: string;
+  node: NodeDescriptor | null; network_id: string; message_id: string; envelope_sha256: string;
+  allow_legacy_unsigned?: boolean;
 }): StoredReceipt {
-  const binding = validateNodeDescriptor(options.node);
-  const raw = doc(value, 16384);
-  if (!Object.hasOwn(raw, 'node_receipt')) fail('network_node_identity_required');
-  objectFields(raw, ['state', 'message_id', 'envelope_sha256', 'sequence', 'node_receipt']);
+  const raw = doc(value, MAX_STORAGE_RECEIPT_BYTES);
+  opaqueId(options.network_id);
+  const binding = options.node === null ? null : validateNodeDescriptor(options.node);
+  if (binding === null) {
+    if (options.allow_legacy_unsigned !== true || Object.hasOwn(raw, 'node_receipt')) fail('network_node_identity_required');
+  } else if (!Object.hasOwn(raw, 'node_receipt')) fail('network_node_identity_required');
+  objectFields(raw, ['state', 'message_id', 'envelope_sha256', 'sequence', ...(binding === null ? [] : ['node_receipt'])]);
   const receipt = { state: raw.state, message_id: raw.message_id, envelope_sha256: raw.envelope_sha256, sequence: raw.sequence };
   if (receipt.state !== 'stored' || opaqueId(receipt.message_id) !== opaqueId(options.message_id)
     || digestHex(receipt.envelope_sha256) !== digestHex(options.envelope_sha256)) fail('network_invalid_storage_receipt');
   safeInteger(receipt.sequence, 1);
+  if (binding === null) return receipt as StoredReceipt;
   const payload = objectFields(signed(raw.node_receipt as DocumentInput, [binding.signing_key]).payload,
     ['schema_version', 'network_id', 'node', 'receipt']);
   if (payload.schema_version !== STORAGE_RECEIPT_SCHEMA || opaqueId(payload.network_id) !== opaqueId(options.network_id)

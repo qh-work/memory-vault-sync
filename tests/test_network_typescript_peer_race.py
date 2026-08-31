@@ -8,6 +8,8 @@ or full-peer acceptance; the real socket/end-to-end cases live in other tests.
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from memory_vault_relay import Relay
 
 from tests.test_network_typescript_transport import prepare_runtime, invoke
 import tests.test_network_typescript_nodes as node_fixtures
@@ -24,12 +26,12 @@ const input=JSON.parse(fs.readFileSync(0,'utf8'));
 Date.now=()=>input.now*1000;
 const folder=fs.mkdtempSync(path.join(process.cwd(),'race-'));fs.chmodSync(folder,0o700);
 const file=path.join(folder,'state.sqlite3'),db=openPrivateDatabase(file);
-db.exec('CREATE TABLE state(key TEXT PRIMARY KEY,value TEXT);CREATE TABLE outbox(request_id TEXT PRIMARY KEY,body BLOB,envelope BLOB,receipts TEXT);CREATE TABLE inbox(message_id TEXT PRIMARY KEY,body BLOB);');
+db.exec('CREATE TABLE state(key TEXT PRIMARY KEY,value TEXT);CREATE TABLE outbox(request_id TEXT PRIMARY KEY,message_id TEXT,body BLOB,envelope BLOB,receipts TEXT);CREATE TABLE inbox(message_id TEXT PRIMARY KEY,body BLOB);');
 const other=openPrivateDatabase(file);
 const write=(connection,key,value)=>connection.prepare('INSERT OR REPLACE INTO state VALUES(?,?)').run(key,JSON.stringify(value));
 const get=key=>{const row=db.prepare('SELECT value FROM state WHERE key=?').get(key);return row?JSON.parse(row.value):null;};
-const body=Buffer.from('synthetic-frozen-body'),envelope=Buffer.from('synthetic-frozen-envelope'),inbox=Buffer.from('synthetic-retained-inbox');
-db.prepare('INSERT INTO outbox VALUES(?,?,?,?)').run('synthetic-request',body,envelope,'{}');
+const body=Buffer.from('synthetic-frozen-body'),envelope=Buffer.from(JSON.stringify({synthetic:'frozen-envelope'})),inbox=Buffer.from('synthetic-retained-inbox');
+db.prepare('INSERT INTO outbox VALUES(?,?,?,?,?)').run('synthetic-request','synthetic-message',body,envelope,'{}');
 db.prepare('INSERT INTO inbox VALUES(?,?)').run('synthetic-message',inbox);
 const peer=Object.create(NetworkPeer.prototype);
 peer.networkId=input.network;peer.issuers=input.issuers;peer.localIdentity=input.local_identity;peer.relays=[input.url,input.other_url];peer.db=()=>db;peer.recovery=()=>({});
@@ -101,7 +103,7 @@ peer.status=async()=>{
   write(other,'roster',current.roster);write(other,'node_directory',current.nodes);write(other,'node_status_issued_at',current.node_status.payload.issued_at);
   write(other,'node:'+input.url,binding);write(other,'cursor:'+input.url,{cursor:7,receipt_cursor:2});write(other,'cursor:'+input.other_url,{cursor:22,receipt_cursor:4});
   write(other,'ack:'+input.url+':synthetic-message',{synthetic:'ack'});write(other,'join:'+input.url+':synthetic-invite',{synthetic:'join'});
-  other.prepare('UPDATE outbox SET receipts=?').run(JSON.stringify({[input.url]:{epoch:binding.storage_epoch},[input.other_url]:{synthetic:'preserved-other-receipt'}}));
+  other.prepare('UPDATE outbox SET receipts=?').run(JSON.stringify({[input.url]:input.old_receipt,[input.other_url]:input.other_receipt}));
   other.exec('COMMIT');
  }catch(error){other.exec('ROLLBACK');throw error;}
  return {response:selected,current:checked.current_roster,nodes:checked.nodes};
@@ -122,7 +124,7 @@ other.close();db.close();process.stdout.write(JSON.stringify(result));
 class TypeScriptPeerRaceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        prepare_runtime(cls, ("crypto.ts", "control.ts", "nodes.ts", "io.ts", "transport.ts", "peer.ts", "vault.ts", "records.ts", "setup.ts", "retrieval.ts", "retrieval_text.ts"), DRIVER)
+        prepare_runtime(cls, ("crypto.ts", "control.ts", "nodes.ts", "io.ts", "transport.ts", "peer.ts", "vault.ts", "records.ts", "setup.ts", "retrieval.ts", "retrieval_text.ts", "ranking_math.ts"), DRIVER)
 
     def setUp(self):
         # Reuse only synthetic key/document generation, not its test suite.
@@ -140,7 +142,12 @@ class TypeScriptPeerRaceTests(unittest.TestCase):
             return {"nonce": fixture.nonce, "expires_at": fixture.now + 300, "current_roster_version": 1,
                 "current_roster_sha256": document_sha256(fixture.roster), "node_challenge": fixture.signed(payload, signer)}
         member = fixture.roster["payload"]["members"][0]
-        self.data = {"network": fixture.network, "url": fixture.node_entry["base_url"], "other_url": fixture.other_entry["base_url"],
+        receipt = {"state": "stored", "message_id": "synthetic-message", "sequence": 1,
+                   "envelope_sha256": document_sha256({"synthetic": "frozen-envelope"})}
+        relay = SimpleNamespace(node_identity=fixture.node_key, network_id=fixture.network,
+                                node_descriptor=lambda: old_binding)
+        old_receipt = Relay._stored_result(relay, receipt)
+        self.data = {"old_receipt": old_receipt, "other_receipt": receipt, "network": fixture.network, "url": fixture.node_entry["base_url"], "other_url": fixture.other_entry["base_url"],
             "nonce": fixture.nonce, "now": fixture.now, "issuers": [fixture.issuer.public_descriptor()],
             "local_identity": {key: member[key] for key in ("signing_key", "encryption_key")},
             "old_response": fixture.make_response(previous), "new_response": fixture.make_response(current),

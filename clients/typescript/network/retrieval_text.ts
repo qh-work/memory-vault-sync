@@ -131,6 +131,17 @@ export function semanticSimilarity(query: ReadonlySet<string>, candidate: Readon
   if (query.has('polarity:negative') !== candidate.has('polarity:negative')) score *= 0.25;
   return score;
 }
+/** Integer cardinalities for the opt-in v2 profile; v1 similarity is intact. */
+export function semanticCardinality(query: ReadonlySet<string>, candidate: ReadonlySet<string>):
+  { overlap: number; union: number; polarity_denominator: 1 | 4 } {
+  const left = new Set(Array.from(query).filter(value => value.startsWith('concept:')));
+  const right = new Set(Array.from(candidate).filter(value => value.startsWith('concept:')));
+  let overlap = 0;
+  for (const value of left) if (right.has(value)) overlap++;
+  if (!overlap) return { overlap: 0, union: 1, polarity_denominator: 1 };
+  return { overlap, union: new Set([...left, ...right]).size,
+    polarity_denominator: query.has('polarity:negative') === candidate.has('polarity:negative') ? 1 : 4 };
+}
 /** Python sorts strings by Unicode scalar value, not UTF-16 code units. */
 function codepointOrder(left: string, right: string): number {
   const a = Array.from(left, point => point.codePointAt(0)!);

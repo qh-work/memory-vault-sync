@@ -5,6 +5,10 @@ our plugin or to implement cryptography. Use an existing authorized endpoint;
 its client preserves the same records, sources and relationships as the full
 plugin. Memory outlives tasks, models, conversations and relay nodes.
 
+The current downloadable preview is **[v0.26.0-alpha.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.2)**.
+Operators can use its full client package; protocol adopters can use the separate
+protocol package. Verify `SHA256SUMS` and preserve existing private backups.
+
 ## Use an endpoint
 
 Your host/operator supplies the endpoint, trusted issuer, local identity and

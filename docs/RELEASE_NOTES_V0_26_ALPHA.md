@@ -1,11 +1,29 @@
-# 0.26.0-alpha.1 development evidence
+# 0.26 alpha development and package evidence
 
-Date: 2026-08-31. This is an **unreleased development candidate**
-on the existing `feat/v0.26-network-alpha` branch, based on
-`e03de3ec02026f3c13c6af3cb194318f87beec28`. This source report does not attest
-to installation or cloud authorization on any user's machine. A built
-candidate has a separate source manifest and package verification result.
-This report is not an immutable release attestation.
+## Alpha.2 package refresh
+
+Version `0.26.0-alpha.2` packages the post-alpha.1 source campaigns described below:
+replacement-node queue repair, deterministic retrieval v2, storage proof validation,
+and signed topic/subscription authority. No new default network, identity or service
+is activated. The existing eleven-tool MCP interface is preserved.
+A release check also repaired private sync-root creation before nested fragment
+receipts; the exact interruption/resume regression asserts private permissions.
+
+The package version and download pointers are refreshed together. Historical test
+counts below remain tied to their recorded source. See the alpha.2 release body for
+fresh package execution, source commit and archive hashes; an installation has its
+own private verification receipt. Topic authorization does not yet provide encrypted
+topic fan-out, and real-model, live-cloud and scale gates remain open.
+
+
+Date: 2026-08-31. The earlier sections record pre-publication candidate work
+on `feat/v0.26-network-alpha`, originally based on
+`e03de3ec02026f3c13c6af3cb194318f87beec28`.
+[0.26.0-alpha.1 is now published](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.1).
+Later development below does not replace those published assets. This source
+report does not attest to installation or cloud authorization on any user's
+machine, and is not an immutable release attestation. Each built candidate
+has a separate source manifest and package verification result.
 
 ## What this iteration changes
 
@@ -157,6 +175,126 @@ module now fails explicitly if Node or that module is unavailable. The test
 fixture's Starlette/HTTPX deprecation warning is not a test failure; no automatic
 dependency upgrade was performed.
 
+## Development after publication: bounded sender replica repair
+
+Python and the independent TypeScript peer now check configured node
+incarnations before selecting pending sends, including with receive disabled.
+Authenticated replacement invalidates only the affected node's bookkeeping;
+the sender reuses persisted ciphertext and request IDs within its budget.
+Checks reserve delivery time, node order rotates, and each missing replica
+gets a share of remaining delivery time. Concurrent replacement cannot turn
+pending work without an explanatory error into an unqualified completed pass.
+The new rotation checkpoint is included in full endpoint recovery validation.
+
+The added synthetic tests use real owned HTTP processes, both runtime orders,
+nonempty replacement targets, signed current authorization, unchanged record
+bytes, slow-node deadlines and a controlled concurrent replacement. No model
+is impersonated, no real cloud account is used, and no physical failure-domain
+or large-cluster guarantee follows from these checks.
+
+The final related source campaign passed **62 tests with zero failures, errors
+or skips** (99.482 seconds), including 26 new Python/TypeScript repair cases.
+The selected runtime hashes stayed fixed throughout the run. All twelve network
+TypeScript modules also passed strict/no-emit checking using the existing
+TypeScript 5.9.3 toolchain. This does not close the separate ranking boundary
+or attest that the post-publication changes are installed or released.
+
+This repair requires retained sender outbox data, configured addresses and
+current membership/admission. Node-to-node repair without the sender,
+automatic rerouting and complete node retirement remain separate work.
+
+## Development after publication: opt-in ranking and storage proofs
+
+The source now offers explicit
+`bounded-fragment-bm25+deterministic-concepts/v2` recall/handoff using
+[`mv-rank-q64/1` integer arithmetic](RETRIEVAL_V2.md) in Python and TypeScript.
+The default v1 is unchanged, including its known expected-failure fixture.
+V2 native results and continuation cursors retain the original math profile,
+captured clock and selected IDs, while each page rechecks current trust.
+Canonical memory, source signatures and the existing index stay unchanged.
+
+Node storage assertions now use the same bounded closed response shape,
+positive safe-integer sequence and authenticated node binding in both
+implementations. The checks also apply to historical outbox receipts and
+complete endpoint backup/restore. Bad or oversized historical proof data is
+rejected without silently deleting records, acknowledgments or ciphertext.
+The new 64 KiB per-row / 16 MiB aggregate receipt limits can reject oversized
+historical state previously accepted by the Python client; automatic repair
+of such state is not implemented.
+
+The final integrated campaign selected **98 tests: 97 passed and one existing
+v1 boundary remained an expected failure**, with no unexpected failures,
+errors or skips (136.679 seconds, CPython 3.11.4 / Node 22.19.0 on macOS).
+Runtime and selected-test source fingerprints were unchanged during that run.
+It includes ten new v2 cases, seven new storage-proof cases, real owned HTTP
+nodes, signed backup/restore followed by both Python and TypeScript retry,
+node replacement/replica repair, native six-operation interoperability,
+original-record preservation, legacy cloud interface checks and packaging
+allowlists. All thirteen network TypeScript modules plus the parent HTTP SDK
+also passed strict/no-emit TypeScript 5.9.3 checking (fourteen files).
+
+Restoration still refuses to overwrite an existing destination. A late failed
+restore can retain a newly created capture-disabled keys/Vault directory while
+its transport transaction rolls back; this is not atomic publication of the
+entire destination directory. The malformed signed recovery-package cases
+verify rejection after valid AEAD decryption, not only an invalid outer tag.
+
+This is source validation with synthetic data, not a statement that the
+post-publication changes are in existing alpha attachments or installed on
+any user's machine. It does not establish universal Unicode/runtime parity,
+model quality, live cloud authorization or cluster/fault-domain acceptance.
+
+## Development after publication: topic control foundation
+
+The [topic control contract](NETWORK_TOPICS.md) now has independent Python and
+TypeScript validators and signers. It reuses the existing identities, strict
+JSON and Ed25519 message proofs. Complete signed snapshots preserve withdrawn
+grants and member consent; only fresh, same-nonce issuer status can authorize
+current recipient selection or cross a checkpoint gap. The process-local
+authorization result has both a monotonic deadline and a five-minute maximum,
+including when a member's clock is slightly ahead.
+
+An explicitly configured private authority state commits policy/snapshot,
+subscription revision, historical idempotency receipt, clock and roster
+checkpoint together. Restoring only an old roster cannot revive revoked
+membership. New subscription acceptance checks current membership and grant;
+an exact old request can retrieve its historical receipt without renewing any
+permission. Member clock correction does not block a valid chained withdrawal.
+State, topic, request and recipient bounds reject work explicitly and never
+evict consent or revocation history to create capacity.
+
+Optional HTTP subscription/status routes reuse that store through a bounded
+worker entry, with JSON/encoding checks, body size/time limits and explicit
+retryable contention/unknown-commit results. Existing member/node status and
+administrative configuration remain compatible. Ordinary clients gain no
+server dependency, service startup or automatic installation.
+
+This is not encrypted topic delivery: the six-operation facade, frozen topic
+ciphertext, relay polling/acknowledgements and topic-aware recovery/transfer
+still need integration. Authorized proof readers can see the complete grant
+and consent lists. The next work order is refresh amortization, queue lifecycle,
+snapshot deduplication and relay concurrency before routing, complete topic
+delivery and node-driven replica repair; see the [development plan](V0_26_PLAN.md).
+
+Scoped integration validation passed **82 tests** with no failure, error, skip
+or expected failure; tested source hashes remained fixed. This includes the
+new topic control/store/HTTP and independent cross-language checks, plus the
+affected crypto, packaging, administration, node and synthetic cloud checks.
+All **15 TypeScript sources** passed strict TypeScript 5.9.3 checks. Noninteger
+host-object JSON errors now agree between implementations without changing
+valid wire bytes or pretending JavaScript distinguishes numeric `1` from `1.0`.
+A prior private runner lacked the multiprocessing entry guard; that failed
+attempt is retained separately and is not counted as passing evidence.
+
+The store checks include two real competing writer processes, injected durable
+write failures, 32 topics, 16 effective recipients and the 4 MiB incoming-state
+boundary. Cache exhaustion and complete-poststate capacity failures use reduced
+test budgets; they are not production-capacity or throughput certification.
+HTTP checks use in-process ASGI, not public services or actual topic ciphertext
+delivery. Real cloud authorization, models and physical failure domains remain
+outside this campaign. Final archive inspection/execution is separate from
+these source tests, and published alpha assets are unchanged.
+
 ## Open delivery and release gates
 
 The later native-agent campaign selected **89 tests: 88 passed and one known
@@ -171,11 +309,12 @@ TypeScript 5.9.3 / Node types 22.18.6. These are source checks, not proof of a
 new plugin installation or real-model behavior. The expected failure below is
 not counted as a pass.
 
-- **No exact cross-runtime ranking guarantee.** A timestamp precision defect
+- **Default v1 still has a cross-runtime ranking boundary.** A timestamp precision defect
   is fixed, but a separate real fixture still changes first-hit selection at a
   platform floating-point `exp` boundary. Its strict expected-failure regression
   is an open gate, never a passing case. No epsilon or widened score tolerance
-  masks the difference. A shared deterministic math profile is separate work.
+  masks the difference. Post-alpha source adds an explicit deterministic v2
+  profile; its scoped evidence does not certify every runtime or change v1.
 - **No 0.25.2 live-cloud acceptance.** Existing directory/rclone configuration
   is preserved. Native Drive queue checks substitute HTTP; actual account
   authorization, upload, independent download and readback remain unverified.
@@ -193,8 +332,10 @@ not counted as a pass.
   not. Retain original queues until the selected recovery is verified. A drain
   fence or node identity test alone does not demonstrate complete node exit.
   The directed transfer requires an empty target and explicit snapshot-bound
-  issuer grant; automatic repair into a nonempty peer and client rerouting
-  still require separate implementation and verification.
+  issuer grant. The post-publication sender repair above can resend into a
+  nonempty configured replacement; repair without the sender's retained
+  outbox and automatic client rerouting still require separate implementation
+  and verification.
 - **Bounded rejection, not unlimited resilience to malicious peers.** Local
   rejected-ciphertext bookkeeping is limited to 128 entries / 16 MiB. A full
   quarantine stops cursor advancement. Deeper share structure, record signature
@@ -205,7 +346,7 @@ not counted as a pass.
 - **Preserve pre-upgrade backups.** New code reads old client-backup manifests;
   old releases may reject new manifests with the additional native-cache
   exclusion. New-to-old backup compatibility has not been established.
-- **No public publication or blanket installation claim.** The builders require
+- **Separate publication and installation evidence.** The builders require
   selected source bytes to match committed HEAD; that source gate is preserved.
   Dependency hashes are recorded in the new locks. Final archive privacy review,
   source/asset hashes and actual package execution are separate evidence from

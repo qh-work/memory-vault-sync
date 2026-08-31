@@ -28,6 +28,7 @@ REQUIRED_MODULES = (
     "memory_vault_network_control.py", "memory_vault_network_admin.py", "memory_vault_relay.py",
     "memory_vault_network_worker.py", "memory_vault_nodes.py", "memory_vault_node.py",
     "memory_vault_network_recovery.py", "memory_vault_node_transfer.py",
+    "memory_vault_topics.py", "memory_vault_topic_store.py",
 )
 OPTIONAL_MODULES: tuple[str, ...] = ()
 PACKAGE_DOCUMENTS = (
@@ -37,7 +38,7 @@ PACKAGE_DOCUMENTS = (
     "docs/REVIEW_HANDOFF.md", "AI_START_HERE.md", "llms.txt", ".well-known/agent-memory.json",
     "docs/TWO_MODES.md", "docs/SYNC.md", "docs/REMOTE_BACKENDS.md", "docs/HOSTS.md",
     "docs/OPERATIONS.md", "docs/BACKUP.md", "docs/PARITY.md", "docs/UPDATES.md", "docs/PACKS.md",
-    "docs/RETRIEVAL.md", "docs/GRAPH_VIEWS.md", "docs/COMPATIBILITY.md",
+    "docs/RETRIEVAL.md", "docs/RETRIEVAL_V2.md", "docs/GRAPH_VIEWS.md", "docs/COMPATIBILITY.md",
     "docs/LEGACY_PACKS.md", "docs/SHARING.md", "docs/ENCRYPTION.md", "docs/PLATFORMS.md",
     "docs/V0_25_PARITY_PLAN.md", "docs/V0_25_SCOPED_SMOKE.md", "docs/V0_25_FOLLOWUP_SMOKE.md", "docs/V0_25_RECOVERY_SMOKE.md", "docs/V0_25_CAPTURE_SMOKE.md", "docs/V0_25_PARITY_REPAIR_SMOKE.md", "docs/V0_25_WORKFLOW_SMOKE.md", "docs/VALIDATION.md",
     "docs/V0_25_TRANSPORT_RECOVERY_SMOKE.md",
@@ -48,18 +49,20 @@ PACKAGE_DOCUMENTS = (
     "requirements-network.txt", "requirements-network-server.txt", "docs/NETWORK_V1.md", "docs/NETWORK_QUICKSTART.md",
     "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
     "docs/V0_26_PLAN.md",
+    "docs/NETWORK_TOPICS.md",
     "requirements-network-lock.txt", "requirements-network-server-lock.txt", "docs/DEPENDENCIES_NETWORK.md",
     "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md", "docs/NETWORK_TYPESCRIPT.md",
     "clients/typescript/index.ts", "clients/typescript/README.md", "clients/typescript/package.json",
     "clients/typescript/network/README.md", "clients/typescript/network/crypto.ts",
     "clients/typescript/network/control.ts", "clients/typescript/network/package.json",
+    "clients/typescript/network/topics.ts",
     "clients/typescript/network/package-lock.json",
     "clients/typescript/network/io.ts", "clients/typescript/network/nodes.ts",
     "clients/typescript/network/peer.ts", "clients/typescript/network/records.ts",
     "clients/typescript/network/transport.ts", "clients/typescript/network/vault.ts",
     "clients/typescript/network/setup.ts",
     "clients/typescript/network/agent.ts", "clients/typescript/network/retrieval.ts",
-    "clients/typescript/network/retrieval_text.ts",
+    "clients/typescript/network/retrieval_text.ts", "clients/typescript/network/ranking_math.ts",
 )
 TEMPLATE_FILES = (
     ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",

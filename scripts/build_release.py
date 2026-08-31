@@ -34,7 +34,7 @@ PROTOCOL_DOCUMENTS = (
     "docs/STATUS.md", "docs/RELEASE.md", "docs/SYNC.md", "docs/REMOTE_BACKENDS.md",
     "docs/HOSTS.md", "docs/OPERATIONS.md", "docs/BACKUP.md", "docs/PARITY.md",
     "docs/UPDATES.md", "docs/PACKS.md",
-    "docs/RETRIEVAL.md", "docs/GRAPH_VIEWS.md", "docs/COMPATIBILITY.md",
+    "docs/RETRIEVAL.md", "docs/RETRIEVAL_V2.md", "docs/GRAPH_VIEWS.md", "docs/COMPATIBILITY.md",
     "docs/LEGACY_PACKS.md", "docs/SHARING.md", "docs/ENCRYPTION.md", "docs/PLATFORMS.md",
     "docs/V0_25_PARITY_PLAN.md", "docs/V0_25_SCOPED_SMOKE.md", "docs/V0_25_FOLLOWUP_SMOKE.md", "docs/V0_25_RECOVERY_SMOKE.md", "docs/V0_25_CAPTURE_SMOKE.md", "docs/V0_25_PARITY_REPAIR_SMOKE.md", "docs/V0_25_WORKFLOW_SMOKE.md", "docs/VALIDATION.md",
     "docs/V0_25_TRANSPORT_RECOVERY_SMOKE.md",
@@ -44,6 +44,7 @@ PROTOCOL_DOCUMENTS = (
     "docs/ARTIFACTS.md", "docs/V0_25_RAW_COPY_SMOKE.md",
     "docs/NETWORK_V1.md", "docs/NETWORK_QUICKSTART.md", "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
     "docs/V0_26_PLAN.md",
+    "docs/NETWORK_TOPICS.md",
     "docs/DEPENDENCIES_NETWORK.md",
     "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md", "docs/NETWORK_TYPESCRIPT.md",
 )
@@ -55,7 +56,7 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_network_cloud_compat.py", "tests/test_network_crypto.py", "tests/test_network_http.py",
     "tests/test_network_node_runtime.py", "tests/test_network_node_setup.py", "tests/test_network_node_transfer.py",
     "tests/test_network_nodes.py", "tests/test_network_packaging.py",
-    "tests/test_network_recovery.py", "tests/test_network_relay.py", "tests/test_network_typescript.py",
+    "tests/test_network_recovery.py", "tests/test_network_relay.py", "tests/test_network_replica_repair.py", "tests/test_network_typescript.py",
     "tests/test_network_typescript_crypto.py", "tests/test_network_typescript_control.py",
     "tests/test_network_typescript_nodes.py", "tests/test_network_typescript_records.py",
     "tests/test_network_typescript_vault.py", "tests/test_network_typescript_peer.py",
@@ -63,7 +64,9 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_network_typescript_setup.py",
     "tests/test_network_typescript_retrieval_text.py", "tests/test_network_typescript_retrieval.py",
     "tests/test_network_typescript_agent.py", "tests/test_network_typescript_agent_network.py",
-    "tests/test_network_worker.py",
+    "tests/test_network_worker.py", "tests/test_network_ranking_v2.py", "tests/test_network_storage_receipts.py",
+    "tests/test_network_topics.py", "tests/test_network_topic_store.py", "tests/test_network_typescript_topics.py",
+    "tests/test_network_topic_http.py",
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_PACKAGE_BYTES = 32 * 1024 * 1024

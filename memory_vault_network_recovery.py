@@ -25,6 +25,7 @@ from memory_vault_network import MAX_QUEUE_BYTES, MAX_QUARANTINE_BYTES, NetworkC
 from memory_vault_network_admin import backup_keys, restore_keys
 from memory_vault_network_control import _aesgcm, generate_recovery_secret, verify_request, verify_roster
 from memory_vault_network_crypto import PublicKeyTrust, b64url, unb64url, document_sha256, object_fields, opaque, verify_envelope
+from memory_vault_nodes import check_outbox_receipt_bounds
 
 PACKAGE_SCHEMA = "memory-vault-endpoint-backup/v1"
 SECRET_SCHEMA = "memory-vault-endpoint-backup-secret/v1"
@@ -297,6 +298,7 @@ def _export_transport(client: NetworkClient, connection: sqlite3.Connection, out
 
 def _transport_bounds(connection: sqlite3.Connection, deadline: float) -> None:
     """Reject oversized source cells before loading any row into Python."""
+    check_outbox_receipt_bounds(connection)
     for table, columns in COLUMNS.items():
         _check(deadline)
         count = connection.execute("SELECT COUNT(*) FROM " + table).fetchone()[0]
@@ -346,8 +348,8 @@ def _validate_transport(connection: sqlite3.Connection, client: NetworkClient, m
                  and (recipients is None or set(recipients) == set(payload["recipient_key_ids"])), "endpoint_backup_invalid_outbox")
         for relay, receipt in receipts.items():
             origin(relay)
-            _require(isinstance(receipt, dict) and receipt.get("state") == "stored" and receipt.get("message_id") == row["message_id"]
-                     and receipt.get("envelope_sha256") == document_sha256(envelope), "endpoint_backup_invalid_outbox")
+            client._verify_storage_response(connection, relay, receipt, message_id=row["message_id"],
+                                            envelope_sha256=document_sha256(envelope))
     for row in connection.execute("SELECT * FROM inbox"):
         _check(deadline)
         opaque(row["message_id"])
@@ -389,6 +391,9 @@ def _validate_transport(connection: sqlite3.Connection, client: NetworkClient, m
             verify_roster(decoded, client.issuers, network_id=client.network_id, allow_expired=True)
         elif key == "pump_cursor":
             _require(type(decoded) is int and 0 <= decoded <= 2**53 - 1)
+        elif key == "pump_node_cursor":
+            # Scheduling position only; it cannot confer node authority.
+            _require(type(decoded) is int and 0 <= decoded < 2)
         elif key == "node_directory":
             verify_directory(decoded, client.issuers, network_id=client.network_id, allow_expired=True)
         elif key == "node_status_issued_at":

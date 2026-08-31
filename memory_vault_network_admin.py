@@ -171,7 +171,7 @@ def invite_candidate(*, authority_config: Path, candidate: Path, output: Path,
                      lifetime_seconds: int = 86400) -> Mapping[str, Any]:
     config = _read(authority_config, private=True, maximum=16 * 1024)
     required = {"schema_version", "network_id", "identity_path", "trust_store_path", "roster_path"}
-    if not required <= set(config) or set(config) - required - {"node_directory_path"}:
+    if not required <= set(config) or set(config) - required - {"node_directory_path", "topic_state_path"}:
         raise NetworkCryptoError("network_authority_configuration_invalid")
     if config["schema_version"] != "memory-vault-network-authority-config/v1":
         raise NetworkCryptoError("network_authority_configuration_invalid")
@@ -189,7 +189,9 @@ def invite_candidate(*, authority_config: Path, candidate: Path, output: Path,
     trusted = TrustStore(_path(config["trust_store_path"]))
     trusted.require_trusted(issuer.key_id)
     roster_path = _path(config["roster_path"])
-    if out in {roster_path, _path(authority_config), _path(config["identity_path"]), _path(config["trust_store_path"])}:
+    protected = {roster_path, _path(authority_config), _path(config["identity_path"]), _path(config["trust_store_path"])}
+    protected.update(_path(config[name]) for name in ("node_directory_path", "topic_state_path") if name in config)
+    if out in protected:
         raise NetworkCryptoError("network_invitation_path_conflict")
     with _exclusive_store(roster_path):
         previous_document = _read(roster_path, private=True)
@@ -321,7 +323,8 @@ def authorize_node(*, authority_config: Path, candidate: Path,
     """Explicit issuer enrollment of a storage key, never an agent member."""
     from memory_vault_nodes import issue_directory, node, verify_directory
     config = _read(authority_config, private=True, maximum=16 * 1024)
-    object_fields(config, {"schema_version", "network_id", "identity_path", "trust_store_path", "roster_path", "node_directory_path"})
+    object_fields(config, {"schema_version", "network_id", "identity_path", "trust_store_path", "roster_path", "node_directory_path"}
+                  | ({"topic_state_path"} if "topic_state_path" in config else set()))
     if config["schema_version"] != "memory-vault-network-authority-config/v1":
         raise NetworkCryptoError("network_authority_configuration_invalid")
     network_id = opaque(config["network_id"])
@@ -362,7 +365,8 @@ def authorize_node_transfer(*, authority_config: Path, snapshot: Path,
     from memory_vault_node_transfer import issue_transfer_grant
     from memory_vault_nodes import authorized_node, verify_directory
     config = _read(authority_config, private=True, maximum=16 * 1024)
-    object_fields(config, {"schema_version", "network_id", "identity_path", "trust_store_path", "roster_path", "node_directory_path"})
+    object_fields(config, {"schema_version", "network_id", "identity_path", "trust_store_path", "roster_path", "node_directory_path"}
+                  | ({"topic_state_path"} if "topic_state_path" in config else set()))
     if config["schema_version"] != "memory-vault-network-authority-config/v1":
         raise NetworkCryptoError("network_authority_configuration_invalid")
     issuer = Identity.load(_path(config["identity_path"]))

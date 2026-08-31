@@ -128,6 +128,10 @@ class SharingTests(SharingFixture):
         root = synthetic_record("Synthetic review-only record.")
         self.add_source([root])
         choice = {"schema_version": sharing.SELECTOR_SCHEMA, "memory_ids": [root["memory_id"]]}
+        # A read-only WAL connection can create SQLite coordination sidecars;
+        # establish the read baseline before testing the review's own effects.
+        with contextlib.closing(core.Vault(self.sender.vault_path)._connect(writable=False)) as connection:
+            connection.execute("SELECT COUNT(*) FROM memories").fetchone()
         before = {path.relative_to(self.root) for path in self.root.rglob("*")}
         with mock.patch("memory_vault_trust.Identity.load", side_effect=AssertionError("no private key")), \
                 mock.patch("memory_vault_client.notify_sync", side_effect=AssertionError("no worker")):

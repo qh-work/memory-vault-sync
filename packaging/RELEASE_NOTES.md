@@ -1,4 +1,4 @@
-# Memory Vault v0.26.0-alpha.1 — package/review notes
+# Memory Vault v0.26.0-alpha.2 — package/review notes
 
 **Alpha candidate; not a stable-release or runtime-certification claim.** This
 document describes the current build target. It does not establish that a
@@ -31,11 +31,11 @@ Memory cannot install software, enroll trust, activate hooks or execute goals.
 
 ## Build artifacts
 
-- `memory-vault-protocol-v0.26.0-alpha.1.zip`: documentation, structural schemas and
+- `memory-vault-protocol-v0.26.0-alpha.2.zip`: documentation, structural schemas and
   synthetic interchange vectors, with no executable.
-- `memory-vault-client-v0.26.0-alpha.1.zip`: source-built plugin, all required runtime
+- `memory-vault-client-v0.26.0-alpha.2.zip`: source-built plugin, all required runtime
   modules and a local marketplace catalog.
-- `memory-vault-review-v0.26.0-alpha.1.zip`: public source, synthetic cases and bounded
+- `memory-vault-review-v0.26.0-alpha.2.zip`: public source, synthetic cases and bounded
   review handoff for independent reviewers; no automatic test execution.
 - `PROTOCOL.md` and `memory_vault.py`: standalone agreement and optional core.
 - `release-manifest.json` / `SHA256SUMS`: exact source reference, asset hashes

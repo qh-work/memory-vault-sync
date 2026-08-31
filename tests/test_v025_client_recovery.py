@@ -171,7 +171,7 @@ class ClientRecoveryTests(RecoveryFixture):
             result = original(*args, **keywords)
             if not changed:
                 changed = True
-                HookState(self.config()).once("done", "b" * 64, {"not": "a validated active receipt"})
+                HookState(self.config()).once("conflicts", "b" * 64, {"reason": "different_prompts_for_same_turn"})
             return result
 
         with mock.patch.object(recovery, "_snapshot", side_effect=snapshot_then_new_prompt):

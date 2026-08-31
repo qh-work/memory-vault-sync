@@ -21,14 +21,15 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILDER = ROOT / "scripts/build_client_plugin.py"
 RELEASE = ROOT / "scripts/build_release.py"
 LAUNCHER = ROOT / "plugins/memory-vault-client/scripts/launcher.py"
-NEW_MODULES = {"memory_vault_nodes.py", "memory_vault_node.py", "memory_vault_network_recovery.py", "memory_vault_node_transfer.py"}
+NEW_MODULES = {"memory_vault_nodes.py", "memory_vault_node.py", "memory_vault_network_recovery.py", "memory_vault_node_transfer.py",
+               "memory_vault_topics.py", "memory_vault_topic_store.py"}
 TS_NETWORK = {"clients/typescript/network/" + name for name in
               ("README.md", "crypto.ts", "control.ts", "package.json", "package-lock.json",
                "io.ts", "nodes.ts", "peer.ts", "records.ts", "transport.ts", "vault.ts", "setup.ts",
-               "agent.ts", "retrieval.ts", "retrieval_text.ts")}
+               "agent.ts", "retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "topics.ts")}
 TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
                      ("nodes", "records", "vault", "peer", "peer_race", "transport", "setup",
-                      "retrieval_text", "retrieval", "agent", "agent_network")}
+                      "retrieval_text", "retrieval", "agent", "agent_network", "topics")}
 
 
 def literal(path, name):
@@ -48,7 +49,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 44)
+        self.assertEqual(len(allowed), 46)
         self.assertTrue(NEW_MODULES <= allowed)
         for name in allowed:
             path = ROOT / name
@@ -73,19 +74,26 @@ class NetworkPackagingTests(unittest.TestCase):
         review = literal(RELEASE, "NETWORK_REVIEW_TESTS")
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
-        self.assertEqual(len(review), 29)
-        self.assertEqual(len(TS_NETWORK), 15)
+        self.assertEqual(len(review), 36)
+        self.assertEqual(len(TS_NETWORK), 17)
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
         self.assertIn("docs/NETWORK_TYPESCRIPT.md", documents)
         self.assertIn("docs/NETWORK_TYPESCRIPT.md", protocol)
+        self.assertIn("docs/RETRIEVAL_V2.md", documents)
+        self.assertIn("docs/RETRIEVAL_V2.md", protocol)
+        self.assertIn("docs/NETWORK_TOPICS.md", documents)
+        self.assertIn("docs/NETWORK_TOPICS.md", protocol)
+        self.assertTrue({"tests/test_network_topics.py", "tests/test_network_topic_store.py",
+                         "tests/test_network_topic_http.py"} <= set(review))
+        self.assertTrue({"tests/test_network_ranking_v2.py", "tests/test_network_storage_receipts.py"} <= set(review))
         self.assertIn("docs/NETWORK_RECOVERY.md", documents)
         self.assertIn("docs/NETWORK_RECOVERY.md", protocol)
         self.assertIn("docs/NETWORK_NODE_TRANSFER.md", documents)
         self.assertIn("docs/NETWORK_NODE_TRANSFER.md", protocol)
         self.assertTrue({"tests/test_network_client_race.py", "tests/test_network_nodes.py", "tests/test_network_node_runtime.py",
                          "tests/test_network_node_setup.py", "tests/test_network_node_transfer.py",
-                         "tests/test_network_recovery.py", "tests/test_network_typescript_crypto.py",
+                         "tests/test_network_recovery.py", "tests/test_network_replica_repair.py", "tests/test_network_typescript_crypto.py",
                          "tests/test_network_typescript_control.py", "tests/test_network_packaging.py"} <= set(review))
         # Public client material uses a fixed file list, never a recursive SDK
         # directory copy that could accidentally include installed dependencies.

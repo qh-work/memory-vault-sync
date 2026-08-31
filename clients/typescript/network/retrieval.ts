@@ -7,9 +7,11 @@ import { document } from './crypto.ts';
 import type { DocumentInput } from './crypto.ts';
 import { NetworkError } from './io.ts';
 import type { MemoryRecord, MemoryRelation } from './records.ts';
-import { normalizeText, tokenize, semanticFeatures, semanticSimilarity, expandedQueryTokens,
+import { normalizeText, tokenize, semanticFeatures, semanticSimilarity, semanticCardinality, expandedQueryTokens,
   entityQueryMatches, fragmentLocator, memoryFragments, boundedText, LATIN_PATTERN, NEGATION_MARKERS } from './retrieval_text.ts';
 import type { MemoryFragment } from './retrieval_text.ts';
+import { RANKING_MATH_PROFILE, logQ, lexicalTermQ, rankingTimeMicros,
+  canonicalTimestampMicros, timeFactorQ, scoreV2 } from './ranking_math.ts';
 
 type Row = Record<string, any>;
 export interface RetrievalHost {
@@ -20,6 +22,7 @@ export interface RetrievalHost {
 }
 export interface RecallArguments {
   query: string; limit?: number; maximum_context_bytes?: number; semantic?: boolean; handoff?: boolean;
+  ranking_profile?: string;
 }
 export interface IndexState {
   profile: string; complete: boolean; first_unindexed_sequence: number | null;
@@ -31,6 +34,8 @@ interface Candidate { record: MemoryRecord; fragment: MemoryFragment; status: st
   matched_tokens: number; explanation: string[]; score_components: Row }
 
 export const RETRIEVAL_PROFILE = 'bounded-fragment-bm25+deterministic-concepts/v1';
+export const RETRIEVAL_PROFILE_V2 = 'bounded-fragment-bm25+deterministic-concepts/v2';
+export { RANKING_MATH_PROFILE } from './ranking_math.ts';
 export const RETRIEVAL_INDEX_PROFILE = 'full-record-terms+entities/v1';
 const MAX_RETRIEVAL_CANDIDATES = 512, MAX_RERANK_BYTES = 8 * 1024 * 1024, MAX_RERANK_FRAGMENTS = 4096;
 const STATE_RELATIONS = new Set(['supersedes', 'conflicts_with', 'resolves']);
@@ -124,7 +129,9 @@ export class Retrieval {
     return [selected, relations.length > selected.length];
   }
 
-  private rows(query: string, limit: number, semantic: boolean, metrics: Row, through?: number): Row[] {
+  private rows(query: string, limit: number, semantic: boolean, metrics: Row, through?: number,
+    rankingProfile: string = RETRIEVAL_PROFILE): Row[] {
+    const deterministic = rankingProfile === RETRIEVAL_PROFILE_V2;
     const tokens = [...new Set(tokenize(query))], tokenSet = new Set(tokens);
     const features = semantic ? semanticFeatures(query) : new Set<string>();
     const expanded = expandedQueryTokens(tokens, features), expansionOnly = expanded.filter(token => !tokenSet.has(token));
@@ -201,7 +208,9 @@ export class Retrieval {
         if (!locateFragment(String(fragment.text))) continue;
         scoring.push({ memory_id: id, fragment }); firstSelected ||= fragment === first;
       }
-      if (first && !firstSelected && (relatedIds.has(id) || entityMatches.get(id)!.size || semanticSimilarity(features, entityFeatures.get(id)!) > 0)) {
+      if (first && !firstSelected && (relatedIds.has(id) || entityMatches.get(id)!.size ||
+          (deterministic ? semanticCardinality(features, entityFeatures.get(id)!).overlap > 0 :
+            semanticSimilarity(features, entityFeatures.get(id)!) > 0))) {
         fallback.push({ memory_id: id, fragment: first });
       }
     }
@@ -214,12 +223,59 @@ export class Retrieval {
       for (const term of counts.keys()) documentFrequency.set(term, (documentFrequency.get(term) || 0) + 1);
       pool.push({ ...item, counts, length: Math.max(1, terms.length), features: semantic ? semanticFeatures(String(item.fragment.text)) : new Set() });
     }
-    const average = pool.reduce((sum, item) => sum + item.length, 0) / Math.max(1, pool.length), total = pool.length;
-    const currentTime = this.host.now?.() ?? Date.now(), candidates = new Map<string, Candidate>();
-    if (!Number.isSafeInteger(currentTime)) fail('invalid_retrieval_clock');
-    const currentMicros = BigInt(currentTime) * 1000n;
+    const average = deterministic ? 0 : pool.reduce((sum, item) => sum + item.length, 0) / Math.max(1, pool.length), total = pool.length;
+    const totalLength = deterministic ? pool.reduce((sum, item) => sum + BigInt(item.length), 0n) : 0n;
+    const orderedTokens = deterministic ? [...tokenSet].sort(order) : [];
+    const inverseByFrequency = new Map<number, bigint>(), recencyById = new Map<string, bigint>();
+    const currentTime = deterministic ? (this.host.now ? this.host.now() : Date.now()) : this.host.now?.() ?? Date.now();
+    const candidates = new Map<string, Candidate>();
+    if (!deterministic && !Number.isSafeInteger(currentTime)) fail('invalid_retrieval_clock');
+    const currentMicros = deterministic ? rankingTimeMicros(currentTime) : BigInt(currentTime) * 1000n;
     for (const item of pool) {
       const id = item.memory_id, record = records.get(id)!, fragment = item.fragment;
+      if (deterministic) {
+        let lexicalQ = 0n;
+        for (const token of orderedTokens) {
+          const frequency = item.counts.get(token);
+          if (!frequency) continue;
+          const df = documentFrequency.get(token)!;
+          let inverse = inverseByFrequency.get(df);
+          if (inverse === undefined) {
+            inverse = logQ(2n * (BigInt(total) + 1n), 2n * BigInt(df) + 1n);
+            inverseByFrequency.set(df, inverse);
+          }
+          lexicalQ += lexicalTermQ(inverse, BigInt(total), totalLength, BigInt(item.length), BigInt(frequency));
+        }
+        let recencyQ = recencyById.get(id);
+        if (recencyQ === undefined) {
+          recencyQ = timeFactorQ(currentMicros, canonicalTimestampMicros(record.created_at));
+          recencyById.set(id, recencyQ);
+        }
+        const status = statuses.get(id)!;
+        const scored = scoreV2({ lexicalQ, concept: semanticCardinality(features, item.features),
+          entityConcept: semanticCardinality(features, entityFeatures.get(id)!),
+          entityMatches: BigInt(entityMatches.get(id)!.size), queryTokens: BigInt(tokenSet.size),
+          phrase: Boolean(normalizedQuery && normalizeText(String(fragment.text)).includes(normalizedQuery)),
+          related: relatedIds.has(id), userHint: fragment.role_hint === 'user', episode: record.kind === 'episode',
+          deprecated: ['superseded', 'resolved'].includes(status), recencyQ });
+        if (!scored.eligible) continue;
+        const explanation = ['bounded_fragment_bm25', 'graph_status:' + status, 'recency_is_soft_not_authority',
+          ...[...intersection(features, item.features)].filter(feature => feature !== 'polarity:negative').sort(order)];
+        if (scored.concept_positive && features.has('polarity:negative') !== item.features.has('polarity:negative')) {
+          explanation.push('concept_polarity_mismatch_penalty');
+        }
+        if (fragment.role_hint) explanation.push('role_hint_is_not_authenticated');
+        if (entityMatches.get(id)!.size) explanation.push('entity_lexical_match');
+        if (relatedIds.has(id)) explanation.push('bounded_related_evidence');
+        const candidate: Candidate = { record, fragment, status, score_milli: scored.score_milli,
+          matched_tokens: new Set([...item.counts.keys(), ...entityMatches.get(id)!]).size,
+          explanation, score_components: scored.score_components };
+        const previous = candidates.get(id);
+        if (!previous || candidate.score_milli > previous.score_milli) candidates.set(id, candidate);
+        continue;
+      }
+      // Original v1 scoring remains the default, including its known libm
+      // boundary. No v2 fixed-point helper participates in this branch.
       let lexical = 0;
       for (const [token, frequency] of item.counts) {
         const df = documentFrequency.get(token)!, inverse = Math.log(1 + (total - df + 0.5) / (df + 0.5));
@@ -304,9 +360,10 @@ export class Retrieval {
         status: item.status, verification: this.host.verification(record.memory_id), score_milli: item.score_milli,
         matched_tokens: item.matched_tokens, score_components: item.score_components, explanation: item.explanation };
     });
-    Object.assign(metrics, { profile: RETRIEVAL_PROFILE, semantic_adapter: semantic ? 'deterministic-concepts-v1' : 'disabled',
+    Object.assign(metrics, { profile: rankingProfile, semantic_adapter: semantic ? 'deterministic-concepts-v1' : 'disabled',
       bm25_scope: 'bounded_candidate_fragments', index: this.indexState(through), candidate_limit: candidateLimit, candidate_records: records.size,
       fragments_scanned: pool.length, record_bytes_scanned: used, fragment_spans_examined: spansExamined, truncated, ranking_is_authority: false });
+    if (deterministic) Object.assign(metrics, { math_profile: RANKING_MATH_PROFILE, ranking_time_ms: currentTime });
     return result;
   }
 
@@ -339,7 +396,9 @@ export class Retrieval {
 
   recall(options: RecallArguments): Row {
     const value = document(options as unknown as DocumentInput, 2 * 1024 * 1024) as Row;
-    if (!Object.hasOwn(value, 'query') || Object.keys(value).some(key => !['query', 'limit', 'maximum_context_bytes', 'semantic', 'handoff'].includes(key))) fail('invalid_shape');
+    if (!Object.hasOwn(value, 'query') || Object.keys(value).some(key => !['query', 'limit', 'maximum_context_bytes', 'semantic', 'handoff', 'ranking_profile'].includes(key))) fail('invalid_shape');
+    const rankingProfile = Object.hasOwn(value, 'ranking_profile') ? value.ranking_profile : RETRIEVAL_PROFILE;
+    if (rankingProfile !== RETRIEVAL_PROFILE && rankingProfile !== RETRIEVAL_PROFILE_V2) fail('unsupported_ranking_profile');
     const query = value.query;
     if (typeof query !== 'string' || query.includes('\0') || !normalizeText(query)) fail('invalid_text');
     if (Buffer.byteLength(query) > 1024 * 1024) fail('text_too_large');
@@ -353,7 +412,7 @@ export class Retrieval {
     const ownsTransaction = !this.db.isTransaction;
     if (ownsTransaction) this.db.exec('BEGIN');
     try {
-      const retrieval: Row = {}; let hits = this.rows(query, limit, semantic, retrieval);
+      const retrieval: Row = {}; let hits = this.rows(query, limit, semantic, retrieval, undefined, rankingProfile);
       if (handoff) {
         const structural: Row[] = [], seenKinds = new Set<string>();
         const candidates = this.db.prepare('SELECT m.* FROM memories m JOIN record_admissions a ON a.memory_id=m.memory_id ' +
