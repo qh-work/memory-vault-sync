@@ -49,11 +49,15 @@ PACKAGE_DOCUMENTS = (
     "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
     "docs/V0_26_PLAN.md",
     "requirements-network-lock.txt", "requirements-network-server-lock.txt", "docs/DEPENDENCIES_NETWORK.md",
-    "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md",
+    "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md", "docs/NETWORK_TYPESCRIPT.md",
     "clients/typescript/index.ts", "clients/typescript/README.md", "clients/typescript/package.json",
     "clients/typescript/network/README.md", "clients/typescript/network/crypto.ts",
     "clients/typescript/network/control.ts", "clients/typescript/network/package.json",
     "clients/typescript/network/package-lock.json",
+    "clients/typescript/network/io.ts", "clients/typescript/network/nodes.ts",
+    "clients/typescript/network/peer.ts", "clients/typescript/network/records.ts",
+    "clients/typescript/network/transport.ts", "clients/typescript/network/vault.ts",
+    "clients/typescript/network/setup.ts",
 )
 TEMPLATE_FILES = (
     ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",

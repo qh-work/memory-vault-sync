@@ -12,6 +12,12 @@ design references only, with no imported task/room/relay/database model.
 these through `agent`; old `protocol`, `mcp`, `share`, `manage`, `pack` and host
 adapters remain. The single-file core still uses only the standard library.
 
+The [independent TypeScript endpoint](NETWORK_TYPESCRIPT.md) reuses canonical
+records, identities, the local Vault and network queue schemas without invoking
+Python. It is a bounded protocol/storage preview; its local text matching does
+not yet implement full graph, ranking or dynamic handoff parity. The existing
+TypeScript HTTP SDK continues to use the shared six-operation endpoint above.
+
 `remember` and `recall` use the original client Vault and local trust. A sent
 text becomes a source-signed canonical observation. It travels with selected
 memories and their evidence closure in `universal-memory-share/v1`. No task,

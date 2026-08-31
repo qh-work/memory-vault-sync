@@ -23,7 +23,10 @@ RELEASE = ROOT / "scripts/build_release.py"
 LAUNCHER = ROOT / "plugins/memory-vault-client/scripts/launcher.py"
 NEW_MODULES = {"memory_vault_nodes.py", "memory_vault_node.py", "memory_vault_network_recovery.py", "memory_vault_node_transfer.py"}
 TS_NETWORK = {"clients/typescript/network/" + name for name in
-              ("README.md", "crypto.ts", "control.ts", "package.json", "package-lock.json")}
+              ("README.md", "crypto.ts", "control.ts", "package.json", "package-lock.json",
+               "io.ts", "nodes.ts", "peer.ts", "records.ts", "transport.ts", "vault.ts", "setup.ts")}
+TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
+                     ("nodes", "records", "vault", "peer", "peer_race", "transport", "setup")}
 
 
 def literal(path, name):
@@ -43,6 +46,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
+        self.assertEqual(len(allowed), 44)
         self.assertTrue(NEW_MODULES <= allowed)
         for name in allowed:
             path = ROOT / name
@@ -67,12 +71,17 @@ class NetworkPackagingTests(unittest.TestCase):
         review = literal(RELEASE, "NETWORK_REVIEW_TESTS")
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
+        self.assertEqual(len(review), 25)
+        self.assertEqual(len(TS_NETWORK), 12)
         self.assertTrue(TS_NETWORK <= set(documents))
+        self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
+        self.assertIn("docs/NETWORK_TYPESCRIPT.md", documents)
+        self.assertIn("docs/NETWORK_TYPESCRIPT.md", protocol)
         self.assertIn("docs/NETWORK_RECOVERY.md", documents)
         self.assertIn("docs/NETWORK_RECOVERY.md", protocol)
         self.assertIn("docs/NETWORK_NODE_TRANSFER.md", documents)
         self.assertIn("docs/NETWORK_NODE_TRANSFER.md", protocol)
-        self.assertTrue({"tests/test_network_nodes.py", "tests/test_network_node_runtime.py",
+        self.assertTrue({"tests/test_network_client_race.py", "tests/test_network_nodes.py", "tests/test_network_node_runtime.py",
                          "tests/test_network_node_setup.py", "tests/test_network_node_transfer.py",
                          "tests/test_network_recovery.py", "tests/test_network_typescript_crypto.py",
                          "tests/test_network_typescript_control.py", "tests/test_network_packaging.py"} <= set(review))
@@ -80,6 +89,15 @@ class NetworkPackagingTests(unittest.TestCase):
         # directory copy that could accidentally include installed dependencies.
         listed_sdk = {name for name in documents if name.startswith("clients/typescript/network/")}
         self.assertEqual(listed_sdk, TS_NETWORK)
+        # All local native SDK imports must survive the explicit-file package.
+        # This does not invoke a compiler, dependency installer or application.
+        for name in listed_sdk:
+            if not name.endswith(".ts"):
+                continue
+            source = (ROOT / name).read_text()
+            for relative in re.findall(r"\b(?:from|import)\s*['\"](\./[^'\"]+)['\"]", source):
+                imported = (Path(name).parent / relative).as_posix()
+                self.assertIn(imported, listed_sdk, (name, relative))
         forbidden = {"node_modules", "__pycache__", ".git", ".env", "client.json", "rclone.conf"}
         for name in set(documents) | set(protocol) | set(review):
             path = ROOT / name

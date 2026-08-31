@@ -45,17 +45,22 @@ PROTOCOL_DOCUMENTS = (
     "docs/NETWORK_V1.md", "docs/NETWORK_QUICKSTART.md", "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
     "docs/V0_26_PLAN.md",
     "docs/DEPENDENCIES_NETWORK.md",
-    "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md",
+    "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md", "docs/NETWORK_TYPESCRIPT.md",
 )
 # Each executable network review fixture is selected deliberately. A matching
 # filename alone never enrolls a new local test into the public review kit.
 NETWORK_REVIEW_TESTS = (
     "tests/test_network_agent.py", "tests/test_network_admin.py", "tests/test_network_client.py",
+    "tests/test_network_client_race.py",
     "tests/test_network_cloud_compat.py", "tests/test_network_crypto.py", "tests/test_network_http.py",
     "tests/test_network_node_runtime.py", "tests/test_network_node_setup.py", "tests/test_network_node_transfer.py",
     "tests/test_network_nodes.py", "tests/test_network_packaging.py",
     "tests/test_network_recovery.py", "tests/test_network_relay.py", "tests/test_network_typescript.py",
     "tests/test_network_typescript_crypto.py", "tests/test_network_typescript_control.py",
+    "tests/test_network_typescript_nodes.py", "tests/test_network_typescript_records.py",
+    "tests/test_network_typescript_vault.py", "tests/test_network_typescript_peer.py",
+    "tests/test_network_typescript_peer_race.py", "tests/test_network_typescript_transport.py",
+    "tests/test_network_typescript_setup.py",
     "tests/test_network_worker.py",
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
