@@ -1423,6 +1423,7 @@ def tool_definitions() -> list[dict[str, Any]]:
         "query": query, "limit": {"type": "integer", "minimum": 1, "maximum": 32},
         "maximum_context_bytes": {"type": "integer", "minimum": 512, "maximum": 65536},
         "semantic": {"type": "boolean", "description": "Include the documented bounded bilingual concept expansion; never call a model or network."},
+        "ranking_profile": {"type": "string", "maxLength": 128, "description": "Optional explicit retrieval profile; omitted keeps v1, supported deterministic integer scoring uses v2. Unknown profiles fail."},
     }
     sequence = {"type": "integer", "minimum": 0, "maximum": 2**63 - 1}
     memory_id = {"type": "string", "pattern": "^" + _MEMORY.pattern + "$"}

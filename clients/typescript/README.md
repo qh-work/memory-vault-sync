@@ -69,6 +69,13 @@ cover the response body as well as connection establishment. Cancellation or
 timeout after dispatch is not a rollback. Use recall's `next_cursor` explicitly;
 the SDK does not automatically load unbounded history or poll messages forever.
 
+Query recall can explicitly select
+`ranking_profile: 'bounded-fragment-bm25+deterministic-concepts/v2'`. The trusted
+endpoint returns the selected profile, math profile and captured ranking clock;
+this SDK forwards them without reranking. ID inspection and cursor continuation
+do not accept a new profile. Omitting the selector keeps v1. See the
+[shared arithmetic and continuation contract](../../docs/RETRIEVAL_V2.md).
+
 Native endpoint errors and receipt states pass through unchanged. A separate
 `MemoryVaultTransportError` describes local validation, cancellation, timeout,
 malformed/oversized replies, or transport failures. Its `commit_state` is

@@ -28,6 +28,8 @@ from memory_vault_network_crypto import (EncryptionIdentity, PublicKeyTrust, doc
     seal, open_envelope, verify_envelope, b64url, unb64url, opaque, object_fields, integer, digest)
 from memory_vault_network_control import (verify_roster, verify_status, verify_invite, sign_request,
     open_join_challenge, verify_request)
+from memory_vault_nodes import (check_outbox_receipt_bounds, verify_storage_receipt,
+                                MAX_OUTBOX_RECEIPT_ROW_BYTES)
 
 CONFIG_SCHEMA = "memory-vault-network-client/v1"
 CONTENT_SCHEMA = "memory-vault-network-content/v1"
@@ -399,7 +401,7 @@ class NetworkClient:
                 connection.execute("DELETE FROM state WHERE key=?", ("cursor:" + relay,))
                 for prefix in ("ack:" + relay + ":", "join:" + relay + ":"):
                     connection.execute("DELETE FROM state WHERE substr(key,1,?)=?", (len(prefix), prefix))
-                for row in connection.execute("SELECT request_id,receipts FROM outbox").fetchall():
+                for row in self._outbox_rows(connection):
                     receipts = strict_json_loads(row["receipts"])
                     if relay in receipts:
                         receipts.pop(relay)
@@ -415,20 +417,59 @@ class NetworkClient:
         if current != binding:
             raise MemoryError("network_node_changed", retryable=True)
 
-    def _verify_storage_response(self, connection: sqlite3.Connection, relay: str, response: Mapping[str, Any]) -> None:
+    def _verify_storage_response(self, connection: sqlite3.Connection, relay: str, response: Mapping[str, Any], *,
+                                 message_id: str, envelope_sha256: str) -> None:
         row = connection.execute("SELECT value FROM state WHERE key=?", ("node:" + relay,)).fetchone()
-        if row is None:
-            if "node_receipt" in response:
-                raise MemoryError("network_node_identity_required")
-            return
-        binding = strict_json_loads(row["value"])
-        raw = object_fields(response.get("node_receipt"), {"payload", "proof"})
-        payload = object_fields(raw["payload"], {"schema_version", "network_id", "node", "receipt"})
-        receipt = {key: value for key, value in response.items() if key != "node_receipt"}
-        if (payload["schema_version"] != "memory-vault-node-storage-receipt/v1" or payload["network_id"] != self.network_id
-                or payload["node"] != binding or payload["receipt"] != receipt):
+        binding = strict_json_loads(row["value"]) if row else None
+        if binding is not None and (not isinstance(binding, dict) or binding.get("base_url") != relay):
             raise MemoryError("network_node_receipt_mismatch")
-        PublicKeyTrust([binding["signing_key"]]).verify_message(payload, raw["proof"])
+        verify_storage_receipt(response, network_id=self.network_id, message_id=message_id,
+                               envelope_sha256=envelope_sha256, node_binding=binding,
+                               allow_legacy_unsigned=binding is None)
+
+    def _outbox_rows(self, connection: sqlite3.Connection, request_id: str | None = None,
+                     *, full: bool = False) -> list[sqlite3.Row]:
+        """Bound receipt bytes before reading them, in the same read snapshot.
+
+        Bulk scans never materialize all message bodies/envelopes. Historical
+        proofs use the earlier bound node, not an incoming self-declared key.
+        Errors leave every row and all frozen message bytes untouched.
+        """
+        owns = not connection.in_transaction
+        if owns:
+            connection.execute("BEGIN")
+        try:
+            check_outbox_receipt_bounds(connection)
+            if full and request_id is None:
+                raise ValueError("full outbox reads require one request")
+            columns = "*" if full else "request_id,message_id,receipts"
+            rows = connection.execute("SELECT rowid AS position," + columns + " FROM outbox"
+                                      + (" WHERE request_id=?" if request_id is not None else "")
+                                      + " ORDER BY rowid", (request_id,) if request_id is not None else ()).fetchall()
+            for row in rows:
+                raw = row["receipts"]
+                if len(raw.encode() if isinstance(raw, str) else raw) > MAX_OUTBOX_RECEIPT_ROW_BYTES:
+                    raise MemoryError("network_storage_receipt_capacity")
+                receipts = strict_json_loads(raw)
+                if not isinstance(receipts, dict) or len(receipts) > 2:
+                    raise MemoryError("network_invalid_storage_receipt")
+                if not receipts:
+                    continue
+                stored = connection.execute("SELECT envelope FROM outbox WHERE request_id=?", (row["request_id"],)).fetchone()
+                if stored is None or stored["envelope"] is None:
+                    raise MemoryError("network_invalid_storage_receipt")
+                envelope_hash = document_sha256(strict_json_loads(stored["envelope"]))
+                for relay, receipt in receipts.items():
+                    origin(relay)
+                    self._verify_storage_response(connection, relay, receipt, message_id=row["message_id"],
+                                                  envelope_sha256=envelope_hash)
+            if owns:
+                connection.commit()
+            return rows
+        except BaseException:
+            if owns:
+                connection.rollback()
+            raise
 
     def _recovery_anchor(self) -> tuple[int, str | None, Mapping[str, Any] | None] | None:
         # Restoring keys is not activation. The private marker supplies only a
@@ -621,13 +662,13 @@ class NetworkClient:
         input_sha = hashlib.sha256(canonical_bytes({"recipients": recipients, "text": text, "memory_ids": memory_ids})).hexdigest()
         message_id = "msg_" + hashlib.sha256(canonical_bytes([self.network_id, self.identity.key_id, request_id])).hexdigest()
         with self.db() as connection:
-            prior = connection.execute("SELECT * FROM outbox WHERE request_id=?", (request_id,)).fetchone()
+            prior = (self._outbox_rows(connection, request_id, full=True) or [None])[0]
             if prior and prior["input_sha"] != input_sha:
                 raise MemoryError("network_request_id_conflict")
             if prior and prior["recipients"] is None:
                 connection.execute("UPDATE outbox SET recipients=? WHERE request_id=? AND recipients IS NULL",
                                    (canonical_bytes(recipients), request_id))
-                prior = connection.execute("SELECT * FROM outbox WHERE request_id=?", (request_id,)).fetchone()
+                prior = (self._outbox_rows(connection, request_id, full=True) or [None])[0]
         if prior is None:
             body = self._prepare_body(request_id, text, memory_ids)
             with self.db() as connection:
@@ -637,7 +678,7 @@ class NetworkClient:
                     raise MemoryError("network_outbox_capacity")
                 connection.execute("INSERT OR IGNORE INTO outbox(request_id,message_id,input_sha,body,recipients) VALUES(?,?,?,?,?)",
                                    (request_id, message_id, input_sha, body, canonical_bytes(recipients)))
-                prior = connection.execute("SELECT * FROM outbox WHERE request_id=?", (request_id,)).fetchone()
+                prior = (self._outbox_rows(connection, request_id, full=True) or [None])[0]
                 if prior["input_sha"] != input_sha:
                     raise MemoryError("network_request_id_conflict")
         return self._deliver(prior, recipients)
@@ -690,11 +731,12 @@ class NetworkClient:
                 with self.db() as connection:
                     connection.execute("BEGIN IMMEDIATE")
                     self._assert_node(connection, relay, node_binding)
-                    self._verify_storage_response(connection, relay, response)
+                    self._verify_storage_response(connection, relay, response, message_id=message_id,
+                                                  envelope_sha256=document_sha256(envelope))
                     # Another refresh may have invalidated a replaced node's
                     # historical receipt while this request was in flight.
                     # Merge with the current row, not a stale pre-I/O snapshot.
-                    latest = connection.execute("SELECT receipts FROM outbox WHERE request_id=?", (request_id,)).fetchone()
+                    latest = self._outbox_rows(connection, request_id)[0]
                     receipts = {node: receipt for node, receipt in strict_json_loads(latest["receipts"]).items() if node in self.relays}
                     receipts[relay] = response
                     connection.execute("UPDATE outbox SET receipts=? WHERE request_id=?", (canonical_bytes(receipts).decode(), request_id))
@@ -707,7 +749,7 @@ class NetworkClient:
                 if code == "network_budget_exhausted":
                     break
         with self.db() as connection:
-            latest = connection.execute("SELECT receipts FROM outbox WHERE request_id=?", (request_id,)).fetchone()
+            latest = self._outbox_rows(connection, request_id)[0]
             receipts = {node: receipt for node, receipt in strict_json_loads(latest["receipts"]).items() if node in self.relays}
             validated = [row[0] for row in connection.execute("SELECT recipient FROM acknowledgements WHERE message_id=?", (message_id,))]
         return {"state": "stored" if len(receipts) == len(self.relays) else "queued_local", "message_id": message_id,
@@ -717,7 +759,7 @@ class NetworkClient:
 
     def _pending_outbox(self) -> tuple[list[tuple[int, str]], int]:
         with self.db() as connection:
-            rows = connection.execute("SELECT rowid AS position,request_id,receipts FROM outbox ORDER BY rowid LIMIT 1025").fetchall()
+            rows = self._outbox_rows(connection)
             cursor = connection.execute("SELECT value FROM state WHERE key='pump_cursor'").fetchone()
         if len(rows) > 1024:
             raise MemoryError("network_outbox_capacity")
@@ -747,7 +789,7 @@ class NetworkClient:
         it; unavailability or an invalid challenge must not erase that evidence.
         """
         with self.db() as connection:
-            rows = connection.execute("SELECT receipts FROM outbox LIMIT 1025").fetchall()
+            rows = self._outbox_rows(connection)
         if len(rows) > 1024:
             raise MemoryError("network_outbox_capacity")
         nodes = set()
@@ -807,7 +849,7 @@ class NetworkClient:
             attempted.add(request_id)
             try:
                 with self.db() as connection:
-                    prior = connection.execute("SELECT * FROM outbox WHERE request_id=?", (request_id,)).fetchone()
+                    prior = (self._outbox_rows(connection, request_id, full=True) or [None])[0]
                 if prior is None:
                     continue
                 if prior["recipients"] is not None:

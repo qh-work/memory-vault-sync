@@ -27,7 +27,7 @@ export interface RememberArguments {
   entities?: string[];
   relations?: JsonObject[];
 }
-export type RecallArguments = { query: string; handoff?: boolean } |
+export type RecallArguments = { query: string; handoff?: boolean; ranking_profile?: string } |
   { memory_id: string } | { cursor: string };
 export interface DiscoverArguments { online?: boolean }
 export interface SendArguments {
@@ -73,6 +73,7 @@ export interface RecallResult {
   partial: boolean;
   query_candidate_limit: number;
   network_accessed: false;
+  retrieval?: { profile: string; math_profile: string; ranking_time_ms: number };
 }
 
 export interface ClientOptions {

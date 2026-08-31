@@ -187,6 +187,47 @@ This repair requires retained sender outbox data, configured addresses and
 current membership/admission. Node-to-node repair without the sender,
 automatic rerouting and complete node retirement remain separate work.
 
+## Development after publication: opt-in ranking and storage proofs
+
+The source now offers explicit
+`bounded-fragment-bm25+deterministic-concepts/v2` recall/handoff using
+[`mv-rank-q64/1` integer arithmetic](RETRIEVAL_V2.md) in Python and TypeScript.
+The default v1 is unchanged, including its known expected-failure fixture.
+V2 native results and continuation cursors retain the original math profile,
+captured clock and selected IDs, while each page rechecks current trust.
+Canonical memory, source signatures and the existing index stay unchanged.
+
+Node storage assertions now use the same bounded closed response shape,
+positive safe-integer sequence and authenticated node binding in both
+implementations. The checks also apply to historical outbox receipts and
+complete endpoint backup/restore. Bad or oversized historical proof data is
+rejected without silently deleting records, acknowledgments or ciphertext.
+The new 64 KiB per-row / 16 MiB aggregate receipt limits can reject oversized
+historical state previously accepted by the Python client; automatic repair
+of such state is not implemented.
+
+The final integrated campaign selected **98 tests: 97 passed and one existing
+v1 boundary remained an expected failure**, with no unexpected failures,
+errors or skips (136.679 seconds, CPython 3.11.4 / Node 22.19.0 on macOS).
+Runtime and selected-test source fingerprints were unchanged during that run.
+It includes ten new v2 cases, seven new storage-proof cases, real owned HTTP
+nodes, signed backup/restore followed by both Python and TypeScript retry,
+node replacement/replica repair, native six-operation interoperability,
+original-record preservation, legacy cloud interface checks and packaging
+allowlists. All thirteen network TypeScript modules plus the parent HTTP SDK
+also passed strict/no-emit TypeScript 5.9.3 checking (fourteen files).
+
+Restoration still refuses to overwrite an existing destination. A late failed
+restore can retain a newly created capture-disabled keys/Vault directory while
+its transport transaction rolls back; this is not atomic publication of the
+entire destination directory. The malformed signed recovery-package cases
+verify rejection after valid AEAD decryption, not only an invalid outer tag.
+
+This is source validation with synthetic data, not a statement that the
+post-publication changes are in existing alpha attachments or installed on
+any user's machine. It does not establish universal Unicode/runtime parity,
+model quality, live cloud authorization or cluster/fault-domain acceptance.
+
 ## Open delivery and release gates
 
 The later native-agent campaign selected **89 tests: 88 passed and one known
@@ -201,11 +242,12 @@ TypeScript 5.9.3 / Node types 22.18.6. These are source checks, not proof of a
 new plugin installation or real-model behavior. The expected failure below is
 not counted as a pass.
 
-- **No exact cross-runtime ranking guarantee.** A timestamp precision defect
+- **Default v1 still has a cross-runtime ranking boundary.** A timestamp precision defect
   is fixed, but a separate real fixture still changes first-hit selection at a
   platform floating-point `exp` boundary. Its strict expected-failure regression
   is an open gate, never a passing case. No epsilon or widened score tolerance
-  masks the difference. A shared deterministic math profile is separate work.
+  masks the difference. Post-alpha source adds an explicit deterministic v2
+  profile; its scoped evidence does not certify every runtime or change v1.
 - **No 0.25.2 live-cloud acceptance.** Existing directory/rclone configuration
   is preserved. Native Drive queue checks substitute HTTP; actual account
   authorization, upload, independent download and readback remain unverified.

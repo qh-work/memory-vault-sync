@@ -163,6 +163,11 @@
         "semantic": {
           "type": "boolean",
           "description": "Enable the reference implementation's deterministic concept hints; false retains lexical/graph recall."
+        },
+        "ranking_profile": {
+          "type": "string",
+          "enum": ["bounded-fragment-bm25+deterministic-concepts/v1", "bounded-fragment-bm25+deterministic-concepts/v2"],
+          "description": "Explicit derived ranking profile; omitted retains v1. Does not alter canonical records, identity, trust, or the index."
         }
       },
       "additionalProperties": false

@@ -38,6 +38,11 @@ optional `semantic: false` disables the deterministic concept bridge; local
 lexical matching, graph neighbors and the existing dynamic handoff remain.
 `capabilities` advertises the profile and the new view/index operations.
 
+Post-alpha source also offers the explicit `ranking_profile` selector for
+[deterministic v2 arithmetic](RETRIEVAL_V2.md). V1 remains the default; its
+existing floating-point formula and known cross-runtime boundary are not
+silently replaced. Neither selection changes canonical memory or the index.
+
 Each hit still has `memory_id`, `kind`, `text`, `text_truncated`, `entities`,
 `relations`, provenance, verification, status, `score_milli` and
 `matched_tokens`. It additionally contains:

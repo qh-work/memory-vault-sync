@@ -34,7 +34,7 @@ PROTOCOL_DOCUMENTS = (
     "docs/STATUS.md", "docs/RELEASE.md", "docs/SYNC.md", "docs/REMOTE_BACKENDS.md",
     "docs/HOSTS.md", "docs/OPERATIONS.md", "docs/BACKUP.md", "docs/PARITY.md",
     "docs/UPDATES.md", "docs/PACKS.md",
-    "docs/RETRIEVAL.md", "docs/GRAPH_VIEWS.md", "docs/COMPATIBILITY.md",
+    "docs/RETRIEVAL.md", "docs/RETRIEVAL_V2.md", "docs/GRAPH_VIEWS.md", "docs/COMPATIBILITY.md",
     "docs/LEGACY_PACKS.md", "docs/SHARING.md", "docs/ENCRYPTION.md", "docs/PLATFORMS.md",
     "docs/V0_25_PARITY_PLAN.md", "docs/V0_25_SCOPED_SMOKE.md", "docs/V0_25_FOLLOWUP_SMOKE.md", "docs/V0_25_RECOVERY_SMOKE.md", "docs/V0_25_CAPTURE_SMOKE.md", "docs/V0_25_PARITY_REPAIR_SMOKE.md", "docs/V0_25_WORKFLOW_SMOKE.md", "docs/VALIDATION.md",
     "docs/V0_25_TRANSPORT_RECOVERY_SMOKE.md",
@@ -63,7 +63,7 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_network_typescript_setup.py",
     "tests/test_network_typescript_retrieval_text.py", "tests/test_network_typescript_retrieval.py",
     "tests/test_network_typescript_agent.py", "tests/test_network_typescript_agent_network.py",
-    "tests/test_network_worker.py",
+    "tests/test_network_worker.py", "tests/test_network_ranking_v2.py", "tests/test_network_storage_receipts.py",
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_PACKAGE_BYTES = 32 * 1024 * 1024

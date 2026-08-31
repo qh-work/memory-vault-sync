@@ -37,7 +37,7 @@ PACKAGE_DOCUMENTS = (
     "docs/REVIEW_HANDOFF.md", "AI_START_HERE.md", "llms.txt", ".well-known/agent-memory.json",
     "docs/TWO_MODES.md", "docs/SYNC.md", "docs/REMOTE_BACKENDS.md", "docs/HOSTS.md",
     "docs/OPERATIONS.md", "docs/BACKUP.md", "docs/PARITY.md", "docs/UPDATES.md", "docs/PACKS.md",
-    "docs/RETRIEVAL.md", "docs/GRAPH_VIEWS.md", "docs/COMPATIBILITY.md",
+    "docs/RETRIEVAL.md", "docs/RETRIEVAL_V2.md", "docs/GRAPH_VIEWS.md", "docs/COMPATIBILITY.md",
     "docs/LEGACY_PACKS.md", "docs/SHARING.md", "docs/ENCRYPTION.md", "docs/PLATFORMS.md",
     "docs/V0_25_PARITY_PLAN.md", "docs/V0_25_SCOPED_SMOKE.md", "docs/V0_25_FOLLOWUP_SMOKE.md", "docs/V0_25_RECOVERY_SMOKE.md", "docs/V0_25_CAPTURE_SMOKE.md", "docs/V0_25_PARITY_REPAIR_SMOKE.md", "docs/V0_25_WORKFLOW_SMOKE.md", "docs/VALIDATION.md",
     "docs/V0_25_TRANSPORT_RECOVERY_SMOKE.md",
@@ -59,7 +59,7 @@ PACKAGE_DOCUMENTS = (
     "clients/typescript/network/transport.ts", "clients/typescript/network/vault.ts",
     "clients/typescript/network/setup.ts",
     "clients/typescript/network/agent.ts", "clients/typescript/network/retrieval.ts",
-    "clients/typescript/network/retrieval_text.ts",
+    "clients/typescript/network/retrieval_text.ts", "clients/typescript/network/ranking_math.ts",
 )
 TEMPLATE_FILES = (
     ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",

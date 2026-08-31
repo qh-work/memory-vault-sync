@@ -17,8 +17,9 @@ records, identities, the local Vault and network queue schemas without invoking
 Python. Its native `Agent` uses the same bounded fragment retrieval and dynamic
 handoff selection as Python. Low-level `CanonicalVault.recall` retains its
 explicit substring utility; `retrieve` uses the canonical retrieval profile.
-One known platform floating-point boundary can still change selected order;
-exact ranking parity is an open test gate. Full graph/view-management and legacy cloud-worker parity remain outside this
+The default v1 has a known platform floating-point boundary that can change
+selected order. Post-alpha source adds an explicit [deterministic v2 profile](RETRIEVAL_V2.md)
+without replacing that default or changing canonical memory. Full graph/view-management and legacy cloud-worker parity remain outside this
 TypeScript preview. The existing
 TypeScript HTTP SDK continues to use the shared six-operation endpoint above.
 
@@ -100,6 +101,17 @@ limits fail explicitly. Endpoints freeze ciphertext in a durable outbox for
 retries; changed bytes under one ID conflict. Polling is at-least-once with
 durable cursors; recipient acknowledgment follows verification and local save.
 Signed `validated_saved` is not proof of understanding, execution or truth.
+Post-alpha clients also share strict node storage-response validation: closed
+`state`, `message_id`, `envelope_sha256`, `sequence` fields with only an optional
+`node_receipt`, at most 16 KiB total, and a positive JSON safe-integer sequence.
+The signed response must match an independently authenticated node identity;
+the low-level verifier requires an explicit flag for an unsigned response.
+Native peers preserve the existing unbound legacy-node path, without adding a
+new configuration or operator approval. A bound node cannot downgrade to that
+path. Historical per-outbox receipt JSON is checked at 64 KiB per row,
+16 MiB aggregate and 1,024 rows before payload materialization. Invalid or
+oversized old receipts fail explicitly and remain stored; this does not
+silently erase acknowledgments, reseal ciphertext or authorize new recipients.
 After identity recovery with empty transport state, authenticated old receipts
 with no matching local outbox are reported as `unmatched_receipts`, never as
 confirmed local sends. The cursor can advance past them. A repeated valid

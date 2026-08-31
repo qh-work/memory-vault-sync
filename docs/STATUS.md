@@ -18,16 +18,26 @@ full endpoint recovery, authenticated node migration and separately verified
 candidate archives. Current source also includes an independent TypeScript
 persistent endpoint and native six-operation facade with bounded retrieval and
 dynamic handoff. [Its scope](NETWORK_TYPESCRIPT.md) still excludes complete old
-graph/cloud-worker parity and scale certification. No public alpha publication
-or general installation claim is made by this source document. Actual package
-and local upgrade evidence is separate. Historical reports below do not become
+graph/cloud-worker parity and scale certification. The public alpha is available
+at the [explicit prerelease link](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.1).
+Later development adds opt-in [deterministic v2 retrieval](RETRIEVAL_V2.md),
+bounded sender repair and aligned signed-storage-response validation; those
+changes are not claimed to be present in the existing alpha attachments or
+installed locally. Actual package and local upgrade evidence is separate. Historical reports below do not become
 current-version validation by inclusion here.
+
+Earlier release pages/assets are now nonpublic drafts and their old public
+tags/development branches were removed at the owner's request. The sanitized
+main history remains. This does not remove read-only PR refs, forks, caches or
+already downloaded copies; do not treat the cleanup as proof of zero exposure.
 
 ## Historical v0.25.1 capacity-patch status
 
 Source target: **0.25.1**, a bounded file-pack capacity patch. The previous
 [v0.25.0 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
-was published at `7f27953b27b9ecd453be19084808357c89731d20` and remains immutable.
+was originally published at `7f27953b27b9ecd453be19084808357c89731d20`.
+That is a historical source reference; subsequent privacy remediation changed
+public history/assets and the old release is now withdrawn from public access.
 This document does not assert that v0.25.1 assets are already uploaded or that
 the new required CI has passed. No private installation, real Vault, key or
 remote account is changed by preparing these sources.

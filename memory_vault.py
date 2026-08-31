@@ -109,6 +109,9 @@ MAX_HIT_TEXT_BYTES = 48 * 1024
 MAX_TREE_DEPTH = 12
 MAX_TREE_NODES = 16_384
 RETRIEVAL_PROFILE = "bounded-fragment-bm25+deterministic-concepts/v1"
+RETRIEVAL_PROFILE_V2 = "bounded-fragment-bm25+deterministic-concepts/v2"
+RETRIEVAL_PROFILES = (RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2)
+RANKING_MATH_PROFILE = "mv-rank-q64/1"
 RETRIEVAL_INDEX_PROFILE = "full-record-terms+entities/v1"
 VIEW_SCHEMA = "universal-memory-views/v1"
 GRAPH_SCHEMA = "universal-memory-graph/v1"
@@ -615,6 +618,116 @@ def semantic_similarity(query: frozenset[str], candidate: frozenset[str]) -> flo
     return score
 
 
+def _semantic_cardinality(query: frozenset[str], candidate: frozenset[str]) -> tuple[int, int, int]:
+    left = {value for value in query if value.startswith("concept:")}
+    right = {value for value in candidate if value.startswith("concept:")}
+    overlap = len(left & right)
+    if not overlap:
+        return 0, 1, 1
+    return (overlap, len(left | right) or 1,
+            4 if ("polarity:negative" in query) != ("polarity:negative" in candidate) else 1)
+
+
+# mv-rank-q64/1 is an explicit derived-score profile. Do not change its
+# constants or rounding sites, or silently apply it to the stable v1 profile.
+_RANK_SCALE = 1 << 64
+_RANK_LN2 = 12786308645202655660
+_RANK_YEAR_US = 31_536_000_000_000
+
+
+def _rank_round(numerator: int, denominator: int) -> int:
+    if numerator < 0 or denominator <= 0:
+        raise MemoryError("invalid_ranking_arithmetic")
+    quotient, remainder = divmod(numerator, denominator)
+    return quotient + int(2 * remainder > denominator or (2 * remainder == denominator and quotient % 2))
+
+
+def _rank_log_q(numerator: int, denominator: int) -> int:
+    if numerator < denominator or denominator <= 0:
+        raise MemoryError("invalid_ranking_arithmetic")
+    exponent = 0
+    while numerator >= 2 * denominator:
+        denominator *= 2
+        exponent += 1
+    z = _rank_round((numerator - denominator) * _RANK_SCALE, numerator + denominator)
+    squared = _rank_round(z * z, _RANK_SCALE)
+    power, total = z, 0
+    for index in range(32):
+        total += _rank_round(power, 2 * index + 1)
+        power = _rank_round(power * squared, _RANK_SCALE)
+    return exponent * _RANK_LN2 + 2 * total
+
+
+def _rank_exp_neg_q(value: int) -> int:
+    if value < 0:
+        raise MemoryError("invalid_ranking_arithmetic")
+    if value >= 64 * _RANK_SCALE:
+        return 0
+    exponent = 0
+    while value > (_RANK_SCALE // 8) * (1 << exponent):
+        exponent += 1
+    reduced = _rank_round(value, 1 << exponent)
+    term = total = _RANK_SCALE
+    for index in range(1, 21):
+        term = _rank_round(term * reduced, index * _RANK_SCALE)
+        total += term if index % 2 == 0 else -term
+    for _ in range(exponent):
+        total = _rank_round(total * total, _RANK_SCALE)
+    return min(_RANK_SCALE, max(0, total))
+
+
+def _rank_datetime_us(value: dt.datetime) -> int:
+    # Integer calendar subtraction preserves all six canonical fractional
+    # digits and avoids platform timestamp()/total_seconds() floating math.
+    delta = value - dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)
+    return (delta.days * 86400 + delta.seconds) * 1_000_000 + delta.microseconds
+
+
+def _rank_time_factor_q(created_at: str, ranking_time_ms: int) -> int:
+    captured = dt.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    age = max(0, ranking_time_ms * 1000 - _rank_datetime_us(captured))
+    decay = _rank_exp_neg_q(_rank_round(age * _RANK_SCALE, _RANK_YEAR_US))
+    return _rank_round(41 * _RANK_SCALE + 9 * decay, 50)
+
+
+def _rank_score_v2(*, counts: Mapping[str, int], inverse: Mapping[str, int],
+                   total_length: int, total: int, length: int,
+                   features: frozenset[str], fragment_features: frozenset[str],
+                   entity_features: frozenset[str], entity_matches: int, query_tokens: int,
+                   phrase: bool, related: bool, user_hint: bool, episode: bool,
+                   status: str, time_factor: int) -> tuple[int, dict[str, int]] | None:
+    lexical = 0
+    for token in sorted(counts):
+        frequency = counts[token]
+        lexical += _rank_round(inverse[token] * 1175 * frequency * total_length,
+            500 * frequency * total_length + 27 * (7 * total_length + 18 * length * total))
+    overlap, union, polarity = _semantic_cardinality(features, fragment_features)
+    concept = _rank_round(9 * overlap * _RANK_SCALE, 4 * union * polarity)
+    overlap, union, polarity = _semantic_cardinality(features, entity_features)
+    token_count, semantic_denominator = max(1, query_tokens), union * polarity
+    entity = _rank_round(_RANK_SCALE * (entity_matches * semantic_denominator + overlap * token_count),
+                         2 * token_count * semantic_denominator)
+    phrase_q = _rank_round(27 * _RANK_SCALE, 20) if phrase else 0
+    graph = _rank_round(_RANK_SCALE, 5) if related else 0
+    base = lexical + concept + entity + phrase_q + graph
+    if not base:
+        return None
+    role = (71, 50) if user_hint else (1, 1)
+    kind = (1, 1) if episode else (28, 25)
+    state = (18, 25) if status in {"superseded", "resolved"} else (1, 1)
+    numerator, denominator = role[0] * kind[0] * state[0], role[1] * kind[1] * state[1]
+    score = _rank_round(base * numerator * time_factor * 1000, denominator * _RANK_SCALE * _RANK_SCALE)
+    if score > 2**53 - 1:
+        raise MemoryError("invalid_ranking_arithmetic")
+    components = {key: _rank_round(value * 1000, _RANK_SCALE) for key, value in (
+        ("lexical_milli", lexical), ("semantic_milli", concept), ("entity_milli", entity),
+        ("phrase_milli", phrase_q), ("graph_milli", graph), ("recency_factor_milli", time_factor))}
+    components.update({"role_factor_milli": _rank_round(role[0] * 1000, role[1]),
+                       "kind_factor_milli": _rank_round(kind[0] * 1000, kind[1]),
+                       "graph_factor_milli": _rank_round(state[0] * 1000, state[1])})
+    return score, components
+
+
 def _expanded_query_tokens(tokens: Sequence[str], features: frozenset[str]) -> list[str]:
     result = set(tokens)
     for index, terms in enumerate(_CONCEPT_GROUPS):
@@ -886,6 +999,7 @@ def capability_result() -> dict[str, Any]:
         "optional_signing": "external_ed25519_provider",
         "signature_is_authorization": False,
         "retrieval_profile": RETRIEVAL_PROFILE,
+        "retrieval_profiles": list(RETRIEVAL_PROFILES),
         "retrieval_index_profile": RETRIEVAL_INDEX_PROFILE,
         "semantic_adapter": "deterministic-concepts-v1",
         "lexical_fallback": True,
@@ -1670,9 +1784,12 @@ class Vault:
         query: str,
         limit: int,
         semantic: bool = True,
+        ranking_profile: str = RETRIEVAL_PROFILE,
         metrics: dict[str, Any] | None = None,
         through: int | None = None,
     ) -> list[dict[str, Any]]:
+        if not isinstance(ranking_profile, str) or ranking_profile not in RETRIEVAL_PROFILES:
+            raise MemoryError("unsupported_ranking_profile")
         tokens = list(dict.fromkeys(tokenize(query)))
         token_set = set(tokens)
         features = semantic_features(query) if semantic else frozenset()
@@ -1800,7 +1917,8 @@ class Vault:
                 first_selected = first_selected or fragment is first_fragment
             if (first_fragment is not None and not first_selected
                     and (memory_id in related_ids or entity_matches[memory_id]
-                         or semantic_similarity(features, entity_features[memory_id]) > 0)):
+                         or (_semantic_cardinality(features, entity_features[memory_id])[0] > 0
+                             if ranking_profile == RETRIEVAL_PROFILE_V2 else semantic_similarity(features, entity_features[memory_id]) > 0))):
                 # These records can be useful without a textual query match.
                 # Keep their first span, as before, but do not let unrelated
                 # prefixes consume slots needed by genuine matching spans.
@@ -1820,35 +1938,69 @@ class Vault:
                 **item, "counts": counts, "length": max(1, len(terms)),
                 "features": semantic_features(str(fragment["text"])) if semantic else frozenset(),
             })
-        average = sum(item["length"] for item in pool) / max(1, len(pool))
+        total_length = sum(item["length"] for item in pool)
+        average = total_length / max(1, len(pool)) if ranking_profile == RETRIEVAL_PROFILE else 0
         total = len(pool)
         now = dt.datetime.now(dt.timezone.utc)
+        ranking_time_ms = _rank_datetime_us(now) // 1000 if ranking_profile == RETRIEVAL_PROFILE_V2 else None
+        if ranking_time_ms is not None and not -62135596800000 <= ranking_time_ms <= 253402300799999:
+            raise MemoryError("invalid_ranking_clock")
+        inverse_v2 = {}
+        time_factors_v2: dict[str, int] = {}
+        if ranking_profile == RETRIEVAL_PROFILE_V2:
+            by_frequency = {df: _rank_log_q(2 * (total + 1), 2 * df + 1) for df in set(document_frequency.values())}
+            inverse_v2 = {token: by_frequency[df] for token, df in document_frequency.items()}
         candidates: dict[str, dict[str, Any]] = {}
         for item in pool:
             memory_id = item["memory_id"]
             record = records[memory_id]
             fragment = item["fragment"]
-            lexical = 0.0
-            for token, frequency in item["counts"].items():
-                df = document_frequency[token]
-                inverse = math.log(1.0 + (total - df + 0.5) / (df + 0.5))
-                denominator = frequency + 1.35 * (1.0 - 0.72 + 0.72 * item["length"] / max(1.0, average))
-                lexical += inverse * frequency * 2.35 / denominator
-            concept = semantic_similarity(features, item["features"]) * 2.25
-            entity_lexical = len(entity_matches[memory_id]) / max(1, len(token_set))
-            entity = (entity_lexical + semantic_similarity(features, entity_features[memory_id])) * 0.5
-            phrase = 1.35 if normalized_query and normalized_query in normalize_text(str(fragment["text"])) else 0.0
-            graph = 0.20 if memory_id in related_ids else 0.0
-            if not any((lexical, concept, entity, phrase, graph)):
-                continue
-            role_factor = 1.42 if fragment["role_hint"] == "user" else 1.0
-            kind_factor = 1.12 if record["kind"] != "episode" else 1.0
             status = statuses[memory_id]
-            graph_factor = 0.72 if status in {"superseded", "resolved"} else 1.0
-            captured = dt.datetime.fromisoformat(str(record["created_at"]).replace("Z", "+00:00"))
-            age = max(0.0, (now - captured).total_seconds() / 86400.0)
-            time_factor = 0.82 + 0.18 * math.exp(-age / 365.0)
-            score = (lexical + concept + entity + phrase + graph) * role_factor * kind_factor * graph_factor * time_factor
+            if ranking_profile == RETRIEVAL_PROFILE_V2:
+                if memory_id not in time_factors_v2:
+                    time_factors_v2[memory_id] = _rank_time_factor_q(str(record["created_at"]), ranking_time_ms)
+                ranked = _rank_score_v2(counts=item["counts"], inverse=inverse_v2,
+                    total_length=total_length, total=total, length=item["length"],
+                    features=features, fragment_features=item["features"], entity_features=entity_features[memory_id],
+                    entity_matches=len(entity_matches[memory_id]), query_tokens=len(token_set),
+                    phrase=bool(normalized_query and normalized_query in normalize_text(str(fragment["text"]))),
+                    related=memory_id in related_ids, user_hint=fragment["role_hint"] == "user",
+                    episode=record["kind"] == "episode", status=status, time_factor=time_factors_v2[memory_id])
+                if ranked is None:
+                    continue
+                score_milli, score_components = ranked
+                concept = _semantic_cardinality(features, item["features"])[0] > 0
+                graph = memory_id in related_ids
+            else:
+                lexical = 0.0
+                for token, frequency in item["counts"].items():
+                    df = document_frequency[token]
+                    inverse = math.log(1.0 + (total - df + 0.5) / (df + 0.5))
+                    denominator = frequency + 1.35 * (1.0 - 0.72 + 0.72 * item["length"] / max(1.0, average))
+                    lexical += inverse * frequency * 2.35 / denominator
+                concept = semantic_similarity(features, item["features"]) * 2.25
+                entity_lexical = len(entity_matches[memory_id]) / max(1, len(token_set))
+                entity = (entity_lexical + semantic_similarity(features, entity_features[memory_id])) * 0.5
+                phrase = 1.35 if normalized_query and normalized_query in normalize_text(str(fragment["text"])) else 0.0
+                graph = 0.20 if memory_id in related_ids else 0.0
+                if not any((lexical, concept, entity, phrase, graph)):
+                    continue
+                role_factor = 1.42 if fragment["role_hint"] == "user" else 1.0
+                kind_factor = 1.12 if record["kind"] != "episode" else 1.0
+                status = statuses[memory_id]
+                graph_factor = 0.72 if status in {"superseded", "resolved"} else 1.0
+                captured = dt.datetime.fromisoformat(str(record["created_at"]).replace("Z", "+00:00"))
+                age = max(0.0, (now - captured).total_seconds() / 86400.0)
+                time_factor = 0.82 + 0.18 * math.exp(-age / 365.0)
+                score = (lexical + concept + entity + phrase + graph) * role_factor * kind_factor * graph_factor * time_factor
+                score_milli = max(0, round(score * 1000))
+                score_components = {
+                    "lexical_milli": round(lexical * 1000), "semantic_milli": round(concept * 1000),
+                    "entity_milli": round(entity * 1000), "phrase_milli": round(phrase * 1000),
+                    "graph_milli": round(graph * 1000), "role_factor_milli": round(role_factor * 1000),
+                    "kind_factor_milli": round(kind_factor * 1000), "graph_factor_milli": round(graph_factor * 1000),
+                    "recency_factor_milli": round(time_factor * 1000),
+                }
             explanation = ["bounded_fragment_bm25", f"graph_status:{status}", "recency_is_soft_not_authority"]
             explanation.extend(sorted(features & item["features"] - {"polarity:negative"}))
             if concept and (("polarity:negative" in features) != ("polarity:negative" in item["features"])):
@@ -1861,16 +2013,10 @@ class Vault:
                 explanation.append("bounded_related_evidence")
             candidate = {
                 "record": record, "fragment": fragment, "status": status,
-                "score_milli": max(0, round(score * 1000)),
+                "score_milli": score_milli,
                 "matched_tokens": len(set(item["counts"]) | entity_matches[memory_id]),
                 "explanation": explanation,
-                "score_components": {
-                    "lexical_milli": round(lexical * 1000), "semantic_milli": round(concept * 1000),
-                    "entity_milli": round(entity * 1000), "phrase_milli": round(phrase * 1000),
-                    "graph_milli": round(graph * 1000), "role_factor_milli": round(role_factor * 1000),
-                    "kind_factor_milli": round(kind_factor * 1000), "graph_factor_milli": round(graph_factor * 1000),
-                    "recency_factor_milli": round(time_factor * 1000),
-                },
+                "score_components": score_components,
             }
             previous = candidates.get(memory_id)
             if previous is None or candidate["score_milli"] > previous["score_milli"]:
@@ -1991,7 +2137,7 @@ class Vault:
                 break
         if metrics is not None:
             metrics.update({
-                "profile": RETRIEVAL_PROFILE,
+                "profile": ranking_profile,
                 "semantic_adapter": "deterministic-concepts-v1" if semantic else "disabled",
                 "bm25_scope": "bounded_candidate_fragments", "index": self._retrieval_index_state(connection, through=through),
                 "candidate_limit": candidate_limit, "candidate_records": len(records),
@@ -1999,6 +2145,8 @@ class Vault:
                 "fragment_spans_examined": spans_examined,
                 "truncated": truncated, "ranking_is_authority": False,
             })
+            if ranking_profile == RETRIEVAL_PROFILE_V2:
+                metrics.update({"math_profile": RANKING_MATH_PROFILE, "ranking_time_ms": ranking_time_ms})
         return result
 
     def _admitted_row(self, connection: sqlite3.Connection, memory_id: str, *, through: int) -> sqlite3.Row | None:
@@ -2478,7 +2626,7 @@ class Vault:
             _exact_object(
                 request,
                 required={"op", "query"},
-                optional=common_optional | {"limit", "maximum_context_bytes", "semantic"},
+                optional=common_optional | {"limit", "maximum_context_bytes", "semantic", "ranking_profile"},
             )
             query = str(_visible_text(request.get("query")))
             limit = request.get("limit", 8 if operation == "recall" else 12)
@@ -2491,7 +2639,8 @@ class Vault:
             if not isinstance(semantic, bool):
                 raise MemoryError("invalid_option")
             retrieval: dict[str, Any] = {}
-            hits = self._recall_rows(connection, query=query, limit=limit, semantic=semantic, metrics=retrieval)
+            hits = self._recall_rows(connection, query=query, limit=limit, semantic=semantic,
+                                     ranking_profile=request.get("ranking_profile", RETRIEVAL_PROFILE), metrics=retrieval)
             if operation == "handoff":
                 # Goal continuity is guaranteed a place even when semantic
                 # recall already filled the requested limit. This remains a

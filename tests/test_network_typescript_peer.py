@@ -83,7 +83,7 @@ class TypeScriptPeerTests(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory(prefix="memory-vault-ts-peer-synthetic-")
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.fixture = Path(cls.temporary.name).resolve()
-        for name in ("crypto.ts", "control.ts", "nodes.ts", "records.ts", "vault.ts", "io.ts", "transport.ts", "peer.ts", "setup.ts", "retrieval.ts", "retrieval_text.ts", "package.json"):
+        for name in ("crypto.ts", "control.ts", "nodes.ts", "records.ts", "vault.ts", "io.ts", "transport.ts", "peer.ts", "setup.ts", "retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "package.json"):
             shutil.copyfile(ROOT / "clients/typescript/network" / name, cls.fixture / name)
         (cls.fixture / "node_modules").mkdir()
         (cls.fixture / "node_modules/jose").symlink_to(package, target_is_directory=True)

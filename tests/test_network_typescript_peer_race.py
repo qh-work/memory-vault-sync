@@ -122,7 +122,7 @@ other.close();db.close();process.stdout.write(JSON.stringify(result));
 class TypeScriptPeerRaceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        prepare_runtime(cls, ("crypto.ts", "control.ts", "nodes.ts", "io.ts", "transport.ts", "peer.ts", "vault.ts", "records.ts", "setup.ts", "retrieval.ts", "retrieval_text.ts"), DRIVER)
+        prepare_runtime(cls, ("crypto.ts", "control.ts", "nodes.ts", "io.ts", "transport.ts", "peer.ts", "vault.ts", "records.ts", "setup.ts", "retrieval.ts", "retrieval_text.ts", "ranking_math.ts"), DRIVER)
 
     def setUp(self):
         # Reuse only synthetic key/document generation, not its test suite.

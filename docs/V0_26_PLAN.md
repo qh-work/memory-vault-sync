@@ -66,10 +66,12 @@ SQLite Vault and network queue schema; real loopback tests continue the same
 queue between Python and TypeScript. The native six-operation facade now uses
 the same bounded fragment ranking and structural handoff selection. It shares
 the Vault, identity, permissions and errors; it is not a second data system.
-Exact numerical ranking parity remains open: a reproducible platform `exp`
-rounding boundary changes the first selected ID. Preserve its expected-failure
-test and design a shared deterministic math profile separately; do not hide it
-with a larger tolerance or silently replace the stable Python formula.
+Default-v1 numerical ranking parity remains open: a reproducible platform
+`exp` boundary changes the first selected ID. Post-alpha source preserves its
+expected-failure test and adds an explicit [integer v2 profile](RETRIEVAL_V2.md),
+shared by both implementations without a tolerance or default-formula change.
+Node storage-response shape, signature/binding and size checks are also shared;
+malformed historical receipts remain preserved and fail explicitly.
 Whole-endpoint recovery includes committed transport state and has targeted
 synthetic recovery tests. Development after the alpha adds bounded sender
 repair: pump checks configured node incarnations before selecting pending

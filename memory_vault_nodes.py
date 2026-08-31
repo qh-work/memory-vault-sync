@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 from memory_vault_network_control import MAX_CONTROL_BYTES, _sign, _verify, _window
 from memory_vault_network_crypto import (
-    NetworkCryptoError, digest, document, document_sha256, integer, object_fields,
+    NetworkCryptoError, PublicKeyTrust, digest, document, document_sha256, integer, object_fields,
     opaque, public_signing_key,
 )
 from memory_vault_trust import Identity, TrustStore
@@ -21,8 +21,63 @@ DIRECTORY_SCHEMA = "memory-vault-node-directory/v1"
 REQUEST_SCHEMA = "memory-vault-node-request/v1"
 STATUS_SCHEMA = "memory-vault-node-status/v1"
 MAX_NODES = 256
+MAX_STORAGE_RECEIPT_BYTES = 16 * 1024
+MAX_OUTBOX_RECEIPT_ROW_BYTES = 64 * 1024
+MAX_OUTBOX_RECEIPTS_BYTES = 16 * 1024 * 1024
 NODE_SCOPES = frozenset({"node.status", "export", "import"})
 NODE_ACTIONS = frozenset({"refresh", "export", "import"})
+
+
+def check_outbox_receipt_bounds(connection: Any) -> None:
+    """Read lengths only; callers keep the same SQLite snapshot for the rows."""
+    count, largest, total = connection.execute(
+        "SELECT COUNT(*),COALESCE(MAX(length(CAST(receipts AS BLOB))),0),"
+        "COALESCE(SUM(length(CAST(receipts AS BLOB))),0) FROM outbox"
+    ).fetchone()
+    if count > 1024:
+        raise NetworkCryptoError("network_outbox_capacity")
+    if largest > MAX_OUTBOX_RECEIPT_ROW_BYTES or total > MAX_OUTBOX_RECEIPTS_BYTES:
+        raise NetworkCryptoError("network_storage_receipt_capacity")
+
+
+def verify_storage_receipt(value: Mapping[str, Any] | bytes, *, network_id: str,
+                           message_id: str, envelope_sha256: str,
+                           node_binding: Mapping[str, Any] | None,
+                           allow_legacy_unsigned: bool = False) -> dict[str, Any]:
+    """Validate a historical assertion, never current retention or authority.
+
+    A missing node binding permits only the explicit legacy unsigned path;
+    an incoming receipt cannot supply its own trusted node key.
+    """
+    raw = document(value, maximum=MAX_STORAGE_RECEIPT_BYTES)
+    opaque(network_id)
+    binding = None
+    if node_binding is None:
+        if allow_legacy_unsigned is not True or "node_receipt" in raw:
+            raise NetworkCryptoError("network_node_identity_required")
+    else:
+        binding = object_fields(node_binding, {"signing_key", "base_url", "storage_epoch"})
+        public_signing_key(binding["signing_key"])
+        _base_url(binding["base_url"])
+        opaque(binding["storage_epoch"])
+        if "node_receipt" not in raw:
+            raise NetworkCryptoError("network_node_identity_required")
+    fields = {"state", "message_id", "envelope_sha256", "sequence"}
+    object_fields(raw, fields | ({"node_receipt"} if binding is not None else set()))
+    receipt = {key: raw[key] for key in fields}
+    if (receipt["state"] != "stored" or opaque(receipt["message_id"]) != opaque(message_id)
+            or digest(receipt["envelope_sha256"]) != digest(envelope_sha256)):
+        raise NetworkCryptoError("network_invalid_storage_receipt")
+    integer(receipt["sequence"], minimum=1)
+    if binding is not None:
+        signed = object_fields(raw["node_receipt"], {"payload", "proof"})
+        payload = object_fields(signed["payload"], {"schema_version", "network_id", "node", "receipt"})
+        if (payload["schema_version"] != "memory-vault-node-storage-receipt/v1"
+                or payload["network_id"] != network_id or payload["node"] != binding
+                or payload["receipt"] != receipt):
+            raise NetworkCryptoError("network_node_receipt_mismatch")
+        PublicKeyTrust([binding["signing_key"]]).verify_message(payload, signed["proof"])
+    return receipt
 
 
 def _base_url(value: Any) -> str:

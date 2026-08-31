@@ -12,7 +12,8 @@ import {
 import type { DocumentInput, SigningIdentityDocument, EncryptionIdentityDocument, SigningPublicDescriptor } from './crypto.ts';
 import { verifyCurrentRoster, verifyRoster, signRequest, verifyRequest, verifyInvitationPackage, openJoinChallenge, authorizedMember } from './control.ts';
 import type { CurrentRoster, RequestAction, RecoveryAnchor } from './control.ts';
-import { verifyCurrentNodes, authorizedNode, verifyNodeChallenge, verifyStorageReceipt } from './nodes.ts';
+import { verifyCurrentNodes, authorizedNode, verifyNodeChallenge, verifyStorageReceipt,
+  MAX_OUTBOX_RECEIPT_ROW_BYTES, MAX_OUTBOX_RECEIPTS_BYTES } from './nodes.ts';
 import { CanonicalVault } from './vault.ts';
 import { parseShare, NetworkRecordsError } from './records.ts';
 import { absolutePath, readPrivate, openPrivateDatabase, transaction, NetworkError } from './io.ts';
@@ -126,6 +127,37 @@ export class NetworkPeer {
   private assertNode(relay: string, binding: Obj|null): void {
     if (!equal(this.state('node:'+relay)??null,binding)) throw new NetworkError('network_node_changed',true);
   }
+  private verifyStorageResponse(relay:string,value:Obj,messageId:string,envelopeHash:string):void {
+    const binding=this.state('node:'+relay)??null;
+    if(binding!==null&&binding.base_url!==relay)fail('network_node_receipt_mismatch');
+    verifyStorageReceipt(value as any,{node:binding,network_id:this.networkId,message_id:messageId,
+      envelope_sha256:envelopeHash,allow_legacy_unsigned:binding===null});
+  }
+  private outboxRows(requestId?:string,full=false):Obj[]{
+    // Length metadata and payload reads share a snapshot. Bulk scans do not
+    // load every body/envelope, and incoming proof keys never grant trust.
+    const db=this.db(),owns=!db.isTransaction;
+    if(owns)db.exec('BEGIN');
+    try{
+      const sizes=db.prepare('SELECT COUNT(*) count,COALESCE(MAX(length(CAST(receipts AS BLOB))),0) largest,COALESCE(SUM(length(CAST(receipts AS BLOB))),0) total FROM outbox').get() as Obj;
+      if(sizes.count>1024)fail('network_outbox_capacity');
+      if(sizes.largest>MAX_OUTBOX_RECEIPT_ROW_BYTES||sizes.total>MAX_OUTBOX_RECEIPTS_BYTES)fail('network_storage_receipt_capacity');
+      if(full&&requestId===undefined)throw Error('full outbox reads require one request');
+      const statement=db.prepare('SELECT rowid AS position,'+(full?'*':'request_id,message_id,receipts')+' FROM outbox'+(requestId===undefined?'':' WHERE request_id=?')+' ORDER BY rowid');
+      const rows=(requestId===undefined?statement.all():statement.all(requestId)) as Obj[];
+      for(const row of rows){
+        if(Buffer.byteLength(row.receipts)>MAX_OUTBOX_RECEIPT_ROW_BYTES)fail('network_storage_receipt_capacity');
+        const receipts=parse(row.receipts);
+        if(receipts===null||typeof receipts!=='object'||Array.isArray(receipts)||Object.keys(receipts).length>2)fail('network_invalid_storage_receipt');
+        if(!Object.keys(receipts).length)continue;
+        const stored=db.prepare('SELECT envelope FROM outbox WHERE request_id=?').get(row.request_id) as Obj|undefined;
+        if(!stored||stored.envelope===null)fail('network_invalid_storage_receipt');
+        const hash=documentSha256(parse(stored.envelope));
+        for(const [relay,receipt] of Object.entries(receipts)){origin(relay);this.verifyStorageResponse(relay,receipt as Obj,row.message_id,hash);}
+      }
+      if(owns)db.exec('COMMIT');return rows;
+    }catch(error){if(owns)db.exec('ROLLBACK');throw error;}
+  }
   private request(action: RequestAction, body: Obj, requestId = 'req_'+randomBytes(16).toString('hex')): any {
     const at = now(); return signRequest({signer:this.identity,network_id:this.networkId,action,request_id:requestId,body,issued_at:at,expires_at:at+60});
   }
@@ -178,7 +210,7 @@ export class NetworkPeer {
           if (!equal(this.state('node:'+relay)??null,binding)) {
             this.db().prepare('DELETE FROM state WHERE key=?').run('cursor:'+relay);
             for(const prefix of ['ack:'+relay+':','join:'+relay+':']) this.db().prepare('DELETE FROM state WHERE substr(key,1,?)=?').run(prefix.length,prefix);
-            for(const row of this.db().prepare('SELECT request_id,receipts FROM outbox').all() as Obj[]) {
+            for(const row of this.outboxRows()) {
               const receipts=parse(row.receipts);if(relay in receipts){delete receipts[relay];this.db().prepare('UPDATE outbox SET receipts=? WHERE request_id=?').run(json(receipts),row.request_id);}
             }
             this.put('node:'+relay,binding);
@@ -252,16 +284,16 @@ export class NetworkPeer {
     if(!text&&!memoryIds.length)fail('network_empty_message');
     const inputSha=sha256(canonicalBytes({recipients,text,memory_ids:memoryIds}));
     const messageId='msg_'+sha256(canonicalBytes([this.networkId,this.identity.key_id,requestId]));
-    let row=this.db().prepare('SELECT * FROM outbox WHERE request_id=?').get(requestId) as Obj|undefined;
+    let row=this.outboxRows(requestId,true)[0] as Obj|undefined;
     if(row&&row.input_sha!==inputSha)fail('network_request_id_conflict');
-    if(row&&row.recipients===null){this.db().prepare('UPDATE outbox SET recipients=? WHERE request_id=? AND recipients IS NULL').run(canonicalBytes(recipients),requestId);row=this.db().prepare('SELECT * FROM outbox WHERE request_id=?').get(requestId) as Obj;}
+    if(row&&row.recipients===null){this.db().prepare('UPDATE outbox SET recipients=? WHERE request_id=? AND recipients IS NULL').run(canonicalBytes(recipients),requestId);row=this.outboxRows(requestId,true)[0];}
     if(!row){
       const body=this.prepareBody(requestId,text,memoryIds);
       transaction(this.db(),()=>{
         const totals=this.db().prepare('SELECT COUNT(*) count,COALESCE(SUM(length(body)+COALESCE(length(envelope),0)),0) bytes FROM outbox').get() as Obj;
         if(totals.count>=1024||totals.bytes+body.length*3>MAX_QUEUE)fail('network_outbox_capacity');
         this.db().prepare('INSERT OR IGNORE INTO outbox(request_id,message_id,input_sha,body,recipients) VALUES(?,?,?,?,?)').run(requestId,messageId,inputSha,body,canonicalBytes(recipients));
-        row=this.db().prepare('SELECT * FROM outbox WHERE request_id=?').get(requestId) as Obj;
+        row=this.outboxRows(requestId,true)[0];
         if(row.input_sha!==inputSha)fail('network_request_id_conflict');
       });
     }
@@ -301,9 +333,8 @@ export class NetworkPeer {
         if(result.state!=='stored'||result.message_id!==prior.message_id||result.envelope_sha256!==documentSha256(envelope))fail('network_invalid_storage_receipt');
         transaction(this.db(),()=>{
           this.assertNode(relay,node);
-          if(node)verifyStorageReceipt(result as any,{node:node as any,network_id:this.networkId,message_id:prior.message_id,envelope_sha256:documentSha256(envelope)});
-          else if('node_receipt'in result)fail('network_node_identity_required');
-          receipts=this.receipts(this.db().prepare('SELECT receipts FROM outbox WHERE request_id=?').get(prior.request_id) as Obj);
+          this.verifyStorageResponse(relay,result,prior.message_id,documentSha256(envelope));
+          receipts=this.receipts(this.outboxRows(prior.request_id)[0]);
           receipts[relay]=result;this.db().prepare('UPDATE outbox SET receipts=? WHERE request_id=?').run(json(receipts),prior.request_id);
         });
       }catch(error){
@@ -312,7 +343,7 @@ export class NetworkPeer {
         errors.push({node:this.relays.indexOf(relay),...detail});if(detail.code==='network_budget_exhausted')break;
       }
     }
-    receipts=this.receipts(this.db().prepare('SELECT receipts FROM outbox WHERE request_id=?').get(prior.request_id) as Obj);
+    receipts=this.receipts(this.outboxRows(prior.request_id)[0]);
     const validated=(this.db().prepare('SELECT recipient FROM acknowledgements WHERE message_id=?').all(prior.message_id) as Obj[]).map(row=>row.recipient);
     return {state:Object.keys(receipts).length===this.relays.length?'stored':'queued_local',message_id:prior.message_id,stored_nodes:Object.keys(receipts).length,configured_nodes:this.relays.length,degraded:Object.keys(receipts).length<this.relays.length,validated_recipients:validated,endpoint_validated:recipients.every(key=>validated.includes(key)),understood:false,errors,retry_same_request_id:true};
   }
@@ -416,7 +447,7 @@ export class NetworkPeer {
     return {messages,partial:messages.length>=limit,errors,unmatched_receipts:unmatched,network_accessed:true,receipts_mean:'endpoint_validated_saved_not_understood'};
   }
   private pending():Obj[]{
-    const rows=this.db().prepare('SELECT rowid AS position,* FROM outbox ORDER BY rowid LIMIT 1025').all() as Obj[];
+    const rows=this.outboxRows();
     if(rows.length>1024)fail('network_outbox_capacity');
     return rows.filter(row=>!this.relays.every(relay=>relay in this.receipts(row)));
   }
@@ -429,7 +460,7 @@ export class NetworkPeer {
   private async checkReplicaNodes(deadline:number,firstNode:number):Promise<Obj[]>{
     // Historical receipts survive outages. Only a verified new incarnation
     // invalidates them, before pending work is selected (even without poll).
-    const rows=this.db().prepare('SELECT receipts FROM outbox LIMIT 1025').all() as Obj[];
+    const rows=this.outboxRows();
     if(rows.length>1024)fail('network_outbox_capacity');
     const nodes=new Set<string>();
     for(const row of rows){
@@ -455,15 +486,16 @@ export class NetworkPeer {
     const replicaChecks=maximumMessages?await this.checkReplicaNodes(start+maximumSeconds*500,firstNode):[],rows=this.pending(),cursor=this.state('pump_cursor')??0;
     const errors:Obj[]=replicaChecks.filter(check=>check.state!=='current').map(({node,code,retryable})=>({node,code,retryable}));
     const ordered=[...rows.filter(row=>row.position>cursor),...rows.filter(row=>row.position<=cursor)],outbound:Obj[]=[],attempted=new Set<string>();
-    for(const row of ordered.slice(0,maximumMessages)){
-      if(performance.now()>=deadline)break;attempted.add(row.request_id);
+    for(const selected of ordered.slice(0,maximumMessages)){
+      if(performance.now()>=deadline)break;attempted.add(selected.request_id);
       try{
+        const row=this.outboxRows(selected.request_id,true)[0];if(!row)continue;
         const recipients=row.recipients?parse(row.recipients):row.envelope?parse(row.envelope).recipient_key_ids:null;
         if(recipients===null)fail('network_outbox_recipients_unavailable');
         if(!Array.isArray(recipients)||recipients.length<1||recipients.length>16||new Set(recipients).size!==recipients.length)fail('network_outbox_routing_mismatch');recipients.forEach(opaqueId);
         const result=await this.deliver(row,recipients,deadline,true,firstNode);outbound.push({request_id:row.request_id,message_id:result.message_id,state:result.state,stored_nodes:result.stored_nodes,errors:result.errors});
-      }catch(error){const detail=errorData(error);outbound.push({request_id:row.request_id,state:'queued_local',errors:[{...detail,requires_original_request:detail.code==='network_outbox_recipients_unavailable'}]});}
-      this.put('pump_cursor',row.position);
+      }catch(error){const detail=errorData(error);outbound.push({request_id:selected.request_id,state:'queued_local',errors:[{...detail,requires_original_request:detail.code==='network_outbox_recipients_unavailable'}]});}
+      this.put('pump_cursor',selected.position);
     }
     const incoming=receiveLimit&&performance.now()<deadline?await this.receiveInternal(receiveLimit,deadline):null;
     const exhausted=performance.now()>=deadline;if(exhausted)errors.push({code:'network_budget_exhausted',retryable:true});

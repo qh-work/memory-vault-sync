@@ -95,7 +95,7 @@ class TypeScriptRetrievalTests(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory(prefix="memory-vault-ts-retrieval-synthetic-")
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.fixture = Path(cls.temporary.name).resolve()
-        for name in ("retrieval.ts", "retrieval_text.ts", "records.ts", "crypto.ts", "io.ts", "package.json"):
+        for name in ("retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "records.ts", "crypto.ts", "io.ts", "package.json"):
             shutil.copyfile(ROOT / "clients/typescript/network" / name, cls.fixture / name)
         (cls.fixture / "node_modules").mkdir()
         (cls.fixture / "node_modules/jose").symlink_to(jose, target_is_directory=True)
