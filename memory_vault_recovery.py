@@ -60,9 +60,10 @@ _SYNC_TOP_FILES = frozenset({"sync-state.json", "sync-trigger.json", "launch.jso
                              "remote-receipt.json", "worker-events.ndjson"})
 _SYNC_LOCKS = ("launch.lock", "worker.lock", "trigger.lock", "transfer/transfer.lock")
 _REVIEW_FILES = frozenset({"intent.json", "original.json", "replacement.json", "decision.json", "completed.json"})
-_EXCLUDED = ("private_keys", "credentials", "trust_registry", "original_client_and_sync_configuration",
+_LEGACY_EXCLUDED = ("private_keys", "credentials", "trust_registry", "original_client_and_sync_configuration",
              "host_permissions", "executable_code", "external_exchange_directories", "rclone_cache_and_tmp",
              "lock_files", "unselected_components")
+_EXCLUDED = (*_LEGACY_EXCLUDED, "native_drive_ciphertext_cache")
 
 # Closed schemas are recreated from these literals, never from SQLite programs
 # supplied by an archive. Optional indexes in the canonical memory DB are owned
@@ -302,8 +303,8 @@ def _sync_kind(parts: tuple[str, ...], directory: bool) -> str | None:
             return "opaque" if parts[0].endswith("ndjson") else "json"
         if not directory and parts[0] in _SYNC_LOCKS:
             return "lock"
-        if directory and parts[0] in {"transfer", "remote-group-receipts", "exchange", "rclone"}:
-            return "excluded" if parts[0] == "rclone" else "directory"
+        if directory and parts[0] in {"transfer", "remote-group-receipts", "exchange", "rclone", "native-drive"}:
+            return "excluded" if parts[0] in {"rclone", "native-drive"} else "directory"
         return None
     if parts[0] == "remote-group-receipts":
         if not _HASH.fullmatch(parts[1]):
@@ -735,7 +736,7 @@ def _manifest(root: Path, deadline: float) -> tuple[dict[str, Any], str]:
     _require({"memory/" + database_backup.SNAPSHOT_NAME, "memory/" + database_backup.MANIFEST_NAME} <= paths
              and sum(entry["bytes"] for entry in entries) <= MAX_TOTAL_BYTES, "client_backup_incomplete")
     _require(isinstance(value["control_summaries"], dict) and not set(value["control_summaries"]) - (set(selected) & set(_DATABASE_NAMES))
-             and value["excluded"] == list(_EXCLUDED), "invalid_client_backup_manifest")
+             and value["excluded"] in (list(_LEGACY_EXCLUDED), list(_EXCLUDED)), "invalid_client_backup_manifest")
     for component, summary in value["control_summaries"].items():
         _require(isinstance(summary, dict), "invalid_client_backup_manifest")
         version = _control_version(component, summary.get("schema_version"))

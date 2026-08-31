@@ -1,9 +1,9 @@
-# Memory Vault v0.25.0 — development/review notes
+# Memory Vault v0.26.0-alpha.1 — package/review notes
 
-**Unreleased development source; not a finished stable release or runtime
-certification.** The v0.24.1 tag remains unchanged. Its "full client" wording
-did not mean complete v0.21 parity; this development line explicitly closes
-those functional gaps under a P01–P14 requirement ledger.
+**Alpha candidate; not a stable-release or runtime-certification claim.** This
+document describes the current build target. It does not establish that a
+package has been installed or publicly published. Existing versioned reports
+and published artifacts remain separate historical evidence.
 
 ## Two modes, one memory
 
@@ -11,25 +11,31 @@ The independent agreement has no plugin, Python, database, Git or vendor
 dependency. The authorized full client supplies practical capture, retrieval,
 transport and recovery around the same immutable taskless record contract.
 
-v0.25 source restores the old production host-operation bridge; full-text and
-concept retrieval; bounded claim timelines, conflict state and graph views;
-index repair; privacy-blocked publication review; large signed fragmented
-delivery; old ZIP/pack/checkpoint graph conversion; full-client recovery;
-controlled managed installation/activation/rollback with optional publisher
-verification; selective sharing and independent device/encryption contracts;
-and native protected Windows storage paths.
+The existing production host bridge, local retrieval/graph views, signed sync,
+large file packs, selected sharing, client recovery, managed updates and
+protected storage paths remain. Canonical record/v1 IDs and share-v1 are
+unchanged; network transport state is bookkeeping, not another memory store.
 
-The existing v0.24 Ed25519 attestations and independent protocol remain.
+The alpha adds optional native `connect`, `remember`, `recall`, `discover`,
+`send` and `receive` over the same client. It supplies independently provisioned
+issuer/member identities, encrypted delivery, repeated-delivery recovery and
+bounded rejected-ciphertext storage. The explicit `network-pump` management
+command retries persisted work and receives a bounded page, then exits. It
+starts no scheduler or default background service. The native network has no
+MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility claim; the existing
+eleven-tool MCP memory interface remains unchanged.
+
+Existing Ed25519 record attestations and the independent protocol remain.
 Task ownership, mandatory Git runtime and the old monolith do not return.
 Memory cannot install software, enroll trust, activate hooks or execute goals.
 
 ## Build artifacts
 
-- `memory-vault-protocol-v0.25.0.zip`: documentation, structural schemas and
+- `memory-vault-protocol-v0.26.0-alpha.1.zip`: documentation, structural schemas and
   synthetic interchange vectors, with no executable.
-- `memory-vault-client-v0.25.0.zip`: source-built plugin, all required runtime
+- `memory-vault-client-v0.26.0-alpha.1.zip`: source-built plugin, all required runtime
   modules and a local marketplace catalog.
-- `memory-vault-review-v0.25.0.zip`: public source, synthetic cases and bounded
+- `memory-vault-review-v0.26.0-alpha.1.zip`: public source, synthetic cases and bounded
   review handoff for independent reviewers; no automatic test execution.
 - `PROTOCOL.md` and `memory_vault.py`: standalone agreement and optional core.
 - `release-manifest.json` / `SHA256SUMS`: exact source reference, asset hashes
@@ -39,27 +45,39 @@ These are build target names, not assertions that the assets are published.
 Use the exact source commit carried by an actual artifact. Do not infer the
 development contents from an older release or an unqualified main checkout.
 
+Optional network dependencies use the separate client/server hash locks;
+ordinary local memory still has a standard-library path. See
+[dependency coverage](../docs/DEPENDENCIES_NETWORK.md) and
+[operator setup and one-pass pumping](../docs/NETWORK_QUICKSTART.md). Locked
+artifact hashes do not establish package security or platform runtime success.
+
 ## Verification boundary
 
-The [validation index](../docs/VALIDATION.md) records the minimal offline
-synthetic evidence and exact source pins; results do not transfer between
-versions. Full P01–P14 acceptance remains open. The exercised paths share one
-Python reference, not independent implementations or AI models. Recorded checks
-installed no host plugin and accessed no private memory; signing/encryption,
-cloud, real-host/cross-device, native Windows and performance acceptance remain
-open.
+The [validation index](../docs/VALIDATION.md) preserves earlier source-pinned
+evidence; results do not transfer between versions. The current
+[alpha report](../docs/RELEASE_NOTES_V0_26_ALPHA.md) separates synthetic native
+network journeys, independent cryptographic interchange and owned loopback
+process recovery from real-model, live-cloud and deployment acceptance.
+Full P01–P14, real-host/cross-device, native Windows, stable-runtime and
+performance acceptance require their own evidence.
 
 Static source, syntax/schema-document and archive/inventory inspection are
 separate evidence, not runtime or production-security certification. Limited
-smoke evidence and this document do not change the unreleased status.
+smoke evidence and this document do not establish installation or publication.
+
+Two configured relays do not provide automatic replica repair or certified
+independent failure domains. Bounded pumping cannot forcibly interrupt an
+in-flight system call. Queues and quarantine can fill and then fail explicitly;
+the 256-member alpha does not satisfy the planned 1,000-active-agent/72-hour
+gate. No real-model communication or collective-intelligence success is claimed.
 
 See [the full parity ledger](../docs/V0_25_PARITY_PLAN.md) and
 [review handoff](../docs/REVIEW_HANDOFF.md). Remaining runtime evidence must be
 reported as pending, not converted into a passing claim. A production signing,
 encryption or recovery ceremony is not supplied; unconfigured providers fail
 closed. ChatGPT Work automatic lifecycle and universal host compatibility are
-not asserted. Existing private installations, real memories and protected main
-are not changed by this development build.
+not asserted. Extracting an artifact changes no existing private installation,
+real memory, host configuration or service.
 
 Independent implementations and reproducible synthetic-data reviews are welcome.
 Use [AI_START_HERE.md](../AI_START_HERE.md) and

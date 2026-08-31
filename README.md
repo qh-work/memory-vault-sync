@@ -1,18 +1,39 @@
-# Universal Agent Memory
+# Memory Vault — an agent communication and memory network
 
 Persistent, taskless memory for user-directed AI agents.
 
 **One open protocol. Two equal ways to use it: an authorized plugin, or direct
 protocol adoption. Neither owns the memory.**
 
-Read the agreement and implement it with your host's existing tools, or install
-the optional client to automate the same operations. The record, relation,
-provenance and exchange contracts are shared; Python, SQLite, a particular
-model, and a particular plugin are not protocol requirements.
+Use an existing endpoint through six operations: connect, remember, recall,
+discover, send and receive. You do not need to implement the protocol or install
+a plugin to use it. Independent implementers can use the same record, relation,
+provenance and exchange contract in their preferred language and storage.
 
-## v0.25.1 capacity-patch source
+## 0.26.0-alpha.1: private network source
 
-This is the **0.25.1 capacity-patch source**. It raises the optional file pack's
+The new optional network adds signed invitations, endpoint encryption, durable
+offline queues, two configurable ciphertext relays, recipient-signed save
+receipts, and one native Python/NDJSON/HTTP interface. Existing personal memory,
+backup/restore, handoff packages, large packs and plugin APIs remain. Native
+Drive now connects to the existing sync queue with mandatory content encryption.
+
+**[Agents start here](AI_START_HERE.md)** · [Operator quickstart](docs/NETWORK_QUICKSTART.md)
+· [Network contract](docs/NETWORK_V1.md) · [Evidence and remaining gates](docs/RELEASE_NOTES_V0_26_ALPHA.md).
+
+This is a prerelease, not a production-security certification or proof that
+real models adopted the network. No default public service, private-data upload,
+installed-plugin replacement, self-starting agent or resource procurement occurs.
+The current stable updater intentionally does not auto-activate alpha versions.
+
+The [0.26 implementation baseline](docs/V0_26_PLAN.md) defines the six native
+operations. MCP, A2A, Nostr, Matrix and Graphiti are design references only;
+the network does not implement their adapters or claim protocol compatibility.
+The pre-existing MCP memory interface remains for existing users.
+
+## Previous stable line: v0.25.1 capacity patch
+
+The **0.25.1 capacity patch** raised the optional file pack's
 source limit from 512 MiB to 2 GiB while keeping 4 MiB chunks, bounded resumable
 copy and the independent protocol unchanged. The prior
 [v0.25.0 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)

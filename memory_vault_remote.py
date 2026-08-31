@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded transport of exact signed capsules through an operator's rclone.
+"""Bounded exact signed capsules through explicit rclone or encrypted Drive.
 
 No installation, credential discovery, directory mirroring, remote deletion or
 trust enrollment. This module is not imported by the standard-library core.
@@ -19,7 +19,7 @@ import subprocess
 import time
 from typing import Any, Callable, Mapping
 
-from memory_vault import MemoryError, strict_json_loads
+from memory_vault import MemoryError, canonical_bytes, strict_json_loads
 from memory_vault_credentials import config_password, password_reference
 from memory_vault_transfer import MAX_CAPSULE_BYTES, _fragment_name, _group, _path
 import memory_vault_storage as protected_storage
@@ -524,3 +524,336 @@ class RcloneBackend:
                    "--max-transfer", str(MAX_CAPSULE_BYTES + 64 * 1024), "--cutoff-mode", "HARD"], output_limit=4096)
         if self.download_fragment(key_id, store_id, group, fragment) != expected:
             raise MemoryError("remote_group_fragment_mismatch")
+
+
+def native_drive_specification(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Pure explicit configuration validation; no key, credential or cloud read."""
+    from memory_vault_network_crypto import encryption_public_descriptor
+    names = {"kind", "config_file", "root_folder_id", "encryption_key_path", "recipient_keys", "peers"}
+    if not isinstance(value, dict) or set(value) != names or value["kind"] != "native-drive":
+        raise MemoryError("invalid_native_drive_backend")
+    if (not isinstance(value["root_folder_id"], str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{2,256}", value["root_folder_id"]) is None
+            or value["root_folder_id"] == "root"):
+        raise MemoryError("invalid_native_drive_root")
+    recipients, peers = value["recipient_keys"], value["peers"]
+    if not isinstance(recipients, list) or not 1 <= len(recipients) <= 32:
+        raise MemoryError("native_drive_encryption_required")
+    recipients = [encryption_public_descriptor(item) for item in recipients]
+    if len({item["key_id"] for item in recipients}) != len(recipients):
+        raise MemoryError("network_duplicate_recipient")
+    if not isinstance(peers, list) or len(peers) > 16:
+        raise MemoryError("invalid_sync_peers")
+    peers = [peer_value(item) for item in peers]
+    if len({(item["key_id"], item["store_id"]) for item in peers}) != len(peers):
+        raise MemoryError("duplicate_sync_peer")
+    return {**value, "recipient_keys": sorted(recipients, key=lambda item: item["key_id"]), "peers": peers}
+
+
+class NativeDriveBackend:
+    """The existing signed queue carried as JWE ciphertext, never as plaintext.
+
+    A 4 MiB original capsule/fragment can become a 6 MiB JWE. Ciphertext is split
+    into at most two immutable Drive blobs, with an encrypted locator and a
+    commit manifest published last. A private ciphertext-only stage preserves
+    randomized encryption across interrupted writes. No rclone configuration,
+    old share envelope, memory record or signing identity is converted.
+    """
+
+    MANIFEST_SCHEMA = "memory-vault-drive-ciphertext-object/v1"
+    STAGE_SCHEMA = "memory-vault-drive-ciphertext-stage/v1"
+    MANIFEST_BYTES = 128 * 1024
+    STAGE_BYTES = 7 * 1024 * 1024
+
+    def __init__(self, specification: Mapping[str, Any], *, work_directory: Path,
+                 budget: Budget, active_check: Callable[[], None]):
+        from memory_vault_drive import DriveClient, DriveConfig
+        import memory_vault_network_crypto as crypto
+        self.spec = native_drive_specification(specification)
+        self.budget, self.active_check, self.crypto = budget, active_check, crypto
+        self.config_file = _path(Path(self.spec["config_file"]))
+        self.key_file = _path(Path(self.spec["encryption_key_path"]))
+        self.work_directory = _path(work_directory)
+        self.active_check()
+        # Failure/unlock/dependency errors precede construction of a Drive client.
+        self.identity = crypto.EncryptionIdentity.load(self.key_file)
+        self.recipients = self.spec["recipient_keys"]
+        if self.identity.public_descriptor() not in self.recipients:
+            raise MemoryError("native_drive_self_recipient_required")
+        config_bytes = _config_bytes(self.config_file)
+        config = DriveConfig.from_document(strict_json_loads(config_bytes))
+        if config.root_folder_id != self.spec["root_folder_id"]:
+            raise MemoryError("sync_configuration_changed")
+        self._config_digest = hashlib.sha256(config_bytes).digest()
+        key_bytes = _config_bytes(self.key_file)
+        if crypto.EncryptionIdentity.from_private_document(strict_json_loads(key_bytes)).public_descriptor() != self.identity.public_descriptor():
+            raise MemoryError("sync_configuration_changed")
+        self._key_digest = hashlib.sha256(key_bytes).digest()
+        self._manifests: dict[tuple[str, str], tuple[str, dict[str, Any], dict[str, Any]]] = {}
+        self._active()
+        self.client = DriveClient(config, deadline=budget.deadline, active_check=self._active)
+
+    def _active(self) -> None:
+        self.budget.remaining()
+        self.active_check()
+        if (hashlib.sha256(_config_bytes(self.config_file)).digest() != self._config_digest
+                or hashlib.sha256(_config_bytes(self.key_file)).digest() != self._key_digest):
+            raise MemoryError("sync_configuration_changed")
+
+    @staticmethod
+    def _opaque(value: Any) -> str:
+        return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+    def _context(self, bucket: str, name: str, part: str) -> dict[str, Any]:
+        # Backup AAD is independent of a network/roster or share protocol. It
+        # exposes opaque transport labels, not the original memory hash/text.
+        return {"schema_version": "memory-vault-cloud-backup-context/v1",
+                "bucket": bucket, "object": name, "part": part,
+                "content_type": "application/json" if part == "locator" else "application/octet-stream"}
+
+    def _bucket(self, key_id: str, store_id: str, after: int) -> str:
+        peer_value({"key_id": key_id, "store_id": store_id})
+        if type(after) is not int or not 0 <= after < 2**63:
+            raise MemoryError("invalid_cursor")
+        return "bucket-" + self._opaque(["capsules", key_id, store_id, after])
+
+    @staticmethod
+    def _name(name: str, after: int) -> None:
+        match = _NAME.fullmatch(name) if isinstance(name, str) else None
+        if match is None or int(match[1]) != after or not after < int(match[2]) < 2**63:
+            raise MemoryError("invalid_remote_capsule_name")
+
+    def _find(self, parent: str, name: str) -> dict[str, Any] | None:
+        self._active()
+        page = self.client.list_children(parent, name=name)
+        if page["next_page_token"] is not None or len(page["files"]) > 1:
+            raise MemoryError("native_drive_ambiguous_name")
+        return page["files"][0] if page["files"] else None
+
+    def _folder(self, parent: str, name: str, *, create: bool = False) -> str | None:
+        from memory_vault_drive import FOLDER_MIME
+        metadata = self._find(parent, name)
+        if metadata is None and create:
+            created = self.client.create_folder(parent, name)
+            metadata = self._find(parent, name)
+            if metadata is None or metadata["id"] != created["id"]:
+                raise MemoryError("native_drive_ambiguous_name")
+        if metadata is None:
+            return None
+        if metadata["mimeType"] != FOLDER_MIME:
+            raise MemoryError("native_drive_object_conflict")
+        return metadata["id"]
+
+    def _read_bytes(self, metadata: Mapping[str, Any], maximum: int) -> bytes:
+        self._active()
+        value = metadata.get("size")
+        if not isinstance(value, str) or re.fullmatch(r"[1-9][0-9]{0,18}", value) is None or not int(value) <= maximum:
+            raise MemoryError("native_drive_invalid_object_size")
+        size = int(value)
+        self.budget.transfer(size)
+        raw = self.client.read_range(metadata["id"], 0, size)
+        current = self.client.metadata(metadata["id"])
+        if len(raw) != size or any(current.get(key) != metadata.get(key) for key in (
+                "id", "name", "parents", "size", "version", "mimeType")):
+            raise MemoryError("native_drive_object_changed")
+        return raw
+
+    def _put_bytes(self, parent: str, name: str, raw: bytes) -> None:
+        metadata = self._find(parent, name)
+        if metadata is None:
+            self.budget.transfer(len(raw))
+            created = self.client.upload_bytes(parent, name, raw)
+            metadata = self._find(parent, name)
+            if metadata is None or metadata["id"] != created["id"]:
+                raise MemoryError("native_drive_ambiguous_name")
+        if self._read_bytes(metadata, len(raw)) != raw:
+            raise MemoryError("native_drive_object_conflict")
+
+    def _manifest(self, bucket: str, object_name: str, folder: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        metadata = self._find(folder, "COMMIT.json")
+        if metadata is None:
+            return None  # Uncommitted encrypted chunks never advance a cursor.
+        value = strict_json_loads(self._read_bytes(metadata, self.MANIFEST_BYTES))
+        names = {"schema_version", "locator", "envelope_bytes", "envelope_sha256", "chunks"}
+        if (not isinstance(value, dict) or set(value) != names or value["schema_version"] != self.MANIFEST_SCHEMA
+                or type(value["envelope_bytes"]) is not int or not 1 <= value["envelope_bytes"] <= self.crypto.MAX_ENVELOPE_BYTES
+                or not isinstance(value["envelope_sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", value["envelope_sha256"]) is None
+                or not isinstance(value["chunks"], list) or not 1 <= len(value["chunks"]) <= 2):
+            raise MemoryError("native_drive_invalid_manifest")
+        total, seen = 0, set()
+        for chunk in value["chunks"]:
+            if (not isinstance(chunk, dict) or set(chunk) != {"name", "bytes", "sha256"}
+                    or type(chunk["bytes"]) is not int or not 1 <= chunk["bytes"] <= MAX_CAPSULE_BYTES
+                    or not isinstance(chunk["sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", chunk["sha256"]) is None
+                    or chunk["name"] != chunk["sha256"] + ".bin" or chunk["name"] in seen):
+                raise MemoryError("native_drive_invalid_manifest")
+            total += chunk["bytes"]
+            seen.add(chunk["name"])
+        if total != value["envelope_bytes"]:
+            raise MemoryError("native_drive_invalid_manifest")
+        raw = self.crypto.decrypt_bytes(value["locator"], self.identity, context=self._context(bucket, object_name, "locator"))
+        if len(raw) > 1024:
+            raise MemoryError("native_drive_invalid_locator")
+        locator = strict_json_loads(raw)
+        if (not isinstance(locator, dict) or set(locator) != {"name", "bytes"}
+                or not isinstance(locator["name"], str) or len(locator["name"]) > 256
+                or type(locator["bytes"]) is not int or not 1 <= locator["bytes"] <= MAX_CAPSULE_BYTES
+                or object_name != "object-" + self._opaque(locator["name"])):
+            raise MemoryError("native_drive_invalid_locator")
+        self._manifests[(bucket, locator["name"])] = (folder, value, locator)
+        return value, locator
+
+    def _download_object(self, bucket: str, name: str, size: int) -> bytes:
+        item = self._manifests.get((bucket, name))
+        if item is None:
+            parent = self._folder(self.spec["root_folder_id"], bucket)
+            folder = None if parent is None else self._folder(parent, "object-" + self._opaque(name))
+            if folder is None or self._manifest(bucket, "object-" + self._opaque(name), folder) is None:
+                raise MemoryError("native_drive_object_missing")
+            item = self._manifests[(bucket, name)]
+        folder, manifest, locator = item
+        if locator["bytes"] != size:
+            raise MemoryError("remote_capsule_size_changed")
+        parts = []
+        for chunk in manifest["chunks"]:
+            metadata = self._find(folder, chunk["name"])
+            if metadata is None:
+                raise MemoryError("native_drive_object_missing")
+            raw = self._read_bytes(metadata, chunk["bytes"])
+            if len(raw) != chunk["bytes"] or hashlib.sha256(raw).hexdigest() != chunk["sha256"]:
+                raise MemoryError("native_drive_ciphertext_mismatch")
+            parts.append(raw)
+        encrypted = b"".join(parts)
+        if hashlib.sha256(encrypted).hexdigest() != manifest["envelope_sha256"]:
+            raise MemoryError("native_drive_ciphertext_mismatch")
+        raw = self.crypto.decrypt_bytes(encrypted, self.identity,
+            context=self._context(bucket, "object-" + self._opaque(name), "payload"))
+        if len(raw) != size:
+            raise MemoryError("remote_capsule_size_changed")
+        self._active()
+        return raw
+
+    def candidates(self, key_id: str, store_id: str, after: int) -> list[tuple[str, int]]:
+        from memory_vault_drive import FOLDER_MIME
+        bucket = self._bucket(key_id, store_id, after)
+        parent = self._folder(self.spec["root_folder_id"], bucket)
+        if parent is None:
+            return []
+        page = self.client.list_children(parent)
+        if page["next_page_token"] is not None or len(page["files"]) > MAX_PREFIX_CANDIDATES:
+            raise MemoryError("remote_candidate_limit")
+        result = []
+        seen = set()
+        for metadata in page["files"]:
+            name = metadata["name"]
+            if metadata["mimeType"] != FOLDER_MIME or re.fullmatch(r"object-[0-9a-f]{64}", name) is None or name in seen:
+                raise MemoryError("native_drive_object_conflict")
+            seen.add(name)
+            item = self._manifest(bucket, name, metadata["id"])
+            if item is not None:
+                locator = item[1]
+                self._name(locator["name"], after)
+                result.append((locator["name"], locator["bytes"]))
+        return sorted(result)
+
+    def download(self, key_id: str, store_id: str, after: int, name: str, size: int) -> bytes:
+        self._name(name, after)
+        return self._download_object(self._bucket(key_id, store_id, after), name, size)
+
+    def _upload_object(self, source: Path, bucket: str, name: str, expected: bytes) -> None:
+        if not isinstance(expected, bytes) or not 1 <= len(expected) <= MAX_CAPSULE_BYTES:
+            raise MemoryError("remote_capsule_too_large")
+        fd, before = _plain_file(source, private=True, maximum=MAX_CAPSULE_BYTES)
+        with os.fdopen(fd, "rb") as stream:
+            raw = stream.read(MAX_CAPSULE_BYTES + 1)
+            after = os.fstat(stream.fileno())
+            if raw != expected or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                    after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise MemoryError("local_remote_source_changed")
+        object_name = "object-" + self._opaque(name)
+        binding = self._opaque([self.spec["root_folder_id"], bucket, object_name, self.recipients, hashlib.sha256(expected).hexdigest()])
+        protected_storage.private_directory(self.work_directory)
+        stage = self.work_directory / (binding + ".json")
+        locator = {"name": name, "bytes": len(expected)}
+        if stage.exists():
+            fd = protected_storage.open_file(stage, os.O_RDONLY, private=True)
+            with os.fdopen(fd, "rb") as stream:
+                raw = stream.read(self.STAGE_BYTES + 1)
+            if len(raw) > self.STAGE_BYTES:
+                raise MemoryError("native_drive_invalid_stage")
+            staged = strict_json_loads(raw)
+            if not isinstance(staged, dict) or set(staged) != {"schema_version", "binding", "payload", "locator"}:
+                raise MemoryError("native_drive_invalid_stage")
+            if staged["schema_version"] != self.STAGE_SCHEMA or staged["binding"] != binding:
+                raise MemoryError("native_drive_invalid_stage")
+            if self.crypto.decrypt_bytes(staged["payload"], self.identity,
+                    context=self._context(bucket, object_name, "payload")) != expected:
+                raise MemoryError("native_drive_invalid_stage")
+            if self.crypto.decrypt_bytes(staged["locator"], self.identity,
+                    context=self._context(bucket, object_name, "locator")) != canonical_bytes(locator):
+                raise MemoryError("native_drive_invalid_stage")
+            for part in ("payload", "locator"):
+                if {item["header"]["kid"] for item in staged[part]["recipients"]} != {item["key_id"] for item in self.recipients}:
+                    raise MemoryError("native_drive_invalid_stage")
+        else:
+            staged = {"schema_version": self.STAGE_SCHEMA, "binding": binding,
+                "payload": self.crypto.encrypt_bytes(expected, self.recipients, context=self._context(bucket, object_name, "payload")),
+                "locator": self.crypto.encrypt_bytes(canonical_bytes(locator), self.recipients,
+                    context=self._context(bucket, object_name, "locator"))}
+            raw = canonical_bytes(staged)
+            if len(raw) > self.STAGE_BYTES:
+                raise MemoryError("native_drive_invalid_stage")
+            protected_storage.atomic_write(stage, raw, replace=False)
+        stage_bytes = raw
+        encrypted = canonical_bytes(staged["payload"])
+        chunks = [encrypted[offset:offset + MAX_CAPSULE_BYTES] for offset in range(0, len(encrypted), MAX_CAPSULE_BYTES)]
+        manifest = {"schema_version": self.MANIFEST_SCHEMA, "locator": staged["locator"], "envelope_bytes": len(encrypted),
+                    "envelope_sha256": hashlib.sha256(encrypted).hexdigest(), "chunks": [
+                        {"name": hashlib.sha256(raw).hexdigest() + ".bin", "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+                        for raw in chunks]}
+        parent = self._folder(self.spec["root_folder_id"], bucket, create=True)
+        assert parent is not None
+        folder = self._folder(parent, object_name, create=True)
+        assert folder is not None
+        if self._manifest(bucket, object_name, folder) is None:
+            for chunk, raw in zip(manifest["chunks"], chunks):
+                self._put_bytes(folder, chunk["name"], raw)
+            self._put_bytes(folder, "COMMIT.json", canonical_bytes(manifest))
+            # _put_bytes read back the exact independently assembled commit.
+            self._manifests[(bucket, name)] = (folder, manifest, locator)
+        if self._download_object(bucket, name, len(expected)) != expected:
+            raise MemoryError("remote_content_mismatch")
+        # Only this exact, validated ciphertext cache is removed after success.
+        fd = protected_storage.open_file(stage, os.O_RDONLY, private=True)
+        with os.fdopen(fd, "rb") as stream:
+            if stream.read(self.STAGE_BYTES + 1) != stage_bytes:
+                raise MemoryError("native_drive_invalid_stage")
+            selected = os.fstat(stream.fileno())
+            named = stage.lstat()
+            if (selected.st_dev, selected.st_ino) != (named.st_dev, named.st_ino):
+                raise MemoryError("native_drive_invalid_stage")
+        stage.unlink()
+
+    def upload(self, source: Path, *, key_id: str, store_id: str, after: int, name: str, expected: bytes) -> None:
+        self._name(name, after)
+        self._upload_object(source, self._bucket(key_id, store_id, after), name, expected)
+
+    def _fragment_bucket(self, key_id: str, store_id: str, group: Mapping[str, Any], fragment: Mapping[str, Any]) -> str:
+        peer_value({"key_id": key_id, "store_id": store_id})
+        validated = _group(dict(group))
+        index = fragment.get("index")
+        if type(index) is not int or not 0 <= index < len(validated["fragments"]) or validated["fragments"][index] != fragment:
+            raise MemoryError("invalid_remote_group_fragment")
+        return "group-" + self._opaque([key_id, store_id, validated["group_id"]])
+
+    def download_fragment(self, key_id: str, store_id: str, group: Mapping[str, Any], fragment: Mapping[str, Any]) -> bytes:
+        raw = self._download_object(self._fragment_bucket(key_id, store_id, group, fragment), _fragment_name(fragment), fragment["bytes"])
+        if hashlib.sha256(raw).hexdigest() != fragment["sha256"]:
+            raise MemoryError("remote_group_fragment_mismatch")
+        return raw
+
+    def upload_fragment(self, source: Path, *, key_id: str, store_id: str,
+                        group: Mapping[str, Any], fragment: Mapping[str, Any], expected: bytes) -> None:
+        if len(expected) != fragment["bytes"] or hashlib.sha256(expected).hexdigest() != fragment["sha256"]:
+            raise MemoryError("local_group_fragment_mismatch")
+        self._upload_object(source, self._fragment_bucket(key_id, store_id, group, fragment), _fragment_name(fragment), expected)

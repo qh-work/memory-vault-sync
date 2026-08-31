@@ -1,0 +1,5 @@
+# Only for a relay, authority, or trusted HTTP endpoint operator.
+# Ordinary Python/NDJSON network clients do not need server dependencies.
+-r requirements-network.txt
+starlette==1.6.0
+uvicorn==0.52.4

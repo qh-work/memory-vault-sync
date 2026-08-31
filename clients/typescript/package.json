@@ -1,0 +1,7 @@
+{
+  "name": "memory-vault-native-client",
+  "private": true,
+  "type": "module",
+  "exports": "./index.ts",
+  "types": "./index.ts"
+}

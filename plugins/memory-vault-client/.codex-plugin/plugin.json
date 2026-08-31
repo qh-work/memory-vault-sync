@@ -1,6 +1,6 @@
 {
   "name": "memory-vault-client",
-  "version": "0.25.1",
+  "version": "0.26.0-alpha.1",
   "description": "Full authorized client for the open memory protocol: MCP, visible-turn capture, queued signed sync, host adapters and recovery.",
   "author": {
     "name": "Memory Vault contributors"
@@ -12,12 +12,13 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Memory Vault Client",
-    "shortDescription": "Shared memory, opt-in sync and recovery",
+    "shortDescription": "Private memory network, sync and recovery",
     "longDescription": "One open protocol with two equal usage paths: independent protocol adoption or this authorized full client. Restores v0.21 workflows with local retrieval and graph views, old host-wire adapters, visible-turn capture, resumable signed sync, complete client recovery, old packs, selective sharing and independently controlled verified updates. No Task/Git ownership, transcript discovery, permission creation, key auto-enrollment or log suppression. Development version: runtime validation, Work automatic lifecycle and production signing/encryption provisioning are not claimed.",
     "developerName": "Memory Vault contributors",
     "category": "Productivity",
     "capabilities": [
       "Local memory recall and handoff",
+      "Optional encrypted agent network endpoint",
       "Explicit memory writes",
       "Opt-in Codex visible-turn capture",
       "Configured record signing",

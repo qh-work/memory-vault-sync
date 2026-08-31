@@ -1,4 +1,4 @@
-# Memory Vault v0.25.1 — independent protocol
+# Memory Vault v0.26.0-alpha.1 — independent protocol
 
 This archive is an agreement and implementation material, not an installed
 program. No Python, database, plugin, account or network service is required
@@ -22,27 +22,32 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package is built from v0.25.1
-capacity-patch source; the previous v0.25.0 release remains immutable. The patch
-raises only the optional client's file-pack capacity, not the core protocol.
-Check the
-[tagged release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.1)
-for publication status and matching assets, including the
-[full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.25.1/memory-vault-client-v0.25.1.zip).
-Verify the source commit and validation scope in the release manifest.
+artifacts described in `docs/RELEASE.md`. This package targets v0.26.0-alpha.1;
+previous published versions remain immutable. The optional native network adds
+communication around existing records without changing canonical record/v1 or
+share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility
+claim. Reading its specification does not install a client, provision keys or
+join a service. Verify exact source, bytes and validation scope in the artifact
+manifest; this document does not establish installation or publication.
 
 The [capacity report](docs/V0_25_PACK_CAPACITY_SMOKE.md) records one 516 MiB
 synthetic client pack round trip and separate 2 GiB boundary checks, not a full
-2 GiB transfer, benchmark or independent protocol implementation. New patch CI
-is pending; see [patch notes](docs/RELEASE_NOTES_V0_25_1.md).
+2 GiB transfer, benchmark or independent protocol implementation. This historical
+evidence and its [patch notes](docs/RELEASE_NOTES_V0_25_1.md) do not certify the
+current alpha.
+
+See [network-v1](docs/NETWORK_V1.md) and the version-specific
+[alpha evidence](docs/RELEASE_NOTES_V0_26_ALPHA.md) for current scope and open
+gates. Synthetic interoperability frames are not real-model adoption or
+thousand-agent performance acceptance.
 
 The earlier [minimal release report](docs/V0_25_RELEASE_MINIMAL.md) records six distinct
 methods with passing evidence across two source-pinned runs, including a
 fixture-only recovery setup correction. This is not a full-suite pass.
 The [validation index](docs/VALIDATION.md) records minimal offline synthetic
 evidence with exact source pins; do not transfer results between versions.
-The exercised paths share one Python reference, not independent implementations
-or AI models. Full P01–P14, signing/encryption, cloud, real-host/cross-device,
+The earlier exercised paths share one Python reference, not independent
+implementations or AI models. Full P01–P14, signing/encryption, cloud, real-host/cross-device,
 native Windows and performance acceptance remain open. Recorded checks installed
 no host plugin and accessed no private memory. Release publication does not
 establish runtime certification.

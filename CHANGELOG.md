@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.26.0-alpha.1 — Private communication-memory network
+
+- Add an optional six-operation native Python/NDJSON/trusted HTTP endpoint
+  without changing core-v1 records, old MCP tools or handoff bundles. No new
+  MCP/A2A/Nostr/Matrix/Graphiti protocol adapter is part of this version.
+- Add separate X25519 encryption keys, signed multi-recipient JWE, independent
+  issuer status, dual-key invitation proof, durable ciphertext relay and retries.
+- Add explicit setup, private key/control recovery and two-node delivery counts;
+  no service autostart, public relay registration or permission expansion.
+- Connect native Drive to the signed queue with content encryption and retain
+  rclone crypt; preserve old backup manifests and exclude rebuildable caches.
+- Use short agent-first onboarding and publish synthetic interoperability cases.
+  See [precise validation scope and open gates](docs/RELEASE_NOTES_V0_26_ALPHA.md).
+
 ## 0.25.0 — Development, unreleased
 
 The full [P01–P14 ledger](docs/V0_25_PARITY_PLAN.md) remains open. These entries

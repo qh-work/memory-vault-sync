@@ -4,6 +4,9 @@ The full client can keep using the taskless Memory Vault while a separate,
 explicitly configured service exchanges signed incremental capsules. The light
 [protocol](../PROTOCOL.md) does not require this service, Python, a cloud account,
 or a particular database. Synchronization does not restore Task/Git containers.
+The development source additionally offers [encrypted native Drive](NATIVE_DRIVE.md)
+alongside directory exchange and preconfigured rclone. Existing signed memory,
+share/handoff and personal backup/restore interfaces remain available.
 
 The v3 dependency behavior described here matches source
 `098b22c44ca299d1f889b41df9355511dfa2caf4`. This page describes implementation,
@@ -73,6 +76,8 @@ shorten the configured maximum. A completed window is not proof of global
 freshness: results retain `remote_latest_proven=false`.
 The corresponding client entry point is `memory_vault_client.py --config
 /absolute/private/control/client.json sync status` or `sync run`.
+Native Drive receive does require its explicitly selected encryption private key;
+read-only `status` never reads that key or an OS credential.
 
 Reconfiguration requires all configuration arguments again and `--replace`.
 Use the same paths/destination with `--replace --disabled` to stop future work;
@@ -122,14 +127,14 @@ so this is not a guarantee of eventual delivery without a later event.
 | Signal | What it establishes |
 | --- | --- |
 | Local write success | The Vault accepted the local record; no remote claim. |
-| `published_batches` | Signed capsules were finalized in the selected directory or private rclone staging exchange, including a recovered completion. |
+| `published_batches` | Signed capsules were finalized in the selected directory or private remote staging exchange, including a recovered completion. |
 | `uploaded_batches` | The manifest/capsule read-back matched; every referenced fragment has an exact earlier upload/read-back receipt for this configured destination. This does not prove continuing remote availability. |
 | `received_batches` | A locally verified capsule was admitted with an atomic local transfer receipt, or its receipt was replayed. |
 | `pending=true` | A trigger generation is unfinished or a newer event arrived; another window may be required. |
 | `blocked_records` | Signed non-delivery dispositions, including operator exclusions; never a count of records received by a peer. |
 | `remote_ai_read_verified=false` | Neither upload nor local admission proves that any remote AI read, understood or used memory. |
 
-For both directory and rclone backends, completed local admissions are counted immediately
+For directory, rclone and native Drive, completed local admissions are counted immediately
 after their atomic Vault receipt, before the separate stream-head save or next
 read. A later work-budget/storage error preserves those completed counts and
 the pending generation; it does not report zero progress or count a batch twice
@@ -142,7 +147,7 @@ silently commit that group or grant permission to resume it.
 
 Before local publication the exact signed pending capsule is durable. A crash
 after publication but before the local cursor update retries those bytes rather
-than constructing a competing batch at the same prefix. For rclone there is a
+than constructing a competing batch at the same prefix. For remote backends there is a
 separate remote receipt: a failed copy or read-back never advances it. Retrying
 uses immutable named files; it does not delete or mirror the destination.
 
@@ -253,6 +258,10 @@ The strict `limits` object supports these ranges: `maximum_batches` 1–16,
 exposes `--maximum-seconds`; changing other limits requires an explicit private
 configuration edit while no worker is running. A running worker rejects a
 changed binding or limits.
+Native Drive retains those defaults but requires at least 8 file operations and
+24 MiB per window for encrypted chunk/commit uploads and verification reads.
+Its ciphertext-only retry cache and explicit encryption requirements are detailed
+in [NATIVE_DRIVE.md](NATIVE_DRIVE.md); HTTPS alone is not content encryption.
 
 ### Complete dependency groups, not size-based skipping
 
@@ -303,7 +312,7 @@ silently pruned. Large binary artifact directories remain a separate explicit
 mechanism: this protocol transports complete canonical memories, not arbitrary
 filesystem trees.
 
-Both directory and rclone call the same v3 receiver. The sender's private rclone
+All three backends call the same v3 receiver. The sender's private remote
 staging publication can populate its positive-member index before remote upload;
 that is not remote delivery evidence. Separate remote receipts still enforce
 ordered uploading, exact read-back and predecessor checks. Before a pending v3
@@ -313,9 +322,9 @@ adapter does not fetch from unconfigured sources to repair a missing dependency.
 
 ### Explicit per-record publication decisions
 
-Both directory and rclone publication call `assert_publishable`. It rejects
+All three backends' publication calls `assert_publishable`. It rejects
 recognized secrets and personal filesystem paths before writing an exchange
-file; rclone checks a staged capsule again immediately before uploading. A
+file; remote backends check a staged capsule again immediately before uploading. A
 blocked capsule remains pending and is not counted as uploaded. This is a
 best-effort guard, not comprehensive personal-data detection or encryption.
 It pauses the **whole outbound batch** until an operator decides; it never
