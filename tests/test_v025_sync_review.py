@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 
 from memory_vault import MemoryError, Vault, canonical_bytes, sha256
 from memory_vault_privacy import assert_publishable, review_records
+import memory_vault_sync as sync
 from memory_vault_sync import CONFIG_SCHEMA, DEFAULT_LIMITS, SyncConfig, _push_pending, receive, requeue
 from memory_vault_transfer import CHAINED_DELTA_SCHEMA, MAX_REVIEW_DOCUMENT, DirectoryTransfer, _fragment_name, _read, _write
 from memory_vault_trust import Identity, TrustStore
@@ -325,6 +326,262 @@ class SyncReviewTests(unittest.TestCase):
         with contextlib.closing(sqlite3.connect(self.database)) as connection:
             after = connection.execute("SELECT COUNT(*) FROM delivery_log").fetchone()[0]
         self.assertEqual(before, after)
+
+    def test_signed_sync_review_requeue_and_receive_remain_independent(self) -> None:
+        """One real signed directory workflow, not a signature/review mock.
+
+        Two fresh fixture identities and independent trust files are explicitly
+        enrolled in this TemporaryDirectory. Both clients disable automatic and
+        background work. One guard refuses private-key loading during actual
+        read-only review. A later wrapper injects a before-read budget failure
+        after real admission; it does not simulate elapsed time. Neither mock
+        supplies a signature, policy decision or receive result.
+        """
+        sender_config = self.sync_config()
+        receiver_identity_path = self.control / "workflow-receiver.json"
+        receiver_identity = Identity.generate(receiver_identity_path)
+        receiver_trust_path = self.control / "workflow-receiver-trust.json"
+        receiver_trust = TrustStore(receiver_trust_path)
+        receiver_trust.add(self.identity.public_descriptor(), "explicit synthetic sender")
+        receiver_trust.add(receiver_identity.public_descriptor(), "explicit synthetic receiver")
+        self.trust.add(receiver_identity.public_descriptor(), "explicit synthetic peer")
+        receiver_config = self.control / "workflow-receiver-sync.json"
+        receiver_database = self.root / "workflow-receiver.sqlite3"
+        receiver_state = self.root / "workflow-receiver-state"
+        _write(receiver_config, {
+            "schema_version": CONFIG_SCHEMA, "vault": str(receiver_database),
+            "identity": str(receiver_identity_path), "trust_store": str(receiver_trust_path),
+            "state_directory": str(receiver_state), "enabled": True,
+            "automatic": False, "background": False,
+            "backend": {"kind": "directory", "exchange": str(self.exchange)},
+            "limits": dict(DEFAULT_LIMITS),
+        }, replace=False)
+        receiver_vault = Vault(receiver_database, signer=receiver_identity.sign_record,
+                               trust_check=receiver_trust.require_trusted)
+
+        def record(vault: Vault, memory_id: str) -> dict:
+            response = vault.handle({"op": "get", "memory_id": memory_id})
+            self.assertTrue(response["ok"], response)
+            self.assertFalse(response["authority"]["execution_eligible"])
+            self.assertEqual(response["result"]["verification"]["admission"], "verified")
+            return dict(response["result"]["record"])
+
+        def delivery_count(path: Path) -> int:
+            with contextlib.closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as connection:
+                return int(connection.execute("SELECT COUNT(*) FROM delivery_log").fetchone()[0])
+
+        def fixture_hashes() -> dict[str, str]:
+            # Hashes, not private fixture-key values, appear in an assertion.
+            return {str(path.relative_to(self.root)): sha256(path.read_bytes())
+                    for path in self.root.rglob("*") if path.is_file()}
+
+        def verified_capsule(path: Path) -> dict:
+            capsule = dict(_read(path, private=True))
+            payload = capsule["payload"]
+            self.assertEqual(receiver_trust.verify_message(payload, capsule["proof"]), self.identity.key_id)
+            self.assertIsNone(payload["group"], "this is a small inline workflow, not a fragment-group trial")
+            for item in payload["records"]:
+                receiver_trust.verify_record(item, payload["attestations"][item["memory_id"]])
+            return capsule
+
+        private_id = self.remember("Synthetic private path /home/synthetic/workflow-note.txt")
+        secret_id = self.remember("Synthetic noncredential fixture: ghp_" + "x" * 30)
+        kept_id = self.remember("Synthetic shareable workflow fact")
+        original = {identifier: record(self.vault, identifier) for identifier in (private_id, secret_id, kept_id)}
+        inbound = receiver_vault.handle({"op": "remember", "kind": "fact",
+                                         "text": "Synthetic independently signed incoming fact"})
+        self.assertTrue(inbound["ok"], inbound)
+        inbound_id = inbound["result"]["memory_id"]
+        inbound_record = record(receiver_vault, inbound_id)
+        initial_peer = sync.flush(receiver_config)
+        self.assertIsNone(initial_peer["last_error"])
+        self.assertEqual(initial_peer["counts"]["published_batches"], 1)
+
+        blocked = sync.flush(sender_config)
+        self.assertEqual(blocked["state"], "retry_pending")
+        self.assertIn(blocked["last_error"], {"publication_local_path_detected", "publication_secret_detected"})
+        self.assertEqual(blocked["counts"]["published_batches"], 0)
+        self.assertEqual(blocked["counts"]["uploaded_batches"], 0)
+        self.assertEqual(blocked["counts"]["blocked_records"], 0, "an unexposed review is not a signed disposition")
+        self.assertEqual(blocked["counts"]["received_batches"], 1)
+        self.assertEqual(blocked["counts"]["records_added"], 1)
+        self.assertTrue(blocked["pending"])
+        self.assertTrue(blocked["more_work_possible"])
+        self.assertFalse(blocked["network_backend"])
+        self.assertEqual(record(self.vault, inbound_id), inbound_record)
+        sender_state = self.root / "sync-state" / "transfer"
+        pending_path = sender_state / "publish.pending.json"
+        frozen = pending_path.read_bytes()
+        before_review = fixture_hashes()
+        with mock.patch.object(Identity, "load", side_effect=AssertionError("read-only review loaded a private key")):
+            reviewed = sync.review(sender_config)
+        self.assertEqual(fixture_hashes(), before_review)
+        self.assertTrue(reviewed["operator_action_required"])
+        self.assertFalse(reviewed["files_written"])
+        self.assertFalse(reviewed["network_accessed"])
+        self.assertFalse(reviewed["memory_content_included"])
+        self.assertFalse(reviewed["review_is_authorization"])
+        findings = {item["memory_id"]: item for item in reviewed["records"]}
+        self.assertEqual(set(findings), {private_id, secret_id, kept_id})
+        self.assertIn("publication_local_path_detected", findings[private_id]["reasons"])
+        self.assertIn("publication_secret_detected", findings[secret_id]["reasons"])
+        self.assertTrue(all(item["signature_state"] == "verified_current_trust" for item in findings.values()))
+        self.assertNotIn("/home/synthetic", canonical_bytes(reviewed).decode("utf-8"))
+        self.assertNotIn("ghp_" + "x" * 30, canonical_bytes(reviewed).decode("utf-8"))
+        self.assertEqual(pending_path.read_bytes(), frozen)
+        batch = reviewed["batch_sha256"]
+        self.assert_error("review_requires_complete_partition", sync.resolve, sender_config,
+                          batch_sha256=batch, request_id="req_workflow_partial_01", exclude=[private_id], keep=[kept_id])
+        self.assert_error("publication_secret_detected", sync.resolve, sender_config,
+                          batch_sha256=batch, request_id="req_workflow_secret_01", exclude=[private_id],
+                          keep=[kept_id, secret_id], allow_local_paths=True)
+        self.assert_error("publication_local_path_detected", sync.resolve, sender_config,
+                          batch_sha256=batch, request_id="req_workflow_path_01", exclude=[secret_id],
+                          keep=[private_id, kept_id])
+
+        request_id = "req_workflow_exclusion_01"
+        applied = sync.resolve(sender_config, batch_sha256=batch, request_id=request_id,
+                               exclude=[private_id, secret_id], keep=[kept_id])
+        self.assertFalse(applied["canonical_memory_changed"])
+        self.assertFalse(applied["published"])
+        self.assertFalse(applied["worker_started"])
+        self.assertFalse(applied["receipt_replayed"])
+        replacement = pending_path.read_bytes()
+        capsule = verified_capsule(pending_path)
+        self.assertNotEqual(replacement, frozen)
+        self.assertEqual([item["memory_id"] for item in capsule["payload"]["records"]], [kept_id])
+        self.assertEqual({(item["memory_id"], item["reason"]) for item in capsule["payload"]["blocked"]},
+                         {(private_id, "operator_excluded"), (secret_id, "operator_excluded")})
+        self.assertEqual((sender_state / "publication-reviews" / sha256(request_id.encode("utf-8")) / "original.json").read_bytes(), frozen)
+        replayed = sync.resolve(sender_config, batch_sha256=batch, request_id=request_id,
+                                exclude=[secret_id, private_id], keep=[kept_id])
+        self.assertTrue(replayed["receipt_replayed"])
+        self.assertEqual(pending_path.read_bytes(), replacement)
+        self.assert_error("request_id_conflict", sync.resolve, sender_config, batch_sha256=batch,
+                          request_id=request_id, exclude=[private_id], keep=[kept_id, secret_id], allow_local_paths=True)
+        for identifier, expected in original.items():
+            self.assertEqual(record(self.vault, identifier), expected)
+        published = sync.flush(sender_config)
+        self.assertEqual(published["state"], "attention_required")
+        self.assertIsNone(published["last_error"])
+        self.assertEqual(published["counts"]["blocked_records"], 2)
+        self.assertEqual(published["counts"]["published_batches"], 2)  # Kept fact, then the incoming fact's forwarding batch.
+        self.assertFalse(pending_path.exists())
+        payload = capsule["payload"]
+        stream = self.exchange / self.identity.key_id / payload["source_store_id"]
+        published_path = stream / f"{payload['after']:020d}-{payload['cursor']:020d}-{applied['replacement_batch_sha256']}.json"
+        self.assertEqual(published_path.read_bytes(), replacement)
+
+        received = sync.receive(receiver_config)
+        self.assertFalse(received["outbound_attempted"])
+        self.assertEqual(received["counts"]["received_batches"], 2)
+        self.assertEqual(received["counts"]["records_added"], 1)
+        self.assertEqual(received["counts"]["blocked_records"], 2)
+        self.assertEqual(record(receiver_vault, kept_id), original[kept_id])
+        for identifier in (private_id, secret_id):
+            self.assertFalse(receiver_vault.handle({"op": "get", "memory_id": identifier})["ok"])
+        before_retry = delivery_count(receiver_database)
+        exact_receive = sync.receive(receiver_config)
+        self.assertIsNone(exact_receive["last_error"])
+        self.assertEqual(exact_receive["counts"]["received_batches"], 0)
+        self.assertEqual(exact_receive["counts"]["records_added"], 0)
+        self.assertEqual(delivery_count(receiver_database), before_retry)
+
+        before_requeue = delivery_count(self.database)
+        requeue_id = "req_workflow_requeue_01"
+        queued = sync.requeue(sender_config, identifiers=[private_id], request_id=requeue_id)
+        self.assertFalse(queued["worker_started"])
+        self.assertFalse(queued["publication_review_reused"])
+        self.assertEqual(delivery_count(self.database), before_requeue + 1)
+        self.assertEqual(sync.requeue(sender_config, identifiers=[private_id, private_id], request_id=requeue_id), queued)
+        self.assertEqual(delivery_count(self.database), before_requeue + 1)
+        self.assert_error("request_id_conflict", sync.requeue, sender_config, identifiers=[kept_id], request_id=requeue_id)
+        retried = sync.flush(sender_config)
+        self.assertEqual(retried["last_error"], "publication_local_path_detected")
+        self.assertEqual(retried["counts"]["published_batches"], 0)
+        fresh_review = sync.review(sender_config)
+        self.assertEqual([item["memory_id"] for item in fresh_review["records"]], [private_id])
+        self.assertNotEqual(fresh_review["batch_sha256"], batch)
+        approved = sync.resolve(sender_config, batch_sha256=fresh_review["batch_sha256"],
+                                request_id="req_workflow_approve_path_01", exclude=[], keep=[private_id], allow_local_paths=True)
+        self.assertFalse(approved["worker_started"])
+        approved_capsule = verified_capsule(pending_path)
+        self.assertEqual(approved_capsule["payload"]["blocked"], [])
+        final_publication = sync.flush(sender_config)
+        self.assertIsNone(final_publication["last_error"])
+        self.assertEqual(final_publication["counts"]["published_batches"], 1)
+        final_receive = sync.receive(receiver_config)
+        self.assertIsNone(final_receive["last_error"])
+        self.assertEqual(final_receive["counts"]["records_added"], 1)
+        self.assertEqual(record(receiver_vault, private_id), original[private_id])
+        self.assertFalse(receiver_vault.handle({"op": "get", "memory_id": secret_id})["ok"])
+        self.assertEqual(record(self.vault, secret_id), original[secret_id])
+
+        # Incoming signed review text is not this receiver's forwarding consent.
+        forwarded = sync.flush(receiver_config)
+        self.assertEqual(forwarded["last_error"], "publication_local_path_detected")
+        self.assertEqual(forwarded["counts"]["published_batches"], 0)
+        peer_pending = _read(receiver_state / "transfer" / "publish.pending.json", private=True)
+        self.assertIsNone(peer_pending["payload"]["publication_review"])
+        self.assertIn(private_id, {item["memory_id"] for item in peer_pending["payload"]["records"]})
+
+        # Two actual signed batches allow a precise failure at the next read,
+        # not a mock import or a claim about real clock/throughput exhaustion.
+        first_later_id = self.remember("Synthetic first post-review incoming fact")
+        first_later = sync.flush(sender_config)
+        self.assertIsNone(first_later["last_error"])
+        self.assertEqual(first_later["counts"]["published_batches"], 1)
+        second_later_id = self.remember("Synthetic second post-review incoming fact")
+        second_later = sync.flush(sender_config)
+        self.assertIsNone(second_later["last_error"])
+        self.assertEqual(second_later["counts"]["published_batches"], 1)
+        receiver_pending_path = receiver_state / "transfer" / "publish.pending.json"
+        receiver_frozen = receiver_pending_path.read_bytes()
+        before_interruption = delivery_count(receiver_database)
+        actual_receive = DirectoryTransfer.receive
+        durable_progress: list[int] = []
+        injected_reads: list[int] = []
+
+        def interrupt_after_admission(endpoint: DirectoryTransfer, **arguments):
+            before_read = arguments["before_read"]
+            on_progress = arguments["on_progress"]
+
+            def progress(report):
+                on_progress(report)
+                durable_progress.append(int(report["batches"]))
+
+            def next_read():
+                if durable_progress:
+                    injected_reads.append(1)
+                    raise MemoryError("sync_transfer_budget_exceeded", retryable=True)
+                before_read()
+
+            return actual_receive(endpoint, **{**arguments, "before_read": next_read, "on_progress": progress})
+
+        with mock.patch.object(DirectoryTransfer, "receive", new=interrupt_after_admission):
+            interrupted = sync.receive(receiver_config)
+        self.assertEqual(injected_reads, [1])
+        self.assertEqual(durable_progress, [1])
+        self.assertEqual(interrupted["state"], "retry_pending")
+        self.assertEqual(interrupted["last_error"], "sync_transfer_budget_exceeded")
+        self.assertEqual(interrupted["counts"]["received_batches"], 1)
+        self.assertEqual(interrupted["counts"]["records_added"], 1)
+        self.assertEqual(interrupted["counts"]["receipt_replays"], 0)
+        self.assertFalse(interrupted["outbound_attempted"])
+        self.assertTrue(interrupted["more_work_possible"])
+        self.assertTrue(interrupted["pending"])
+        self.assertEqual(record(receiver_vault, first_later_id), record(self.vault, first_later_id))
+        self.assertFalse(receiver_vault.handle({"op": "get", "memory_id": second_later_id})["ok"])
+        self.assertEqual(delivery_count(receiver_database), before_interruption + 1)
+        self.assertEqual(receiver_pending_path.read_bytes(), receiver_frozen)
+        resumed = sync.receive(receiver_config)
+        self.assertIsNone(resumed["last_error"])
+        self.assertEqual(resumed["counts"]["received_batches"], 1)
+        self.assertEqual(resumed["counts"]["records_added"], 1)
+        self.assertEqual(resumed["counts"]["receipt_replays"], 0)
+        self.assertEqual(record(receiver_vault, second_later_id), record(self.vault, second_later_id))
+        self.assertEqual(delivery_count(receiver_database), before_interruption + 2)
+        self.assertEqual(receiver_pending_path.read_bytes(), receiver_frozen)
 
     def test_remote_fragment_receipt_survives_interruption_before_manifest(self) -> None:
         for ordinal in range(6):

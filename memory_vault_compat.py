@@ -1029,19 +1029,111 @@ def _verify_saved_capture(config: Any, plan: Mapping[str, Any]) -> None:
             raise MemoryError("invalid_compat_receipt")
 
 
+@contextlib.contextmanager
+def _existing_recovery_connection(path: Path) -> Iterator[sqlite3.Connection]:
+    """Let SQLite recover an existing private file, without initializing it."""
+    from memory_vault_storage import StorageError, check_private_directory
+    try:
+        check_private_directory(path.parent)
+    except StorageError as exc:
+        raise MemoryError(exc.code, retryable=exc.retryable) from None
+    if not _plain(path):
+        raise MemoryError("host_recovery_database_missing")
+    for suffix in ("-wal", "-shm", "-journal"):
+        _plain(Path(str(path) + suffix))
+    connection = sqlite3.connect(path.as_uri() + "?mode=rw", uri=True, timeout=5)
+    connection.row_factory = sqlite3.Row
+    with contextlib.closing(connection), connection:
+        if hasattr(connection, "setlimit"):
+            connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 8 * 1024 * 1024)
+        connection.execute("PRAGMA trusted_schema=OFF")
+        connection.execute("PRAGMA synchronous=FULL")
+        # A writable, existing-file connection can roll back a hot journal.
+        # There are deliberately no application INSERT/UPDATE/DDL statements,
+        # no journal-mode change and no core _initialize(allow_upgrade=True).
+        connection.execute("BEGIN IMMEDIATE")
+        yield connection
+
+
+def _readonly_sql_failure(error: BaseException) -> bool:
+    return isinstance(error, sqlite3.OperationalError) or (
+        isinstance(error, MemoryError) and isinstance(error.__cause__, sqlite3.OperationalError)
+    )
+
+
+def _recover_flush_state(config: Any) -> None:
+    """An explicit flush may repair SQLite journals, never create a new store."""
+    current = _config(config.path)
+    if not current.capture_visible_turns:
+        raise MemoryError("capture_not_enabled")
+    if current.vault_path != config.vault_path:
+        raise MemoryError("host_vault_changed")
+    if current != config:
+        raise MemoryError("host_configuration_changed")
+    state = CompatState(current)
+    if not _plain(state.path):
+        raise MemoryError("host_recovery_database_missing")
+    # Revalidate the independently configured writer/trust before any journal
+    # recovery. Merely constructing this writer cannot initialize a Vault or
+    # sign, admit or append a record. A signing failure has no unsigned fallback.
+    current.vault(writing=True)
+    if current.trust_path is not None:
+        from memory_vault_trust import TrustError, TrustStore
+        try:
+            TrustStore(current.trust_path).status()
+        except TrustError as exc:
+            raise MemoryError(exc.code) from None
+    with _existing_recovery_connection(state.path) as connection:
+        try:
+            state._bind(connection, writable=False)
+        except MemoryError as exc:
+            if not _readonly_sql_failure(exc):
+                raise
+            # _bind validates the selected path/schema before reading the
+            # canonical store. If that read itself needs journal recovery,
+            # open only the existing selected file; never call a core writer
+            # which could initialize an absent/empty store or upgrade records.
+            with _existing_recovery_connection(current.vault_path) as source:
+                row = source.execute("SELECT value FROM metadata WHERE key='store_id'").fetchone()
+                expected = connection.execute("SELECT value FROM meta WHERE key='store_id'").fetchone()
+                if (row is None or not isinstance(row[0], str)
+                        or re.fullmatch(r"store_[0-9a-f]{32}", row[0]) is None):
+                    raise MemoryError("host_vault_unavailable")
+                if expected is None or expected[0] not in {"", row[0]}:
+                    raise MemoryError("host_vault_changed")
+            state._bind(connection, writable=False)
+
+
+@contextlib.contextmanager
+def _flush_connection(config: Any) -> Iterator[sqlite3.Connection | None]:
+    state = CompatState(config)
+    try:
+        connection = state.connect(writable=False)
+    except (MemoryError, sqlite3.OperationalError) as exc:
+        if not _readonly_sql_failure(exc):
+            raise
+        # This fallback belongs only to explicit finite flush/retry. Status,
+        # recall and exact lifecycle receipt lookups do not call this helper.
+        _recover_flush_state(config)
+        connection = state.connect(writable=False)
+    if connection is None:
+        yield None
+        return
+    with contextlib.closing(connection):
+        yield connection
+
+
 def flush_local(config_path: Path, *, limit: int = MAX_LOCAL_FLUSH) -> Mapping[str, Any]:
     """Explicit finite local intent retry; does not notify or run synchronization."""
     _integer(limit, 1, 16)
     config = _config(config_path)
-    state = CompatState(config)
     errors: list[str] = []
     saved = 0
     pending = 0
     for _ in range(limit):
-        connection = state.connect(writable=False)
-        if connection is None:
-            break
-        with contextlib.closing(connection):
+        with _flush_connection(config) as connection:
+            if connection is None:
+                break
             pending = int(connection.execute("SELECT COUNT(*) FROM turns WHERE phase='pending'").fetchone()[0])
             if not pending:
                 break
@@ -1064,9 +1156,8 @@ def flush_local(config_path: Path, *, limit: int = MAX_LOCAL_FLUSH) -> Mapping[s
         except (MemoryError, OSError, sqlite3.Error) as exc:
             errors.append(getattr(exc, "code", "host_local_save_unavailable"))
             break
-    connection = state.connect(writable=False)
-    if connection is not None:
-        with contextlib.closing(connection):
+    with _flush_connection(config) as connection:
+        if connection is not None:
             pending = int(connection.execute("SELECT COUNT(*) FROM turns WHERE phase='pending'").fetchone()[0])
     return {"saved": saved, "pending": pending, "errors": errors, "network_accessed": False}
 

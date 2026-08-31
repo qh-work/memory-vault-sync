@@ -97,7 +97,12 @@ state merely to bypass either check; consult [BACKUP.md](BACKUP.md) for restore.
    disabled rather than queued.
 4. A worker holds a nonblocking process lock, publishes local pending work, then
    receives eligible peer streams within the remaining budget. Notifications
-   during that window coalesce; a newer generation stays pending.
+   during that window coalesce; a newer generation stays pending. A recognized
+   secret/local-path publication block pauses only sending: the same bounded
+   window can still verify and admit independently trusted incoming records.
+   The original outbound batch/error stays pending; this is not consent to send
+   it. Other storage, trust, cancellation and work-budget failures keep their
+   normal stopping behavior.
 5. The worker exits. There is no launchd entry, cron job, resident daemon,
    self-relaunch loop, or hidden scheduled retry. Remaining work waits for a
    later client event or explicit `flush`/`run`.
@@ -123,6 +128,13 @@ so this is not a guarantee of eventual delivery without a later event.
 | `pending=true` | A trigger generation is unfinished or a newer event arrived; another window may be required. |
 | `blocked_records` | Signed non-delivery dispositions, including operator exclusions; never a count of records received by a peer. |
 | `remote_ai_read_verified=false` | Neither upload nor local admission proves that any remote AI read, understood or used memory. |
+
+For the directory backend, completed local admissions are counted immediately
+after their atomic Vault receipt, before the separate stream-head save or next
+read. A later work-budget/storage error preserves those completed counts and
+the pending generation; it does not report zero progress or count a batch twice
+on normal return. Exact replay can still be needed if the stream head was not
+saved. This is local progress reporting, not a remote-read acknowledgment.
 
 Before local publication the exact signed pending capsule is durable. A crash
 after publication but before the local cursor update retries those bytes rather
@@ -310,6 +322,16 @@ key loading, lock-file creation, or content output:
 python3 /absolute/source/memory_vault_sync.py \
   --config /absolute/private/control/sync.json review --offset 0 --limit 100
 ```
+
+The guard retains the v0.21 token/key, authorization/cookie, generic-secret
+assignment and local-path families, including Unix roots, arbitrary Windows
+drives, UNC paths and home-relative paths. Newer Basic-auth and credential-URL
+checks remain. Both original text and, when different, an NFC scan projection
+are examined; neither changes canonical bytes or IDs. Ordinary core/MCP local
+storage remains available. The separate old host adapter still applies its
+historical input/output privacy rules. Recognizing an old capability-shaped
+string does not restore that capability, Task binding or execution authority.
+Unknown secrets and arbitrary personal information may still escape detection.
 
 Pages contain immutable record IDs/digests, sizes, reason codes, dependency IDs,
 and current signature status, not the matched secret, path, or memory text.

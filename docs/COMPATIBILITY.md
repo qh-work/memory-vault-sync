@@ -97,6 +97,16 @@ cannot choose another Vault. Existing installations must explicitly enable
 `capture_visible_turns` before new `turn.input`/`turn.commit` operations. Explicit
 memory reads and semantic writes do not imply automatic host capture.
 
+An explicit local flush can recover an existing private SQLite rollback journal
+when its normal read-only snapshot fails. It reloads the exact configuration,
+requires capture still enabled and revalidates configured writer/trust first.
+Recovery uses existing-file connections only, without initializing or upgrading
+schemas; the canonical store ID must still match the bridge. It then returns
+to the ordinary read-only selection and bounded materialization path. Status,
+recall and receipt lookup do not gain this recovery authority. A changed/missing
+Vault, revoked configuration, invalid trust or unrelated database error is not
+permission to create another store or reset its identity.
+
 ## ID compatibility is a mapping, not an identity claim
 
 Old `ep-…` / `evt-…` IDs were computed in different hash domains. They must not be

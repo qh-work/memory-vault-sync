@@ -1235,7 +1235,17 @@ class DirectoryTransfer:
         before_fragment_read: Callable[[int], None] | None = None,
         skip_local_stream: bool = False,
         maximum_fragments: int = 8,
+        on_progress: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> Mapping[str, Any]:
+        """Receive bounded batches, optionally reporting durable local progress.
+
+        ``on_progress`` receives cumulative content-free report snapshots after
+        successful Vault admission/receipt persistence, before the separate
+        stream-head write or another read can fail. It is a trusted in-process
+        observer, never an incoming-memory callback or authorization surface.
+        The final report can include additional rejections/discovery results;
+        callers consuming both must aggregate deltas, not add both totals.
+        """
         if not isinstance(maximum_batches, int) or isinstance(maximum_batches, bool) or not 1 <= maximum_batches <= 256:
             raise MemoryError("invalid_limit")
         if type(maximum_fragments) is not int or not 1 <= maximum_fragments <= MAX_GROUP_FRAGMENTS:
@@ -1377,20 +1387,26 @@ class DirectoryTransfer:
                         if active_check is not None:
                             active_check()
                         result = self._admit_payload(payload, digest)
-                        self._bind_vault(state, missing_ok=False)
                     except (MemoryError, TrustError) as exc:
                         if exc.code.startswith("sync_"):
                             raise  # Work-budget exhaustion leaves the group pending.
                         if len(report["rejected"]) < 32:
                             report["rejected"].append({"batch_sha256": digest, "code": exc.code})
                         break  # Leave evidence available for explicit inspection/retry.
-                    self._remember_head(state, payload, digest)
-                    _write(self.state_path, state, replace=True)
-                    expected = cursor
                     report["batches"] += 1
                     report["records_added"] += int(result["records_added"])
                     report["sender_blocked_records"] += len(payload["blocked"])
                     report["receipt_replays"] += int(bool(result.get("receipt_replayed", False)))
+                    if on_progress is not None:
+                        on_progress({**report, "rejected": [dict(item) for item in report["rejected"]]})
+                    # Local control-state failures after admission are not
+                    # malformed-peer rejections. Preserve the durable count and
+                    # let the caller report the error; the atomic Vault receipt
+                    # makes a later retry safe even if this head was not saved.
+                    self._bind_vault(state, missing_ok=False)
+                    self._remember_head(state, payload, digest)
+                    _write(self.state_path, state, replace=True)
+                    expected = cursor
                     if report["batches"] >= maximum_batches:
                         report["more_possible"] = True
                         return report

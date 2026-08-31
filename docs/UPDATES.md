@@ -102,6 +102,14 @@ even if metadata has since expired. If the pointer never moved, activation
 still requires a currently valid candidate. Neither case replays a past
 authorization to select new code.
 
+New staged/installed files use protected temporary-file publication rather than
+writing a partial final member. A caught write error cleans up that temporary
+file, allowing the exact approved archive to be retried without poisoning an
+immutable member path. This does not repair already truncated files, silently
+remove unknown temporary files after a hard process kill, or certify power-loss
+recovery. Unexpected existing bytes remain a visible refusal; the previously
+active runtime is not overwritten.
+
 The launcher checks its executable inventory and refuses unlisted files,
 including __pycache__; disabling cache writes alone does not prevent reading
 cached code. Both launchers also clear an external Python bytecode-cache prefix before

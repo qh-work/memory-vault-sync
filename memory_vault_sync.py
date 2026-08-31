@@ -544,6 +544,7 @@ def _window(
     # A malformed/offline peer cannot monopolize every attempt to send local
     # memory. An empty receiving Vault is permitted to bootstrap below.
     more = False
+    outbound_review_error: MemoryError | None = None
     for index in range(maximum if direction != "receive" else 0):
         active()
         try:
@@ -556,6 +557,14 @@ def _window(
                 break
             if exc.code == "remote_group_pending":
                 more = True
+                break
+            if exc.code in {"publication_local_path_detected", "publication_secret_detected"}:
+                # Only outbound publication needs this operator decision. Keep
+                # the exact frozen pending batch and error, but do not starve
+                # independently verified incoming memory in the same bounded
+                # window. Trust, storage, cancellation and budget errors do not
+                # enter this branch or acquire permission to continue.
+                outbound_review_error = exc
                 break
             raise
         if result["state"] == "group_publication_pending":
@@ -605,17 +614,35 @@ def _window(
             if received >= maximum:
                 break
     elif exchange.is_dir():
+        accounted = {key: 0 for key in ("received_batches", "records_added", "blocked_records", "rejected_batches", "receipt_replays")}
+
+        def receive_progress(report: Mapping[str, Any]) -> None:
+            # Admission has its own durable receipt before the stream-head
+            # write/next read. Keep completed work visible if either fails, and
+            # apply the same cumulative snapshot at normal return exactly once.
+            totals = {
+                "received_batches": int(report["batches"]),
+                "records_added": int(report["records_added"]),
+                "blocked_records": int(report["sender_blocked_records"]),
+                "rejected_batches": len(report["rejected"]) + int(report["gaps"]) + int(report["unknown_senders"]),
+                "receipt_replays": int(report["receipt_replays"]),
+            }
+            for key, total in totals.items():
+                counts[key] += total - accounted[key]
+                accounted[key] = total
+
         result = endpoint.receive(maximum_batches=maximum, active_check=active,
                                   before_read=lambda: budget.transfer(MAX_CAPSULE_BYTES),
-                                  before_fragment_read=lambda size: budget.transfer(size), skip_local_stream=True)
-        counts["received_batches"] += int(result["batches"])
-        counts["records_added"] += int(result["records_added"])
-        counts["blocked_records"] += int(result["sender_blocked_records"])
-        counts["rejected_batches"] += len(result["rejected"]) + int(result["gaps"]) + int(result["unknown_senders"])
-        counts["receipt_replays"] += int(result["receipt_replays"])
+                                  before_fragment_read=lambda size: budget.transfer(size), skip_local_stream=True,
+                                  on_progress=receive_progress)
+        receive_progress(result)
         more = more or bool(result.get("more_possible", False))
     if peer_error is not None:
         raise MemoryError(peer_error, retryable=True)
+    if outbound_review_error is not None:
+        # Receive errors/cancellation above take their usual precedence. Only
+        # a normally completed receive phase reports the pending review error.
+        raise outbound_review_error
     # Newly received records may need forwarding in a later window. Do not
     # mark that generation exhausted merely because the outbound pass ran first.
     # Admission upgrades of existing records can create outbound changes even
@@ -658,6 +685,11 @@ def run(
         except (MemoryError, TrustError, OSError, ValueError, TypeError) as exc:
             code = _error_code(exc)
             failures = state["failures"] + 1
+            # A review-blocked sender or interrupted receive can still have
+            # received durable records.
+            # Preserve that progress without completing its pending generation
+            # or claiming that the rejected outbound batch was published.
+            more = more or state["counts"]["received_batches"] > 0
             state.update(state="cancelled" if code == "sync_cancelled" else "retry_pending", failures=failures,
                          last_error=code, next_retry_at=int(time.time()) + min(300, 5 * 2**min(failures - 1, 6)))
         finally:

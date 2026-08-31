@@ -1,14 +1,17 @@
 """Best-effort publication guard for the optional full client, not the protocol.
 
-Local saving is deliberately unaffected. This guard is not a DLP guarantee,
-an encryption layer or a substitute for choosing a private exchange destination.
-It never echoes a matched value in an error or receipt.
+Canonical local saving is deliberately unaffected. The v0.21 wire adapter also
+uses this scanner for its historically restricted input/output envelopes; that
+compatibility rule is not a restriction on ordinary core/MCP local persistence.
+This guard is not a DLP guarantee, encryption or a substitute for choosing a
+private exchange destination. It never echoes a matched value in an error.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping
 import re
+import unicodedata
 from typing import Any
 
 from memory_vault import MAX_BUNDLE_BYTES, MAX_BUNDLE_RECORDS, MemoryError, canonical_bytes, validate_record
@@ -17,17 +20,43 @@ from memory_vault import MAX_BUNDLE_BYTES, MAX_BUNDLE_RECORDS, MemoryError, cano
 MAX_SCAN_BYTES = 2 * MAX_BUNDLE_BYTES
 MAX_SCAN_RECORDS = MAX_BUNDLE_RECORDS
 _SECRETS = (
-    re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"),
-    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{30,255})\b"),
-    re.compile(r"\b(?:sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,255}|AKIA[A-Z0-9]{16})\b"),
-    re.compile(r"\b(?:xox[baprs]-[A-Za-z0-9-]{15,255}|AIza[A-Za-z0-9_-]{30,64})\b"),
-    re.compile(r"(?i)\bauthorization\s*:\s*(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,1024}"),
-    re.compile(r"(?i)\b(?:password|client_secret|refresh_token|access_token|api_key)\s*[=:]\s*[\"']?[^\s\"'<>]{16,256}"),
+    # Preserve the actual v0.21 publication scanner, including its minimum
+    # lengths. Recognizing an old capability-shaped string does not restore
+    # that capability or make memory an authorization source.
+    re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),
+    re.compile(r"(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"),
+    re.compile(r"(?<![A-Za-z0-9_])sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
+    re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
+    re.compile(r"AIza[A-Za-z0-9_-]{20,}"),
+    re.compile(r"\b(?:ya29\.|GOCSPX-)[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?![A-Za-z0-9_-])"),
+    re.compile(r"(?i)\bauthorization\s*:\s*(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}"),
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{20,}"),
+    re.compile(r"\bx(?:ox[baprs]|app)-[A-Za-z0-9-]{10,}\b"),
+    re.compile(r"\b(?:glpat|glrt|gloas)-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\b(?:npm_|hf_)[A-Za-z0-9]{30,}\b"),
+    re.compile(r"\b(?:pypi-|sq0(?:atp|csp)-)[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b"),
+    re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"\b\d{8,12}:[A-Za-z0-9_-]{30,}\b"),
+    re.compile(r"\bdop_v1_[0-9a-fA-F]{64}\b"),
+    re.compile(r"(?i)\b(?:Cookie|Set-Cookie)\s*:\s*\S+"),
+    re.compile(r"(?i)(?:--session-token|session[_-]?token)(?:\s*[:=]\s*|\s+)[\"']?[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"),
+    re.compile(r"(?i)(?:\[\[\s*)?memory-vault-handoff\s*:\s*[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"),
+    re.compile(r"mvrd_[A-Za-z0-9_-]{43}"),
+    re.compile(r"(?i)\b(?:password|passwd|api[_-]?(?:key|token)|access[_-]?token|refresh[_-]?token|oauth[_-]?token|session[_-]?token|client[_-]?secret|secret[_-]?key|private[_-]?key|webhook[_-]?secret)\s*[:=]\s*[\"']?[^\s\"']{12,}"),
+    # This newer full-client check was not present in the v0.21 scanner.
     re.compile(r"\bhttps?://[^\s/@:]{1,128}:[^\s/@]{1,256}@"),
 )
 _LOCAL_PATHS = (
+    # The first two patterns retain the newer anywhere-in-text checks; the
+    # remaining patterns restore old path families at their original boundaries.
     re.compile(r"(?<![A-Za-z0-9])/(?:Users|home|private|var|tmp|Volumes)/[^\s\"<>]+"),
     re.compile(r"(?i)\b[A-Z]:[\\/](?:Users|Documents and Settings)[\\/][^\r\n\"<>]+"),
+    re.compile(r"(?:^|[\s\"'(`])/(?:Users|home|root|tmp|var|private|Volumes|content|mnt|etc|opt|Applications|Library|System|bin|sbin|run|dev|proc|sys|srv|data|workspace|workspaces|project|projects|repo|repos|build|app|usr/(?:local|bin|sbin|share|lib|include))/"),
+    re.compile(r"(?:^|[\s\"'(`])[A-Za-z]:[\\/]"),
+    re.compile(r"(?:^|[\s\"'(`])\\\\[^\\\s]+\\[^\\\s]+"),
+    re.compile(r"(?:^|[\s\"'(`])~[\\/]"),
 )
 
 
@@ -62,9 +91,14 @@ def _scan_records(records: Iterable[Mapping[str, Any]]) -> Iterator[tuple[Mappin
                     raise MemoryError("publication_invalid_text") from None
                 if remaining < 0:
                     raise MemoryError("publication_scan_limit")
-                if any(pattern.search(value) for pattern in _SECRETS):
+                # Keep both original and legacy NFC scan semantics: composition
+                # can hide an ASCII token suffix which matched in the original.
+                # At most two projections; canonical bytes/IDs stay unchanged.
+                normalized = unicodedata.normalize("NFC", value)
+                scanned = (value,) if normalized == value else (value, normalized)
+                if any(pattern.search(text) for text in scanned for pattern in _SECRETS):
                     reasons.add("publication_secret_detected")
-                if any(pattern.search(value) for pattern in _LOCAL_PATHS):
+                if any(pattern.search(text) for text in scanned for pattern in _LOCAL_PATHS):
                     reasons.add("publication_local_path_detected")
         yield record, reasons
 

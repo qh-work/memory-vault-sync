@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import hashlib
 import io
 import os
@@ -91,16 +92,17 @@ def read_file(path: Path, maximum: int) -> bytes:
 def write_file(path: Path, data: bytes) -> None:
     selected = _absolute(path)
     _private_directory(selected.parent)
-    if os.name == "nt":
-        from memory_vault_storage import atomic_write
+    # Preserve the POSIX no-clobber error even for a pre-existing public file;
+    # no existing bytes or permissions are adopted, repaired or overwritten.
+    if os.name == "posix" and os.path.lexists(selected):
+        raise FileExistsError(errno.EEXIST, "update_output_exists")
+    from memory_vault_storage import StorageError, atomic_write
+    try:
+        # A handled write failure must not leave a truncated immutable member
+        # which _materialize would correctly refuse on an exact install retry.
         atomic_write(selected, data, replace=False)
-        return
-    descriptor = os.open(selected, os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                         | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0), 0o600)
-    with os.fdopen(descriptor, "wb") as stream:
-        stream.write(data)
-        stream.flush()
-        os.fsync(stream.fileno())
+    except StorageError as exc:
+        raise MemoryError(exc.code, retryable=exc.retryable) from None
 
 
 def atomic_json(path: Path, value: Mapping[str, Any]) -> None:
