@@ -52,6 +52,17 @@ GitHub run linked from the release/PR, not this local report.
 
 ## Retained raw evidence
 
+The first protected-main [CI run](https://github.com/qh-work/memory-vault-sync/actions/runs/33374465799)
+passed seven of eight baseline methods on each platform and failed the same
+bundle-transfer assertion: it required the selected recall fragment to include
+the assistant-side `NDJSON bundle` text. The documented v0.25 recall contract
+returns the best matching original-text fragment, which can be the user side.
+The fixture now compares source and received canonical records through `get`,
+checks the assistant text in that complete record, and checks that recall still
+points to the same record with an actual original-text substring. It does not
+relax quarantine, transfer or content-preservation checks, or change application
+code. The subsequent required CI result is recorded on the PR/release.
+
 The local `memory-vault-v025-release-minimal.p9SY7k` evidence directory retains
 both runners, both output logs and both JSON reports. Reports include the exact
 method names and source-file SHA-256 map. Raw reports contain machine-local

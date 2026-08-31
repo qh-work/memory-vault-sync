@@ -204,7 +204,19 @@ class UniversalMemoryTests(unittest.TestCase):
                 {"op": "recall", "query": "portable NDJSON handoff", "limit": 4},
             )
             self.assertTrue(recalled["ok"])
-            self.assertIn("NDJSON bundle", recalled["result"]["hits"][0]["text"])
+            # Recall returns the best matching fragment, not necessarily the
+            # assistant side. Transfer must preserve the entire canonical
+            # record regardless of which original-text span ranks highest.
+            memory_id = observed["result"]["memory_id"]
+            source = self.request(first_database, {"op": "get", "memory_id": memory_id})
+            received = self.request(second_database, {"op": "get", "memory_id": memory_id})
+            self.assertTrue(source["ok"])
+            self.assertTrue(received["ok"])
+            self.assertEqual(received["result"]["record"], source["result"]["record"])
+            self.assertIn("NDJSON bundle", received["result"]["record"]["text"])
+            hit = recalled["result"]["hits"][0]
+            self.assertEqual(hit["memory_id"], memory_id)
+            self.assertIn(hit["text"], received["result"]["record"]["text"])
 
     def test_authority_shaped_provenance_is_refused_without_echo(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
