@@ -116,6 +116,34 @@ timeouts, but does not forcibly interrupt in-flight system calls or borrowed
 transports. Permanent per-item errors are distinguished from retryable errors,
 and queue rotation prevents one blocked item from starving other queued sends.
 
+In the development source after `v0.26.0-alpha.1`, a nonzero outbound budget
+also refreshes up to two configured nodes with historical outbox receipts
+**before** selecting pending sends. An issuer-authorized replacement key or
+storage epoch invalidates only that node's delivery bookkeeping; the same pass
+can then resend the original persisted ciphertext within its message/time
+budget, including when `receive_limit=0`. Checks use at most the first half of
+the cooperative time budget, leaving time for queued sends. The configured
+starting node rotates once per outbound pass for both checking and delivery,
+even when no previous receipt exists. `maximum_messages=0` disables these
+extra checks and leaves the rotation position unchanged.
+For each selected outbox row, the pump divides remaining delivery time among
+the configured nodes still missing receipts. A slow node's individual
+`network_replica_send_budget` is retryable and does not prevent attempting the
+next node while whole-pass time remains. This uses the same cooperative I/O
+limits; it is not a hard interruption guarantee for borrowed transports.
+
+`replica_checks` reports selected node indexes as `current`, `failed`, or
+`deferred` when the check budget prevented an attempt. The retryable
+`network_replica_check_budget` code is separate from exhaustion of the whole
+pass; failed/deferred checks also appear in `errors`.
+Successful legacy nodes without signed node identities explicitly report
+`node_identity_verified: false`. An unreachable node does not yield an
+unqualified completed pass. Unavailability
+alone does not erase historical storage receipts. These checks establish the
+current authorized node incarnation, not continued possession of every object.
+Repaired sends still require current sender/recipient authorization and node
+admission; no fresh invitation or enrollment is silently created.
+
 The pump uses persisted request IDs, plaintext content and frozen ciphertext;
 it does not re-export or rewrite canonical memory. New rows save the original
 recipient list before attempting a connection. An older frozen row can recover
@@ -136,9 +164,13 @@ quarantine requires operator attention; it is not an unbounded spam sink.
 
 Two nodes can receive identical ciphertext, with actual storage acknowledgment
 counts and degraded results. This is not quorum replication, independent
-failure-domain certification, automatic repair, garbage collection, anonymous
+failure-domain certification, general node-to-node repair, garbage collection, anonymous
 discovery or federation. A malicious relay can withhold/discard data: signatures
 and encryption do not prove completeness or availability.
+The bounded sender repair above needs retained outbox ciphertext and a
+configured address. It cannot recover discarded sender queues, discover a new
+address, repair undetected loss under an unchanged storage epoch, or bypass
+an expired/revoked member's authorization. It starts no background service.
 
 Receiving shares does not enroll authors in the personal trust registry.
 Independently trusted signatures admit normally; unknown authors remain

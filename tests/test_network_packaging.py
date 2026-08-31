@@ -73,7 +73,7 @@ class NetworkPackagingTests(unittest.TestCase):
         review = literal(RELEASE, "NETWORK_REVIEW_TESTS")
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
-        self.assertEqual(len(review), 29)
+        self.assertEqual(len(review), 30)
         self.assertEqual(len(TS_NETWORK), 15)
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
@@ -85,7 +85,7 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertIn("docs/NETWORK_NODE_TRANSFER.md", protocol)
         self.assertTrue({"tests/test_network_client_race.py", "tests/test_network_nodes.py", "tests/test_network_node_runtime.py",
                          "tests/test_network_node_setup.py", "tests/test_network_node_transfer.py",
-                         "tests/test_network_recovery.py", "tests/test_network_typescript_crypto.py",
+                         "tests/test_network_recovery.py", "tests/test_network_replica_repair.py", "tests/test_network_typescript_crypto.py",
                          "tests/test_network_typescript_control.py", "tests/test_network_packaging.py"} <= set(review))
         # Public client material uses a fixed file list, never a recursive SDK
         # directory copy that could accidentally include installed dependencies.

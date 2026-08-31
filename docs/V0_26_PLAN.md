@@ -71,7 +71,11 @@ rounding boundary changes the first selected ID. Preserve its expected-failure
 test and design a shared deterministic math profile separately; do not hide it
 with a larger tolerance or silently replace the stable Python formula.
 Whole-endpoint recovery includes committed transport state and has targeted
-synthetic recovery tests. Complete legacy graph/view and cloud-worker parity, scheduled pumping,
+synthetic recovery tests. Development after the alpha adds bounded sender
+repair: pump checks configured node incarnations before selecting pending
+outbox work, then reuses ciphertext after an authenticated replacement. This
+does not implement node-to-node repair without sender state or client rerouting.
+Complete legacy graph/view and cloud-worker parity, scheduled pumping,
 topics/subscriptions, resource leases and automatic replica repair/exit remain
 separate work. Interfaces or examples alone must not mark them delivered;
 see the [TypeScript scope](NETWORK_TYPESCRIPT.md) and current evidence below.

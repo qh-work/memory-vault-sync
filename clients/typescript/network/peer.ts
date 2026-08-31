@@ -268,14 +268,21 @@ export class NetworkPeer {
     return this.deliver(row!,recipients);
   });}
   private receipts(row:Obj):Obj{return Object.fromEntries(Object.entries(parse(row.receipts)).filter(([key])=>this.relays.includes(key)));}
-  private async deliver(prior:Obj,recipients:string[],deadline?:number,pendingOnly=false):Promise<Obj>{
+  private async deliver(prior:Obj,recipients:string[],deadline?:number,pendingOnly=false,firstNode=0):Promise<Obj>{
     let receipts=this.receipts(prior),envelope=prior.envelope?parse(prior.envelope):null,roster=prior.roster?parse(prior.roster):null;
     const errors:Obj[]=[];
     if(envelope&&!equal([...envelope.recipient_key_ids].sort(),[...recipients].sort()))fail('network_outbox_routing_mismatch');
-    for(const relay of this.relays){
+    for(let offset=0;offset<this.relays.length;offset++){
+      const relay=this.relays[(firstNode+offset)%this.relays.length];
       if(pendingOnly&&relay in receipts)continue;
+      let nodeDeadline=deadline;
+      if(pendingOnly&&deadline!==undefined){
+        const remaining=this.relays.map((_,index)=>this.relays[(firstNode+index)%this.relays.length]).slice(offset).filter(node=>!(node in receipts)).length;
+        const at=performance.now();nodeDeadline=at+Math.max(0,deadline-at)/remaining;
+      }
       try{
-        const {current,node}=await this.refresh(relay,deadline);
+        const {current,node}=await this.refresh(relay,nodeDeadline);
+        if(nodeDeadline!==undefined&&performance.now()>=nodeDeadline)throw new NetworkError('network_budget_exhausted',true);
         authorizedMember(current,this.identity.key_id,'send',{now:now(),expected_identity:this.localIdentity as any});
         const destinations=recipients.map(id=>authorizedMember(current,id,'receive',{now:now()}));
         if(!envelope){
@@ -290,7 +297,7 @@ export class NetworkPeer {
         for(const id of [this.identity.key_id,...recipients]){
           if(!equal(historical.members.find(member=>member.signing_key.key_id===id)??null,current.roster.payload.members.find(member=>member.signing_key.key_id===id)??null))fail('network_frozen_recipient_changed');
         }
-        const result=await this.http(relay,'POST','/v1/messages',{envelope,roster},deadline);
+        const result=await this.http(relay,'POST','/v1/messages',{envelope,roster},nodeDeadline);
         if(result.state!=='stored'||result.message_id!==prior.message_id||result.envelope_sha256!==documentSha256(envelope))fail('network_invalid_storage_receipt');
         transaction(this.db(),()=>{
           this.assertNode(relay,node);
@@ -299,7 +306,11 @@ export class NetworkPeer {
           receipts=this.receipts(this.db().prepare('SELECT receipts FROM outbox WHERE request_id=?').get(prior.request_id) as Obj);
           receipts[relay]=result;this.db().prepare('UPDATE outbox SET receipts=? WHERE request_id=?').run(json(receipts),prior.request_id);
         });
-      }catch(error){const detail=errorData(error);errors.push({node:this.relays.indexOf(relay),...detail});if(detail.code==='network_budget_exhausted')break;}
+      }catch(error){
+        const detail=errorData(error);
+        if(pendingOnly&&detail.code==='network_budget_exhausted'&&deadline!==undefined&&nodeDeadline!==undefined&&nodeDeadline<deadline&&performance.now()<deadline)detail.code='network_replica_send_budget';
+        errors.push({node:this.relays.indexOf(relay),...detail});if(detail.code==='network_budget_exhausted')break;
+      }
     }
     receipts=this.receipts(this.db().prepare('SELECT receipts FROM outbox WHERE request_id=?').get(prior.request_id) as Obj);
     const validated=(this.db().prepare('SELECT recipient FROM acknowledgements WHERE message_id=?').all(prior.message_id) as Obj[]).map(row=>row.recipient);
@@ -409,25 +420,58 @@ export class NetworkPeer {
     if(rows.length>1024)fail('network_outbox_capacity');
     return rows.filter(row=>!this.relays.every(relay=>relay in this.receipts(row)));
   }
+  private pumpStartNode():number{
+    return transaction(this.db(),()=>{
+      const cursor=safeInteger(this.state('pump_node_cursor')??0)%this.relays.length;
+      this.put('pump_node_cursor',(cursor+1)%this.relays.length);return cursor;
+    });
+  }
+  private async checkReplicaNodes(deadline:number,firstNode:number):Promise<Obj[]>{
+    // Historical receipts survive outages. Only a verified new incarnation
+    // invalidates them, before pending work is selected (even without poll).
+    const rows=this.db().prepare('SELECT receipts FROM outbox LIMIT 1025').all() as Obj[];
+    if(rows.length>1024)fail('network_outbox_capacity');
+    const nodes=new Set<string>();
+    for(const row of rows){
+      const receipts=parse(row.receipts);
+      if(receipts===null||typeof receipts!=='object'||Array.isArray(receipts))fail('network_invalid_storage_receipt');
+      for(const relay of Object.keys(receipts))if(this.relays.includes(relay))nodes.add(relay);
+    }
+    const order=this.relays.map((_,offset)=>(firstNode+offset)%this.relays.length),checks:Obj[]=[];
+    for(const index of order){
+      const relay=this.relays[index];if(!nodes.has(relay))continue;
+      if(performance.now()>=deadline){checks.push({node:index,state:'deferred',code:'network_replica_check_budget',retryable:true});continue;}
+      try{
+        const {node}=await this.refresh(relay,deadline);
+        checks.push({node:index,state:'current',node_identity_verified:node!==null});
+      }catch(error){const detail=errorData(error);if(detail.code==='network_budget_exhausted')detail.code='network_replica_check_budget';checks.push({node:index,state:'failed',...detail});}
+    }
+    return checks;
+  }
   pump(maximumMessages=4,maximumSeconds=10,receiveLimit=4):Promise<Obj>{return this.serial(async()=>{
     if(!Number.isSafeInteger(maximumMessages)||maximumMessages<0||maximumMessages>16||!Number.isSafeInteger(maximumSeconds)||maximumSeconds<1||maximumSeconds>60||!Number.isSafeInteger(receiveLimit)||receiveLimit<0||receiveLimit>4)fail('network_invalid_pump_budget');
-    const start=performance.now(),deadline=start+maximumSeconds*1000,rows=this.pending(),cursor=this.state('pump_cursor')??0;
-    const ordered=[...rows.filter(row=>row.position>cursor),...rows.filter(row=>row.position<=cursor)],outbound:Obj[]=[],errors:Obj[]=[],attempted=new Set<string>();
+    const start=performance.now(),deadline=start+maximumSeconds*1000;
+    const firstNode=maximumMessages?this.pumpStartNode():0;
+    const replicaChecks=maximumMessages?await this.checkReplicaNodes(start+maximumSeconds*500,firstNode):[],rows=this.pending(),cursor=this.state('pump_cursor')??0;
+    const errors:Obj[]=replicaChecks.filter(check=>check.state!=='current').map(({node,code,retryable})=>({node,code,retryable}));
+    const ordered=[...rows.filter(row=>row.position>cursor),...rows.filter(row=>row.position<=cursor)],outbound:Obj[]=[],attempted=new Set<string>();
     for(const row of ordered.slice(0,maximumMessages)){
       if(performance.now()>=deadline)break;attempted.add(row.request_id);
       try{
         const recipients=row.recipients?parse(row.recipients):row.envelope?parse(row.envelope).recipient_key_ids:null;
         if(recipients===null)fail('network_outbox_recipients_unavailable');
         if(!Array.isArray(recipients)||recipients.length<1||recipients.length>16||new Set(recipients).size!==recipients.length)fail('network_outbox_routing_mismatch');recipients.forEach(opaqueId);
-        const result=await this.deliver(row,recipients,deadline,true);outbound.push({request_id:row.request_id,message_id:result.message_id,state:result.state,stored_nodes:result.stored_nodes,errors:result.errors});
+        const result=await this.deliver(row,recipients,deadline,true,firstNode);outbound.push({request_id:row.request_id,message_id:result.message_id,state:result.state,stored_nodes:result.stored_nodes,errors:result.errors});
       }catch(error){const detail=errorData(error);outbound.push({request_id:row.request_id,state:'queued_local',errors:[{...detail,requires_original_request:detail.code==='network_outbox_recipients_unavailable'}]});}
       this.put('pump_cursor',row.position);
     }
     const incoming=receiveLimit&&performance.now()<deadline?await this.receiveInternal(receiveLimit,deadline):null;
     const exhausted=performance.now()>=deadline;if(exhausted)errors.push({code:'network_budget_exhausted',retryable:true});
     const remaining=this.pending(),all=[...errors,...outbound.flatMap(item=>item.errors),...(incoming?.errors??[])];
-    const retryable=exhausted||remaining.some(row=>!attempted.has(row.request_id))||all.some(error=>error.retryable);
-    return {state:exhausted?'budget_exhausted':retryable?'needs_retry':all.length?'needs_attention':'completed',outbound_attempted:attempted.size,outbound,remaining_outbox:remaining.length,receive:incoming,errors,retryable,retry_after_ms:retryable?1000:0,elapsed_ms:Math.max(0,Math.floor(performance.now()-start)),budget_exhausted:exhausted,
+    const pendingIds=new Set(remaining.map(row=>row.request_id));
+    const retryPending=outbound.some(item=>pendingIds.has(item.request_id)&&item.errors.length===0);
+    const retryable=exhausted||remaining.some(row=>!attempted.has(row.request_id))||retryPending||all.some(error=>error.retryable);
+    return {state:exhausted?'budget_exhausted':retryable?'needs_retry':all.length?'needs_attention':'completed',outbound_attempted:attempted.size,outbound,remaining_outbox:remaining.length,receive:incoming,replica_checks:replicaChecks,errors,retryable,retry_after_ms:retryable?1000:0,elapsed_ms:Math.max(0,Math.floor(performance.now()-start)),budget_exhausted:exhausted,
       limits:{maximum_messages:maximumMessages,maximum_seconds:maximumSeconds,receive_limit:receiveLimit},deadline_semantics:'cooperative_no_new_requests_after_deadline',worker_started:false};
   });}
 }

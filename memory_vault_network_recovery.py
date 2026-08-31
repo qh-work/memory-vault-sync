@@ -389,6 +389,9 @@ def _validate_transport(connection: sqlite3.Connection, client: NetworkClient, m
             verify_roster(decoded, client.issuers, network_id=client.network_id, allow_expired=True)
         elif key == "pump_cursor":
             _require(type(decoded) is int and 0 <= decoded <= 2**53 - 1)
+        elif key == "pump_node_cursor":
+            # Scheduling position only; it cannot confer node authority.
+            _require(type(decoded) is int and 0 <= decoded < 2)
         elif key == "node_directory":
             verify_directory(decoded, client.issuers, network_id=client.network_id, allow_expired=True)
         elif key == "node_status_issued_at":

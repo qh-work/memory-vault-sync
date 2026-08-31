@@ -643,7 +643,7 @@ class NetworkClient:
         return self._deliver(prior, recipients)
 
     def _deliver(self, prior: sqlite3.Row, recipients: list[str], *, deadline: float | None = None,
-                 pending_only: bool = False) -> Mapping[str, Any]:
+                 pending_only: bool = False, first_node: int = 0) -> Mapping[str, Any]:
         """Reuse durable content; never export memory or reseal a frozen row."""
         request_id, message_id = prior["request_id"], prior["message_id"]
         receipts = {node: receipt for node, receipt in strict_json_loads(prior["receipts"]).items() if node in self.relays}
@@ -652,12 +652,21 @@ class NetworkClient:
         frozen_roster = strict_json_loads(prior["roster"]) if prior["roster"] else None
         if envelope is not None and set(envelope["recipient_key_ids"]) != set(recipients):
             raise MemoryError("network_outbox_routing_mismatch")
-        for relay in self.relays:
+        for offset in range(len(self.relays)):
+            relay = self.relays[(first_node + offset) % len(self.relays)]
             if pending_only and relay in receipts:
                 continue
+            node_deadline = deadline
+            if pending_only and deadline is not None:
+                # Leave each remaining missing replica an opportunity even
+                # when row rotation repeatedly meets the same slow first node.
+                remaining_nodes = sum(self.relays[(first_node + index) % len(self.relays)] not in receipts
+                                      for index in range(offset, len(self.relays)))
+                at = time.monotonic()
+                node_deadline = at + max(0, deadline - at) / remaining_nodes
             try:
-                current, node_binding = self._refresh_bound(relay, deadline=deadline)
-                if deadline is not None and time.monotonic() >= deadline:
+                current, node_binding = self._refresh_bound(relay, deadline=node_deadline)
+                if node_deadline is not None and time.monotonic() >= node_deadline:
                     raise MemoryError("network_budget_exhausted", retryable=True)
                 members = self._members(current)
                 if "send" not in members[self.identity.key_id]["scope"] or any(k not in members or "receive" not in members[k]["scope"] for k in recipients):
@@ -674,7 +683,7 @@ class NetworkClient:
                 historical = self._members(frozen_roster)
                 if any(k not in historical or historical[k] != members[k] for k in [self.identity.key_id, *recipients]):
                     raise MemoryError("network_frozen_recipient_changed")
-                response = self._transport_request(relay, "POST", "/v1/messages", {"envelope": envelope, "roster": frozen_roster}, deadline=deadline)
+                response = self._transport_request(relay, "POST", "/v1/messages", {"envelope": envelope, "roster": frozen_roster}, deadline=node_deadline)
                 if (response.get("state") != "stored" or response.get("message_id") != message_id
                         or response.get("envelope_sha256") != document_sha256(envelope)):
                     raise MemoryError("network_invalid_storage_receipt")
@@ -690,8 +699,12 @@ class NetworkClient:
                     receipts[relay] = response
                     connection.execute("UPDATE outbox SET receipts=? WHERE request_id=?", (canonical_bytes(receipts).decode(), request_id))
             except (MemoryError, TrustError) as exc:
-                errors.append({"node": self.relays.index(relay), "code": exc.code, "retryable": getattr(exc, "retryable", False)})
-                if exc.code == "network_budget_exhausted":
+                code = exc.code
+                if (pending_only and code == "network_budget_exhausted" and deadline is not None
+                        and node_deadline is not None and node_deadline < deadline and time.monotonic() < deadline):
+                    code = "network_replica_send_budget"
+                errors.append({"node": self.relays.index(relay), "code": code, "retryable": getattr(exc, "retryable", False)})
+                if code == "network_budget_exhausted":
                     break
         with self.db() as connection:
             latest = connection.execute("SELECT receipts FROM outbox WHERE request_id=?", (request_id,)).fetchone()
@@ -717,10 +730,56 @@ class NetworkClient:
                 pending.append((row["position"], row["request_id"]))
         return pending, integer(strict_json_loads(cursor["value"])) if cursor else 0
 
+    def _pump_start_node(self) -> int:
+        with self.db() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            saved = connection.execute("SELECT value FROM state WHERE key='pump_node_cursor'").fetchone()
+            cursor = integer(strict_json_loads(saved["value"])) % len(self.relays) if saved else 0
+            connection.execute("INSERT OR REPLACE INTO state VALUES('pump_node_cursor',?)",
+                               (str((cursor + 1) % len(self.relays)),))
+        return cursor
+
+    def _check_replica_nodes(self, deadline: float, first_node: int) -> list[Mapping[str, Any]]:
+        """Recheck configured nodes with historical receipts before selecting work.
+
+        A receipt proves an earlier save, not that the same node incarnation
+        still serves this address. Only authenticated replacement invalidates
+        it; unavailability or an invalid challenge must not erase that evidence.
+        """
+        with self.db() as connection:
+            rows = connection.execute("SELECT receipts FROM outbox LIMIT 1025").fetchall()
+        if len(rows) > 1024:
+            raise MemoryError("network_outbox_capacity")
+        nodes = set()
+        for row in rows:
+            receipts = strict_json_loads(row["receipts"])
+            if not isinstance(receipts, dict):
+                raise MemoryError("network_invalid_storage_receipt")
+            nodes.update(node for node in receipts if node in self.relays)
+        checks = []
+        for offset in range(len(self.relays)):
+            index = (first_node + offset) % len(self.relays)
+            relay = self.relays[index]
+            if relay not in nodes:
+                continue
+            if time.monotonic() >= deadline:
+                checks.append({"node": index, "state": "deferred", "code": "network_replica_check_budget", "retryable": True})
+                continue
+            try:
+                _, binding = self._refresh_bound(relay, deadline=deadline)
+                checks.append({"node": index, "state": "current", "node_identity_verified": binding is not None})
+            except (MemoryError, TrustError) as exc:
+                code = "network_replica_check_budget" if exc.code == "network_budget_exhausted" else exc.code
+                checks.append({"node": index, "state": "failed", "code": code,
+                               "retryable": getattr(exc, "retryable", False)})
+        return checks
+
     def pump(self, maximum_messages: int = 4, maximum_seconds: int = 10, receive_limit: int = 4) -> Mapping[str, Any]:
         """Explicit bounded retry/receive pass, never a daemon or scheduler.
 
-        maximum_messages caps outbox attempts (0..16); receive_limit separately
+        maximum_messages caps outbox attempts (0..16); a nonzero value also
+        refreshes up to two configured nodes with historical storage receipts,
+        before choosing pending rows. receive_limit separately
         caps incoming messages (0..4). The 1..60 second cooperative deadline
         starts no new network requests after expiry and limits HTTP timeouts.
         In-flight synchronous OS/storage calls are not forcibly interrupted;
@@ -732,9 +791,15 @@ class NetworkClient:
             raise MemoryError("network_invalid_pump_budget")
         started = time.monotonic()
         deadline = started + maximum_seconds
+        # Rotate once per pass, even when no receipt exists yet. Otherwise a
+        # slow first node can starve all delivery to the other configured node.
+        first_node = self._pump_start_node() if maximum_messages else 0
+        replica_checks = self._check_replica_nodes(started + maximum_seconds / 2, first_node) if maximum_messages else []
         pending, cursor = self._pending_outbox()
         ordered = [item for item in pending if item[0] > cursor] + [item for item in pending if item[0] <= cursor]
-        outgoing, errors = [], []
+        outgoing = []
+        errors = [{"node": check["node"], "code": check["code"], "retryable": check["retryable"]}
+                  for check in replica_checks if check["state"] != "current"]
         attempted = set()
         for position, request_id in ordered[:maximum_messages]:
             if time.monotonic() >= deadline:
@@ -756,7 +821,7 @@ class NetworkClient:
                     raise MemoryError("network_outbox_routing_mismatch")
                 for key in recipients:
                     opaque(key)
-                result = self._deliver(prior, recipients, deadline=deadline, pending_only=True)
+                result = self._deliver(prior, recipients, deadline=deadline, pending_only=True, first_node=first_node)
                 outgoing.append({"request_id": request_id, "message_id": result["message_id"],
                                  "state": result["state"], "stored_nodes": result["stored_nodes"], "errors": result["errors"]})
             except (MemoryError, TrustError) as exc:
@@ -778,10 +843,16 @@ class NetworkClient:
         receive_errors = [] if incoming is None else incoming["errors"]
         all_errors = errors + item_errors + receive_errors
         unattempted = any(request_id not in attempted for _, request_id in remaining)
-        retryable = exhausted or unattempted or any(error.get("retryable", False) for error in all_errors)
+        # A concurrent authenticated node replacement can invalidate a
+        # receipt even after this pass successfully delivered the row. Such
+        # unexplained pending work needs another pass, not a false completion.
+        pending_ids = {request_id for _, request_id in remaining}
+        retry_pending = any(item["request_id"] in pending_ids and not item["errors"] for item in outgoing)
+        retryable = exhausted or unattempted or retry_pending or any(error.get("retryable", False) for error in all_errors)
         return {"state": "budget_exhausted" if exhausted else "needs_retry" if retryable else "needs_attention" if all_errors else "completed",
                 "outbound_attempted": len(attempted), "outbound": outgoing, "remaining_outbox": len(remaining),
-                "receive": incoming, "errors": errors, "retryable": retryable, "retry_after_ms": 1000 if retryable else 0,
+                "receive": incoming, "replica_checks": replica_checks,
+                "errors": errors, "retryable": retryable, "retry_after_ms": 1000 if retryable else 0,
                 "elapsed_ms": max(0, int((time.monotonic() - started) * 1000)), "budget_exhausted": exhausted,
                 "limits": {"maximum_messages": maximum_messages, "maximum_seconds": maximum_seconds, "receive_limit": receive_limit},
                 "deadline_semantics": "cooperative_no_new_requests_after_deadline", "worker_started": False}

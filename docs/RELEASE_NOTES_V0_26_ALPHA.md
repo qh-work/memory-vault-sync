@@ -1,11 +1,13 @@
 # 0.26.0-alpha.1 development evidence
 
-Date: 2026-08-31. This is an **unreleased development candidate**
-on the existing `feat/v0.26-network-alpha` branch, based on
-`e03de3ec02026f3c13c6af3cb194318f87beec28`. This source report does not attest
-to installation or cloud authorization on any user's machine. A built
-candidate has a separate source manifest and package verification result.
-This report is not an immutable release attestation.
+Date: 2026-08-31. The earlier sections record pre-publication candidate work
+on `feat/v0.26-network-alpha`, originally based on
+`e03de3ec02026f3c13c6af3cb194318f87beec28`.
+[0.26.0-alpha.1 is now published](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.1).
+Later development below does not replace those published assets. This source
+report does not attest to installation or cloud authorization on any user's
+machine, and is not an immutable release attestation. Each built candidate
+has a separate source manifest and package verification result.
 
 ## What this iteration changes
 
@@ -157,6 +159,34 @@ module now fails explicitly if Node or that module is unavailable. The test
 fixture's Starlette/HTTPX deprecation warning is not a test failure; no automatic
 dependency upgrade was performed.
 
+## Development after publication: bounded sender replica repair
+
+Python and the independent TypeScript peer now check configured node
+incarnations before selecting pending sends, including with receive disabled.
+Authenticated replacement invalidates only the affected node's bookkeeping;
+the sender reuses persisted ciphertext and request IDs within its budget.
+Checks reserve delivery time, node order rotates, and each missing replica
+gets a share of remaining delivery time. Concurrent replacement cannot turn
+pending work without an explanatory error into an unqualified completed pass.
+The new rotation checkpoint is included in full endpoint recovery validation.
+
+The added synthetic tests use real owned HTTP processes, both runtime orders,
+nonempty replacement targets, signed current authorization, unchanged record
+bytes, slow-node deadlines and a controlled concurrent replacement. No model
+is impersonated, no real cloud account is used, and no physical failure-domain
+or large-cluster guarantee follows from these checks.
+
+The final related source campaign passed **62 tests with zero failures, errors
+or skips** (99.482 seconds), including 26 new Python/TypeScript repair cases.
+The selected runtime hashes stayed fixed throughout the run. All twelve network
+TypeScript modules also passed strict/no-emit checking using the existing
+TypeScript 5.9.3 toolchain. This does not close the separate ranking boundary
+or attest that the post-publication changes are installed or released.
+
+This repair requires retained sender outbox data, configured addresses and
+current membership/admission. Node-to-node repair without the sender,
+automatic rerouting and complete node retirement remain separate work.
+
 ## Open delivery and release gates
 
 The later native-agent campaign selected **89 tests: 88 passed and one known
@@ -193,8 +223,10 @@ not counted as a pass.
   not. Retain original queues until the selected recovery is verified. A drain
   fence or node identity test alone does not demonstrate complete node exit.
   The directed transfer requires an empty target and explicit snapshot-bound
-  issuer grant; automatic repair into a nonempty peer and client rerouting
-  still require separate implementation and verification.
+  issuer grant. The post-publication sender repair above can resend into a
+  nonempty configured replacement; repair without the sender's retained
+  outbox and automatic client rerouting still require separate implementation
+  and verification.
 - **Bounded rejection, not unlimited resilience to malicious peers.** Local
   rejected-ciphertext bookkeeping is limited to 128 entries / 16 MiB. A full
   quarantine stops cursor advancement. Deeper share structure, record signature
@@ -205,7 +237,7 @@ not counted as a pass.
 - **Preserve pre-upgrade backups.** New code reads old client-backup manifests;
   old releases may reject new manifests with the additional native-cache
   exclusion. New-to-old backup compatibility has not been established.
-- **No public publication or blanket installation claim.** The builders require
+- **Separate publication and installation evidence.** The builders require
   selected source bytes to match committed HEAD; that source gate is preserved.
   Dependency hashes are recorded in the new locks. Final archive privacy review,
   source/asset hashes and actual package execution are separate evidence from
