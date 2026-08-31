@@ -47,6 +47,20 @@ def _text_preview(text: str) -> str:
     return preview
 
 
+def _imported_text_reference(content: Mapping[str, Any], selected: bytes | None = None) -> str | None:
+    """Project an ID only from content already admitted by the share importer."""
+    if content["share"] is None:
+        return None
+    if selected is None:
+        selected = unb64url(content["share"], maximum=MAX_SHARE_BYTES)
+    for line in selected.splitlines():
+        frame = strict_json_loads(line)
+        if (frame.get("type") == "record" and frame["selected"]
+                and frame["record"]["text"] == content["text"]):
+            return frame["record"]["memory_id"]
+    return None
+
+
 def origin(value: Any) -> str:
     if not isinstance(value, str):
         raise MemoryError("network_invalid_url")
@@ -619,7 +633,7 @@ class NetworkClient:
 
     @staticmethod
     def _existing_delivery(connection: sqlite3.Connection, message_id: str, envelope_digest: str) -> Mapping[str, Any] | None:
-        existing = connection.execute("SELECT digest,result FROM inbox WHERE message_id=?", (message_id,)).fetchone()
+        existing = connection.execute("SELECT digest,result,body FROM inbox WHERE message_id=?", (message_id,)).fetchone()
         if existing:
             if existing["digest"] != envelope_digest:
                 raise MemoryError("network_inbox_identity_conflict")
@@ -629,6 +643,11 @@ class NetworkClient:
             preview = _text_preview(result["text"])
             result["text_partial"] = result["text_partial"] or preview != result["text"]
             result["text"] = preview
+            if "text_memory_id" not in result:
+                # This inbox row was committed only after successful import.
+                # Reconstruct its missing view without importing/re-signing or
+                # changing either the cached evidence or the canonical Vault.
+                result["text_memory_id"] = _imported_text_reference(strict_json_loads(existing["body"]))
             return result
         rejected = connection.execute("SELECT digest,sender,code FROM quarantine WHERE message_id=?", (message_id,)).fetchone()
         if rejected:
@@ -725,12 +744,7 @@ class NetworkClient:
             # Only inspect IDs after the unchanged share importer has checked
             # every canonical record and the selected dependency closure.
             # This reference is a local view, never a parent of the memory.
-            for line in selected.splitlines():
-                frame = strict_json_loads(line)
-                if (frame.get("type") == "record" and frame["selected"]
-                        and frame["record"]["text"] == content["text"]):
-                    text_memory_id = frame["record"]["memory_id"]
-                    break
+            text_memory_id = _imported_text_reference(content, selected)
         # The native result budget counts serialized UTF-8, including JSON
         # escaping. Four 512-character emoji previews would already exceed it.
         preview = _text_preview(content["text"])
