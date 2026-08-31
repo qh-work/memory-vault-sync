@@ -6,6 +6,8 @@
 - Add opt-in deterministic retrieval v2 and validate network storage proofs.
 - Include signed topic policy, grants, subscriptions and durable authority state.
   Encrypted topic fan-out remains unfinished.
+- Create the private sync root before nested fragment receipts so interrupted
+  remote transfers can resume under a normal process umask.
 - Refresh current download and agent discovery entrypoints. Keep the eleven-tool
   MCP interface and canonical memory records unchanged.
 - This is an explicitly installed preview, not a stable or thousand-agent release.

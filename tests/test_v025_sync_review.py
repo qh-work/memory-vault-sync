@@ -613,6 +613,7 @@ class SyncReviewTests(unittest.TestCase):
         self.assertEqual(remote.fragments, [0])
         self.assertEqual(remote.manifests, [])
         self.assertTrue(_push_pending(config, self.sender, remote))
+        self.assertEqual(config.state_directory.stat().st_mode & 0o777, 0o700)
         self.assertEqual(remote.fragments, [0, 1])
         self.assertEqual(len(remote.manifests), 1)
         self.assertFalse(_push_pending(config, self.sender, remote))

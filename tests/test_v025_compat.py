@@ -474,7 +474,16 @@ class HostCompatibilityTests(unittest.TestCase):
         with contextlib.closing(sqlite3.connect(self.vault_path)) as connection, connection:
             part = json.loads(connection.execute("SELECT record_json FROM memories WHERE memory_id=?", (parts[0],)).fetchone()[0])
             part["text"] = "Synthetic non-anchor corruption"
-            connection.execute("UPDATE memories SET record_json=? WHERE memory_id=?", (canonical_bytes(part).decode("utf-8"), parts[0]))
+            statement = "UPDATE memories SET record_json=? WHERE memory_id=?"
+            arguments = (canonical_bytes(part).decode("utf-8"), parts[0])
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "append-only memories"):
+                connection.execute(statement, arguments)
+            # Inject corruption only into this disposable fixture, restoring
+            # the exact guard before exercising production validation.
+            trigger = connection.execute("SELECT sql FROM sqlite_master WHERE name='memories_no_update'").fetchone()[0]
+            connection.execute("DROP TRIGGER memories_no_update")
+            connection.execute(statement, arguments)
+            connection.execute(trigger)
         corrupted = self.canonical_snapshot()
         rejected = self.call("memory.remember", {"proposal": proposal})
         self.assertEqual(rejected["status"], "rejected", rejected)

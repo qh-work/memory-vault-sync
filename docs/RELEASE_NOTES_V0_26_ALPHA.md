@@ -6,6 +6,8 @@ Version `0.26.0-alpha.2` packages the post-alpha.1 source campaigns described be
 replacement-node queue repair, deterministic retrieval v2, storage proof validation,
 and signed topic/subscription authority. No new default network, identity or service
 is activated. The existing eleven-tool MCP interface is preserved.
+A release check also repaired private sync-root creation before nested fragment
+receipts; the exact interruption/resume regression asserts private permissions.
 
 The package version and download pointers are refreshed together. Historical test
 counts below remain tied to their recorded source. See the alpha.2 release body for
