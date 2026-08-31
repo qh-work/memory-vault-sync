@@ -54,6 +54,11 @@ open until evidence is recorded; it is not shortened to match finished work.
 - v0.21 automatic capture created an episode and a fixed continuity checkpoint.
   It did **not** automatically infer decisions and constraints from every turn;
   semantic claims were explicit proposals. Do not invent an old capability.
+- Its native Stop path could save only the user or assistant side when that was
+  all the visible content actually received (`partial_active_turn`). That is a
+  separate capability from recovering a partially written complete turn. The
+  full-pair-only current hook route is a confirmed remaining P02 implementation
+  gap; missing content must never be guessed from a transcript or another turn.
 - Its accepted host intent also froze the source sequence and preceding episode
   reference. New automatic capture restores that causal behavior with frozen
   projections and a `continues` relation between continuity records. Local

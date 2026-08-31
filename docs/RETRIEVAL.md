@@ -115,7 +115,39 @@ Vault.
    understanding, a learned model or a universal translator.
 6. Apply soft role, kind, graph-state and recency factors. Superseded/resolved
    evidence remains eligible but is de-emphasized. Return the strongest
-   fragment per record and suppress identical excerpt/kind/state duplicates.
+   fragment per record, then use the bounded diversity pass described below.
+
+### Evidence diversity without source ownership
+
+The selected candidate set uses the old taskless runtime's token-set Jaccard
+threshold: above `0.82` is a near duplicate. Suppression only compares excerpts
+with the same canonical kind, current graph state and negation polarity.
+Opposing statements and current/historical/conflicted evidence remain distinct;
+the polarity guard also applies when `semantic: false`. Identical text is also
+deduplicated within that same comparison group. This is a display heuristic,
+not proof that two records assert the same fact.
+
+An explicit canonical `provenance.source_ref`, together with `source_type`,
+can apply a request-local diversity quota: at most two episode excerpts or four
+semantic excerpts for each source/state/polarity group. Missing source
+references do not place every unrelated record into a shared default bucket.
+The label remains untrusted provenance: it does not authenticate an author,
+assign an owner, change admission, partition storage or restrict `get`/export.
+No Task or Project directory is created and no memory is removed.
+
+Current verified candidates enter this pass before currently usable unsigned
+candidates. A lower-admission copy or source label cannot suppress a stronger
+selected candidate or consume its source quota. Final order still follows the
+existing retrieval scores. This protects the **selection pass**, not earlier
+candidate discovery, and does not promise resistance to arbitrary poisoning
+by other equally admitted records or make score a trust decision.
+
+Similarity token sets contain at most 1,024 tokens per candidate. At most
+`limit` candidates are retained in each of the two admission bands, within the
+existing candidate/fragment/record-byte bounds. A diversity exclusion does not
+mean the search was truncated by a resource limit. The independent review cases
+are in `tests/test_v025_retrieval_diversity.py`; these newly authored cases have
+not been executed, including the explicitly shape-only admission fixture.
 
 The episode record currently stores conventional `User:` / `Assistant:` text,
 not separately authenticated role segments. Parsing those labels is only a
@@ -133,6 +165,35 @@ Retrieval never performs automatic semantic extraction. Decisions, constraints
 or summaries still have to be supplied explicitly as evidence-backed memory by
 the host/agent. The old taskless implementation also did not automatically
 generate such semantic claims from each visible turn.
+
+## Small evidence-context budgets
+
+`maximum_context_bytes` bounds the UTF-8 bytes of `evidence_context.text`,
+including its historical-evidence warning, labels, JSON-quoted excerpts and
+clipping notices. When the highest-ranked excerpt does not fit, the reference
+now includes the largest nonempty prefix that fits with its complete label and
+an explicit clipping notice, instead of silently omitting that whole memory.
+Both `recall` and `handoff` use this renderer, including clients that forward
+the resulting local context.
+
+Every displayed label contains the original `memory_id`, kind, current state,
+timestamp and admission. Use `get` with that ID for the complete canonical
+record. Only the displayed substring is shortened: the hit's original fragment,
+record bytes, signature, identifier, provenance and relations are unchanged.
+Clipping measures the JSON-escaped representation and never slices encoded
+UTF-8 or a partly escaped JSON string; embedded fake role lines remain quoted
+memory data rather than renderer-supplied framing.
+
+The context adds `included_memory_ids` and `clipped_memory_ids` in display order.
+`omitted_count` counts hits for which no excerpt could be shown; a displayed
+clipped excerpt is not also counted as omitted. `truncated` is true when either
+kind of omission occurred. An entry whose label and one character cannot fit
+is still omitted, and the warning is always retained. The bounds apply to the
+rendered text, not the complete JSON response with its separately returned hits.
+
+`tests/test_v025_context_budget.py` supplies synthetic public-entry and pure
+renderer regressions for this repair. They are authored, not executed; no new
+runtime, host or performance acceptance follows from this source change.
 
 ## Existing 0.24 indexes and explicit repair
 

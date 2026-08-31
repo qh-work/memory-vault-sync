@@ -3,8 +3,9 @@
 This is the full-client **review build**, not a claim of a finished or
 runtime-verified stable release. The plugin is under
 `plugins/memory-vault-client`; the local marketplace catalog is
-`.agents/plugins/marketplace.json`. All 26 required runtime source modules
-are included. No Git checkout or runtime build is needed to use the archive.
+`.agents/plugins/marketplace.json`. All required runtime source modules listed
+in `runtime/MANIFEST.json` under the plugin are included. No Git checkout or
+runtime build is needed to use the archive.
 
 Python 3.10+ and a host supporting local stdio MCP are required. The ordinary
 unsigned path uses only the standard library. Optional record signing requires

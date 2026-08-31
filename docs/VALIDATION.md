@@ -35,6 +35,12 @@ it does not close the full ledger. See [development status](STATUS.md).
 
 ## Interpretation and authority
 
+The later small-context, retrieval-diversity, conflict-resolution and
+capture-disabled-recall fixtures have not been executed. Their accompanying
+source repairs postdate every runtime campaign above. AST/JSON/diff inspection
+does not turn these fixtures into passing tests; see the current
+[development status](STATUS.md#latest-guarded-workflows).
+
 The recorded maintainer runs use disposable synthetic data. They do not prove
 full parity, real-host event delivery, independent cryptographic interoperability,
 signed cross-device transfer, native Windows/Linux behavior, large-scale throughput,

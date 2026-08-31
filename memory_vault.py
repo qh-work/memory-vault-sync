@@ -1502,6 +1502,54 @@ class Vault:
             raise MemoryError("stored_record_invalid")
         return record
 
+    # The substitutions below are fixed SQL expressions supplied only by these
+    # local readers, never request text. Reuse the same endpoint/rank predicate
+    # for status and displayed edge evidence; a claim-level resolution flag
+    # would incorrectly suppress an independent conflict elsewhere in the view.
+    _CONFLICT_RESOLUTION_FROM = (
+        "FROM relations resolution JOIN record_admissions resolver "
+        "ON resolver.memory_id=resolution.source_id "
+        "JOIN memories resolution_record ON resolution_record.memory_id=resolution.source_id "
+        "WHERE resolution.relation='resolves' "
+        "AND resolution.target_id IN ({source_id},{target_id}) "
+        "AND vault_admitted(resolver.state,resolver.signer_key_id)>={minimum_rank} "
+    )
+
+    @staticmethod
+    def _state_relation(connection: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+        """Describe admitted directional effects before status precedence.
+
+        state_effective retains the target-only strength rule. An unresolved
+        conflict can still affect its weaker source's own state; disclosing that
+        effect does not let it change or group with the stronger target.
+        """
+        source, target, relation = str(row["source_id"]), str(row["target_id"]), str(row["relation"])
+        source_rank, target_rank = int(row["source_rank"]), int(row["target_rank"])
+        resolution = None
+        source_effective = relation == "conflicts_with"
+        if relation not in _CLAIM_RELATIONS:
+            effective, reason = False, "non_state_relation"
+        elif source_rank < target_rank:
+            effective, reason = False, "weaker_than_target"
+        else:
+            effective, reason = True, "admitted_relation"
+        if relation == "conflicts_with":
+            resolution = connection.execute(
+                "SELECT resolution.source_id,resolution.target_id "
+                + Vault._CONFLICT_RESOLUTION_FROM.format(source_id="?", target_id="?", minimum_rank="?")
+                + "ORDER BY resolution.source_id,resolution.target_id LIMIT 1",
+                (source, target, max(source_rank, target_rank)),
+            ).fetchone()
+            if resolution is not None:
+                effective, source_effective, reason = False, False, "explicit_endpoint_resolution"
+        return {
+            "source_id": source, "target_id": target, "type": relation,
+            "state_effective": effective, "source_state_effective": source_effective,
+            "state_effective_reason": reason,
+            "resolution_memory_id": str(resolution["source_id"]) if resolution is not None else None,
+            "resolution_target_id": str(resolution["target_id"]) if resolution is not None else None,
+        }
+
     @staticmethod
     def _memory_status(connection: sqlite3.Connection, memory_id: str) -> str:
         own = connection.execute(
@@ -1531,7 +1579,12 @@ class Vault:
             "JOIN record_admissions b ON b.memory_id=r.target_id "
             "WHERE (r.source_id=? OR r.target_id=?) AND r.relation='conflicts_with' "
             "AND vault_admitted(a.state,a.signer_key_id)>=? "
-            "AND vault_admitted(b.state,b.signer_key_id)>0 LIMIT 1",
+            "AND vault_admitted(b.state,b.signer_key_id)>0 "
+            "AND NOT EXISTS(SELECT 1 "
+            + Vault._CONFLICT_RESOLUTION_FROM.format(
+                source_id="r.source_id", target_id="r.target_id",
+                minimum_rank="MAX(vault_admitted(a.state,a.signer_key_id),vault_admitted(b.state,b.signer_key_id))",
+            ) + ") LIMIT 1",
             (memory_id, memory_id, rank),
         ).fetchone()
         if unresolved is not None:
@@ -1777,16 +1830,88 @@ class Vault:
                 str(item["record"]["memory_id"]),
             ),
         )
+        # Restore the old bounded evidence-diversity step without making a
+        # source an owner. Only an explicit canonical provenance reference can
+        # share a request-local quota; missing references never group a Vault.
+        # Check stronger admissions first so a lower-trust copy/source label
+        # cannot consume a stronger record's quota or suppress its excerpt.
+        # Each admission band retains at most limit items (64 total), keeping
+        # similarity work within the already bounded candidate working set.
+        candidate_ids = [str(item["record"]["memory_id"]) for item in ordered]
+        admission_ranks: dict[str, int] = {}
+        for offset in range(0, len(candidate_ids), 500):
+            batch = candidate_ids[offset:offset + 500]
+            placeholders = ",".join("?" for _ in batch)
+            admission_ranks.update({
+                str(row["memory_id"]): int(row["active_rank"])
+                for row in connection.execute(
+                    "SELECT memory_id,vault_admitted(state,signer_key_id) AS active_rank "
+                    f"FROM record_admissions WHERE memory_id IN ({placeholders})", batch,
+                )
+            })
+        diverse: list[dict[str, Any]] = []
+        selected_signatures: list[tuple[tuple[str, str, bool], str, frozenset[str]]] = []
+        source_counts: Counter[tuple[str, str, str, str, bool]] = Counter()
+        for admission_rank in (2, 1):
+            retained = 0
+            for item in ordered:
+                record = item["record"]
+                if admission_ranks.get(str(record["memory_id"]), 0) != admission_rank:
+                    continue
+                text = str(item["fragment"]["text"])
+                normalized = normalize_text(text)
+                words = set(_LATIN.findall(normalized))
+                # Negation protects opposing evidence even with semantic=False;
+                # this does not enable concept expansion or call an adapter.
+                negative = any(
+                    marker in words if marker.isascii() else marker in normalized
+                    for marker in _NEGATION_MARKERS
+                )
+                signature = (str(record["kind"]), str(item["status"]), negative)
+                bucket_kind = "episode" if record["kind"] == "episode" else "semantic"
+                source_ref = record["provenance"].get("source_ref")
+                source_bucket = (
+                    str(record["provenance"].get("source_type", "")), str(source_ref),
+                    bucket_kind, str(item["status"]), negative,
+                ) if source_ref else None
+                if source_bucket is not None and source_counts[source_bucket] >= (2 if bucket_kind == "episode" else 4):
+                    continue
+                tokens_for_diversity = frozenset(tokenize(text, maximum=1024))
+                duplicate = False
+                for previous_signature, previous_text, previous_tokens in selected_signatures:
+                    if previous_signature != signature:
+                        continue
+                    if normalized == previous_text:
+                        duplicate = True
+                        break
+                    if tokens_for_diversity and previous_tokens:
+                        # Jaccard > .82, as in the old result selector. Use
+                        # integer arithmetic and a cheap cardinality bound.
+                        smaller, larger = sorted((len(tokens_for_diversity), len(previous_tokens)))
+                        if smaller * 100 <= larger * 82:
+                            continue
+                        common = len(tokens_for_diversity & previous_tokens)
+                        union = len(tokens_for_diversity) + len(previous_tokens) - common
+                        if common * 100 > union * 82:
+                            duplicate = True
+                            break
+                if duplicate:
+                    continue
+                diverse.append(item)
+                selected_signatures.append((signature, normalized, tokens_for_diversity))
+                if source_bucket is not None:
+                    source_counts[source_bucket] += 1
+                retained += 1
+                if retained >= limit:
+                    break
+        # Admission priority only controls diversity suppression, not the
+        # existing relevance scores or any canonical record/admission state.
+        diverse.sort(key=lambda item: (-int(item["score_milli"]), str(item["record"]["memory_id"])))
         result: list[dict[str, Any]] = []
-        seen_excerpts: set[tuple[str, str, str]] = set()
-        for item in ordered:
+        for item in diverse:
             record = item["record"]
             fragment = item["fragment"]
             text = str(fragment["text"])
-            diversity_key = (normalize_text(text), str(record["kind"]), item["status"])
-            if diversity_key in seen_excerpts:
-                continue
-            seen_excerpts.add(diversity_key)
             entities = list(record["entities"])
             relations, relations_truncated = self._context_relations(connection, record["relations"])
             result.append(
@@ -1885,8 +2010,8 @@ class Vault:
                 reasons.add("edge_limit")
             for row in rows[:maximum_edges]:
                 source, target, relation = str(row["source_id"]), str(row["target_id"]), str(row["relation"])
-                effective = int(row["source_rank"]) >= int(row["target_rank"])
-                if claims_only and not effective:
+                strength_eligible = int(row["source_rank"]) >= int(row["target_rank"])
+                if claims_only and not strength_eligible:
                     continue
                 key = (source, relation, target)
                 if key in edges:
@@ -1918,10 +2043,9 @@ class Vault:
                     records[neighbor] = self._record_from_row(other)
                     used += int(metadata[0])
                     queue.append((neighbor, depth + 1))
-                edges[key] = {
-                    "source_id": source, "target_id": target, "type": relation,
-                    "state_effective": effective and relation in _CLAIM_RELATIONS,
-                }
+                # A resolved conflict remains a historical association for
+                # bounded component discovery, but no longer changes state.
+                edges[key] = self._state_relation(connection, row)
         ordered_edges = [edges[key] for key in sorted(edges)]
         return {
             "records": records, "edges": ordered_edges,
@@ -1992,22 +2116,25 @@ class Vault:
         for item in timeline:
             memory_id = str(item["memory_id"])
             effects = connection.execute(
-                "SELECT r.source_id,r.relation,r.target_id FROM relations r "
+                "SELECT r.source_id,r.relation,r.target_id,"
+                "vault_admitted(a.state,a.signer_key_id) AS source_rank,"
+                "vault_admitted(b.state,b.signer_key_id) AS target_rank FROM relations r "
                 "JOIN record_admissions a ON a.memory_id=r.source_id "
                 "JOIN record_admissions b ON b.memory_id=r.target_id "
                 "WHERE (r.source_id=? OR r.target_id=?) "
                 "AND r.relation IN ('supersedes','conflicts_with','resolves') "
                 "AND vault_admitted(a.state,a.signer_key_id)>0 AND vault_admitted(b.state,b.signer_key_id)>0 "
-                "AND vault_admitted(a.state,a.signer_key_id)>=vault_admitted(b.state,b.signer_key_id) "
-                "ORDER BY r.source_id,r.relation,r.target_id LIMIT 9", (memory_id, memory_id),
+                "AND (vault_admitted(a.state,a.signer_key_id)>=vault_admitted(b.state,b.signer_key_id) "
+                "OR (r.relation='conflicts_with' AND r.source_id=?)) "
+                "ORDER BY r.source_id,r.relation,r.target_id LIMIT 9", (memory_id, memory_id, memory_id),
             ).fetchall()
-            item["state_relations"] = [
-                {"source_id": str(row["source_id"]), "type": str(row["relation"]), "target_id": str(row["target_id"])}
-                for row in effects[:8]
-            ]
+            reasons = [self._state_relation(connection, row) for row in effects]
+            item["state_relations"] = reasons[:8]
             item["state_relations_truncated"] = len(effects) > 8
             external_state_relations = external_state_relations or any(
-                str(row["source_id"]) not in allowed_ids or str(row["target_id"]) not in allowed_ids for row in effects
+                edge["source_id"] not in allowed_ids or edge["target_id"] not in allowed_ids
+                or (edge["resolution_memory_id"] is not None and edge["resolution_memory_id"] not in allowed_ids)
+                for edge in reasons
             ) or len(effects) > 8
         strongest_rank = max((2 if item["verification"]["admission"] == "verified" else 1 for item in timeline), default=0)
         strongest_states = {
@@ -2189,20 +2316,41 @@ class Vault:
         lines: list[str] = [prefix.rstrip()]
         used = len(lines[0].encode("utf-8"))
         omitted = 0
+        included_ids: list[str] = []
+        clipped_ids: list[str] = []
         for index, hit in enumerate(hits, 1):
-            rendered = (
-                f"\n{index}. [{hit['kind']}; {hit['status']}; {hit['created_at']}; "
+            memory_id = str(hit["memory_id"])
+            label = (
+                f"\n{index}. [{memory_id}; {hit['kind']}; {hit['status']}; {hit['created_at']}; "
                 f"{hit.get('verification', {}).get('admission', 'unknown')}]\n"
-                # Quote text as JSON data so embedded fake role/boundary lines
-                # cannot masquerade as the formatting supplied by the Vault.
-                f"{json.dumps(hit['text'], ensure_ascii=False)}"
             )
-            raw = rendered.encode("utf-8")
-            if used + len(raw) + 1 > maximum:
-                omitted += 1
-                continue
+            # Quote the complete displayed substring as JSON data. Never cut
+            # already-encoded bytes: that could split UTF-8 or leave an escape
+            # or a quote unfinished and turn recalled text into framing.
+            text = str(hit["text"])
+            quoted = json.dumps(text, ensure_ascii=False)
+            available = maximum - used - _utf8_length(label) - 1
+            suffix = ""
+            if _utf8_length(quoted) > available:
+                suffix = "\n[excerpt truncated; use get with the memory ID above]"
+                quote_budget = available - _utf8_length(suffix)
+                lower, upper = 0, len(text)
+                while lower < upper:
+                    middle = (lower + upper + 1) // 2
+                    candidate = json.dumps(text[:middle], ensure_ascii=False)
+                    if _utf8_length(candidate) <= quote_budget:
+                        lower = middle
+                    else:
+                        upper = middle - 1
+                if lower == 0:
+                    omitted += 1
+                    continue
+                quoted = json.dumps(text[:lower], ensure_ascii=False)
+                clipped_ids.append(memory_id)
+            rendered = label + quoted + suffix
             lines.append(rendered)
-            used += len(raw) + 1
+            used += _utf8_length(rendered) + 1
+            included_ids.append(memory_id)
         return {
             "kind": "evidence_context",
             "content_type": "text/plain",
@@ -2212,8 +2360,10 @@ class Vault:
             "execution_eligible": False,
             "policy_change_eligible": False,
             "current_user_input_precedence": True,
-            "truncated": omitted > 0,
+            "truncated": omitted > 0 or bool(clipped_ids),
             "omitted_count": omitted,
+            "included_memory_ids": included_ids,
+            "clipped_memory_ids": clipped_ids,
             "text": "\n".join(lines),
         }
 

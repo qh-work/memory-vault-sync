@@ -1249,7 +1249,7 @@ def _lifecycle(config: Any, request: Mapping[str, Any]) -> dict[str, Any]:
             except (MemoryError, OSError, sqlite3.Error):
                 previous["result"]["evidence_context"] = None
         return previous
-    if operation in {"turn.input", "turn.commit"} and not config.capture_visible_turns:
+    if operation == "turn.commit" and not config.capture_visible_turns:
         raise MemoryError("capture_not_enabled")
     user = _scan(payload["visible_user_text"]) if payload.get("visible_user_text") is not None else None
     assistant = _scan(payload["visible_assistant_text"]) if payload.get("visible_assistant_text") is not None else None
@@ -1279,25 +1279,46 @@ def _lifecycle(config: Any, request: Mapping[str, Any]) -> dict[str, Any]:
             state.session(connection, session, opened=operation == "turn.input")
             turn = payload["turn_handle"]
             row = state.turn(connection, turn, session) if turn is not None else None
+            readonly_turn = (row is not None and row["phase"] == "aborted"
+                             and row["abort_reason"] == "capture_disabled")
+            if readonly_turn and (any(row[field] is not None for field in (
+                    "user_text", "assistant_text", "assistant_sha256", "receipt_id", "last_error", "memory_id"))
+                    or connection.execute("SELECT 1 FROM capture_jobs WHERE job_key=?", (turn,)).fetchone() is not None):
+                raise MemoryError("invalid_host_readonly_turn")
             if operation == "turn.input":
                 assert user is not None
                 if row is not None:
-                    if row["phase"] != "staged" or row["user_sha256"] != sha256(user.encode("utf-8")):
+                    reusable = row["phase"] == "staged" if config.capture_visible_turns else readonly_turn
+                    if not reusable or row["user_sha256"] != sha256(user.encode("utf-8")):
                         raise MemoryError("conflict")
-                else:
+                elif config.capture_visible_turns:
                     state.pending_budget(connection, len(user.encode("utf-8")), new_turn=True)
                     turn = "mvt1_" + secrets.token_urlsafe(32)
                     connection.execute("INSERT INTO turns(handle,session_handle,phase,user_text,user_sha256,created_at) VALUES(?,?,'staged',?,?,?)", (turn, session, user, sha256(user.encode("utf-8")), utc_now()))
+                else:
+                    # The old adapter requires a real opaque turn handle even
+                    # for recall-only input. Seal this metadata-only handle as
+                    # terminal immediately: no text, pending intent, projection
+                    # or future commit is authorized by issuing it.
+                    if connection.execute("SELECT COUNT(*) FROM turns").fetchone()[0] >= MAX_CONTROL_ROWS:
+                        raise MemoryError("host_turn_receipt_limit")
+                    turn = "mvt1_" + secrets.token_urlsafe(32)
+                    connection.execute("INSERT INTO turns(handle,session_handle,phase,user_sha256,created_at,abort_reason) VALUES(?,?,'aborted',?,?,'capture_disabled')", (turn, session, sha256(user.encode("utf-8")), utc_now()))
                 response = state.save_receipt(connection, request, {"continuity_handle": session, "turn_handle": turn, "evidence_context": None, "network_accessed": False}, turn=turn)
             elif operation == "turn.abort":
                 assert row is not None
                 result: dict[str, Any] = {"continuity_handle": session, "turn_handle": turn, "network_accessed": False}
                 if row["phase"] in {"pending", "done"}:
                     result.update(aborted=False, terminal_state="committed", queue_state="done" if row["phase"] == "done" else "pending")
-                else:
+                elif not readonly_turn:
                     if row["phase"] == "aborted" and row["abort_reason"] not in {payload["reason"], "session_closed"}:
                         raise MemoryError("conflict")
                     connection.execute("UPDATE turns SET phase='aborted',user_text=NULL,assistant_text=NULL,abort_reason=? WHERE handle=?", (payload["reason"], turn))
+                    result.update(aborted=True, terminal_state="aborted")
+                else:
+                    # Confirm closure of an already sealed, never-captured
+                    # input; keep its marker even when the bridge changes its
+                    # abort reason or capture is later enabled again.
                     result.update(aborted=True, terminal_state="aborted")
                 response = state.save_receipt(connection, request, result, turn=turn)
             else:

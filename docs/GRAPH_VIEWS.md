@@ -11,9 +11,13 @@ retrieval-only cases from that file passed at source
 `ecb83fdc3045545c9cfd1a07ea312dfadf8f314d` in the limited
 [offline synthetic follow-up](V0_25_FOLLOWUP_SMOKE.md); they do not exercise or
 validate the `memory.views` or `memory.graph` operations described here.
-The actual graph/view cases and the expanded current-trust revocation case
-remain unexecuted. The earlier twelve-case smoke run at `066cd56` does not
-cover the later retrieval changes either. This document is not graph/view
+Later [MCP workflow evidence](V0_25_WORKFLOW_SMOKE.md) and the
+[old-format continuation workflow](V0_25_TRANSPORT_RECOVERY_SMOKE.md) exercised
+selected graph/view paths on their separately pinned sources, not this entire
+test file or the new endpoint-resolution behavior below. Its four synthetic
+cases in `tests/test_v025_conflict_resolution.py` are **not run**; their injected
+signer/trust fixtures test projection strength, not cryptography. Earlier smoke
+runs do not validate this change. This document is not full graph/view
 acceptance evidence or a deployment, cryptographic or real-host certification.
 
 ## A claim is an association, not a container
@@ -31,8 +35,11 @@ both exist. These are ordinary untrusted associations in the existing
 
 Alternatively select a `memory_id` or a free-text `query`. These selectors
 are mutually exclusive. A selected record's claim label retrieves that exact
-entity timeline. Without a claim label, only effective `supersedes`,
-`conflicts_with` and `resolves` edges build a semantic component.
+entity timeline. Without a claim label, only admission-strength-qualified
+`supersedes`, `conflicts_with` and `resolves` edges build a semantic component.
+A resolved conflict stays in that historical component so a complete view does
+not lose the original alternatives or the evidence explaining their resolution.
+A weaker source's conflict cannot join its stronger target's component.
 
 Sharing an episode, a source, a Task reference, `derived_from`, `supports`,
 `related_to` or `continues` does **not** merge two matters. Task/project/model/
@@ -59,6 +66,37 @@ admission. Quarantined/currently revoked endpoints do not contribute context
 or state effects. Effective incoming resolution takes precedence over
 supersession, then unresolved conflict, then current state; no timestamp elects
 a winning fact. Historical records are never silently erased.
+
+### Endpoint-scoped conflict resolution
+
+For a particular `conflicts_with` edge from C to A, an explicit `R resolves C`
+or `R resolves A` closes that edge only when R is currently admitted with
+strength at least `max(strength(C), strength(A))`. The same predicate drives
+per-record status, graph effects and timeline reasons. No recursive inference,
+timestamp, shared entity, task reference or merely present resolution elects
+a winner or clears a whole claim.
+
+For example, when C declares conflicts with A and B, a sufficiently strong
+`R resolves C` closes those two effects. A and B become current unless another
+effective relation applies; C remains inspectable with status `resolved`.
+An independent C2 conflict with A stays effective. Revoking R's trust reopens
+the original C conflicts on the next read if no other sufficient resolution
+remains. Canonical records, IDs, signatures and original edges never change.
+
+Resolving a lower-strength endpoint can retire that endpoint without being
+strong enough to close its conflict with a stronger record. The direct
+resolution precedence and the two-endpoint conflict threshold are distinct;
+weaker evidence must not silence the stronger side indirectly.
+
+Closed conflict reasons include `resolution_memory_id` and
+`resolution_target_id`, identifying one deterministic, currently admitted
+explicit resolution and the endpoint it references. They are null for an
+unclosed edge. These are inspectable evidence references, not author identity
+or permission. If that resolver or another state-reason endpoint is outside
+the selected record page, `external_state_relations` and
+`state_is_page_local` are true and no complete-history consolidation proposal
+is offered. Current state can use a newer resolver even when `through` excludes
+its record from the frozen page; the witness ID makes that distinction visible.
 
 At most eight state-reason edges are included per timeline entry; a separate
 flag marks omitted reasons. Per-entry text/entity display is also bounded.
@@ -125,9 +163,24 @@ deletion, policy change, tool call or agent execution.
 Replace the synthetic ID with an admitted record ID. The operation follows
 both incoming and outgoing references for neighborhood discovery but preserves
 each edge's original source, target and type. All seven record/v1 relation
-types can be inspected. `state_effective` separately tells whether a semantic
-edge meets the existing admission-strength rule; other displayed references
-do not acquire state-changing power.
+types can be inspected. The original directional boundary remains explicit:
+
+- `state_effective` describes eligibility to affect the **target**. A weaker
+  source cannot change a stronger target's state.
+- `source_state_effective` describes the source's own conflict effect. An
+  unresolved weaker `conflicts_with` source can still be `conflicted` itself
+  while the stronger target stays current. Non-conflict edges have no source
+  effect. A sufficient endpoint resolution closes both directions.
+- `state_effective_reason` is `admitted_relation`, `weaker_than_target`,
+  `explicit_endpoint_resolution` or `non_state_relation`. A closed conflict
+  retains its original type and carries the resolution witness described above.
+
+These flags describe relation effects before the per-record status precedence
+rules, not instructions or evidence that either assertion is true. Timeline
+`state_relations` uses the same fields. A weaker source's own conflict reason
+is included even when its stronger target lies outside the selected component;
+this disclosure does not merge the components. Other displayed references do
+not acquire state-changing power.
 
 Traversal has hard depth/node/edge/record-byte bounds and reports reasons,
 frontier IDs, frontier truncation and observed depth. Select an admitted

@@ -215,18 +215,52 @@
         "text": {"type": "string", "maxLength": 1024},
         "text_truncated": {"type": "boolean"},
         "status": {"enum": ["current", "superseded", "conflicted", "resolved"]},
-        "verification": {"type": "object", "required": ["eligible_for_context", "grants_authority"], "properties": {"eligible_for_context": {"const": true}, "grants_authority": {"const": false}}}
+        "verification": {"type": "object", "required": ["eligible_for_context", "grants_authority"], "properties": {"eligible_for_context": {"const": true}, "grants_authority": {"const": false}}},
+        "state_relations": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/edge"}},
+        "state_relations_truncated": {"type": "boolean"}
       }
     },
     "edge": {
       "type": "object",
-      "required": ["source_id", "target_id", "type", "state_effective"],
+      "required": ["source_id", "target_id", "type", "state_effective", "source_state_effective", "state_effective_reason", "resolution_memory_id", "resolution_target_id"],
       "properties": {
         "source_id": {"$ref": "common.schema.json#/$defs/memory_id"},
         "target_id": {"$ref": "common.schema.json#/$defs/memory_id"},
         "type": {"enum": ["related_to", "derived_from", "supports", "supersedes", "conflicts_with", "resolves", "continues"]},
-        "state_effective": {"type": "boolean"}
+        "state_effective": {"type": "boolean"},
+        "source_state_effective": {"type": "boolean"},
+        "state_effective_reason": {"enum": ["non_state_relation", "weaker_than_target", "explicit_endpoint_resolution", "admitted_relation"]},
+        "resolution_memory_id": {"anyOf": [{"$ref": "common.schema.json#/$defs/memory_id"}, {"type": "null"}]},
+        "resolution_target_id": {"anyOf": [{"$ref": "common.schema.json#/$defs/memory_id"}, {"type": "null"}]}
       },
+      "allOf": [
+        {
+          "if": {"properties": {"state_effective_reason": {"const": "explicit_endpoint_resolution"}}},
+          "then": {
+            "properties": {
+              "type": {"const": "conflicts_with"}, "state_effective": {"const": false},
+              "resolution_memory_id": {"$ref": "common.schema.json#/$defs/memory_id"},
+              "resolution_target_id": {"$ref": "common.schema.json#/$defs/memory_id"}
+            }
+          },
+          "else": {"properties": {"resolution_memory_id": {"type": "null"}, "resolution_target_id": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"state_effective_reason": {"const": "admitted_relation"}}},
+          "then": {"properties": {"state_effective": {"const": true}, "type": {"enum": ["supersedes", "conflicts_with", "resolves"]}}},
+          "else": {"properties": {"state_effective": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "conflicts_with"}, "state_effective_reason": {"not": {"const": "explicit_endpoint_resolution"}}}},
+          "then": {"properties": {"source_state_effective": {"const": true}}},
+          "else": {"properties": {"source_state_effective": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"state_effective_reason": {"const": "non_state_relation"}}},
+          "then": {"properties": {"type": {"enum": ["related_to", "derived_from", "supports", "continues"]}}},
+          "else": {"properties": {"type": {"enum": ["supersedes", "conflicts_with", "resolves"]}}}
+        }
+      ],
       "additionalProperties": false
     },
     "proposal": {

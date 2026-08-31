@@ -73,7 +73,7 @@ synthetic schema cases are in `tests/test_v025_mcp_bounds.py`; they were not run
 | --- | --- |
 | `capabilities` | Zero-write, network-free original capability fields plus an explicit compatibility profile |
 | `session.open` | Issue/reuse an opaque local continuity handle; non-compact reasons may retry local intents and enter one separately configured sync window |
-| `turn.input` | Scan and NFC-normalize the visible prompt, stage it privately, return current local evidence |
+| `turn.input` | Scan and NFC-normalize the visible prompt and return current local evidence; stage text only when capture is enabled, otherwise issue a terminal metadata-only handle |
 | `turn.commit` | Atomically accept the visible intent, frozen projection and old-format receipt; then attempt local canonical materialization; never launch a worker or access a network |
 | `turn.abort` | Abort an uncommitted input; an already accepted pending/done commit remains committed and is never falsely rolled back |
 | `session.close` | Close local correlation, discard only staged text, retain accepted intents and all canonical memory |
@@ -101,8 +101,52 @@ flush_local(config_path, limit=4) -> local-only retry report
 
 The configuration is loaded exclusively through `ClientConfig.load`; a request
 cannot choose another Vault. Existing installations must explicitly enable
-`capture_visible_turns` before new `turn.input`/`turn.commit` operations. Explicit
-memory reads and semantic writes do not imply automatic host capture.
+`capture_visible_turns` before new visible-text staging or `turn.commit`
+operations. Input-time recall remains available while capture is disabled.
+Explicit memory reads and semantic writes do not imply automatic host capture.
+
+### Capture-disabled input
+
+With `capture_visible_turns: false`, `turn.input` still returns the original
+closed result fields: a real `continuity_handle`, a nonempty `turn_handle`,
+`evidence_context`, and `network_accessed: false`. This preserves the v0.21
+reference adapter's nonempty-handle checks; it does not substitute a null or
+invented committable handle and require that adapter to change protocols.
+
+Only bounded local metadata is written for a new input: its opaque handle,
+NFC-normalized input hash, timestamp and exact request/response receipt. No new
+user/assistant text, canonical memory, pending capture intent or frozen capture
+projection is written. Internally the handle is already terminal
+(`phase: aborted`, `abort_reason: capture_disabled`), with null body, assistant
+hash, commit receipt and memory reference. The existing total turn/receipt and
+control-file limits still apply; these sealed entries are not pending saves.
+`accepted_local` acknowledges this local correlation metadata, not a saved
+conversation. Recall still uses the configured Vault and current eligibility
+checks, and an unavailable recall can produce a degraded metadata acknowledgment.
+
+Exact input retries retain the original receipt/handle and refresh local
+evidence. Another request can reuse a sealed read-only handle only while
+capture remains disabled and the normalized input hash agrees. The old
+adapter's next `turn.abort` can acknowledge that handle idempotently, including
+a changed abort reason, without removing its seal. Re-enabling capture cannot
+resurrect it: a new input using it conflicts, and a final commit reports
+`turn_aborted`. Fresh capture requires a newly accepted turn. A prior receipt
+for an input or pending commit accepted before opt-out remains readable as
+history; its replay does not resume canonical writes while capture is disabled.
+
+Ordinary `turn.input` never calls flush or starts a worker. The existing
+`session.open` metadata and separately authorized non-compact sync-window
+semantics are unchanged, as are explicit abort/close and sync commands. Unlike
+the Codex native disabled-capture recall branch, this compatibility path is
+therefore not described as performing zero filesystem writes.
+
+[`tests/test_v025_capture_disabled_recall.py`](../tests/test_v025_capture_disabled_recall.py)
+contains one focused, not-yet-run unsigned workflow for real recall, old-shaped
+handles, exact retry, terminal aborts, opt-out of existing pending jobs and
+re-enable rejection. Two pre-save failures create the pending setup; negative
+guards forbid capture, canonical writers and worker notifications during the
+recall checks. It does not execute a real old host, signing/revocation, provider,
+process or full recovery. Earlier reports do not cover this correction.
 
 An explicit local flush can recover an existing private SQLite rollback journal
 when its normal read-only snapshot fails. It reloads the exact configuration,

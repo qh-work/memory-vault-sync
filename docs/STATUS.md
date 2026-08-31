@@ -65,6 +65,22 @@ present. A production publisher root/channel is not provisioned.
 
 ## Latest guarded workflows
 
+The current source also contains four later behavior repairs: traceable excerpts
+when a whole hit exceeds a small context budget; bounded near-duplicate/source
+diversity; endpoint-specific conflict resolution with current-trust witnesses;
+and local recall while automatic capture is disabled, including valid but
+noncommittable old-host handles. The corresponding new fixtures are
+`test_v025_context_budget.py`, `test_v025_retrieval_diversity.py`,
+`test_v025_conflict_resolution.py` and `test_v025_capture_disabled_recall.py`.
+They are authored review material, **not executed results**. Older campaigns and
+the packages built from `91111c518d62` do not include or validate these repairs.
+
+One additional real v0.21 gap was identified in source: a native Stop event with
+only one visible side could retain `partial_active_turn` evidence. The current
+full-pair hook route still requires both sides. This is being implemented; it
+is different from retrying an interrupted two-write save and is not covered by
+the earlier partial-write result.
+
 The [workflow report](V0_25_WORKFLOW_SMOKE.md) records four passing methods on
 `c65fd82f863e4e05d9ec53622eceb584525fb52e`: all eleven embedded MCP tools, all ten
 old host operations, signed directory review/resolve/requeue with independent

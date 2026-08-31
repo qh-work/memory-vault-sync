@@ -237,9 +237,32 @@ completed receipts can still be read, and abort/close can clear uncommitted
 local text. Recovery may acknowledge an already completed save after opt-out,
 or finish cleanup backed by an already durable cancellation receipt, but cannot
 resume a partial save or create a new cancellation merely from a cached phase.
+Disabling capture does not disable bounded local recall: start/input callbacks
+can still return untrusted evidence through the configured Vault and its current
+admission/trust checks. In the Codex visible-hook route, these disabled-capture
+callbacks do not construct staging state, retry pending writes, or notify sync
+or managed-update workers. A Stop callback cannot resume an earlier pending
+save after opt-out. Independently requested sync operations keep their existing
+authorization boundary.
+
+The separate [v0.21 compatibility bridge](COMPATIBILITY.md#capture-disabled-input)
+preserves the old adapter's required nonempty handles using bounded, terminal
+metadata-only input receipts. Those contain hashes and correlation handles,
+not newly captured text or a future commit intent. This is not a zero-write
+claim for that old bridge; the native Codex read-only recall branch above does
+not need such new receipts.
+
 Keep pending evidence for explicit repair; do not delete the control directory
 to force a commit or erase cancellation state. Corrupt or retargeted control
 state is rejected, not silently reset.
+
+The focused unsigned fixture
+[`tests/test_v025_capture_disabled_recall.py`](../tests/test_v025_capture_disabled_recall.py)
+was authored for this opt-out correction and has not been run. It uses real
+local retrieval and envelopes, with two injected pre-save failures to leave
+earlier jobs pending and negative guards against resuming them. Older campaign
+results on this page do not validate this later change, live host callbacks,
+signed revocation, or a full restore workflow.
 
 The focused cancellation cases in
 [`tests/test_v025_host_recovery.py`](../tests/test_v025_host_recovery.py) use only

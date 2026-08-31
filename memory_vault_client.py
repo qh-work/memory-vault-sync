@@ -849,6 +849,16 @@ def handle_hook(config: ClientConfig, action: str, value: Any) -> Mapping[str, A
     config = current
     # Ignore all unrelated event fields, especially transcript_path, cwd,
     # permission_mode and arbitrary extension fields. They are not authority.
+    if not config.capture_visible_turns:
+        # Opting out of new capture does not opt out of the already configured
+        # local reader. Do not construct staging state, recover pending writes,
+        # or notify sync/update workers from this read-only branch.
+        if action == "session-start":
+            return _hook_recall(config, "SessionStart", "Current goals, decisions, continuity and unresolved next actions")
+        if action == "user-prompt-submit":
+            prompt = _text(value.get("prompt"), maximum=MAX_TURN_PART_BYTES)
+            return _hook_recall(config, "UserPromptSubmit", _excerpt(prompt, MAX_QUERY_BYTES - 128))
+        return {}
     if action == "session-start":
         notify_sync(config, "session-start")
         # Only the separately configured, user-selected managed installation
@@ -859,15 +869,11 @@ def handle_hook(config: ClientConfig, action: str, value: Any) -> Mapping[str, A
             with contextlib.suppress(Exception):
                 from memory_vault_install import notify as notify_update
                 notify_update(_absolute(managed_root), Path(__file__).absolute().with_name("memory_vault_install.py"))
-        if not config.capture_visible_turns:
-            return {}
         # Only a bounded number of local durable jobs is replayed. Network
         # delivery remains asynchronous and cannot delay this recall path.
         with contextlib.suppress(MemoryError, OSError):
             retry_pending(config, limit=4)
         return _hook_recall(config, "SessionStart", "Current goals, decisions, continuity and unresolved next actions")
-    if not config.capture_visible_turns:
-        return {}
     key = _turn_key(value)
     state = HookState(config)
     if action == "user-prompt-submit":
