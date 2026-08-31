@@ -16,7 +16,7 @@ python3 scripts/launcher.py pack copy --source /absolute/new/export-pack --out /
 python3 scripts/launcher.py pack unpack --source /absolute/other-device/copied-pack --out /absolute/new/received.ndjson
 ```
 
-`create` reads a regular, explicitly selected file of at most 512 MiB, splits it
+`create` reads a regular, explicitly selected file of at most 2 GiB, splits it
 into 4 MiB chunks and compresses each independently. It records compressed and
 uncompressed hashes, chunk order, total bytes and a whole-file digest. The
 manifest contains no source filename or private local path. Source mutation
@@ -30,11 +30,20 @@ making an ordinary separate copy first.
 
 `copy` operates between selected local/mounted directories. It processes at most
 32 uncached chunks by default; repeat the exact command for the next bounded
-portion, or select `--maximum-chunks` up to 128. Completed chunks are retained;
+portion, or select `--maximum-chunks` up to 512. Completed chunks are retained;
 the destination manifest is published only after all chunks are present. Its
 private `COPY_STATE.json` caches verified file metadata so unchanged chunks do
 not need repeated hashing on every retry. This cache assumes the operator's
 filesystem is trusted; it is **not an authentication boundary**.
+
+The 2 GiB limit restores byte-carriage capacity for the old taskless exports;
+the published v0.25.0 client was limited to 512 MiB. This is an unreleased
+capacity correction, not a rewrite of that release. Existing file-pack/v1
+manifests and chunk hashes are unchanged. The implementation still reads and
+compresses only one 4 MiB chunk at a time, has at most 512 chunk descriptors,
+and keeps the default 32-uncached-chunk copy budget. Canonical record sizes and
+signed synchronization limits do not change. This is a bounded capacity
+contract, not a performance claim or support for arbitrarily large files.
 
 `unpack` always verifies every compressed hash, bounded decompression, plaintext
 chunk hash and final file hash. It publishes only to a **new file** after full

@@ -28,7 +28,10 @@ import memory_vault_storage as protected_storage
 SCHEMA = "memory-vault-file-pack/v1"
 COPY_SCHEMA = "memory-vault-pack-copy/v1"
 CHUNK_BYTES = 4 * 1024 * 1024
-MAX_SOURCE_BYTES = 512 * 1024 * 1024
+# Keep opaque byte carriage large enough for the old taskless 2 GiB exports.
+# Memory remains bounded by one 4 MiB chunk; copy's default work budget is
+# unchanged. This does not enlarge canonical records or signed sync groups.
+MAX_SOURCE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_COMPRESSED_BYTES = CHUNK_BYTES + 64 * 1024
 MAX_CHUNKS = MAX_SOURCE_BYTES // CHUNK_BYTES
 MAX_MANIFEST_BYTES = 128 * 1024
