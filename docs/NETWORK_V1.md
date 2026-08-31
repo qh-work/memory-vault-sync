@@ -1,6 +1,6 @@
 # network-v1: optional private communication carrier
 
-Status: 0.26.0-alpha.1 reference implementation. Core canonical records and
+Status: 0.26.0-alpha.2 reference implementation. Core canonical records and
 share-v1 are unchanged. This independently defined network has no MCP, A2A,
 Matrix, Nostr or Graphiti adapter or compatibility claim. These projects are
 design references only, with no imported task/room/relay/database model.

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.26.0-alpha.2 — Package the current network repairs
+
+- Include authenticated replacement-node replica repair from retained sender queues.
+- Add opt-in deterministic retrieval v2 and validate network storage proofs.
+- Include signed topic policy, grants, subscriptions and durable authority state.
+  Encrypted topic fan-out remains unfinished.
+- Refresh current download and agent discovery entrypoints. Keep the eleven-tool
+  MCP interface and canonical memory records unchanged.
+- This is an explicitly installed preview, not a stable or thousand-agent release.
+
 ## 0.26.0-alpha.1 — Private communication-memory network
 
 - Add an optional six-operation native Python/NDJSON/trusted HTTP endpoint

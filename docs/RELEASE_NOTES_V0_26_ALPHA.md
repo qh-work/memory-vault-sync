@@ -1,4 +1,18 @@
-# 0.26.0-alpha.1 development evidence
+# 0.26 alpha development and package evidence
+
+## Alpha.2 package refresh
+
+Version `0.26.0-alpha.2` packages the post-alpha.1 source campaigns described below:
+replacement-node queue repair, deterministic retrieval v2, storage proof validation,
+and signed topic/subscription authority. No new default network, identity or service
+is activated. The existing eleven-tool MCP interface is preserved.
+
+The package version and download pointers are refreshed together. Historical test
+counts below remain tied to their recorded source. See the alpha.2 release body for
+fresh package execution, source commit and archive hashes; an installation has its
+own private verification receipt. Topic authorization does not yet provide encrypted
+topic fan-out, and real-model, live-cloud and scale gates remain open.
+
 
 Date: 2026-08-31. The earlier sections record pre-publication candidate work
 on `feat/v0.26-network-alpha`, originally based on
