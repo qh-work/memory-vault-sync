@@ -7,13 +7,12 @@ import unittest
 from unittest.mock import patch
 
 from memory_vault import canonical_bytes, strict_json_loads
-from memory_vault_network_admin import initialize, invite_candidate
+from memory_vault_network_admin import initialize
 from memory_vault_network_control import create_authority_app
 from memory_vault_relay import create_app as create_relay_app
-from memory_vault_storage import atomic_write
-from memory_vault_trust import Identity
 from memory_vault_trial import (RESULT_SCHEMA, SERVICE_SCHEMA, STATE_PREFIX, TRUST_SCHEMA,
                                 _validate_enrollment, cleanup_trial_state, main, run_trial)
+from memory_vault_trial_coordinator import TrialCoordinator, initialize_trial_coordinator
 from memory_vault_trial_peer import SyntheticReferencePeer
 from tests.test_network_worker import Transport
 
@@ -39,34 +38,26 @@ class TrialEndpointTests(unittest.TestCase):
                        "issuer_public_key": issuer, "reference_peer_key_id": initialized["owner_key_id"]}
             trust = {"schema_version": TRUST_SCHEMA,
                      "enrollment_url": authority_url + "/v1/trial/enroll", "service": service}
-            invitation_count = 0
             last_enrollment = None
+            run_code = "synthetic-run-code-00000000000001"
+            coordinator_config = root / "coordinator.json"
+            initialize_trial_coordinator(config=coordinator_config,
+                authority_config=owner / "authority.json", state_directory=root / "coordinator-state",
+                authority_url=authority_url, relays=[relay_url],
+                reference_peer_key_id=initialized["owner_key_id"], run_codes=[run_code])
+            coordinator = TrialCoordinator(coordinator_config)
 
             def enroll(url, body):
-                nonlocal invitation_count, last_enrollment
+                nonlocal last_enrollment
                 self.assertEqual(url, trust["enrollment_url"])
                 self.assertEqual(set(body), {"run_code", "candidate"})
                 self.assertNotIn("private_key", canonical_bytes(body).decode("utf-8"))
-                invitation_count += 1
-                candidate = root / ("candidate-" + str(invitation_count) + ".json")
-                package = root / ("invitation-" + str(invitation_count) + ".json")
-                atomic_write(candidate, canonical_bytes(body["candidate"]) + b"\n", replace=False)
-                invite_candidate(authority_config=owner / "authority.json", candidate=candidate,
-                                 output=package, lifetime_seconds=300)
-                invitation = strict_json_loads(package.read_bytes())
-                expires_at = invitation["invite"]["payload"]["expires_at"]
-                signed_service = {**service,
-                    "issued_at": invitation["invite"]["payload"]["issued_at"], "expires_at": expires_at,
-                    "synthetic_only": True, "execution_authority": False}
-                issuer_identity = Identity.load(owner / "authority-identity.json")
-                last_enrollment = {"schema_version": "memory-vault-trial-enrollment-result/v1", "state": "invited",
-                        "invitation": invitation, "service": signed_service,
-                        "service_proof": issuer_identity.sign_message(signed_service), "expires_at": expires_at}
+                last_enrollment = coordinator.enroll_bytes(canonical_bytes(body), source="127.0.0.2")
                 return last_enrollment
 
             peer = SyntheticReferencePeer(owner / "client.json", owner / "network.json", transport=transport)
             state = root / (STATE_PREFIX + "endpoint")
-            result = run_trial(service_trust=trust, run_code="synthetic-run-code-00000000000001",
+            result = run_trial(service_trust=trust, run_code=run_code,
                                state_directory=state, transport=transport,
                                enrollment_request=enroll, progress_hook=peer.step,
                                timeout_seconds=5)
@@ -92,6 +83,11 @@ class TrialEndpointTests(unittest.TestCase):
             with self.assertRaises(Exception) as bad_signature:
                 _validate_enrollment(forged, service)
             self.assertEqual(getattr(bad_signature.exception, "code", None), "trial_service_proof_invalid")
+            wrong_boundary = json.loads(json.dumps(last_enrollment))
+            wrong_boundary["service"]["relay_plaintext_access"] = True
+            with self.assertRaises(Exception) as invalid_boundary:
+                _validate_enrollment(wrong_boundary, service)
+            self.assertEqual(getattr(invalid_boundary.exception, "code", None), "trial_enrollment_invalid")
             for stored in (owner / "relay-state").rglob("*"):
                 if stored.is_file():
                     self.assertNotIn(b"memory-vault synthetic trial/v1 nonce=", stored.read_bytes())

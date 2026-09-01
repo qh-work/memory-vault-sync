@@ -200,6 +200,7 @@ def _validate_enrollment(value: Any, pinned_service: Mapping[str, Any]) -> dict[
     signed_service = object_fields(result["service"], {
         "schema_version", "network_id", "authority_url", "relays", "issuer_public_key",
         "reference_peer_key_id", "issued_at", "expires_at", "synthetic_only", "execution_authority",
+        "content_enforcement", "relay_plaintext_access",
     }, "trial_enrollment_invalid")
     static_service = validate_service({key: signed_service[key] for key in pinned_service})
     if canonical_bytes(static_service) != canonical_bytes(pinned_service):
@@ -207,7 +208,9 @@ def _validate_enrollment(value: Any, pinned_service: Mapping[str, Any]) -> dict[
     issued_at = integer(signed_service["issued_at"], minimum=1)
     service_expires_at = integer(signed_service["expires_at"], minimum=1)
     if (issued_at > service_expires_at or signed_service["synthetic_only"] is not True
-            or signed_service["execution_authority"] is not False):
+            or signed_service["execution_authority"] is not False
+            or signed_service["content_enforcement"] != "endpoint-only"
+            or signed_service["relay_plaintext_access"] is not False):
         raise _trial_error("trial_enrollment_invalid")
     try:
         verified = PublicKeyTrust([pinned_service["issuer_public_key"]]).verify_message(
