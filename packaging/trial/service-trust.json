@@ -1,4 +1,1 @@
-{
-  "schema_version": "memory-vault-trial-service-trust/v1",
-  "state": "unconfigured"
-}
+{"enrollment_url":"https://commands-harvard-kingdom-tube.trycloudflare.com/v1/trial/enroll","schema_version":"memory-vault-trial-service-trust/v1","service":{"authority_url":"https://mixer-connect-album-counseling.trycloudflare.com","issuer_public_key":{"algorithm":"Ed25519","key_id":"ed25519_f2ff4607dd5ea705c9bd78dc5a6f0024c5a9c0b4ce12d67818dc05197fd076de","public_key":"MA3cSWxG4L28+wQ1vqkOWk9sBt8U8EoC4aJp++hMYsc=","schema_version":"universal-memory-public-key/v1"},"network_id":"memory-vault-alpha3-synthetic-trial-20260901","reference_peer_key_id":"ed25519_cd9ccc794a74a5af90e10b561c33dba067dc47053c00b9dafafb37111bca9c7d","relays":["https://achievement-proper-enough-lawyers.trycloudflare.com"],"schema_version":"memory-vault-trial-service/v1"}}

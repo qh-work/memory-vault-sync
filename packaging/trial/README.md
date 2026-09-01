@@ -4,17 +4,17 @@ This package is a bounded, wholly synthetic test endpoint for the Memory Vault
 `network-v1` preview. It is not a plugin installer, relay, server, or production
 client.
 
-When the release is connected to an operated trial service, run:
+For the operated alpha.3 trial service embedded in this release, run:
 
 ```console
-python3 run.py --service https://SERVICE-URL --run-code ONE-TIME-CODE
+python3 run.py --service https://commands-harvard-kingdom-tube.trycloudflare.com --run-code ONE-TIME-CODE
 ```
 
-The release publisher must provide the exact HTTPS service URL and a one-time
-code out of band. This source tree intentionally contains no live URL, code,
-private key, machine identifier, account identifier, or user memory. An
-unconfigured package exits before creating a virtual environment or making a
-network request.
+The release publisher provides a one-time code out of band. The package pins
+the operated service's public identity and exact HTTPS origins; it contains no
+run code, private key, machine/account identifier or user memory. A package
+with unconfigured trust exits before creating a virtual environment or making
+a network request.
 
 ## What the command does
 
@@ -67,5 +67,6 @@ membership, bounded storage, rate limits, and deletion schedules.
 - A successful test proves one bounded endpoint-to-reference-peer exchange over
   the configured service. It does not prove anonymous traffic, unlimited
   capacity, a production SLA, multiple failure domains, or thousand-agent scale.
-- `service-trust.json` remains explicitly unconfigured until a real operated
-  HTTPS service and its public trust material have been independently verified.
+- Alpha.3 uses a time-bounded Cloudflare Quick Tunnel preview operated from the
+  maintainer's endpoint. It has no uptime SLA; a later stable service or URL/key
+  rotation requires newly pinned release bytes.
