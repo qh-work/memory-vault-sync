@@ -11,13 +11,31 @@ from memory_vault_network_admin import initialize
 from memory_vault_network_control import create_authority_app
 from memory_vault_relay import create_app as create_relay_app
 from memory_vault_trial import (RESULT_SCHEMA, SERVICE_SCHEMA, STATE_PREFIX, TRUST_SCHEMA,
-                                _validate_enrollment, cleanup_trial_state, main, run_trial)
+                                _new_state_root, _validate_enrollment, cleanup_trial_state, main, run_trial)
 from memory_vault_trial_coordinator import TrialCoordinator, initialize_trial_coordinator
 from memory_vault_trial_peer import SyntheticReferencePeer
 from tests.test_network_worker import Transport
 
 
 class TrialEndpointTests(unittest.TestCase):
+    def test_automatic_state_resolves_symlinked_system_temporary_parent(self):
+        with tempfile.TemporaryDirectory(prefix="memory-vault-trial-parent-") as temporary:
+            root = Path(temporary).resolve()
+            actual = root / "actual"
+            actual.mkdir()
+            alias = root / "alias"
+            try:
+                alias.symlink_to(actual, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("directory symlinks unavailable")
+            with patch("memory_vault_trial.tempfile.gettempdir", return_value=str(alias)):
+                state = _new_state_root(None)
+            try:
+                self.assertEqual(state.parent, actual)
+                self.assertTrue(state.is_dir())
+            finally:
+                cleanup_trial_state(state)
+
     def test_disposable_endpoint_runs_real_encrypted_round_trip(self):
         from starlette.testclient import TestClient
         with tempfile.TemporaryDirectory(prefix="memory-vault-trial-test-") as temporary, ExitStack() as stack:

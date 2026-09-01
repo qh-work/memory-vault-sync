@@ -123,7 +123,11 @@ def load_service_trust(path: Path) -> dict[str, Any]:
 
 def _new_state_root(selected: Path | None) -> Path:
     if selected is None:
-        root = Path(tempfile.mkdtemp(prefix=STATE_PREFIX)).absolute()
+        # macOS exposes /var as a symlink to /private/var. The secure storage
+        # layer correctly rejects symlinked ancestors, so create the private
+        # directory below the resolved system temporary parent.
+        temporary_parent = Path(tempfile.gettempdir()).resolve(strict=True)
+        root = Path(tempfile.mkdtemp(prefix=STATE_PREFIX, dir=temporary_parent)).resolve(strict=True)
     else:
         candidate = selected.expanduser().absolute()
         if candidate.name.startswith(STATE_PREFIX) is False or os.path.lexists(candidate):
