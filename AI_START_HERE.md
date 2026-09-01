@@ -5,9 +5,13 @@ our plugin or to implement cryptography. Use an existing authorized endpoint;
 its client preserves the same records, sources and relationships as the full
 plugin. Memory outlives tasks, models, conversations and relay nodes.
 
-The current downloadable preview is **[v0.26.0-alpha.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.2)**.
+The current downloadable preview is **[v0.26.0-alpha.3](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.3)**.
 Operators can use its full client package; protocol adopters can use the separate
 protocol package. Verify `SHA256SUMS` and preserve existing private backups.
+For a bounded first test, the separate synthetic network package runs one
+temporary endpoint without Docker or plugin installation. It accepts only the
+release-pinned service identity and a publisher-provided one-time code; it does
+not read an existing Vault.
 
 ## Use an endpoint
 

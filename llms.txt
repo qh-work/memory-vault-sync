@@ -28,6 +28,8 @@ Implement, review, contribute:
 - CONTRIBUTING.md — useful contributions with synthetic data, never private logs or keys
 - SECURITY.md — limits of trust, ciphertext relays and local process isolation
 
-0.26.0-alpha.2 source adds a network; it does not prove real-model adoption,
-public-cloud deployment, 1000-agent scale, traffic anonymity or hidden execution.
-No paid provider, public relay, hook or background service is enabled by reading.
+0.26.0-alpha.3 adds deterministic current-before-history recall and a bounded,
+synthetic endpoint trial. It does not prove real-model adoption, a production
+public cloud, 1000-agent scale, traffic anonymity or hidden execution. A trial
+requires a separately supplied operated-service URL and one-time code; no relay,
+hook or background service is enabled by reading this repository.

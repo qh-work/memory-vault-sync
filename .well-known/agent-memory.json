@@ -1,19 +1,20 @@
 {
   "schema_version": "memory-vault-discovery/v1",
   "name": "Memory Vault",
-  "implementation_version": "0.26.0-alpha.2",
+  "implementation_version": "0.26.0-alpha.3",
   "implementation_status": "alpha_preview",
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
-  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.2",
+  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.3",
   "release_publication_verified": false,
   "release_assets": {
-    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.2/memory-vault-client-v0.26.0-alpha.2.zip",
-    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.2/memory-vault-protocol-v0.26.0-alpha.2.zip",
-    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.2/memory-vault-review-v0.26.0-alpha.2.zip",
-    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.2/SHA256SUMS"
+    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/memory-vault-client-v0.26.0-alpha.3.zip",
+    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/memory-vault-protocol-v0.26.0-alpha.3.zip",
+    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/memory-vault-review-v0.26.0-alpha.3.zip",
+    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/memory-vault-network-test-v0.26.0-alpha.3.zip",
+    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/SHA256SUMS"
   },
-  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.1",
+  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.2",
   "relative_links_base": "this discovery document",
   "start_here": "../AI_START_HERE.md",
   "specification": "../PROTOCOL.md",

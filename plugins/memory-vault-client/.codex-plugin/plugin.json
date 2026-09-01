@@ -1,6 +1,6 @@
 {
   "name": "memory-vault-client",
-  "version": "0.26.0-alpha.2",
+  "version": "0.26.0-alpha.3",
   "description": "Full authorized client for the open memory protocol: MCP, visible-turn capture, queued signed sync, host adapters and recovery.",
   "author": {
     "name": "Memory Vault contributors"

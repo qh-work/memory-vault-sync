@@ -1,5 +1,27 @@
 # 0.26 alpha development and package evidence
 
+## Alpha.3 current-state recall and synthetic endpoint trial
+
+Version `0.26.0-alpha.3` makes record lifecycle an explicit deterministic
+retrieval tier: current records sort before superseded/resolved history, then by
+score and memory ID. Python and TypeScript apply the same rule before response
+byte budgets and after scoring. Historical records remain unchanged and can
+still appear after current evidence.
+
+The release also adds a separate no-Docker, all-synthetic endpoint trial. Its
+bootstrap verifies an exact package inventory, creates a temporary private venv,
+installs the hash-locked client dependency set, and refuses to start without a
+release-pinned service identity. A bounded coordinator consumes one-time codes
+and sees only candidate public keys; a fixed reference peer receives, saves,
+acknowledges and returns synthetic encrypted content without executing it.
+
+The relay now reuses one outstanding anonymous status challenge and rolls only
+completed cache rows, so repeated unauthenticated GET requests cannot exhaust
+the challenge table. The trial proves one bounded endpoint-to-reference-peer
+exchange when an operated HTTPS service and code are separately supplied. It is
+not a public-service SLA, multi-failure-domain guarantee, real-model evaluation,
+traffic-anonymity system or scale certification.
+
 ## Alpha.2 package refresh
 
 Version `0.26.0-alpha.2` packages the post-alpha.1 source campaigns described below:

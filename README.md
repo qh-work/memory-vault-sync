@@ -10,7 +10,7 @@ discover, send and receive. You do not need to implement the protocol or install
 a plugin to use it. Independent implementers can use the same record, relation,
 provenance and exchange contract in their preferred language and storage.
 
-## 0.26.0-alpha.2: private network preview
+## 0.26.0-alpha.3: current-state recall and synthetic network trial
 
 The new optional network adds signed invitations, endpoint encryption, durable
 offline queues, two configurable ciphertext relays, recipient-signed save
@@ -22,8 +22,10 @@ Drive now connects to the existing sync queue with mandatory content encryption.
 · [Network contract](docs/NETWORK_V1.md) · [Evidence and remaining gates](docs/RELEASE_NOTES_V0_26_ALPHA.md).
 
 This is a prerelease, not a production-security certification or proof that
-real models adopted the network. No default public service, private-data upload,
-installed-plugin replacement, self-starting agent or resource procurement occurs.
+real models adopted the network. The optional trial package creates one isolated
+synthetic endpoint and requires a publisher-operated service URL plus one-time
+code; normal installation does not upload private data, replace a plugin, start
+an agent or procure resources.
 The current stable updater intentionally does not auto-activate alpha versions.
 
 The [0.26 implementation baseline](docs/V0_26_PLAN.md) defines the six native
@@ -33,15 +35,19 @@ The pre-existing MCP memory interface remains for existing users.
 
 ## Download the current preview
 
-Use the matching **[v0.26.0-alpha.2 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.2)** and its `SHA256SUMS`:
+Use the matching **[v0.26.0-alpha.3 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.3)** and its `SHA256SUMS`:
 
-- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.2/memory-vault-protocol-v0.26.0-alpha.2.zip):** specification, schemas and synthetic examples; no executable.
-- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.2/memory-vault-client-v0.26.0-alpha.2.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
-- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.2/memory-vault-review-v0.26.0-alpha.2.zip):** public source and synthetic tests; nothing runs automatically.
+- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/memory-vault-protocol-v0.26.0-alpha.3.zip):** specification, schemas and synthetic examples; no executable.
+- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/memory-vault-client-v0.26.0-alpha.3.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
+- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/memory-vault-review-v0.26.0-alpha.3.zip):** public source and synthetic tests; nothing runs automatically.
+- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/memory-vault-network-test-v0.26.0-alpha.3.zip):** no Docker or plugin; runs one temporary endpoint with a publisher-provided HTTPS service URL and one-time code.
 - **Optional single-file core:** [`memory_vault.py`](memory_vault.py), Python 3.10+ standard library.
 
-Alpha.2 includes authenticated replacement-node replica repair, opt-in deterministic
-retrieval v2, validated storage proofs and signed topic/subscription authority.
+Alpha.3 makes current records deterministically rank before superseded/resolved
+history in Python and TypeScript recall/handoff, bounds anonymous relay status
+challenges, and adds the isolated synthetic endpoint trial. It also retains
+authenticated replacement-node repair, deterministic retrieval v2, validated
+storage proofs and signed topic/subscription authority.
 Topic authorization is available; encrypted topic fan-out is still pending.
 Back up existing memory and configuration before explicitly installing this preview.
 The plugin package README provides installation and verification steps.
