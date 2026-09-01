@@ -184,7 +184,7 @@ def trial_service_configured(source_tree: ReleaseSource) -> bool:
         return (parsed.scheme == "https" and bool(parsed.hostname)
                 and not parsed.username and not parsed.password
                 and not parsed.query and not parsed.fragment
-                and (not enrollment or parsed.path == "/v1/trial/enroll"))
+                and parsed.path in ({"/v1/trial/enroll"} if enrollment else {"", "/"}))
 
     if (not secure_url(value["enrollment_url"], enrollment=True)
             or not secure_url(service["authority_url"])
