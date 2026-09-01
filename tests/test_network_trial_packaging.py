@@ -126,6 +126,7 @@ class NetworkTrialPackagingTests(unittest.TestCase):
         self.assertNotIn("urllib.request", source)
         self.assertNotIn("input(", source)
         self.assertIn("service_trust_override_forbidden", source)
+        self.assertIn("sys.path.insert(0,sys.argv.pop(1))", source)
         readme = (ROOT / "packaging/trial/README.md").read_text()
         for boundary in ("wholly synthetic", "never reads an existing Memory Vault",
                          "traffic anonymity", "not a publisher signature"):

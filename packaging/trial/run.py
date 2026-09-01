@@ -183,7 +183,7 @@ def _run(arguments: list[str]) -> int:
     root = script.resolve().parent
     manifest = _verify_package(root)
     trust = _verify_service_trust(root, manifest)
-    endpoint = root / "runtime" / "memory_vault_trial.py"
+    runtime = root / "runtime"
     lock = root / "requirements-network-lock.txt"
     environment = _clean_environment()
     workspace = Path(tempfile.mkdtemp(prefix="memory-vault-trial-bootstrap-")).resolve()
@@ -202,7 +202,12 @@ def _run(arguments: list[str]) -> int:
         )
         if install.returncode != 0:
             raise TrialBootstrapError("locked_dependency_install_failed")
-        command = [str(python), "-I", "-B", str(endpoint),
+        # Isolated mode deliberately omits the script directory from sys.path.
+        # Add only the already hash-verified flat runtime, never cwd, user site,
+        # PYTHONPATH, or a caller-controlled import path.
+        entry = ("import sys;sys.path.insert(0,sys.argv.pop(1));"
+                 "from memory_vault_trial import main;raise SystemExit(main(sys.argv[1:]))")
+        command = [str(python), "-I", "-B", "-c", entry, str(runtime),
                    "--service-trust", str(trust), *arguments]
         result = subprocess.run(
             command,
