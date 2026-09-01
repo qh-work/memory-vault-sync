@@ -41,8 +41,10 @@ class NetworkTrialPackagingTests(unittest.TestCase):
     def test_trial_package_uses_an_exact_endpoint_only_source_allowlist(self) -> None:
         required = literal(CLIENT_BUILDER, "REQUIRED_MODULES")
         extras = literal(RELEASE, "TRIAL_EXTRA_MODULES")
+        review_servers = literal(RELEASE, "TRIAL_REVIEW_SERVER_MODULES")
         sources = dict(literal(RELEASE, "TRIAL_PACKAGE_SOURCES"))
         self.assertEqual(extras, ("memory_vault_trial.py",))
+        self.assertEqual(set(review_servers), {"memory_vault_trial_coordinator.py", "memory_vault_trial_peer.py"})
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(sources), {
             "README.md", "run.py", "service-trust.json",
@@ -50,9 +52,8 @@ class NetworkTrialPackagingTests(unittest.TestCase):
         })
         self.assertEqual(sources["run.py"], "packaging/trial/run.py")
         self.assertEqual(sources["service-trust.json"], "packaging/trial/service-trust.json")
-        self.assertFalse({"memory_vault_trial_coordinator.py", "memory_vault_trial_peer.py"}
-                         & (set(required) | set(extras)))
-        for name in (*required, *extras, *sources.values()):
+        self.assertFalse(set(review_servers) & (set(required) | set(extras)))
+        for name in (*required, *extras, *review_servers, *sources.values()):
             path = ROOT / name
             self.assertTrue(path.is_file() and not path.is_symlink(), name)
             self.assertLessEqual(path.stat().st_size, 2 * 1024 * 1024, name)

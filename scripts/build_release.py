@@ -68,10 +68,13 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_network_worker.py", "tests/test_network_ranking_v2.py", "tests/test_network_storage_receipts.py",
     "tests/test_network_topics.py", "tests/test_network_topic_store.py", "tests/test_network_typescript_topics.py",
     "tests/test_network_topic_http.py",
+    "tests/test_network_trial.py",
+    "tests/test_network_trial_coordinator.py",
     "tests/test_network_trial_packaging.py",
 )
 TRIAL_EXTRA_MODULES = ("memory_vault_trial.py",)
 TRIAL_RUNTIME_MODULES = REQUIRED_MODULES + TRIAL_EXTRA_MODULES
+TRIAL_REVIEW_SERVER_MODULES = ("memory_vault_trial_coordinator.py", "memory_vault_trial_peer.py")
 TRIAL_PACKAGE_SOURCES = (
     ("README.md", "packaging/trial/README.md"),
     ("run.py", "packaging/trial/run.py"),
@@ -143,6 +146,7 @@ def review_sources(material: list[Path], source_tree: ReleaseSource) -> list[Pat
     paths.extend(ROOT / name for name in NETWORK_REVIEW_TESTS)
     paths.extend(ROOT / source for _, source in TRIAL_PACKAGE_SOURCES)
     paths.extend(ROOT / name for name in TRIAL_RUNTIME_MODULES)
+    paths.extend(ROOT / name for name in TRIAL_REVIEW_SERVER_MODULES)
     paths.extend(ROOT / "examples/network-interop" / name for name in ("README.md", "package.json", "package-lock.json", "interop.ts"))
     paths.extend(material)
     result = sorted(set(paths))
