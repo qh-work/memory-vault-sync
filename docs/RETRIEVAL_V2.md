@@ -144,9 +144,10 @@ thousandths as `R(componentQ*1000,Q)`, ratio-factor thousandths as
 `R(numerator*1000,denominator)`, and recency as `R(timeQ*1000,Q)`.
 
 Keep the highest integer fragment score for each record; retain the existing
-first-fragment tie behavior. Records sort by descending integer score, then
-ascending ASCII memory ID. Current admission, evidence diversity and dynamic
-structural handoff selection still apply. V2 may intentionally choose a
+first-fragment tie behavior. Current/conflicted records sort before
+superseded/resolved history; inside each tier records sort by descending integer
+score, then ascending ASCII memory ID. Current admission, evidence diversity
+and dynamic structural handoff selection still apply. V2 may intentionally choose a
 different result than v1; neither score is an authority or a truth probability.
 
 ## Verification boundary

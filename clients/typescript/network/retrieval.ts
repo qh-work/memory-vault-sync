@@ -313,7 +313,10 @@ export class Retrieval {
       const previous = candidates.get(id);
       if (!previous || candidate.score_milli > previous.score_milli) candidates.set(id, candidate);
     }
-    const byScore = (a: Candidate, b: Candidate) => b.score_milli - a.score_milli || order(a.record.memory_id, b.record.memory_id);
+    const byScore = (a: Candidate, b: Candidate) => {
+      const historical = (item: Candidate) => ['superseded', 'resolved'].includes(item.status) ? 1 : 0;
+      return historical(a) - historical(b) || b.score_milli - a.score_milli || order(a.record.memory_id, b.record.memory_id);
+    };
     const ordered = [...candidates.values()].sort(byScore), ids = ordered.map(item => item.record.memory_id), admissionRanks = new Map<string, number>();
     for (let offset = 0; offset < ids.length; offset += 500) {
       const batch = ids.slice(offset, offset + 500);

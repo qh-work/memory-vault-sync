@@ -250,6 +250,54 @@ class TypeScriptRetrievalTests(unittest.TestCase):
         self.trusted = [self.identity.public_descriptor()]
         self.differential({"query": "memory", "limit": 32})
 
+    def test_current_cancellation_and_revalidation_precede_stronger_history(self):
+        failure = self.seed(
+            "Synthetic failed approach: fixture service stopped and the probe returned connection refused.",
+            kind="observation",
+        )
+        goal = self.seed(
+            "Synthetic goal: retry the fixture probe after the service is confirmed running.",
+            kind="goal", relations=[{"type": "derived_from", "target": failure["memory_id"]}],
+        )
+        changed = self.seed(
+            "Synthetic revalidation: fixture service is now running; the previous failure is historical.",
+            kind="observation", relations=[{"type": "supersedes", "target": failure["memory_id"]}],
+        )
+        cancellation = self.seed(
+            "Synthetic cancellation: the retry goal is cancelled; do not execute it.",
+            kind="decision", relations=[{"type": "supersedes", "target": goal["memory_id"]}],
+        )
+        query = "retry the fixture probe"
+        requests = []
+        for profile in (core.RETRIEVAL_PROFILE, core.RETRIEVAL_PROFILE_V2):
+            requests.extend([
+                {"query": query, "limit": 4, "ranking_profile": profile},
+                {"query": query, "limit": 4, "handoff": True, "ranking_profile": profile},
+                {"query": query, "limit": 1, "ranking_profile": profile},
+                {"query": query, "limit": 1, "handoff": True, "ranking_profile": profile},
+            ])
+        results = self.differential(*requests)
+        current_ids = {cancellation["memory_id"], changed["memory_id"]}
+        historical_ids = {goal["memory_id"], failure["memory_id"]}
+        for offset in (0, 4):
+            ordinary, handoff, ordinary_one, handoff_one = results[offset:offset + 4]
+            for result in (ordinary, handoff):
+                ids = [hit["memory_id"] for hit in result["hits"]]
+                self.assertTrue(current_ids.issubset(ids), ids)
+                self.assertTrue(historical_ids.issubset(ids), ids)
+                self.assertLess(max(ids.index(item) for item in current_ids),
+                                min(ids.index(item) for item in historical_ids))
+                self.assertEqual(result["evidence_context"]["included_memory_ids"], ids)
+                hits = {hit["memory_id"]: hit for hit in result["hits"]}
+                self.assertEqual(hits[cancellation["memory_id"]]["status"], "current")
+                self.assertEqual(hits[changed["memory_id"]]["status"], "current")
+                self.assertEqual(hits[goal["memory_id"]]["status"], "superseded")
+                self.assertEqual(hits[failure["memory_id"]]["status"], "superseded")
+                self.assertGreater(hits[goal["memory_id"]]["score_milli"],
+                                   hits[cancellation["memory_id"]]["score_milli"])
+            self.assertEqual(ordinary_one["hits"][0]["memory_id"], cancellation["memory_id"])
+            self.assertEqual(handoff_one["hits"][0]["memory_id"], cancellation["memory_id"])
+
     def test_dynamic_handoff_reserves_structural_goal_and_requires_live_episode(self):
         episode = self.seed("User:\nVisible continuity evidence.\n\nAssistant:\nObserved reply.", kind="episode",
                             provenance={"source_type": "visible_turn", "confidence": "observed"})

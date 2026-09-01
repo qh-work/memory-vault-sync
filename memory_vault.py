@@ -2024,6 +2024,7 @@ class Vault:
         ordered = sorted(
             candidates.values(),
             key=lambda item: (
+                1 if item["status"] in {"superseded", "resolved"} else 0,
                 -int(item["score_milli"]),
                 str(item["record"]["memory_id"]),
             ),
@@ -2104,7 +2105,10 @@ class Vault:
                     break
         # Admission priority only controls diversity suppression, not the
         # existing relevance scores or any canonical record/admission state.
-        diverse.sort(key=lambda item: (-int(item["score_milli"]), str(item["record"]["memory_id"])))
+        diverse.sort(key=lambda item: (
+            1 if item["status"] in {"superseded", "resolved"} else 0,
+            -int(item["score_milli"]), str(item["record"]["memory_id"]),
+        ))
         result: list[dict[str, Any]] = []
         for item in diverse:
             record = item["record"]

@@ -54,6 +54,37 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(failure["error"]["code"], "network_not_configured")
         self.assertIn("commit_state", failure["error"])
 
+    def test_facade_selects_current_cancellation_before_superseded_goal(self):
+        self.configure()
+
+        def remember(request_id, kind, text, relations=()):
+            response = self.agent.handle({"op": "remember", "request_id": request_id,
+                "kind": kind, "text": text, "relations": list(relations)})
+            self.assertTrue(response["ok"], response)
+            return response["result"]["memory_id"]
+
+        failure = remember("req_current_target_failure", "observation",
+            "Synthetic failed approach: fixture service stopped and the probe returned connection refused.")
+        goal = remember("req_current_target_goal", "goal",
+            "Synthetic goal: retry the fixture probe after the service is confirmed running.",
+            [{"type": "derived_from", "target": failure}])
+        remember("req_current_target_changed", "observation",
+            "Synthetic revalidation: fixture service is now running; the previous failure is historical.",
+            [{"type": "supersedes", "target": failure}])
+        cancellation = remember("req_current_target_cancel", "decision",
+            "Synthetic cancellation: the retry goal is cancelled; do not execute it.",
+            [{"type": "supersedes", "target": goal}])
+        for handoff in (False, True):
+            response = self.agent.handle({"op": "recall", "query": "retry the fixture probe", "handoff": handoff})
+            self.assertTrue(response["ok"], response)
+            ids = [hit["memory_id"] for hit in response["result"]["hits"]]
+            self.assertEqual(ids[0], cancellation)
+            self.assertIn(goal, ids)
+        vault = ClientConfig.load(self.config).vault()
+        with vault._connect(writable=False) as connection:
+            self.assertEqual(vault._memory_status(connection, goal), "superseded")
+            self.assertEqual(vault._memory_status(connection, cancellation), "current")
+
     def test_http_python_and_cli_share_native_records_and_retry_semantics(self):
         from starlette.testclient import TestClient
         self.configure()
