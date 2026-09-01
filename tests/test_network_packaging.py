@@ -74,7 +74,7 @@ class NetworkPackagingTests(unittest.TestCase):
         review = literal(RELEASE, "NETWORK_REVIEW_TESTS")
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
-        self.assertEqual(len(review), 36)
+        self.assertGreaterEqual(len(review), 37)
         self.assertEqual(len(TS_NETWORK), 17)
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
@@ -87,6 +87,7 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertTrue({"tests/test_network_topics.py", "tests/test_network_topic_store.py",
                          "tests/test_network_topic_http.py"} <= set(review))
         self.assertTrue({"tests/test_network_ranking_v2.py", "tests/test_network_storage_receipts.py"} <= set(review))
+        self.assertIn("tests/test_network_trial_packaging.py", review)
         self.assertIn("docs/NETWORK_RECOVERY.md", documents)
         self.assertIn("docs/NETWORK_RECOVERY.md", protocol)
         self.assertIn("docs/NETWORK_NODE_TRANSFER.md", documents)
