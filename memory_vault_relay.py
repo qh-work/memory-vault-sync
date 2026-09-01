@@ -419,9 +419,21 @@ class Relay:
                     authorized_node(nodes, self.node_identity.key_id, "refresh",
                                     base_url=self.base_url, storage_epoch=self.storage_epoch)
             if challenge["status_sha256"] is not None:
-                if challenge["status_sha256"] != status_hash:
+                result = strict_json_loads(challenge["result"])
+                # Several authorized endpoints can receive the one shared
+                # pending challenge concurrently. Their issuer responses may
+                # differ only by signed issuance time. After fully verifying
+                # the new response above, treat an equivalent roster/node
+                # snapshot as the same refresh; reject any control-state
+                # difference under the consumed nonce.
+                same_roster = (result.get("roster_version") == roster["version"]
+                               and result.get("roster_sha256") == candidate_hash)
+                saved_nodes = self._get(db, "node_directory")
+                same_nodes = (("nodes" in raw and saved_nodes == raw["nodes"])
+                              or ("nodes" not in raw and saved_nodes is None))
+                if challenge["status_sha256"] != status_hash and not (same_roster and same_nodes):
                     raise RelayError("relay_status_nonce_conflict")
-                return strict_json_loads(challenge["result"])
+                return result
             previous_status = self._get(db, "status")
             if previous_status and status["issued_at"] < previous_status["payload"]["issued_at"]:
                 raise RelayError("relay_status_rollback")

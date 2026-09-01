@@ -53,15 +53,22 @@ class NetworkRelayTests(unittest.TestCase):
                 with relay._transaction() as db:
                     self.assertEqual(db.execute("SELECT COUNT(*) FROM status_nonces").fetchone()[0], 1)
                 latest_request = latest_result = None
-                for _ in range(7):
+                for index in range(7):
                     challenge = client.get("/v1/status").json()
+                    signed_at = int(time.time())
                     signed = issue_status(issuer, network_id=network, nonce=challenge["nonce"],
                         roster_sha256=document_sha256(roster), roster_version=1,
-                        issued_at=int(time.time()), expires_at=int(time.time()) + 300)
+                        issued_at=signed_at, expires_at=signed_at + 300)
                     latest_request = {"status": signed, "roster": roster}
                     response = client.post("/v1/status", json=latest_request)
                     self.assertEqual(response.status_code, 200, response.json())
                     latest_result = response.json()
+                    if index == 0:
+                        concurrent = issue_status(issuer, network_id=network, nonce=challenge["nonce"],
+                            roster_sha256=document_sha256(roster), roster_version=1,
+                            issued_at=signed_at + 1, expires_at=signed_at + 301)
+                        self.assertEqual(client.post("/v1/status", json={"status": concurrent, "roster": roster}).json(),
+                                         latest_result)
                     with relay._transaction() as db:
                         self.assertLessEqual(db.execute("SELECT COUNT(*) FROM status_nonces").fetchone()[0], 3)
                 self.assertEqual(client.post("/v1/status", json=latest_request).json(), latest_result)
