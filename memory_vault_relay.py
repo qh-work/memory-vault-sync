@@ -344,16 +344,36 @@ class Relay:
         now = int(time.time())
         with self._transaction() as db:
             db.execute("DELETE FROM status_nonces WHERE expires_at<=?", (now,))
-            if db.execute("SELECT COUNT(*) FROM status_nonces").fetchone()[0] >= self.limits["maximum_control_rows"]:
-                raise RelayError("relay_status_challenge_limit", retryable=True)
             roster, payload = self._current(db, fresh=False)
-            nonce = secrets.token_hex(32)
-            db.execute("INSERT INTO status_nonces(nonce,expires_at) VALUES (?,?)", (nonce, now + 300))
-            result = {"nonce": nonce, "expires_at": now + 300, "current_roster_version": payload["version"],
+            # GET is intentionally unauthenticated so a new endpoint can
+            # refresh control state before sending. Reuse the one outstanding
+            # challenge instead of allocating a row per GET; otherwise an
+            # unauthenticated caller can exhaust the bounded control table.
+            pending = db.execute(
+                "SELECT nonce,expires_at FROM status_nonces "
+                "WHERE status_sha256 IS NULL ORDER BY rowid LIMIT 1"
+            ).fetchone()
+            if pending is None:
+                count = db.execute("SELECT COUNT(*) FROM status_nonces").fetchone()[0]
+                if count >= self.limits["maximum_control_rows"]:
+                    # Completed refreshes are only an idempotency cache. Keep
+                    # the newest bounded history and make room for one live
+                    # challenge; never evict an outstanding challenge.
+                    remove = count - self.limits["maximum_control_rows"] + 1
+                    db.execute(
+                        "DELETE FROM status_nonces WHERE nonce IN "
+                        "(SELECT nonce FROM status_nonces WHERE status_sha256 IS NOT NULL "
+                        "ORDER BY rowid LIMIT ?)", (remove,)
+                    )
+                nonce, expires_at = secrets.token_hex(32), now + 300
+                db.execute("INSERT INTO status_nonces(nonce,expires_at) VALUES (?,?)", (nonce, expires_at))
+            else:
+                nonce, expires_at = pending["nonce"], pending["expires_at"]
+            result = {"nonce": nonce, "expires_at": expires_at, "current_roster_version": payload["version"],
                       "current_roster_sha256": document_sha256(roster)}
             if self.node_identity is not None:
                 challenge = {"schema_version": "memory-vault-node-challenge/v1", "network_id": self.network_id,
-                             "node": self.node_descriptor(), "nonce": nonce, "issued_at": now, "expires_at": now + 300}
+                             "node": self.node_descriptor(), "nonce": nonce, "issued_at": now, "expires_at": expires_at}
                 result["node_challenge"] = {"payload": challenge, "proof": self.node_identity.sign_message(challenge)}
             return result
 
