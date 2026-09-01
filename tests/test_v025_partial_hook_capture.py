@@ -266,7 +266,7 @@ class PartialHookCaptureTests(unittest.TestCase):
         state.prompt(legacy_key, "Synthetic old input.")
         state.once("outbox", legacy_key, {"user": "Synthetic old input.", "assistant": "Synthetic old output."})
         unknown = state.root / "prompts" / "unrecognized.txt"
-        storage.atomic_write(unknown, b"synthetic unknown preparation entry\n")
+        storage.atomic_write(unknown, b"synthetic unknown preparation entry\n", replace=False)
         with self.assertRaisesRegex(MemoryError, "invalid_hook_preparation_entry"):
             self.prompt("refused-unknown", "Synthetic new input must be refused.")
         self.assertIsNone(state.read("prompts", self.key("refused-unknown")))
@@ -316,6 +316,10 @@ class PartialHookCaptureTests(unittest.TestCase):
         key = self.key("disabled-late")
         stale = self.config()
         self.configure(False)
+        # SQLite may create WAL/SHM coordination files for mode=ro. Establish
+        # that read baseline before asserting the disabled hook changes none
+        # of the existing files or canonical records.
+        self.records()
         before = {str(path.relative_to(self.root)): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
         with mock.patch.object(client, "_prepare_hook_event", side_effect=AssertionError("capture disabled")), \
                 mock.patch.object(client, "notify_sync", side_effect=AssertionError("no worker")), \

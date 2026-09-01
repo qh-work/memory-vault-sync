@@ -105,7 +105,7 @@ class TypeScriptVaultTests(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory(prefix="memory-vault-ts-vault-synthetic-")
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.fixture = Path(cls.temporary.name).resolve()
-        for name in ("crypto.ts", "records.ts", "io.ts", "vault.ts", "retrieval.ts", "retrieval_text.ts", "package.json"):
+        for name in ("crypto.ts", "records.ts", "io.ts", "vault.ts", "retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "package.json"):
             shutil.copyfile(ROOT / "clients/typescript/network" / name, cls.fixture / name)
         (cls.fixture / "node_modules").mkdir()
         (cls.fixture / "node_modules/jose").symlink_to(package, target_is_directory=True)

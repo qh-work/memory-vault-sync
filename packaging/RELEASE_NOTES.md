@@ -1,4 +1,4 @@
-# Memory Vault v0.26.0-alpha.1 — package/review notes
+# Memory Vault v0.26.0-alpha.3 — package/review notes
 
 **Alpha candidate; not a stable-release or runtime-certification claim.** This
 document describes the current build target. It does not establish that a
@@ -25,18 +25,26 @@ starts no scheduler or default background service. The native network has no
 MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility claim; the existing
 eleven-tool MCP memory interface remains unchanged.
 
+Alpha.3 also makes current records an explicit deterministic ranking tier ahead
+of superseded/resolved history across Python and TypeScript recall and handoff.
+The separate synthetic trial package runs one temporary endpoint against an
+operator-supplied HTTPS service and one-time code; it never reads the installed
+plugin or an existing Vault.
+
 Existing Ed25519 record attestations and the independent protocol remain.
 Task ownership, mandatory Git runtime and the old monolith do not return.
 Memory cannot install software, enroll trust, activate hooks or execute goals.
 
 ## Build artifacts
 
-- `memory-vault-protocol-v0.26.0-alpha.1.zip`: documentation, structural schemas and
+- `memory-vault-protocol-v0.26.0-alpha.3.zip`: documentation, structural schemas and
   synthetic interchange vectors, with no executable.
-- `memory-vault-client-v0.26.0-alpha.1.zip`: source-built plugin, all required runtime
+- `memory-vault-client-v0.26.0-alpha.3.zip`: source-built plugin, all required runtime
   modules and a local marketplace catalog.
-- `memory-vault-review-v0.26.0-alpha.1.zip`: public source, synthetic cases and bounded
+- `memory-vault-review-v0.26.0-alpha.3.zip`: public source, synthetic cases and bounded
   review handoff for independent reviewers; no automatic test execution.
+- `memory-vault-network-test-v0.26.0-alpha.3.zip`: isolated one-command synthetic
+  endpoint; no Docker or plugin, and fails closed without release-pinned service trust.
 - `PROTOCOL.md` and `memory_vault.py`: standalone agreement and optional core.
 - `release-manifest.json` / `SHA256SUMS`: exact source reference, asset hashes
   and actual verification scope. Checksums are not publisher signatures.

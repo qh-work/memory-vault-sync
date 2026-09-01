@@ -12,6 +12,7 @@ import re
 import stat
 import sys
 from typing import Mapping
+from urllib.parse import urlsplit
 import zipfile
 
 from build_client_plugin import (
@@ -34,7 +35,7 @@ PROTOCOL_DOCUMENTS = (
     "docs/STATUS.md", "docs/RELEASE.md", "docs/SYNC.md", "docs/REMOTE_BACKENDS.md",
     "docs/HOSTS.md", "docs/OPERATIONS.md", "docs/BACKUP.md", "docs/PARITY.md",
     "docs/UPDATES.md", "docs/PACKS.md",
-    "docs/RETRIEVAL.md", "docs/GRAPH_VIEWS.md", "docs/COMPATIBILITY.md",
+    "docs/RETRIEVAL.md", "docs/RETRIEVAL_V2.md", "docs/GRAPH_VIEWS.md", "docs/COMPATIBILITY.md",
     "docs/LEGACY_PACKS.md", "docs/SHARING.md", "docs/ENCRYPTION.md", "docs/PLATFORMS.md",
     "docs/V0_25_PARITY_PLAN.md", "docs/V0_25_SCOPED_SMOKE.md", "docs/V0_25_FOLLOWUP_SMOKE.md", "docs/V0_25_RECOVERY_SMOKE.md", "docs/V0_25_CAPTURE_SMOKE.md", "docs/V0_25_PARITY_REPAIR_SMOKE.md", "docs/V0_25_WORKFLOW_SMOKE.md", "docs/VALIDATION.md",
     "docs/V0_25_TRANSPORT_RECOVERY_SMOKE.md",
@@ -44,6 +45,7 @@ PROTOCOL_DOCUMENTS = (
     "docs/ARTIFACTS.md", "docs/V0_25_RAW_COPY_SMOKE.md",
     "docs/NETWORK_V1.md", "docs/NETWORK_QUICKSTART.md", "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
     "docs/V0_26_PLAN.md",
+    "docs/NETWORK_TOPICS.md",
     "docs/DEPENDENCIES_NETWORK.md",
     "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md", "docs/NETWORK_TYPESCRIPT.md",
 )
@@ -55,7 +57,7 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_network_cloud_compat.py", "tests/test_network_crypto.py", "tests/test_network_http.py",
     "tests/test_network_node_runtime.py", "tests/test_network_node_setup.py", "tests/test_network_node_transfer.py",
     "tests/test_network_nodes.py", "tests/test_network_packaging.py",
-    "tests/test_network_recovery.py", "tests/test_network_relay.py", "tests/test_network_typescript.py",
+    "tests/test_network_recovery.py", "tests/test_network_relay.py", "tests/test_network_replica_repair.py", "tests/test_network_typescript.py",
     "tests/test_network_typescript_crypto.py", "tests/test_network_typescript_control.py",
     "tests/test_network_typescript_nodes.py", "tests/test_network_typescript_records.py",
     "tests/test_network_typescript_vault.py", "tests/test_network_typescript_peer.py",
@@ -63,7 +65,23 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_network_typescript_setup.py",
     "tests/test_network_typescript_retrieval_text.py", "tests/test_network_typescript_retrieval.py",
     "tests/test_network_typescript_agent.py", "tests/test_network_typescript_agent_network.py",
-    "tests/test_network_worker.py",
+    "tests/test_network_worker.py", "tests/test_network_ranking_v2.py", "tests/test_network_storage_receipts.py",
+    "tests/test_network_topics.py", "tests/test_network_topic_store.py", "tests/test_network_typescript_topics.py",
+    "tests/test_network_topic_http.py",
+    "tests/test_network_trial.py",
+    "tests/test_network_trial_coordinator.py",
+    "tests/test_network_trial_packaging.py",
+)
+TRIAL_EXTRA_MODULES = ("memory_vault_trial.py",)
+TRIAL_RUNTIME_MODULES = REQUIRED_MODULES + TRIAL_EXTRA_MODULES
+TRIAL_REVIEW_SERVER_MODULES = ("memory_vault_trial_coordinator.py", "memory_vault_trial_peer.py")
+TRIAL_PACKAGE_SOURCES = (
+    ("README.md", "packaging/trial/README.md"),
+    ("run.py", "packaging/trial/run.py"),
+    ("service-trust.json", "packaging/trial/service-trust.json"),
+    ("requirements-network-lock.txt", "requirements-network-lock.txt"),
+    ("LICENSE", "LICENSE"),
+    ("NOTICE", "NOTICE"),
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_PACKAGE_BYTES = 32 * 1024 * 1024
@@ -126,6 +144,9 @@ def review_sources(material: list[Path], source_tree: ReleaseSource) -> list[Pat
     ))
     paths.extend(sorted((ROOT / "tests").glob("test_v025_*.py")))
     paths.extend(ROOT / name for name in NETWORK_REVIEW_TESTS)
+    paths.extend(ROOT / source for _, source in TRIAL_PACKAGE_SOURCES)
+    paths.extend(ROOT / name for name in TRIAL_RUNTIME_MODULES)
+    paths.extend(ROOT / name for name in TRIAL_REVIEW_SERVER_MODULES)
     paths.extend(ROOT / "examples/network-interop" / name for name in ("README.md", "package.json", "package-lock.json", "interop.ts"))
     paths.extend(material)
     result = sorted(set(paths))
@@ -134,6 +155,42 @@ def review_sources(material: list[Path], source_tree: ReleaseSource) -> list[Pat
     for source in result:
         read_public(source, source_tree=source_tree)
     return result
+
+
+def trial_service_configured(source_tree: ReleaseSource) -> bool:
+    value = parse_json(source_tree.read(ROOT / "packaging/trial/service-trust.json"))
+    schema = "memory-vault-trial-service-trust/v1"
+    if value == {"schema_version": schema, "state": "unconfigured"}:
+        return False
+    if not isinstance(value, dict) or set(value) != {"schema_version", "enrollment_url", "service"}:
+        raise ValueError("invalid_trial_service_trust")
+    if value["schema_version"] != schema or not isinstance(value["service"], dict):
+        raise ValueError("invalid_trial_service_trust")
+    service = value["service"]
+    required = {"schema_version", "network_id", "authority_url", "relays",
+                "issuer_public_key", "reference_peer_key_id"}
+    if (set(service) != required or service["schema_version"] != "memory-vault-trial-service/v1"
+            or not all(isinstance(service[name], str) and 1 <= len(service[name]) <= 512
+                       for name in ("network_id", "authority_url", "reference_peer_key_id"))
+            or not isinstance(service["issuer_public_key"], dict)
+            or not isinstance(service["relays"], list) or not 1 <= len(service["relays"]) <= 2
+            or not all(isinstance(item, str) for item in service["relays"])):
+        raise ValueError("invalid_trial_service_trust")
+
+    def secure_url(raw: object, *, enrollment: bool = False) -> bool:
+        if not isinstance(raw, str):
+            return False
+        parsed = urlsplit(raw)
+        return (parsed.scheme == "https" and bool(parsed.hostname)
+                and not parsed.username and not parsed.password
+                and not parsed.query and not parsed.fragment
+                and parsed.path in ({"/v1/trial/enroll"} if enrollment else {"", "/"}))
+
+    if (not secure_url(value["enrollment_url"], enrollment=True)
+            or not secure_url(service["authority_url"])
+            or not all(secure_url(item) for item in service["relays"])):
+        raise ValueError("invalid_trial_service_trust")
+    return True
 
 
 def inspect_sources(material: list[Path], review: list[Path], source_tree: ReleaseSource) -> tuple[str, dict[str, int]]:
@@ -296,11 +353,14 @@ def build(output: Path, source_commit: str) -> dict[str, object]:
     protocol = destination / f"memory-vault-protocol-v{version}"
     client = destination / f"memory-vault-client-v{version}"
     review = destination / f"memory-vault-review-v{version}"
+    trial = destination / f"memory-vault-network-test-v{version}"
     protocol.mkdir()
     client.mkdir()
     review.mkdir()
+    trial.mkdir()
     protocol_expected: dict[str, str] = {}
     review_expected: dict[str, str] = {}
+    trial_expected: dict[str, str] = {}
     client_expected = client_inventory(source_tree, material)
     for name in PROTOCOL_DOCUMENTS:
         protocol_expected[name] = copy_public(ROOT / name, protocol / name, source_tree)
@@ -327,11 +387,31 @@ def build(output: Path, source_commit: str) -> dict[str, object]:
     with (review / "REVIEW_MANIFEST.json").open("xb") as stream:
         stream.write(review_encoded)
     review_expected["REVIEW_MANIFEST.json"] = hashlib.sha256(review_encoded).hexdigest()
+    for name, source_name in TRIAL_PACKAGE_SOURCES:
+        trial_expected[name] = copy_public(ROOT / source_name, trial / name, source_tree)
+    for name in TRIAL_RUNTIME_MODULES:
+        trial_expected["runtime/" + name] = copy_public(ROOT / name, trial / "runtime" / name, source_tree)
+    configured = trial_service_configured(source_tree)
+    trial_manifest = {
+        "schema_version": "memory-vault-network-test-package/v1",
+        "version": version,
+        "source_commit": source_commit,
+        "private_state_included": False,
+        "synthetic_data_only": True,
+        "service_configured": configured,
+        "checksums_are_publisher_signatures": False,
+        "files": dict(trial_expected),
+    }
+    trial_encoded = (json.dumps(trial_manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    with (trial / "TRIAL_MANIFEST.json").open("xb") as stream:
+        stream.write(trial_encoded)
+    trial_expected["TRIAL_MANIFEST.json"] = hashlib.sha256(trial_encoded).hexdigest()
     if any(path.suffix == ".py" for path in protocol.rglob("*")):
         raise ValueError("executable_in_protocol_only_package")
     assets = [archive(protocol, destination / (protocol.name + ".zip"), protocol_expected),
               archive(client, destination / (client.name + ".zip"), client_expected),
-              archive(review, destination / (review.name + ".zip"), review_expected)]
+              archive(review, destination / (review.name + ".zip"), review_expected),
+              archive(trial, destination / (trial.name + ".zip"), trial_expected)]
     for name in ("memory_vault.py", "PROTOCOL.md"):
         target = destination / name
         digest = copy_public(ROOT / name, target, source_tree)
@@ -356,6 +436,7 @@ def build(output: Path, source_commit: str) -> dict[str, object]:
             "application_imported_or_executed": False,
             "tests_run": False, "host_installation_tested": False,
             "cross_device_interoperability_tested": False,
+            "trial_service_configured": configured,
         },
         "assets": assets,
     }

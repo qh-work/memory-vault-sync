@@ -39,7 +39,8 @@ def _source_module(source: Path, name: str, *, selected_file: Path | None = None
     """Test-only source loader: define functions without calling a CLI main."""
     module = types.ModuleType(name)
     module.__file__ = str(selected_file or source)
-    exec(compile(source.read_bytes(), str(source), "exec"), module.__dict__)
+    with mock.patch.object(sys, "path", [str(source.parent), *sys.path]):
+        exec(compile(source.read_bytes(), str(source), "exec"), module.__dict__)
     return module
 
 
@@ -161,8 +162,24 @@ class UpdateControlEdgeTests(unittest.TestCase):
         package = managed / "releases" / digest / "memory-vault-client-v0.25.0/plugins/memory-vault-client"
         external_cache = self.root / "unchecked-external-cache"
         external_cache.mkdir(mode=0o700)
+        # The current normal launcher requires the current runtime inventory;
+        # the managed case deliberately retains its v0.25 historical fixture.
+        normal_source = ROOT / "plugins/memory-vault-client/scripts/launcher.py"
+        normal = self.root / "current-normal-fixture"
+        (normal / "scripts").mkdir(parents=True, mode=0o700)
+        (normal / "runtime").mkdir(mode=0o700)
+        (normal / "scripts/launcher.py").write_bytes(normal_source.read_bytes())
+        required = _source_module(normal_source, "edge_current_inventory").REQUIRED_MODULES
+        modules = {}
+        for name in sorted(required):
+            data = ("# Inert current handoff fixture: " + name + "\n").encode()
+            (normal / "runtime" / name).write_bytes(data)
+            modules[name] = hashlib.sha256(data).hexdigest()
+        (normal / "runtime/MANIFEST.json").write_bytes(canonical_bytes({
+            "schema_version": "memory-vault-client-runtime/v1", "modules": modules,
+        }))
         sources = (
-            (ROOT / "plugins/memory-vault-client/scripts/launcher.py", package / "scripts/launcher.py", False),
+            (normal_source, normal / "scripts/launcher.py", False),
             (ROOT / "memory_vault_managed_launcher.py", managed / "launcher.py", True),
         )
         for source, selected_file, is_managed in sources:
@@ -180,7 +197,8 @@ class UpdateControlEdgeTests(unittest.TestCase):
                             def inspect_handoff(path: str, *, run_name: str) -> dict:
                                 self.assertIsNone(sys.pycache_prefix)
                                 self.assertTrue(sys.dont_write_bytecode)
-                                self.assertEqual(Path(path), package / "runtime/memory_vault_client.py")
+                                expected_root = package if is_managed else normal
+                                self.assertEqual(Path(path), expected_root / "runtime/memory_vault_client.py")
                                 self.assertEqual(run_name, "__main__")
                                 return {}  # Never execute the packaged fixture.
 

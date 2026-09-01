@@ -1,6 +1,6 @@
-# Memory Vault v0.26.0-alpha.1 — authorized full client
+# Memory Vault v0.26.0-alpha.3 — authorized full client
 
-This full-client package targets **v0.26.0-alpha.1 native-network source**,
+This full-client package targets **v0.26.0-alpha.3 native-network source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

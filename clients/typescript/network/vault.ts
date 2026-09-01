@@ -349,7 +349,12 @@ export class CanonicalVault {
     return this.#run(false, () => {
       const trusted = this.#trusted(); this.#retrievalTrust = trusted;
       const row = this.#row(id); if (!row) fail('not_found');
-      return { record: this.#decode(row).record, verification: this.#verification(id, trusted), network_accessed: false };
+      const retrieval = new Retrieval(this.#db, {
+        recordFromRow: value => { const stored = this.#row(String(value.memory_id)); if (!stored) fail('not_found'); return this.#decode(stored).record; },
+        verification: memoryId => this.#verification(memoryId, trusted),
+      });
+      return { record: this.#decode(row).record, status: retrieval.memoryStatus(id),
+        verification: this.#verification(id, trusted), network_accessed: false };
     });
   }
   recall(query: string, options: RecallOptions = {}): Row {

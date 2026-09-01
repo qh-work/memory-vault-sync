@@ -66,15 +66,52 @@ SQLite Vault and network queue schema; real loopback tests continue the same
 queue between Python and TypeScript. The native six-operation facade now uses
 the same bounded fragment ranking and structural handoff selection. It shares
 the Vault, identity, permissions and errors; it is not a second data system.
-Exact numerical ranking parity remains open: a reproducible platform `exp`
-rounding boundary changes the first selected ID. Preserve its expected-failure
-test and design a shared deterministic math profile separately; do not hide it
-with a larger tolerance or silently replace the stable Python formula.
+Default-v1 numerical ranking parity remains open: a reproducible platform
+`exp` boundary changes the first selected ID. Post-alpha source preserves its
+expected-failure test and adds an explicit [integer v2 profile](RETRIEVAL_V2.md),
+shared by both implementations without a tolerance or default-formula change.
+Node storage-response shape, signature/binding and size checks are also shared;
+malformed historical receipts remain preserved and fail explicitly.
 Whole-endpoint recovery includes committed transport state and has targeted
-synthetic recovery tests. Complete legacy graph/view and cloud-worker parity, scheduled pumping,
+synthetic recovery tests. Development after the alpha adds bounded sender
+repair: pump checks configured node incarnations before selecting pending
+outbox work, then reuses ciphertext after an authenticated replacement. This
+does not implement node-to-node repair without sender state or client rerouting.
+Complete legacy graph/view and cloud-worker parity, scheduled pumping,
 topics/subscriptions, resource leases and automatic replica repair/exit remain
 separate work. Interfaces or examples alone must not mark them delivered;
 see the [TypeScript scope](NETWORK_TYPESCRIPT.md) and current evidence below.
+
+Post-alpha [topic control](NETWORK_TOPICS.md) adds independently pinned signed
+policies, complete consent snapshots and bounded durable subscription changes.
+It reuses network identities and leaves canonical memory ownership unchanged.
+This is the control foundation only: encrypted topic fan-out, native facade
+integration, relay polling/acknowledgement and topic recovery/transfer remain
+unfinished. The published alpha assets are not replaced by these source changes.
+
+## Next priority: sustained operation before expansion
+
+The next sequence is authorization refresh, queue lifecycle, deduplicated
+member snapshots, then relay concurrency. Sharded routing, complete topic
+delivery and node-to-node replica repair follow those foundations. Finishing
+topic control does not promote encrypted topic delivery ahead of this sequence.
+
+Source inspection confirms the following current limits. They are bounded
+preview behavior, not evidence of sustained operation at their numerical caps.
+
+| Area | Current behavior | Next acceptance requirement |
+|---|---|---|
+| Refresh | Sends, receives and replica checks refresh each selected relay. Its 256 status-nonce rows remain occupied until 300-second expiry, including completed challenges. | Amortize authenticated refresh and concurrent refresh attempts without extending five-minute authority, losing node binding or accepting rollback/replayed challenges. Test sustained polling beyond the current cumulative challenge limit. |
+| Lifecycle | Endpoint outbox retains up to 1,024 rows; relay defaults bound 4,096 ciphertext objects. Saved receipts do not currently retire completed history. | Separate live pending work from bounded replay/receipt evidence and explicitly retained memory. Reclaim only eligible transport state, with offline recipients, exact retries and restore semantics preserved. |
+| Member snapshots | Each relay message and frozen sender row stores its full historical signed roster. | Store each verified canonical snapshot once by digest; reference it without changing signed bytes or deleting snapshots still required by retained messages/recovery. |
+| Concurrency | Relay reads and writes share a nonblocking process/file lock; each new message scans the entire ciphertext directory for usage. | Establish durable incremental accounting and bounded recovery reconciliation, then separate safe reads from write transactions. Test concurrent readers/writers, crash windows and accurate capacity rejection. |
+| Routing and repair | Roster cap is 256, endpoints configure one or two relays, sender repair requires its retained outbox. | Add measured sharding/routing and node-driven repair with verifiable retained replicas. Raising a cap does not count as delivery or scale acceptance. |
+
+Authorized network memory discovery, reference location and retrieval remain a
+separate missing capability beyond local recall and selected memory exchange.
+Its design must retain encrypted queries and explicit sharing permissions;
+no relay plaintext search index or parent memory container is implied. Topic
+control and encrypted topic delivery continue to have separate acceptance gates.
 
 ## Sequence and limits
 

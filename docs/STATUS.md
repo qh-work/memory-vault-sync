@@ -1,6 +1,6 @@
 # Memory Vault development status
 
-Current source: **0.26.0-alpha.1**. The optional communication-memory network
+Current source: **0.26.0-alpha.3**. The optional communication-memory network
 has a six-operation endpoint, independent issuer control, signed invitations,
 JWE encryption, two-node delivery, durable retries and endpoint receipts.
 Existing core records, personal backups, handoff packages and plugin entrypoints
@@ -8,6 +8,10 @@ remain. Native encrypted Drive is wired to the existing queue; live cloud
 credentials/upload/readback remain unverified. See
 [current alpha evidence](RELEASE_NOTES_V0_26_ALPHA.md) and
 [network setup](NETWORK_QUICKSTART.md). No real-model or scale acceptance is claimed.
+
+Alpha.3 fixes current-state recall priority across Python and TypeScript and adds
+an isolated, all-synthetic endpoint trial package. The trial needs a separately
+operated HTTPS service and one-time code, and proves only one bounded exchange.
 
 The takeover iteration preserves existing code and configuration, removes
 unshipped external network adapters, separates new issuer/member keys, fixes
@@ -18,16 +22,26 @@ full endpoint recovery, authenticated node migration and separately verified
 candidate archives. Current source also includes an independent TypeScript
 persistent endpoint and native six-operation facade with bounded retrieval and
 dynamic handoff. [Its scope](NETWORK_TYPESCRIPT.md) still excludes complete old
-graph/cloud-worker parity and scale certification. No public alpha publication
-or general installation claim is made by this source document. Actual package
-and local upgrade evidence is separate. Historical reports below do not become
+graph/cloud-worker parity and scale certification. The current public preview is
+at the [explicit prerelease link](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.3).
+Later development adds opt-in [deterministic v2 retrieval](RETRIEVAL_V2.md),
+bounded sender repair and aligned signed-storage-response validation; those
+changes are not claimed to be present in the existing alpha attachments or
+installed locally. Actual package and local upgrade evidence is separate. Historical reports below do not become
 current-version validation by inclusion here.
+
+Earlier release pages/assets are now nonpublic drafts and their old public
+tags/development branches were removed at the owner's request. The sanitized
+main history remains. This does not remove read-only PR refs, forks, caches or
+already downloaded copies; do not treat the cleanup as proof of zero exposure.
 
 ## Historical v0.25.1 capacity-patch status
 
 Source target: **0.25.1**, a bounded file-pack capacity patch. The previous
 [v0.25.0 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
-was published at `7f27953b27b9ecd453be19084808357c89731d20` and remains immutable.
+was originally published at `7f27953b27b9ecd453be19084808357c89731d20`.
+That is a historical source reference; subsequent privacy remediation changed
+public history/assets and the old release is now withdrawn from public access.
 This document does not assert that v0.25.1 assets are already uploaded or that
 the new required CI has passed. No private installation, real Vault, key or
 remote account is changed by preparing these sources.

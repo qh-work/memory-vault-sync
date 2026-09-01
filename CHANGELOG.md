@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.26.0-alpha.3 — Prefer current memory and add a synthetic network trial
+
+- Rank current records ahead of superseded/resolved history with an explicit,
+  deterministic key in Python and TypeScript recall and handoff. Historical
+  evidence remains queryable with its unchanged record, ID, signature and status.
+- Bound state-witness traversal before the retrieval byte budget so a large or
+  multi-hop superseded goal cannot regain first place at the pre-ranking boundary.
+- Reuse one pending anonymous relay status challenge and roll the completed
+  idempotency cache, preventing repeated GET requests from filling control rows.
+- Add a separate no-Docker, all-synthetic one-command endpoint trial package,
+  bounded enrollment coordinator and fixed non-executing reference peer. The
+  package reads no installed Vault and fails closed without release-pinned trust.
+- This remains an invitation-only preview, not a production service, unlimited
+  network, real-model adoption result or thousand-agent certification.
+
+## 0.26.0-alpha.2 — Package the current network repairs
+
+- Include authenticated replacement-node replica repair from retained sender queues.
+- Add opt-in deterministic retrieval v2 and validate network storage proofs.
+- Include signed topic policy, grants, subscriptions and durable authority state.
+  Encrypted topic fan-out remains unfinished.
+- Create the private sync root before nested fragment receipts so interrupted
+  remote transfers can resume under a normal process umask.
+- Refresh current download and agent discovery entrypoints. Keep the eleven-tool
+  MCP interface and canonical memory records unchanged.
+- This is an explicitly installed preview, not a stable or thousand-agent release.
+
 ## 0.26.0-alpha.1 — Private communication-memory network
 
 - Add an optional six-operation native Python/NDJSON/trusted HTTP endpoint

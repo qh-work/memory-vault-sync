@@ -95,7 +95,7 @@ class TypeScriptRetrievalTests(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory(prefix="memory-vault-ts-retrieval-synthetic-")
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.fixture = Path(cls.temporary.name).resolve()
-        for name in ("retrieval.ts", "retrieval_text.ts", "records.ts", "crypto.ts", "io.ts", "package.json"):
+        for name in ("retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "records.ts", "crypto.ts", "io.ts", "package.json"):
             shutil.copyfile(ROOT / "clients/typescript/network" / name, cls.fixture / name)
         (cls.fixture / "node_modules").mkdir()
         (cls.fixture / "node_modules/jose").symlink_to(jose, target_is_directory=True)
@@ -249,6 +249,90 @@ class TypeScriptRetrievalTests(unittest.TestCase):
         self.trust.revoke(self.second.key_id)
         self.trusted = [self.identity.public_descriptor()]
         self.differential({"query": "memory", "limit": 32})
+
+    def test_current_cancellation_and_revalidation_precede_stronger_history(self):
+        failure = self.seed(
+            "Synthetic failed approach: fixture service stopped and the probe returned connection refused.",
+            kind="observation",
+        )
+        goal = self.seed(
+            "Synthetic goal: retry the fixture probe after the service is confirmed running.",
+            kind="goal", relations=[{"type": "derived_from", "target": failure["memory_id"]}],
+        )
+        changed = self.seed(
+            "Synthetic revalidation: fixture service is now running; the previous failure is historical.",
+            kind="observation", relations=[{"type": "supersedes", "target": failure["memory_id"]}],
+        )
+        cancellation = self.seed(
+            "Synthetic cancellation: the retry goal is cancelled; do not execute it.",
+            kind="decision", relations=[{"type": "supersedes", "target": goal["memory_id"]}],
+        )
+        query = "retry the fixture probe"
+        requests = []
+        for profile in (core.RETRIEVAL_PROFILE, core.RETRIEVAL_PROFILE_V2):
+            requests.extend([
+                {"query": query, "limit": 4, "ranking_profile": profile},
+                {"query": query, "limit": 4, "handoff": True, "ranking_profile": profile},
+                {"query": query, "limit": 1, "ranking_profile": profile},
+                {"query": query, "limit": 1, "handoff": True, "ranking_profile": profile},
+            ])
+        results = self.differential(*requests)
+        current_ids = {cancellation["memory_id"], changed["memory_id"]}
+        historical_ids = {goal["memory_id"], failure["memory_id"]}
+        for offset in (0, 4):
+            ordinary, handoff, ordinary_one, handoff_one = results[offset:offset + 4]
+            for result in (ordinary, handoff):
+                ids = [hit["memory_id"] for hit in result["hits"]]
+                self.assertTrue(current_ids.issubset(ids), ids)
+                self.assertTrue(historical_ids.issubset(ids), ids)
+                self.assertLess(max(ids.index(item) for item in current_ids),
+                                min(ids.index(item) for item in historical_ids))
+                self.assertEqual(result["evidence_context"]["included_memory_ids"], ids)
+                hits = {hit["memory_id"]: hit for hit in result["hits"]}
+                self.assertEqual(hits[cancellation["memory_id"]]["status"], "current")
+                self.assertEqual(hits[changed["memory_id"]]["status"], "current")
+                self.assertEqual(hits[goal["memory_id"]]["status"], "superseded")
+                self.assertEqual(hits[failure["memory_id"]]["status"], "superseded")
+                self.assertGreater(hits[goal["memory_id"]]["score_milli"],
+                                   hits[cancellation["memory_id"]]["score_milli"])
+            self.assertEqual(ordinary_one["hits"][0]["memory_id"], cancellation["memory_id"])
+            self.assertEqual(handoff_one["hits"][0]["memory_id"], cancellation["memory_id"])
+
+    def test_current_cancellation_survives_historical_rerank_byte_exhaustion(self):
+        # Ten individually valid records exceed the shared 8 MiB rerank
+        # budget. The short cancellation is relation-relevant but has no
+        # lexical query match, so it proves state priority is applied before
+        # reading large historical bytes rather than only after scoring.
+        goals = [self.seed(
+            f"Synthetic goal {index}: retry the fixture probe " + "😀" * 220_000,
+            kind="goal",
+        ) for index in range(10)]
+        intermediate = self.seed(
+            "Synthetic intermediate cancellation state.",
+            kind="decision",
+            relations=[{"type": "supersedes", "target": goal["memory_id"]} for goal in goals],
+        )
+        cancellation = self.seed(
+            "Synthetic final cancellation decision: do not execute the obsolete retries.",
+            kind="decision",
+            relations=[{"type": "supersedes", "target": intermediate["memory_id"]}],
+        )
+        # The smaller regression above owns the full 2x2 profile/entry matrix.
+        # These two diagonal cases exercise the common pre-scan budget path
+        # without multiplying an intentionally 8+ MiB fixture four times.
+        requests = [
+            {"query": "retry the fixture probe", "limit": 1,
+             "ranking_profile": core.RETRIEVAL_PROFILE},
+            {"query": "retry the fixture probe", "limit": 1, "handoff": True,
+             "ranking_profile": core.RETRIEVAL_PROFILE_V2},
+        ]
+        results = self.differential(*requests)
+        for result in results:
+            self.assertTrue(result["retrieval"]["truncated"])
+            self.assertEqual(result["hits"][0]["memory_id"], cancellation["memory_id"])
+            self.assertEqual(result["hits"][0]["status"], "current")
+            self.assertEqual(result["evidence_context"]["included_memory_ids"],
+                             [cancellation["memory_id"]])
 
     def test_dynamic_handoff_reserves_structural_goal_and_requires_live_episode(self):
         episode = self.seed("User:\nVisible continuity evidence.\n\nAssistant:\nObserved reply.", kind="episode",

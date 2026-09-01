@@ -13,7 +13,9 @@ from pathlib import Path
 import sys
 from typing import Any, Mapping, Sequence
 
-from memory_vault import AUTHORITY, KINDS, MemoryError, canonical_bytes, failure, strict_json_loads, success
+from memory_vault import (AUTHORITY, KINDS, RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2,
+                          RETRIEVAL_PROFILES, RANKING_MATH_PROFILE, MemoryError,
+                          canonical_bytes, failure, strict_json_loads, success)
 from memory_vault_client import ClientConfig, _schema, _validate_arguments, protocol_request
 
 PROFILE = "network-v1"
@@ -54,11 +56,13 @@ def _evidence_metadata(record: Mapping[str, Any]) -> dict[str, Any]:
             "provenance_status": "claimed" if claimed else "unknown"}
 
 
-def _recall_result(hits: list[dict[str, Any]], remaining: list[Any], offset: int) -> Mapping[str, Any]:
-    cursor = base64.urlsafe_b64encode(canonical_bytes({"ids": remaining, "offset": offset})).decode().rstrip("=") if remaining else None
+def _recall_result(hits: list[dict[str, Any]], remaining: list[Any], offset: int,
+                   retrieval: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+    metadata = {"retrieval": dict(retrieval)} if retrieval is not None else {}
+    cursor = base64.urlsafe_b64encode(canonical_bytes({"ids": remaining, "offset": offset, **metadata})).decode().rstrip("=") if remaining else None
     return success({"hits": hits, "next_cursor": cursor, "partial": bool(remaining),
                     "query_candidate_limit": 32, "network_accessed": False,
-                    "evidence_usage": dict(EVIDENCE_USAGE)})
+                    "evidence_usage": dict(EVIDENCE_USAGE), **metadata})
 
 
 def definitions() -> list[dict[str, Any]]:
@@ -70,7 +74,8 @@ def definitions() -> list[dict[str, Any]]:
                              "entities": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 512}},
                              "relations": {"type": "array", "maxItems": 32, "items": {"type": "object"}}}, ["request_id", "kind", "text"]),
         "recall": _schema({"query": text, "memory_id": {"type": "string", "maxLength": 64},
-                           "cursor": {"type": "string", "maxLength": 4096}, "handoff": {"type": "boolean"}}),
+                           "cursor": {"type": "string", "maxLength": 4096}, "handoff": {"type": "boolean"},
+                           "ranking_profile": {"type": "string", "maxLength": 128}}),
         "discover": _schema({"online": {"type": "boolean"}}),
         "send": _schema({"request_id": identifier, "recipients": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "string", "maxLength": 128}},
                          "text": text, "memory_ids": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 64}}}, ["request_id", "recipients"]),
@@ -110,22 +115,31 @@ class Agent:
                 "limits": {"request_bytes": MAX_INPUT, "result_bytes": MAX_RESULT},
                 "memory_owned_by_task": False, "memory_grants_authority": False,
                 "automatic_execution": False, "network_accessed": False,
+                "retrieval_profile": RETRIEVAL_PROFILE, "retrieval_profiles": list(RETRIEVAL_PROFILES),
                 "http_requires_trusted_endpoint_crypto": True,
                 "legacy_interfaces_preserved": ["handoff", "share-v1", "backup", "restore", "protocol", "mcp"]}
 
     def _recall(self, args: Mapping[str, Any]) -> Mapping[str, Any]:
         config = ClientConfig.load(self.client_config)
         cursor = args.get("cursor")
+        retrieval = None
         if cursor:
             if set(args) != {"cursor"}:
                 raise MemoryError("ambiguous_recall_cursor")
             try:
                 decoded = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
                 state = strict_json_loads(decoded)
-                if (set(state) != {"ids", "offset"} or not isinstance(state["ids"], list)
+                if (set(state) not in ({"ids", "offset"}, {"ids", "offset", "retrieval"}) or not isinstance(state["ids"], list)
                         or len(state["ids"]) > 32 or type(state["offset"]) is not int or state["offset"] < 0):
                     raise ValueError()
                 ids, offset = state["ids"], state["offset"]
+                if "retrieval" in state:
+                    retrieval = state["retrieval"]
+                    if (not isinstance(retrieval, dict) or set(retrieval) != {"profile", "math_profile", "ranking_time_ms"}
+                            or retrieval["profile"] != RETRIEVAL_PROFILE_V2 or retrieval["math_profile"] != RANKING_MATH_PROFILE
+                            or type(retrieval["ranking_time_ms"]) is not int
+                            or not -62135596800000 <= retrieval["ranking_time_ms"] <= 253402300799999):
+                        raise ValueError()
             except (ValueError, TypeError, KeyError, MemoryError):
                 raise MemoryError("invalid_recall_cursor") from None
         elif "memory_id" in args:
@@ -136,10 +150,13 @@ class Agent:
             if not args.get("query"):
                 raise MemoryError("recall_query_required")
             response = config.vault().handle({"op": "handoff" if args.get("handoff") else "recall",
-                                              "query": args["query"], "limit": 32, "maximum_context_bytes": 512})
+                                              "query": args["query"], "limit": 32, "maximum_context_bytes": 512,
+                                              **({"ranking_profile": args["ranking_profile"]} if "ranking_profile" in args else {})})
             if not response.get("ok"):
                 return response
             ids, offset = [hit["memory_id"] for hit in response["result"]["hits"]], 0
+            if args.get("ranking_profile") == RETRIEVAL_PROFILE_V2:
+                retrieval = {key: response["result"]["retrieval"][key] for key in ("profile", "math_profile", "ranking_time_ms")}
         hits = []
         remaining = list(ids)
         # A cursor freezes the chosen immutable IDs; no re-running a shifting
@@ -160,19 +177,20 @@ class Agent:
                 if offset < len(raw) and next_offset == offset:
                     raise MemoryError("agent_result_exceeds_budget")
                 hit = {"memory_id": record["memory_id"], "record_sha256": record["record_sha256"],
-                       "kind": record["kind"], "text": fragment, "text_offset_bytes": offset,
+                       "kind": record["kind"], "status": result["status"],
+                       "text": fragment, "text_offset_bytes": offset,
                        "partial": next_offset < len(raw), "verification": result.get("verification"),
                        "source_ids": [r["target"] for r in record["relations"] if r["type"] in {"derived_from", "supports"}][:8],
                        **_evidence_metadata(record)}
                 after_ids = remaining if next_offset < len(raw) else remaining[1:]
                 after_offset = next_offset if next_offset < len(raw) else 0
-                candidate = _recall_result([*hits, hit], after_ids, after_offset)
+                candidate = _recall_result([*hits, hit], after_ids, after_offset, retrieval)
                 if len(canonical_bytes(candidate)) <= MAX_RESULT:
                     break
                 if hits:
                     # The current record was inspected, but no bytes from it
                     # were consumed. Carry its original ID and offset forward.
-                    return _recall_result(hits, remaining, offset)
+                    return _recall_result(hits, remaining, offset, retrieval)
                 fragment_bytes //= 2
                 if fragment_bytes < 1:
                     raise MemoryError("agent_result_exceeds_budget")
@@ -182,7 +200,7 @@ class Agent:
                 break
             remaining.pop(0)
             offset = 0
-        return _recall_result(hits, remaining, offset)
+        return _recall_result(hits, remaining, offset, retrieval)
 
     def handle(self, request: Any) -> Mapping[str, Any]:
         request_id = request.get("request_id") if isinstance(request, dict) else None

@@ -344,16 +344,36 @@ class Relay:
         now = int(time.time())
         with self._transaction() as db:
             db.execute("DELETE FROM status_nonces WHERE expires_at<=?", (now,))
-            if db.execute("SELECT COUNT(*) FROM status_nonces").fetchone()[0] >= self.limits["maximum_control_rows"]:
-                raise RelayError("relay_status_challenge_limit", retryable=True)
             roster, payload = self._current(db, fresh=False)
-            nonce = secrets.token_hex(32)
-            db.execute("INSERT INTO status_nonces(nonce,expires_at) VALUES (?,?)", (nonce, now + 300))
-            result = {"nonce": nonce, "expires_at": now + 300, "current_roster_version": payload["version"],
+            # GET is intentionally unauthenticated so a new endpoint can
+            # refresh control state before sending. Reuse the one outstanding
+            # challenge instead of allocating a row per GET; otherwise an
+            # unauthenticated caller can exhaust the bounded control table.
+            pending = db.execute(
+                "SELECT nonce,expires_at FROM status_nonces "
+                "WHERE status_sha256 IS NULL ORDER BY rowid LIMIT 1"
+            ).fetchone()
+            if pending is None:
+                count = db.execute("SELECT COUNT(*) FROM status_nonces").fetchone()[0]
+                if count >= self.limits["maximum_control_rows"]:
+                    # Completed refreshes are only an idempotency cache. Keep
+                    # the newest bounded history and make room for one live
+                    # challenge; never evict an outstanding challenge.
+                    remove = count - self.limits["maximum_control_rows"] + 1
+                    db.execute(
+                        "DELETE FROM status_nonces WHERE nonce IN "
+                        "(SELECT nonce FROM status_nonces WHERE status_sha256 IS NOT NULL "
+                        "ORDER BY rowid LIMIT ?)", (remove,)
+                    )
+                nonce, expires_at = secrets.token_hex(32), now + 300
+                db.execute("INSERT INTO status_nonces(nonce,expires_at) VALUES (?,?)", (nonce, expires_at))
+            else:
+                nonce, expires_at = pending["nonce"], pending["expires_at"]
+            result = {"nonce": nonce, "expires_at": expires_at, "current_roster_version": payload["version"],
                       "current_roster_sha256": document_sha256(roster)}
             if self.node_identity is not None:
                 challenge = {"schema_version": "memory-vault-node-challenge/v1", "network_id": self.network_id,
-                             "node": self.node_descriptor(), "nonce": nonce, "issued_at": now, "expires_at": now + 300}
+                             "node": self.node_descriptor(), "nonce": nonce, "issued_at": now, "expires_at": expires_at}
                 result["node_challenge"] = {"payload": challenge, "proof": self.node_identity.sign_message(challenge)}
             return result
 
@@ -399,9 +419,21 @@ class Relay:
                     authorized_node(nodes, self.node_identity.key_id, "refresh",
                                     base_url=self.base_url, storage_epoch=self.storage_epoch)
             if challenge["status_sha256"] is not None:
-                if challenge["status_sha256"] != status_hash:
+                result = strict_json_loads(challenge["result"])
+                # Several authorized endpoints can receive the one shared
+                # pending challenge concurrently. Their issuer responses may
+                # differ only by signed issuance time. After fully verifying
+                # the new response above, treat an equivalent roster/node
+                # snapshot as the same refresh; reject any control-state
+                # difference under the consumed nonce.
+                same_roster = (result.get("roster_version") == roster["version"]
+                               and result.get("roster_sha256") == candidate_hash)
+                saved_nodes = self._get(db, "node_directory")
+                same_nodes = (("nodes" in raw and saved_nodes == raw["nodes"])
+                              or ("nodes" not in raw and saved_nodes is None))
+                if challenge["status_sha256"] != status_hash and not (same_roster and same_nodes):
                     raise RelayError("relay_status_nonce_conflict")
-                return strict_json_loads(challenge["result"])
+                return result
             previous_status = self._get(db, "status")
             if previous_status and status["issued_at"] < previous_status["payload"]["issued_at"]:
                 raise RelayError("relay_status_rollback")

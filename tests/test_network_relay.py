@@ -23,6 +23,56 @@ from memory_vault_trust import Identity
 
 
 class NetworkRelayTests(unittest.TestCase):
+    def test_anonymous_status_get_reuses_one_pending_challenge_and_completed_cache_rolls(self) -> None:
+        from starlette.testclient import TestClient
+
+        with tempfile.TemporaryDirectory(prefix="memory-network-status-synthetic-") as temporary:
+            root = Path(temporary).resolve()
+            issuer = Identity.generate(root / "issuer.json")
+            owner = Identity.generate(root / "owner.json")
+            owner_enc = EncryptionIdentity.generate()
+            network = "fixture-status-network"
+            now = int(time.time())
+            roster = issue_roster(issuer, network_id=network, version=1, previous_sha256="0" * 64,
+                members=[{"signing_key": owner.public_descriptor(), "encryption_key": owner_enc.public_descriptor(),
+                          "status": "active", "scope": ["receive", "send"]}],
+                issued_at=now, expires_at=now + 300)
+            roster_path, config_path = root / "roster.json", root / "relay.json"
+            storage.atomic_write(roster_path, canonical_bytes(roster), replace=False)
+            storage.atomic_write(config_path, canonical_bytes({
+                "schema_version": "memory-vault-relay-config/v1", "network_id": network,
+                "issuer_public_key": issuer.public_descriptor(), "roster_path": str(roster_path),
+                "state_directory": str(root / "relay-state"), "base_url": "http://127.0.0.1:8765",
+                "init_member_key_ids": [owner.key_id], "limits": {"maximum_control_rows": 3},
+            }), replace=False)
+            with TestClient(create_app(config_path)) as client:
+                first = client.get("/v1/status").json()
+                for _ in range(12):
+                    self.assertEqual(client.get("/v1/status").json()["nonce"], first["nonce"])
+                relay = client.app.state.relay
+                with relay._transaction() as db:
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM status_nonces").fetchone()[0], 1)
+                latest_request = latest_result = None
+                for index in range(7):
+                    challenge = client.get("/v1/status").json()
+                    signed_at = int(time.time())
+                    signed = issue_status(issuer, network_id=network, nonce=challenge["nonce"],
+                        roster_sha256=document_sha256(roster), roster_version=1,
+                        issued_at=signed_at, expires_at=signed_at + 300)
+                    latest_request = {"status": signed, "roster": roster}
+                    response = client.post("/v1/status", json=latest_request)
+                    self.assertEqual(response.status_code, 200, response.json())
+                    latest_result = response.json()
+                    if index == 0:
+                        concurrent = issue_status(issuer, network_id=network, nonce=challenge["nonce"],
+                            roster_sha256=document_sha256(roster), roster_version=1,
+                            issued_at=signed_at + 1, expires_at=signed_at + 301)
+                        self.assertEqual(client.post("/v1/status", json={"status": concurrent, "roster": roster}).json(),
+                                         latest_result)
+                    with relay._transaction() as db:
+                        self.assertLessEqual(db.execute("SELECT COUNT(*) FROM status_nonces").fetchone()[0], 3)
+                self.assertEqual(client.post("/v1/status", json=latest_request).json(), latest_result)
+
     @unittest.skipUnless(os.name == "posix", "directory fsync fault injection is POSIX-specific")
     def test_orphan_retry_requires_successful_durable_publication_before_storage_receipt(self):
         from tests.test_network_worker import fixture

@@ -8,7 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from memory_vault import canonical_bytes
+from memory_vault import RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2, canonical_bytes
 from memory_vault_agent import Agent, create_app
 from memory_vault_client import CONFIG_SCHEMA, ClientConfig
 from memory_vault_storage import atomic_write
@@ -53,6 +53,42 @@ class AgentTests(unittest.TestCase):
         failure = self.agent.handle({"op": "receive"})
         self.assertEqual(failure["error"]["code"], "network_not_configured")
         self.assertIn("commit_state", failure["error"])
+
+    def test_facade_selects_current_cancellation_before_superseded_goal(self):
+        self.configure()
+
+        def remember(request_id, kind, text, relations=()):
+            response = self.agent.handle({"op": "remember", "request_id": request_id,
+                "kind": kind, "text": text, "relations": list(relations)})
+            self.assertTrue(response["ok"], response)
+            return response["result"]["memory_id"]
+
+        failure = remember("req_current_target_failure", "observation",
+            "Synthetic failed approach: fixture service stopped and the probe returned connection refused.")
+        goal = remember("req_current_target_goal", "goal",
+            "Synthetic goal: retry the fixture probe after the service is confirmed running.",
+            [{"type": "derived_from", "target": failure}])
+        remember("req_current_target_changed", "observation",
+            "Synthetic revalidation: fixture service is now running; the previous failure is historical.",
+            [{"type": "supersedes", "target": failure}])
+        cancellation = remember("req_current_target_cancel", "decision",
+            "Synthetic cancellation: the retry goal is cancelled; do not execute it.",
+            [{"type": "supersedes", "target": goal}])
+        for profile in (RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2):
+            for handoff in (False, True):
+                response = self.agent.handle({"op": "recall", "query": "retry the fixture probe",
+                                              "handoff": handoff, "ranking_profile": profile})
+                self.assertTrue(response["ok"], response)
+                hits = response["result"]["hits"]
+                ids = [hit["memory_id"] for hit in hits]
+                self.assertEqual(ids[0], cancellation)
+                self.assertEqual(hits[0]["status"], "current")
+                self.assertIn(goal, ids)
+                self.assertEqual(hits[ids.index(goal)]["status"], "superseded")
+        vault = ClientConfig.load(self.config).vault()
+        with vault._connect(writable=False) as connection:
+            self.assertEqual(vault._memory_status(connection, goal), "superseded")
+            self.assertEqual(vault._memory_status(connection, cancellation), "current")
 
     def test_http_python_and_cli_share_native_records_and_retry_semantics(self):
         from starlette.testclient import TestClient

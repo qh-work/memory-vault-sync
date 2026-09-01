@@ -16,8 +16,12 @@ The endpoint is a scoped preview. `agent.ts` exposes the native six operations
 and uses the existing bounded fragment ranking and dynamic handoff selection.
 `vault.retrieve` uses that profile; `vault.recall` remains a separately labelled
 substring utility. Full graph/view-management and the old cloud worker are not
-ported here. A known platform floating-point boundary can still change the top
-ranked ID; the explicit expected-failure regression remains an open parity gate.
+ported here. The default v1 has a known platform floating-point boundary that
+can change the top ranked ID; its expected-failure regression remains open.
+Post-alpha source adds explicit `ranking_profile` selection of
+`bounded-fragment-bm25+deterministic-concepts/v2`, using the shared
+[integer math contract](../../../docs/RETRIEVAL_V2.md). V2 cursors preserve the
+original profile and clock; they still recheck current trust without reranking.
 No external security audit or complete old-client parity is
 claimed. Low-level
 crypto callers must still supply authenticated trust and recipient associations;

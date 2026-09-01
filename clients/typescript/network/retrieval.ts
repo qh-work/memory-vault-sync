@@ -7,9 +7,11 @@ import { document } from './crypto.ts';
 import type { DocumentInput } from './crypto.ts';
 import { NetworkError } from './io.ts';
 import type { MemoryRecord, MemoryRelation } from './records.ts';
-import { normalizeText, tokenize, semanticFeatures, semanticSimilarity, expandedQueryTokens,
+import { normalizeText, tokenize, semanticFeatures, semanticSimilarity, semanticCardinality, expandedQueryTokens,
   entityQueryMatches, fragmentLocator, memoryFragments, boundedText, LATIN_PATTERN, NEGATION_MARKERS } from './retrieval_text.ts';
 import type { MemoryFragment } from './retrieval_text.ts';
+import { RANKING_MATH_PROFILE, logQ, lexicalTermQ, rankingTimeMicros,
+  canonicalTimestampMicros, timeFactorQ, scoreV2 } from './ranking_math.ts';
 
 type Row = Record<string, any>;
 export interface RetrievalHost {
@@ -20,6 +22,7 @@ export interface RetrievalHost {
 }
 export interface RecallArguments {
   query: string; limit?: number; maximum_context_bytes?: number; semantic?: boolean; handoff?: boolean;
+  ranking_profile?: string;
 }
 export interface IndexState {
   profile: string; complete: boolean; first_unindexed_sequence: number | null;
@@ -31,8 +34,11 @@ interface Candidate { record: MemoryRecord; fragment: MemoryFragment; status: st
   matched_tokens: number; explanation: string[]; score_components: Row }
 
 export const RETRIEVAL_PROFILE = 'bounded-fragment-bm25+deterministic-concepts/v1';
+export const RETRIEVAL_PROFILE_V2 = 'bounded-fragment-bm25+deterministic-concepts/v2';
+export { RANKING_MATH_PROFILE } from './ranking_math.ts';
 export const RETRIEVAL_INDEX_PROFILE = 'full-record-terms+entities/v1';
 const MAX_RETRIEVAL_CANDIDATES = 512, MAX_RERANK_BYTES = 8 * 1024 * 1024, MAX_RERANK_FRAGMENTS = 4096;
+const MAX_STATE_WITNESSES = 128, MAX_STATE_WITNESS_DEPTH = 12;
 const STATE_RELATIONS = new Set(['supersedes', 'conflicts_with', 'resolves']);
 function fail(code: string): never { throw new NetworkError(code); }
 function order(a: string, b: string): number {
@@ -98,6 +104,48 @@ export class Retrieval {
     return unresolved ? 'conflicted' : 'current';
   }
 
+  private historicalIds(identifiers: readonly string[]): Set<string> {
+    const values = [...new Set(identifiers)].sort(order), historical = new Set<string>();
+    for (let offset = 0; offset < values.length; offset += 400) {
+      const batch = values.slice(offset, offset + 400);
+      for (const row of this.db.prepare('SELECT DISTINCT r.target_id FROM relations r ' +
+        'JOIN record_admissions source ON source.memory_id=r.source_id ' +
+        'JOIN record_admissions target ON target.memory_id=r.target_id ' +
+        'WHERE r.target_id IN (' + placeholders(batch) + ") AND r.relation IN ('supersedes','resolves') " +
+        'AND vault_admitted(source.state,source.signer_key_id)>=vault_admitted(target.state,target.signer_key_id)')
+        .all(...batch)) historical.add(String(row.target_id));
+    }
+    return historical;
+  }
+
+  private currentStateWitnessIds(roots: readonly string[], through?: number): [string[], boolean] {
+    const queue = [...new Set(roots)].map(value => ({value, depth: 0})), seen = new Set(queue.map(item => item.value));
+    const witnesses: string[] = []; let truncated = false;
+    while (queue.length && witnesses.length < MAX_STATE_WITNESSES) {
+      const {value: target, depth} = queue.shift()!, remaining = MAX_STATE_WITNESSES - witnesses.length;
+      const rows = this.db.prepare('SELECT r.source_id,r.relation FROM relations r ' +
+        'JOIN record_admissions source ON source.memory_id=r.source_id ' +
+        'JOIN record_admissions target ON target.memory_id=r.target_id ' +
+        'JOIN memories source_memory ON source_memory.memory_id=r.source_id ' +
+        'JOIN memories target_memory ON target_memory.memory_id=r.target_id ' +
+        "WHERE r.target_id=? AND r.relation IN ('supersedes','resolves') " +
+        'AND vault_admitted(source.state,source.signer_key_id)>=vault_admitted(target.state,target.signer_key_id) ' +
+        (through === undefined ? '' : 'AND source_memory.ingest_seq<=? AND target_memory.ingest_seq<=? ') +
+        "ORDER BY CASE r.relation WHEN 'resolves' THEN 0 ELSE 1 END,r.source_id LIMIT ?")
+        .all(target, ...(through === undefined ? [] : [through, through]), remaining + 1);
+      if (rows.length > remaining) truncated = true;
+      for (const row of rows.slice(0, remaining)) {
+        const source = String(row.source_id); if (seen.has(source)) continue;
+        seen.add(source); witnesses.push(source);
+        if (depth + 1 < MAX_STATE_WITNESS_DEPTH) queue.push({value: source, depth: depth + 1});
+        else truncated = true;
+      }
+    }
+    if (queue.length) truncated = true;
+    const historical = this.historicalIds(witnesses);
+    return [witnesses.filter(memoryId => !historical.has(memoryId)), truncated];
+  }
+
   stateRelation(row: Row): Row {
     const source = String(row.source_id), target = String(row.target_id), relation = String(row.relation);
     const sourceRank = Number(row.source_rank), targetRank = Number(row.target_rank);
@@ -124,7 +172,9 @@ export class Retrieval {
     return [selected, relations.length > selected.length];
   }
 
-  private rows(query: string, limit: number, semantic: boolean, metrics: Row, through?: number): Row[] {
+  private rows(query: string, limit: number, semantic: boolean, metrics: Row, through?: number,
+    rankingProfile: string = RETRIEVAL_PROFILE): Row[] {
+    const deterministic = rankingProfile === RETRIEVAL_PROFILE_V2;
     const tokens = [...new Set(tokenize(query))], tokenSet = new Set(tokens);
     const features = semantic ? semanticFeatures(query) : new Set<string>();
     const expanded = expandedQueryTokens(tokens, features), expansionOnly = expanded.filter(token => !tokenSet.has(token));
@@ -161,9 +211,23 @@ export class Retrieval {
       truncated = matches.length > candidateLimit; selected.push(...matches.slice(0, candidateLimit));
     }
     const rootIds = new Set(selected.map(row => String(row.memory_id)));
-    let relatedIds = new Set<string>();
+    let relatedIds = new Set<string>(), priorityWitnesses: string[] = [];
     if (rootIds.size) {
       const roots = selected.slice(0, Math.min(64, Math.max(8, limit * 2))).map(row => String(row.memory_id));
+      let witnessTruncated: boolean;
+      [priorityWitnesses, witnessTruncated] = this.currentStateWitnessIds(roots, through);
+      truncated ||= witnessTruncated;
+      // Four canonical records fit the existing 8 MiB rerank budget. This is
+      // also the native Agent page size and gives limit=1/4 a hard pre-scan.
+      priorityWitnesses = priorityWitnesses.slice(0, Math.min(4, limit));
+      const priorityNew = priorityWitnesses.filter(memoryId => !rootIds.has(memoryId));
+      for (const memoryId of priorityNew) relatedIds.add(memoryId);
+      if (priorityNew.length) {
+        const rows = this.db.prepare('SELECT m.memory_id,m.ingest_seq,length(CAST(m.record_json AS BLOB)) AS bytes FROM memories m ' +
+          'WHERE m.memory_id IN (' + placeholders(priorityNew) + ') ' + snapshot).all(...priorityNew, ...snapshotArguments);
+        const byId = new Map(rows.map(row => [String(row.memory_id), row]));
+        selected.push(...priorityNew.filter(memoryId => byId.has(memoryId)).map(memoryId => byId.get(memoryId)!));
+      }
       const related = this.db.prepare('SELECT r.source_id,r.target_id FROM relations r ' +
         'JOIN record_admissions a ON a.memory_id=r.source_id JOIN record_admissions b ON b.memory_id=r.target_id ' +
         'JOIN memories s ON s.memory_id=r.source_id JOIN memories t ON t.memory_id=r.target_id ' +
@@ -173,13 +237,27 @@ export class Retrieval {
         'ORDER BY r.source_id,r.relation,r.target_id LIMIT 513')
         .all(...roots, ...roots, ...(through === undefined ? [] : [through, through]));
       truncated ||= related.length > 512;
-      const neighbors = [...new Set(related.slice(0, 512).flatMap(row => [String(row.source_id), String(row.target_id)]))]
-        .filter(id => !rootIds.has(id)).sort(order);
-      relatedIds = new Set(neighbors.slice(0, Math.min(128, limit * 4)));
-      if (relatedIds.size) selected.push(...this.db.prepare('SELECT m.memory_id,m.ingest_seq,length(CAST(m.record_json AS BLOB)) AS bytes ' +
-        'FROM memories m WHERE m.memory_id IN (' + placeholders([...relatedIds]) + ') ' + snapshot + 'ORDER BY m.memory_id')
-        .all(...[...relatedIds].sort(order), ...snapshotArguments));
+      const bounded = related.slice(0, 512);
+      const neighbors = [...new Set(bounded.flatMap(row => [String(row.source_id), String(row.target_id)]))]
+        .filter(id => !rootIds.has(id));
+      const additional = neighbors.filter(memoryId => !relatedIds.has(memoryId));
+      const historicalNeighbors = this.historicalIds(additional);
+      additional.sort((left, right) => Number(historicalNeighbors.has(left)) - Number(historicalNeighbors.has(right)) || order(left, right));
+      const remainingRelated = Math.max(0, Math.min(128, limit * 4) - relatedIds.size);
+      const selectedAdditional = additional.slice(0, remainingRelated);
+      for (const memoryId of selectedAdditional) relatedIds.add(memoryId);
+      if (selectedAdditional.length) selected.push(...this.db.prepare('SELECT m.memory_id,m.ingest_seq,length(CAST(m.record_json AS BLOB)) AS bytes ' +
+        'FROM memories m WHERE m.memory_id IN (' + placeholders(selectedAdditional) + ') ' + snapshot + 'ORDER BY m.memory_id')
+        .all(...[...selectedAdditional].sort(order), ...snapshotArguments));
     }
+    // Apply the state tier before the byte/fragment budget too. A large
+    // superseded record must not hide its short current correction from the
+    // later deterministic score ordering.
+    const historicalSelected = this.historicalIds(selected.map(row => String(row.memory_id)));
+    const priorityRank = new Map(priorityWitnesses.map((memoryId, index) => [memoryId, index]));
+    const tier = (memoryId: string) => priorityRank.has(memoryId) ? 0 : historicalSelected.has(memoryId) ? 2 : 1;
+    selected.sort((left, right) => tier(String(left.memory_id)) - tier(String(right.memory_id)) ||
+      (priorityRank.get(String(left.memory_id)) || 0) - (priorityRank.get(String(right.memory_id)) || 0));
     const normalizedQuery = normalizeText(query), locateFragment = fragmentLocator(expanded, normalizedQuery);
     const records = new Map<string, MemoryRecord>(), statuses = new Map<string, string>();
     const entityFeatures = new Map<string, ReadonlySet<string>>(), entityMatches = new Map<string, ReadonlySet<string>>();
@@ -201,7 +279,9 @@ export class Retrieval {
         if (!locateFragment(String(fragment.text))) continue;
         scoring.push({ memory_id: id, fragment }); firstSelected ||= fragment === first;
       }
-      if (first && !firstSelected && (relatedIds.has(id) || entityMatches.get(id)!.size || semanticSimilarity(features, entityFeatures.get(id)!) > 0)) {
+      if (first && !firstSelected && (relatedIds.has(id) || entityMatches.get(id)!.size ||
+          (deterministic ? semanticCardinality(features, entityFeatures.get(id)!).overlap > 0 :
+            semanticSimilarity(features, entityFeatures.get(id)!) > 0))) {
         fallback.push({ memory_id: id, fragment: first });
       }
     }
@@ -214,12 +294,59 @@ export class Retrieval {
       for (const term of counts.keys()) documentFrequency.set(term, (documentFrequency.get(term) || 0) + 1);
       pool.push({ ...item, counts, length: Math.max(1, terms.length), features: semantic ? semanticFeatures(String(item.fragment.text)) : new Set() });
     }
-    const average = pool.reduce((sum, item) => sum + item.length, 0) / Math.max(1, pool.length), total = pool.length;
-    const currentTime = this.host.now?.() ?? Date.now(), candidates = new Map<string, Candidate>();
-    if (!Number.isSafeInteger(currentTime)) fail('invalid_retrieval_clock');
-    const currentMicros = BigInt(currentTime) * 1000n;
+    const average = deterministic ? 0 : pool.reduce((sum, item) => sum + item.length, 0) / Math.max(1, pool.length), total = pool.length;
+    const totalLength = deterministic ? pool.reduce((sum, item) => sum + BigInt(item.length), 0n) : 0n;
+    const orderedTokens = deterministic ? [...tokenSet].sort(order) : [];
+    const inverseByFrequency = new Map<number, bigint>(), recencyById = new Map<string, bigint>();
+    const currentTime = deterministic ? (this.host.now ? this.host.now() : Date.now()) : this.host.now?.() ?? Date.now();
+    const candidates = new Map<string, Candidate>();
+    if (!deterministic && !Number.isSafeInteger(currentTime)) fail('invalid_retrieval_clock');
+    const currentMicros = deterministic ? rankingTimeMicros(currentTime) : BigInt(currentTime) * 1000n;
     for (const item of pool) {
       const id = item.memory_id, record = records.get(id)!, fragment = item.fragment;
+      if (deterministic) {
+        let lexicalQ = 0n;
+        for (const token of orderedTokens) {
+          const frequency = item.counts.get(token);
+          if (!frequency) continue;
+          const df = documentFrequency.get(token)!;
+          let inverse = inverseByFrequency.get(df);
+          if (inverse === undefined) {
+            inverse = logQ(2n * (BigInt(total) + 1n), 2n * BigInt(df) + 1n);
+            inverseByFrequency.set(df, inverse);
+          }
+          lexicalQ += lexicalTermQ(inverse, BigInt(total), totalLength, BigInt(item.length), BigInt(frequency));
+        }
+        let recencyQ = recencyById.get(id);
+        if (recencyQ === undefined) {
+          recencyQ = timeFactorQ(currentMicros, canonicalTimestampMicros(record.created_at));
+          recencyById.set(id, recencyQ);
+        }
+        const status = statuses.get(id)!;
+        const scored = scoreV2({ lexicalQ, concept: semanticCardinality(features, item.features),
+          entityConcept: semanticCardinality(features, entityFeatures.get(id)!),
+          entityMatches: BigInt(entityMatches.get(id)!.size), queryTokens: BigInt(tokenSet.size),
+          phrase: Boolean(normalizedQuery && normalizeText(String(fragment.text)).includes(normalizedQuery)),
+          related: relatedIds.has(id), userHint: fragment.role_hint === 'user', episode: record.kind === 'episode',
+          deprecated: ['superseded', 'resolved'].includes(status), recencyQ });
+        if (!scored.eligible) continue;
+        const explanation = ['bounded_fragment_bm25', 'graph_status:' + status, 'recency_is_soft_not_authority',
+          ...[...intersection(features, item.features)].filter(feature => feature !== 'polarity:negative').sort(order)];
+        if (scored.concept_positive && features.has('polarity:negative') !== item.features.has('polarity:negative')) {
+          explanation.push('concept_polarity_mismatch_penalty');
+        }
+        if (fragment.role_hint) explanation.push('role_hint_is_not_authenticated');
+        if (entityMatches.get(id)!.size) explanation.push('entity_lexical_match');
+        if (relatedIds.has(id)) explanation.push('bounded_related_evidence');
+        const candidate: Candidate = { record, fragment, status, score_milli: scored.score_milli,
+          matched_tokens: new Set([...item.counts.keys(), ...entityMatches.get(id)!]).size,
+          explanation, score_components: scored.score_components };
+        const previous = candidates.get(id);
+        if (!previous || candidate.score_milli > previous.score_milli) candidates.set(id, candidate);
+        continue;
+      }
+      // Original v1 scoring remains the default, including its known libm
+      // boundary. No v2 fixed-point helper participates in this branch.
       let lexical = 0;
       for (const [token, frequency] of item.counts) {
         const df = documentFrequency.get(token)!, inverse = Math.log(1 + (total - df + 0.5) / (df + 0.5));
@@ -257,7 +384,10 @@ export class Retrieval {
       const previous = candidates.get(id);
       if (!previous || candidate.score_milli > previous.score_milli) candidates.set(id, candidate);
     }
-    const byScore = (a: Candidate, b: Candidate) => b.score_milli - a.score_milli || order(a.record.memory_id, b.record.memory_id);
+    const byScore = (a: Candidate, b: Candidate) => {
+      const historical = (item: Candidate) => ['superseded', 'resolved'].includes(item.status) ? 1 : 0;
+      return historical(a) - historical(b) || b.score_milli - a.score_milli || order(a.record.memory_id, b.record.memory_id);
+    };
     const ordered = [...candidates.values()].sort(byScore), ids = ordered.map(item => item.record.memory_id), admissionRanks = new Map<string, number>();
     for (let offset = 0; offset < ids.length; offset += 500) {
       const batch = ids.slice(offset, offset + 500);
@@ -304,9 +434,10 @@ export class Retrieval {
         status: item.status, verification: this.host.verification(record.memory_id), score_milli: item.score_milli,
         matched_tokens: item.matched_tokens, score_components: item.score_components, explanation: item.explanation };
     });
-    Object.assign(metrics, { profile: RETRIEVAL_PROFILE, semantic_adapter: semantic ? 'deterministic-concepts-v1' : 'disabled',
+    Object.assign(metrics, { profile: rankingProfile, semantic_adapter: semantic ? 'deterministic-concepts-v1' : 'disabled',
       bm25_scope: 'bounded_candidate_fragments', index: this.indexState(through), candidate_limit: candidateLimit, candidate_records: records.size,
       fragments_scanned: pool.length, record_bytes_scanned: used, fragment_spans_examined: spansExamined, truncated, ranking_is_authority: false });
+    if (deterministic) Object.assign(metrics, { math_profile: RANKING_MATH_PROFILE, ranking_time_ms: currentTime });
     return result;
   }
 
@@ -339,7 +470,9 @@ export class Retrieval {
 
   recall(options: RecallArguments): Row {
     const value = document(options as unknown as DocumentInput, 2 * 1024 * 1024) as Row;
-    if (!Object.hasOwn(value, 'query') || Object.keys(value).some(key => !['query', 'limit', 'maximum_context_bytes', 'semantic', 'handoff'].includes(key))) fail('invalid_shape');
+    if (!Object.hasOwn(value, 'query') || Object.keys(value).some(key => !['query', 'limit', 'maximum_context_bytes', 'semantic', 'handoff', 'ranking_profile'].includes(key))) fail('invalid_shape');
+    const rankingProfile = Object.hasOwn(value, 'ranking_profile') ? value.ranking_profile : RETRIEVAL_PROFILE;
+    if (rankingProfile !== RETRIEVAL_PROFILE && rankingProfile !== RETRIEVAL_PROFILE_V2) fail('unsupported_ranking_profile');
     const query = value.query;
     if (typeof query !== 'string' || query.includes('\0') || !normalizeText(query)) fail('invalid_text');
     if (Buffer.byteLength(query) > 1024 * 1024) fail('text_too_large');
@@ -353,7 +486,7 @@ export class Retrieval {
     const ownsTransaction = !this.db.isTransaction;
     if (ownsTransaction) this.db.exec('BEGIN');
     try {
-      const retrieval: Row = {}; let hits = this.rows(query, limit, semantic, retrieval);
+      const retrieval: Row = {}; let hits = this.rows(query, limit, semantic, retrieval, undefined, rankingProfile);
       if (handoff) {
         const structural: Row[] = [], seenKinds = new Set<string>();
         const candidates = this.db.prepare('SELECT m.* FROM memories m JOIN record_admissions a ON a.memory_id=m.memory_id ' +

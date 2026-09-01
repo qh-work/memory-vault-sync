@@ -38,6 +38,11 @@ optional `semantic: false` disables the deterministic concept bridge; local
 lexical matching, graph neighbors and the existing dynamic handoff remain.
 `capabilities` advertises the profile and the new view/index operations.
 
+Post-alpha source also offers the explicit `ranking_profile` selector for
+[deterministic v2 arithmetic](RETRIEVAL_V2.md). V1 remains the default; its
+existing floating-point formula and known cross-runtime boundary are not
+silently replaced. Neither selection changes canonical memory or the index.
+
 Each hit still has `memory_id`, `kind`, `text`, `text_truncated`, `entities`,
 `relations`, provenance, verification, status, `score_milli` and
 `matched_tokens`. It additionally contains:
@@ -114,7 +119,11 @@ Vault.
    delete opposing evidence. The ten hand-authored groups are not semantic
    understanding, a learned model or a universal translator.
 6. Apply soft role, kind, graph-state and recency factors. Superseded/resolved
-   evidence remains eligible but is de-emphasized. Return the strongest
+   evidence remains eligible but is de-emphasized. Current and unresolved
+   candidates are selected before superseded/resolved history, then ordered by
+   score inside that state tier. This prevents a highly lexical cancelled goal
+   or stale failure from displacing its current cancellation or revalidation.
+   It does not rewrite or delete the historical record. Return the strongest
    fragment per record, then use the bounded diversity pass described below.
 
 The optional [single-sided visible-fragment framing](VISIBLE_FRAGMENTS.md)
@@ -146,10 +155,16 @@ No Task or Project directory is created and no memory is removed.
 
 Current verified candidates enter this pass before currently usable unsigned
 candidates. A lower-admission copy or source label cannot suppress a stronger
-selected candidate or consume its source quota. Final order still follows the
-existing retrieval scores. This protects the **selection pass**, not earlier
-candidate discovery, and does not promise resistance to arbitrary poisoning
-by other equally admitted records or make score a trust decision.
+selected candidate or consume its source quota. Final order follows the
+current/historical state tiers above and then the existing retrieval scores.
+Before the 8 MiB record scan, retrieval also follows effective incoming
+`supersedes` and `resolves` chains from at most 64 roots, through at most 128
+witnesses and 12 levels. The first `min(4, limit)` current witnesses are scanned
+before ordinary current and historical candidates. This prevents large history
+from consuming the byte budget before a bounded current cancellation can be
+ranked; reaching a witness bound reports `retrieval.truncated=true`. It does not
+promise resistance to arbitrary poisoning by other equally admitted records or
+make score a trust decision.
 
 Similarity token sets contain at most 1,024 tokens per candidate. At most
 `limit` candidates are retained in each of the two admission bands, within the

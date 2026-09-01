@@ -1,4 +1,4 @@
-# Memory Vault v0.26.0-alpha.1 independent review kit
+# Memory Vault v0.26.0-alpha.3 independent review kit
 
 This separate archive contains public source and synthetic tests, not private
 memory or a preconfigured installation. The [validation index](docs/VALIDATION.md)

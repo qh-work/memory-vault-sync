@@ -8,12 +8,16 @@ storage, or network delivery to a Python bridge.
 
 This is a scoped independent endpoint preview. Native `Agent.recall` uses the
 same bounded fragment BM25/concept ranking and structural handoff selection as
-Python. **Exact ordering at every floating-point boundary is not yet verified:**
+Python. **The default v1 still has a known floating-point boundary:**
 one real fixture still differs by one integer score after platform `exp`
 rounding and changes the first selected ID. The test records this as an open
 expected failure, not a pass; no epsilon hides it. The separate microsecond
-date-conversion defect is fixed. A future shared deterministic math profile
-must be reviewed before replacing the existing Python formula.
+date-conversion defect is fixed. Post-alpha source adds explicit
+`ranking_profile: 'bounded-fragment-bm25+deterministic-concepts/v2'`, using the
+same [specified integer arithmetic](RETRIEVAL_V2.md) in both implementations.
+This does not replace v1 or establish parity for every host Unicode/runtime
+version. V2 native cursors preserve the original profile and ranking clock
+alongside the selected IDs, with current trust checked on every page.
 `CanonicalVault.retrieve` exposes the current profile; the older low-level
 `CanonicalVault.recall` is still a bounded substring utility and explicitly
 reports `python_ranking_equivalent: false`. Full graph/view management and the
@@ -89,8 +93,10 @@ failure causes when relevant conditions change or applicability is uncertain,
 using only existing authorized tools. Recall and receive do not execute retries.
 See [the agent usage contract](../AI_START_HERE.md#attribute-inherited-evidence-and-recheck-old-failures).
 
-Recall hits include `recorded_at`, bounded `provenance_refs`, an explicit
-truncation flag and `provenance_status`. Recall and receive both include
+Recall hits include the live graph `status`, `recorded_at`, bounded
+`provenance_refs`, an explicit truncation flag and `provenance_status`.
+The cursor freezes selected IDs and their order, while `status` is rechecked
+when each page is read. Recall and receive both include
 `evidence_usage`: historical evidence, no assumed personal experience, current
 environment not checked, and no automatic retry of remembered failures. The
 reference fields are claims; the original `verification` still separately
@@ -204,6 +210,14 @@ Check `stored_nodes`, `configured_nodes`, `degraded` and errors. A `stored`
 receipt is a signed storage assertion, not proof of future retention or an
 independent physical fault domain. `validated_saved` means receiver persistence
 and verification; it never means model understanding or task completion.
+Post-alpha source verifies the complete stored response with the same closed
+4-field legacy or 5-field signed shape as Python, a positive safe-integer
+sequence and a 16 KiB limit. The signed form must match an independently
+authenticated node binding, never a key supplied by the receipt itself. The
+low-level verifier requires an explicit flag for unsigned legacy responses;
+native peers retain their existing unbound legacy-node path. An established
+node binding never permits an unsigned downgrade. No new operator approval
+or legacy-mode configuration is introduced by this change.
 Received text previews can be truncated; inspect `text_partial` and
 `text_memory_id` instead of treating the preview as complete content. Starting
 an endpoint does not launch other
@@ -218,9 +232,10 @@ agents, run received instructions, or subscribe to an unlimited background loop.
 | One peer send | At most 16 recipients, 16 KiB UTF-8 text and 32 explicitly selected memory IDs; network share at most 2 MiB |
 | Crypto carrier / HTTP document | At most 4 MiB plaintext, 6 MiB envelope, 8 MiB HTTP body |
 | Peer queues | At most 1,024 outbox rows and 4,096 inbox rows, with 256 MiB content budgets; quarantine at most 128 rows / 16 MiB |
+| Stored responses | 16 KiB each; historical per-message receipt JSON at most 64 KiB and all outbox receipt JSON at most 16 MiB, checked before materializing those payloads |
 | HTTP | No redirects or decompression; verified HTTPS except explicit loopback HTTP; at most ten seconds per built-in request or the earlier caller deadline |
 | Pump | Zero to 16 outgoing attempts, one to 60 seconds, zero to four incoming messages per call |
-| Native recall/handoff | At most 32 selected IDs, four hits per page, up to 768 UTF-8 text bytes per hit within the 8 KiB response; follow `next_cursor` |
+| Native recall/handoff | At most 32 selected IDs, four hits per page, live `status`, and up to 768 UTF-8 text bytes per hit within the 8 KiB response; follow `next_cursor` |
 | Bounded substring utility | `CanonicalVault.recall`: one to 64 results, one to 1,024 scanned rows, one to 30 seconds, and an explicit result-byte limit; follow `nextAfter` when `partial` |
 | Local share | At most 256 records / 8 MiB, with bounded dependency closure and an explicit time limit; the peer's smaller network-share limit still applies |
 

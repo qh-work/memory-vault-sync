@@ -180,6 +180,7 @@ export function canonicalBytes(value: unknown, maximum = MAX_ENVELOPE_BYTES): Ui
     if (current === null || typeof current === 'boolean') { emit(JSON.stringify(current)); return; }
     if (typeof current === 'string') { string(current); return; }
     if (typeof current === 'number') {
+      if (!Number.isInteger(current)) fail('network_nonportable_json');
       if (!Number.isSafeInteger(current)) fail('network_invalid_integer');
       emit(JSON.stringify(current)); return;
     }

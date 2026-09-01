@@ -443,6 +443,9 @@ def _push_pending(config: SyncConfig, endpoint: DirectoryTransfer, remote: Rclon
     if payload.get("group") is not None:
         group = payload["group"]
         receipts = config.state_directory / "remote-group-receipts" / group["group_id"]
+        # Create the private root explicitly: mkdir(parents=True) applies its
+        # requested mode only to the final directory, not missing ancestors.
+        _private_directory(config.state_directory)
         _private_directory(receipts.parent)
         _private_directory(receipts)
         transferred = 0
