@@ -251,7 +251,7 @@ export class Agent {
       while (true) {
         const text = fragment(raw, offset, maximum); next = offset + Buffer.byteLength(text);
         if (offset < raw.length && next === offset) fail('agent_result_exceeds_budget');
-        hit = {memory_id: record.memory_id, record_sha256: record.record_sha256, kind: record.kind,
+        hit = {memory_id: record.memory_id, record_sha256: record.record_sha256, kind: record.kind, status: result.result.status,
           text, text_offset_bytes: offset, partial: next < raw.length, verification: result.result.verification,
           source_ids: record.relations.filter((edge: Obj) => ['derived_from','supports'].includes(edge.type)).slice(0,8).map((edge: Obj) => edge.target),
           ...evidenceMetadata(record)};

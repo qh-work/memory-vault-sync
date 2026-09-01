@@ -157,9 +157,14 @@ Current verified candidates enter this pass before currently usable unsigned
 candidates. A lower-admission copy or source label cannot suppress a stronger
 selected candidate or consume its source quota. Final order follows the
 current/historical state tiers above and then the existing retrieval scores.
-This protects the **selection pass**, not earlier
-candidate discovery, and does not promise resistance to arbitrary poisoning
-by other equally admitted records or make score a trust decision.
+Before the 8 MiB record scan, retrieval also follows effective incoming
+`supersedes` and `resolves` chains from at most 64 roots, through at most 128
+witnesses and 12 levels. The first `min(4, limit)` current witnesses are scanned
+before ordinary current and historical candidates. This prevents large history
+from consuming the byte budget before a bounded current cancellation can be
+ranked; reaching a witness bound reports `retrieval.truncated=true`. It does not
+promise resistance to arbitrary poisoning by other equally admitted records or
+make score a trust decision.
 
 Similarity token sets contain at most 1,024 tokens per candidate. At most
 `limit` candidates are retained in each of the two admission bands, within the

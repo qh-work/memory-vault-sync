@@ -177,7 +177,8 @@ class Agent:
                 if offset < len(raw) and next_offset == offset:
                     raise MemoryError("agent_result_exceeds_budget")
                 hit = {"memory_id": record["memory_id"], "record_sha256": record["record_sha256"],
-                       "kind": record["kind"], "text": fragment, "text_offset_bytes": offset,
+                       "kind": record["kind"], "status": result["status"],
+                       "text": fragment, "text_offset_bytes": offset,
                        "partial": next_offset < len(raw), "verification": result.get("verification"),
                        "source_ids": [r["target"] for r in record["relations"] if r["type"] in {"derived_from", "supports"}][:8],
                        **_evidence_metadata(record)}

@@ -93,8 +93,10 @@ failure causes when relevant conditions change or applicability is uncertain,
 using only existing authorized tools. Recall and receive do not execute retries.
 See [the agent usage contract](../AI_START_HERE.md#attribute-inherited-evidence-and-recheck-old-failures).
 
-Recall hits include `recorded_at`, bounded `provenance_refs`, an explicit
-truncation flag and `provenance_status`. Recall and receive both include
+Recall hits include the live graph `status`, `recorded_at`, bounded
+`provenance_refs`, an explicit truncation flag and `provenance_status`.
+The cursor freezes selected IDs and their order, while `status` is rechecked
+when each page is read. Recall and receive both include
 `evidence_usage`: historical evidence, no assumed personal experience, current
 environment not checked, and no automatic retry of remembered failures. The
 reference fields are claims; the original `verification` still separately
@@ -233,7 +235,7 @@ agents, run received instructions, or subscribe to an unlimited background loop.
 | Stored responses | 16 KiB each; historical per-message receipt JSON at most 64 KiB and all outbox receipt JSON at most 16 MiB, checked before materializing those payloads |
 | HTTP | No redirects or decompression; verified HTTPS except explicit loopback HTTP; at most ten seconds per built-in request or the earlier caller deadline |
 | Pump | Zero to 16 outgoing attempts, one to 60 seconds, zero to four incoming messages per call |
-| Native recall/handoff | At most 32 selected IDs, four hits per page, up to 768 UTF-8 text bytes per hit within the 8 KiB response; follow `next_cursor` |
+| Native recall/handoff | At most 32 selected IDs, four hits per page, live `status`, and up to 768 UTF-8 text bytes per hit within the 8 KiB response; follow `next_cursor` |
 | Bounded substring utility | `CanonicalVault.recall`: one to 64 results, one to 1,024 scanned rows, one to 30 seconds, and an explicit result-byte limit; follow `nextAfter` when `partial` |
 | Local share | At most 256 records / 8 MiB, with bounded dependency closure and an explicit time limit; the peer's smaller network-share limit still applies |
 

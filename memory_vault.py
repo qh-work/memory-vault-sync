@@ -1758,6 +1758,76 @@ class Vault:
         return "current"
 
     @staticmethod
+    def _historical_memory_ids(
+        connection: sqlite3.Connection, identifiers: Iterable[str],
+    ) -> set[str]:
+        """Classify bounded retrieval candidates before applying byte limits.
+
+        This mirrors the resolved/superseded precedence in ``_memory_status``
+        without loading canonical record bytes. Retrieval uses it only to keep
+        a large historical candidate from consuming the entire rerank budget
+        before its current correction can be considered.
+        """
+        values = sorted(set(identifiers))
+        historical: set[str] = set()
+        for offset in range(0, len(values), 400):
+            batch = values[offset:offset + 400]
+            placeholders = ",".join("?" for _ in batch)
+            historical.update(str(row[0]) for row in connection.execute(
+                "SELECT DISTINCT r.target_id FROM relations r "
+                "JOIN record_admissions source ON source.memory_id=r.source_id "
+                "JOIN record_admissions target ON target.memory_id=r.target_id "
+                f"WHERE r.target_id IN ({placeholders}) "
+                "AND r.relation IN ('supersedes','resolves') "
+                "AND vault_admitted(source.state,source.signer_key_id)>="
+                "vault_admitted(target.state,target.signer_key_id)", batch,
+            ))
+        return historical
+
+    @staticmethod
+    def _current_state_witness_ids(
+        connection: sqlite3.Connection, roots: Sequence[str], *, through: int | None,
+        maximum: int = 128,
+    ) -> tuple[list[str], bool]:
+        """Follow effective replacement/resolution chains within fixed bounds."""
+        queue: deque[tuple[str, int]] = deque((value, 0) for value in dict.fromkeys(roots))
+        seen = {value for value, _ in queue}
+        witnesses: list[str] = []
+        truncated = False
+        while queue and len(witnesses) < maximum:
+            target, depth = queue.popleft()
+            remaining = maximum - len(witnesses)
+            rows = connection.execute(
+                "SELECT r.source_id,r.relation FROM relations r "
+                "JOIN record_admissions source ON source.memory_id=r.source_id "
+                "JOIN record_admissions target ON target.memory_id=r.target_id "
+                "JOIN memories source_memory ON source_memory.memory_id=r.source_id "
+                "JOIN memories target_memory ON target_memory.memory_id=r.target_id "
+                "WHERE r.target_id=? AND r.relation IN ('supersedes','resolves') "
+                "AND vault_admitted(source.state,source.signer_key_id)>="
+                "vault_admitted(target.state,target.signer_key_id) "
+                + ("AND source_memory.ingest_seq<=? AND target_memory.ingest_seq<=? " if through is not None else "")
+                + "ORDER BY CASE r.relation WHEN 'resolves' THEN 0 ELSE 1 END,r.source_id LIMIT ?",
+                (target, *((through, through) if through is not None else ()), remaining + 1),
+            ).fetchall()
+            if len(rows) > remaining:
+                truncated = True
+            for row in rows[:remaining]:
+                source = str(row["source_id"])
+                if source in seen:
+                    continue
+                seen.add(source)
+                witnesses.append(source)
+                if depth + 1 < MAX_TREE_DEPTH:
+                    queue.append((source, depth + 1))
+                else:
+                    truncated = True
+        if queue:
+            truncated = True
+        historical = Vault._historical_memory_ids(connection, witnesses)
+        return [memory_id for memory_id in witnesses if memory_id not in historical], truncated
+
+    @staticmethod
     def _context_relations(
         connection: sqlite3.Connection, relations: Sequence[Mapping[str, str]],
     ) -> tuple[list[Mapping[str, str]], bool]:
@@ -1848,8 +1918,28 @@ class Vault:
             selected.extend(rows[:candidate_limit])
         root_ids = {str(row["memory_id"]) for row in selected}
         related_ids: set[str] = set()
+        priority_witnesses: list[str] = []
         if root_ids:
             roots = [str(row["memory_id"]) for row in selected[: min(64, max(8, limit * 2))]]
+            priority_witnesses, witness_truncated = self._current_state_witness_ids(
+                connection, roots, through=through,
+            )
+            truncated = truncated or witness_truncated
+            # Canonical records are individually bounded below 2 MiB, so four
+            # state witnesses fit the existing 8 MiB rerank budget. This gives
+            # limit=1/4 and the four-hit Agent page a hard pre-scan bound.
+            priority_witnesses = priority_witnesses[: min(4, limit)]
+            priority_new = [memory_id for memory_id in priority_witnesses if memory_id not in root_ids]
+            related_ids.update(priority_new)
+            if priority_new:
+                placeholders = ",".join("?" for _ in priority_new)
+                rows = connection.execute(
+                    "SELECT m.memory_id,m.ingest_seq,length(CAST(m.record_json AS BLOB)) AS bytes "
+                    f"FROM memories m WHERE m.memory_id IN ({placeholders}) " + snapshot_filter,
+                    (*priority_new, *snapshot_arguments),
+                ).fetchall()
+                by_id = {str(row["memory_id"]): row for row in rows}
+                selected.extend(by_id[memory_id] for memory_id in priority_new if memory_id in by_id)
             placeholders = ",".join("?" for _ in roots)
             related = connection.execute(
                 "SELECT r.source_id,r.target_id FROM relations r "
@@ -1863,15 +1953,36 @@ class Vault:
                 (*roots, *roots, *((through, through) if through is not None else ())),
             ).fetchall()
             truncated = truncated or len(related) > 512
-            neighbors = sorted({str(row[key]) for row in related[:512] for key in ("source_id", "target_id")} - root_ids)
-            related_ids = set(neighbors[: min(128, limit * 4)])
-            if related_ids:
-                placeholders = ",".join("?" for _ in related_ids)
+            bounded_relations = related[:512]
+            neighbors = {str(row[key]) for row in bounded_relations for key in ("source_id", "target_id")} - root_ids
+            neighbors -= related_ids
+            historical_neighbors = self._historical_memory_ids(connection, neighbors)
+            neighbors = sorted(neighbors, key=lambda memory_id: (
+                memory_id in historical_neighbors,
+                memory_id,
+            ))
+            remaining_related = max(0, min(128, limit * 4) - len(related_ids))
+            additional_related = neighbors[:remaining_related]
+            related_ids.update(additional_related)
+            if additional_related:
+                placeholders = ",".join("?" for _ in additional_related)
                 selected.extend(connection.execute(
                     "SELECT m.memory_id,m.ingest_seq,length(CAST(m.record_json AS BLOB)) AS bytes "
                     f"FROM memories m WHERE m.memory_id IN ({placeholders}) " + snapshot_filter + "ORDER BY m.memory_id",
-                    (*sorted(related_ids), *snapshot_arguments),
+                    (*sorted(additional_related), *snapshot_arguments),
                 ).fetchall())
+        # State priority must apply before the byte/fragment budget as well as
+        # after scoring. Otherwise a few large superseded records can prevent
+        # a short current cancellation from entering the ranked working set.
+        historical_selected = self._historical_memory_ids(
+            connection, (str(row["memory_id"]) for row in selected),
+        )
+        priority_rank = {memory_id: index for index, memory_id in enumerate(priority_witnesses)}
+        selected.sort(key=lambda row: (
+            0 if str(row["memory_id"]) in priority_rank else
+            2 if str(row["memory_id"]) in historical_selected else 1,
+            priority_rank.get(str(row["memory_id"]), 0),
+        ))
         normalized_query = normalize_text(query)
         locate_fragment = _fragment_locator(expanded, normalized_query)
         records: dict[str, dict[str, Any]] = {}

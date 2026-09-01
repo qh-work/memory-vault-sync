@@ -38,6 +38,7 @@ export const RETRIEVAL_PROFILE_V2 = 'bounded-fragment-bm25+deterministic-concept
 export { RANKING_MATH_PROFILE } from './ranking_math.ts';
 export const RETRIEVAL_INDEX_PROFILE = 'full-record-terms+entities/v1';
 const MAX_RETRIEVAL_CANDIDATES = 512, MAX_RERANK_BYTES = 8 * 1024 * 1024, MAX_RERANK_FRAGMENTS = 4096;
+const MAX_STATE_WITNESSES = 128, MAX_STATE_WITNESS_DEPTH = 12;
 const STATE_RELATIONS = new Set(['supersedes', 'conflicts_with', 'resolves']);
 function fail(code: string): never { throw new NetworkError(code); }
 function order(a: string, b: string): number {
@@ -101,6 +102,48 @@ export class Retrieval {
         'MAX(vault_admitted(a.state,a.signer_key_id),vault_admitted(b.state,b.signer_key_id))') + ') LIMIT 1')
       .get(memoryId, memoryId, rank);
     return unresolved ? 'conflicted' : 'current';
+  }
+
+  private historicalIds(identifiers: readonly string[]): Set<string> {
+    const values = [...new Set(identifiers)].sort(order), historical = new Set<string>();
+    for (let offset = 0; offset < values.length; offset += 400) {
+      const batch = values.slice(offset, offset + 400);
+      for (const row of this.db.prepare('SELECT DISTINCT r.target_id FROM relations r ' +
+        'JOIN record_admissions source ON source.memory_id=r.source_id ' +
+        'JOIN record_admissions target ON target.memory_id=r.target_id ' +
+        'WHERE r.target_id IN (' + placeholders(batch) + ") AND r.relation IN ('supersedes','resolves') " +
+        'AND vault_admitted(source.state,source.signer_key_id)>=vault_admitted(target.state,target.signer_key_id)')
+        .all(...batch)) historical.add(String(row.target_id));
+    }
+    return historical;
+  }
+
+  private currentStateWitnessIds(roots: readonly string[], through?: number): [string[], boolean] {
+    const queue = [...new Set(roots)].map(value => ({value, depth: 0})), seen = new Set(queue.map(item => item.value));
+    const witnesses: string[] = []; let truncated = false;
+    while (queue.length && witnesses.length < MAX_STATE_WITNESSES) {
+      const {value: target, depth} = queue.shift()!, remaining = MAX_STATE_WITNESSES - witnesses.length;
+      const rows = this.db.prepare('SELECT r.source_id,r.relation FROM relations r ' +
+        'JOIN record_admissions source ON source.memory_id=r.source_id ' +
+        'JOIN record_admissions target ON target.memory_id=r.target_id ' +
+        'JOIN memories source_memory ON source_memory.memory_id=r.source_id ' +
+        'JOIN memories target_memory ON target_memory.memory_id=r.target_id ' +
+        "WHERE r.target_id=? AND r.relation IN ('supersedes','resolves') " +
+        'AND vault_admitted(source.state,source.signer_key_id)>=vault_admitted(target.state,target.signer_key_id) ' +
+        (through === undefined ? '' : 'AND source_memory.ingest_seq<=? AND target_memory.ingest_seq<=? ') +
+        "ORDER BY CASE r.relation WHEN 'resolves' THEN 0 ELSE 1 END,r.source_id LIMIT ?")
+        .all(target, ...(through === undefined ? [] : [through, through]), remaining + 1);
+      if (rows.length > remaining) truncated = true;
+      for (const row of rows.slice(0, remaining)) {
+        const source = String(row.source_id); if (seen.has(source)) continue;
+        seen.add(source); witnesses.push(source);
+        if (depth + 1 < MAX_STATE_WITNESS_DEPTH) queue.push({value: source, depth: depth + 1});
+        else truncated = true;
+      }
+    }
+    if (queue.length) truncated = true;
+    const historical = this.historicalIds(witnesses);
+    return [witnesses.filter(memoryId => !historical.has(memoryId)), truncated];
   }
 
   stateRelation(row: Row): Row {
@@ -168,9 +211,23 @@ export class Retrieval {
       truncated = matches.length > candidateLimit; selected.push(...matches.slice(0, candidateLimit));
     }
     const rootIds = new Set(selected.map(row => String(row.memory_id)));
-    let relatedIds = new Set<string>();
+    let relatedIds = new Set<string>(), priorityWitnesses: string[] = [];
     if (rootIds.size) {
       const roots = selected.slice(0, Math.min(64, Math.max(8, limit * 2))).map(row => String(row.memory_id));
+      let witnessTruncated: boolean;
+      [priorityWitnesses, witnessTruncated] = this.currentStateWitnessIds(roots, through);
+      truncated ||= witnessTruncated;
+      // Four canonical records fit the existing 8 MiB rerank budget. This is
+      // also the native Agent page size and gives limit=1/4 a hard pre-scan.
+      priorityWitnesses = priorityWitnesses.slice(0, Math.min(4, limit));
+      const priorityNew = priorityWitnesses.filter(memoryId => !rootIds.has(memoryId));
+      for (const memoryId of priorityNew) relatedIds.add(memoryId);
+      if (priorityNew.length) {
+        const rows = this.db.prepare('SELECT m.memory_id,m.ingest_seq,length(CAST(m.record_json AS BLOB)) AS bytes FROM memories m ' +
+          'WHERE m.memory_id IN (' + placeholders(priorityNew) + ') ' + snapshot).all(...priorityNew, ...snapshotArguments);
+        const byId = new Map(rows.map(row => [String(row.memory_id), row]));
+        selected.push(...priorityNew.filter(memoryId => byId.has(memoryId)).map(memoryId => byId.get(memoryId)!));
+      }
       const related = this.db.prepare('SELECT r.source_id,r.target_id FROM relations r ' +
         'JOIN record_admissions a ON a.memory_id=r.source_id JOIN record_admissions b ON b.memory_id=r.target_id ' +
         'JOIN memories s ON s.memory_id=r.source_id JOIN memories t ON t.memory_id=r.target_id ' +
@@ -180,13 +237,27 @@ export class Retrieval {
         'ORDER BY r.source_id,r.relation,r.target_id LIMIT 513')
         .all(...roots, ...roots, ...(through === undefined ? [] : [through, through]));
       truncated ||= related.length > 512;
-      const neighbors = [...new Set(related.slice(0, 512).flatMap(row => [String(row.source_id), String(row.target_id)]))]
-        .filter(id => !rootIds.has(id)).sort(order);
-      relatedIds = new Set(neighbors.slice(0, Math.min(128, limit * 4)));
-      if (relatedIds.size) selected.push(...this.db.prepare('SELECT m.memory_id,m.ingest_seq,length(CAST(m.record_json AS BLOB)) AS bytes ' +
-        'FROM memories m WHERE m.memory_id IN (' + placeholders([...relatedIds]) + ') ' + snapshot + 'ORDER BY m.memory_id')
-        .all(...[...relatedIds].sort(order), ...snapshotArguments));
+      const bounded = related.slice(0, 512);
+      const neighbors = [...new Set(bounded.flatMap(row => [String(row.source_id), String(row.target_id)]))]
+        .filter(id => !rootIds.has(id));
+      const additional = neighbors.filter(memoryId => !relatedIds.has(memoryId));
+      const historicalNeighbors = this.historicalIds(additional);
+      additional.sort((left, right) => Number(historicalNeighbors.has(left)) - Number(historicalNeighbors.has(right)) || order(left, right));
+      const remainingRelated = Math.max(0, Math.min(128, limit * 4) - relatedIds.size);
+      const selectedAdditional = additional.slice(0, remainingRelated);
+      for (const memoryId of selectedAdditional) relatedIds.add(memoryId);
+      if (selectedAdditional.length) selected.push(...this.db.prepare('SELECT m.memory_id,m.ingest_seq,length(CAST(m.record_json AS BLOB)) AS bytes ' +
+        'FROM memories m WHERE m.memory_id IN (' + placeholders(selectedAdditional) + ') ' + snapshot + 'ORDER BY m.memory_id')
+        .all(...[...selectedAdditional].sort(order), ...snapshotArguments));
     }
+    // Apply the state tier before the byte/fragment budget too. A large
+    // superseded record must not hide its short current correction from the
+    // later deterministic score ordering.
+    const historicalSelected = this.historicalIds(selected.map(row => String(row.memory_id)));
+    const priorityRank = new Map(priorityWitnesses.map((memoryId, index) => [memoryId, index]));
+    const tier = (memoryId: string) => priorityRank.has(memoryId) ? 0 : historicalSelected.has(memoryId) ? 2 : 1;
+    selected.sort((left, right) => tier(String(left.memory_id)) - tier(String(right.memory_id)) ||
+      (priorityRank.get(String(left.memory_id)) || 0) - (priorityRank.get(String(right.memory_id)) || 0));
     const normalizedQuery = normalizeText(query), locateFragment = fragmentLocator(expanded, normalizedQuery);
     const records = new Map<string, MemoryRecord>(), statuses = new Map<string, string>();
     const entityFeatures = new Map<string, ReadonlySet<string>>(), entityMatches = new Map<string, ReadonlySet<string>>();

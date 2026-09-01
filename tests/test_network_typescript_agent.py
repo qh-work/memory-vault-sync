@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 import unittest
 
-from memory_vault import AUTHORITY, build_record, canonical_bytes
+from memory_vault import AUTHORITY, RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2, build_record, canonical_bytes
 from memory_vault_agent import Agent
 from memory_vault_client import CONFIG_SCHEMA, ClientConfig
 from memory_vault_storage import atomic_write
@@ -385,6 +385,79 @@ class TypeScriptAgentTests(unittest.TestCase):
             if item["result"]["next_cursor"]:
                 self.same({"op": "recall", "cursor": item["result"]["next_cursor"]})
         self.assertEqual(self.records(), before)
+
+    def test_current_cancellation_order_and_status_survive_cross_runtime_cursor(self):
+        self.configure()
+
+        def write(suffix, text, *, kind="fact", relations=()):
+            response = self.agent.handle(self.remember(
+                suffix, text, kind=kind, relations=list(relations),
+            ))
+            self.assertTrue(response["ok"], response)
+            return response["result"]["memory_id"]
+
+        failure = write("priority_failure",
+            "Synthetic failed approach: fixture service stopped and the probe returned connection refused.",
+            kind="observation")
+        goal = write("priority_goal",
+            "Synthetic goal: retry the fixture probe after the service is confirmed running.",
+            kind="goal", relations=[{"type": "derived_from", "target": failure}])
+        changed = write("priority_changed",
+            "Synthetic revalidation: fixture service is now running; the previous failure is historical.",
+            kind="observation", relations=[{"type": "supersedes", "target": failure}])
+        cancellation = write("priority_cancel",
+            "Synthetic cancellation: the retry goal is cancelled; do not execute it.",
+            kind="decision", relations=[{"type": "supersedes", "target": goal}])
+        current_ids = {changed, cancellation}
+        for index, kind in enumerate(("fact", "summary", "continuity")):
+            current_ids.add(write(f"priority_context_{index}",
+                f"Synthetic current context branch {index} remains separately reviewable.",
+                kind=kind, relations=[{"type": "related_to", "target": goal}]))
+        historical_ids = {failure, goal}
+
+        frozen = []
+        pending_current_ids = set()
+        for profile in (RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2):
+            for handoff in (False, True):
+                request = {"op": "recall", "query": "retry the fixture probe",
+                           "handoff": handoff, "ranking_profile": profile}
+                first = self.agent.handle(request)
+                observed, = self.ts(request)
+                self.assertTrue(first["ok"], first)
+                self.assertEqual(observed["result"]["hits"], first["result"]["hits"])
+                hits = first["result"]["hits"]
+                self.assertEqual(hits[0]["memory_id"], cancellation)
+                self.assertTrue(all(hit["status"] == "current" for hit in hits), hits)
+                self.assertTrue(set(hit["memory_id"] for hit in hits) <= current_ids)
+                self.assertIsNotNone(first["result"]["next_cursor"])
+                cursor = first["result"]["next_cursor"]
+                state = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+                first_ids = [hit["memory_id"] for hit in hits]
+                ordered_ids = first_ids + state["ids"]
+                self.assertLess(max(ordered_ids.index(memory_id) for memory_id in current_ids),
+                                min(ordered_ids.index(memory_id) for memory_id in historical_ids))
+                pending = current_ids & set(state["ids"])
+                self.assertTrue(pending)
+                pending_current_ids.update(pending)
+                frozen.append((cursor, pending))
+
+        newcomer = write("priority_new_current",
+            "Synthetic cancellation retry the fixture probe newly inserted current evidence.",
+            kind="decision", relations=[
+                {"type": "supersedes", "target": memory_id}
+                for memory_id in sorted(pending_current_ids)
+            ])
+        for cursor, pending in frozen:
+            second, = self.same({"op": "recall", "cursor": cursor})
+            self.assertTrue(second["ok"], second)
+            hits = second["result"]["hits"]
+            ids = [hit["memory_id"] for hit in hits]
+            self.assertNotIn(newcomer, ids)
+            self.assertTrue(historical_ids <= set(ids), ids)
+            self.assertTrue(pending <= set(ids), ids)
+            for hit in hits:
+                if hit["memory_id"] in historical_ids | pending:
+                    self.assertEqual(hit["status"], "superseded")
 
     def test_argument_errors_and_exact_64k_request_boundary(self):
         self.configure()

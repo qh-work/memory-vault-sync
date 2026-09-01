@@ -298,6 +298,42 @@ class TypeScriptRetrievalTests(unittest.TestCase):
             self.assertEqual(ordinary_one["hits"][0]["memory_id"], cancellation["memory_id"])
             self.assertEqual(handoff_one["hits"][0]["memory_id"], cancellation["memory_id"])
 
+    def test_current_cancellation_survives_historical_rerank_byte_exhaustion(self):
+        # Ten individually valid records exceed the shared 8 MiB rerank
+        # budget. The short cancellation is relation-relevant but has no
+        # lexical query match, so it proves state priority is applied before
+        # reading large historical bytes rather than only after scoring.
+        goals = [self.seed(
+            f"Synthetic goal {index}: retry the fixture probe " + "😀" * 220_000,
+            kind="goal",
+        ) for index in range(10)]
+        intermediate = self.seed(
+            "Synthetic intermediate cancellation state.",
+            kind="decision",
+            relations=[{"type": "supersedes", "target": goal["memory_id"]} for goal in goals],
+        )
+        cancellation = self.seed(
+            "Synthetic final cancellation decision: do not execute the obsolete retries.",
+            kind="decision",
+            relations=[{"type": "supersedes", "target": intermediate["memory_id"]}],
+        )
+        # The smaller regression above owns the full 2x2 profile/entry matrix.
+        # These two diagonal cases exercise the common pre-scan budget path
+        # without multiplying an intentionally 8+ MiB fixture four times.
+        requests = [
+            {"query": "retry the fixture probe", "limit": 1,
+             "ranking_profile": core.RETRIEVAL_PROFILE},
+            {"query": "retry the fixture probe", "limit": 1, "handoff": True,
+             "ranking_profile": core.RETRIEVAL_PROFILE_V2},
+        ]
+        results = self.differential(*requests)
+        for result in results:
+            self.assertTrue(result["retrieval"]["truncated"])
+            self.assertEqual(result["hits"][0]["memory_id"], cancellation["memory_id"])
+            self.assertEqual(result["hits"][0]["status"], "current")
+            self.assertEqual(result["evidence_context"]["included_memory_ids"],
+                             [cancellation["memory_id"]])
+
     def test_dynamic_handoff_reserves_structural_goal_and_requires_live_episode(self):
         episode = self.seed("User:\nVisible continuity evidence.\n\nAssistant:\nObserved reply.", kind="episode",
                             provenance={"source_type": "visible_turn", "confidence": "observed"})

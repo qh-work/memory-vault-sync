@@ -8,7 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from memory_vault import canonical_bytes
+from memory_vault import RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2, canonical_bytes
 from memory_vault_agent import Agent, create_app
 from memory_vault_client import CONFIG_SCHEMA, ClientConfig
 from memory_vault_storage import atomic_write
@@ -74,12 +74,17 @@ class AgentTests(unittest.TestCase):
         cancellation = remember("req_current_target_cancel", "decision",
             "Synthetic cancellation: the retry goal is cancelled; do not execute it.",
             [{"type": "supersedes", "target": goal}])
-        for handoff in (False, True):
-            response = self.agent.handle({"op": "recall", "query": "retry the fixture probe", "handoff": handoff})
-            self.assertTrue(response["ok"], response)
-            ids = [hit["memory_id"] for hit in response["result"]["hits"]]
-            self.assertEqual(ids[0], cancellation)
-            self.assertIn(goal, ids)
+        for profile in (RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2):
+            for handoff in (False, True):
+                response = self.agent.handle({"op": "recall", "query": "retry the fixture probe",
+                                              "handoff": handoff, "ranking_profile": profile})
+                self.assertTrue(response["ok"], response)
+                hits = response["result"]["hits"]
+                ids = [hit["memory_id"] for hit in hits]
+                self.assertEqual(ids[0], cancellation)
+                self.assertEqual(hits[0]["status"], "current")
+                self.assertIn(goal, ids)
+                self.assertEqual(hits[ids.index(goal)]["status"], "superseded")
         vault = ClientConfig.load(self.config).vault()
         with vault._connect(writable=False) as connection:
             self.assertEqual(vault._memory_status(connection, goal), "superseded")
