@@ -324,6 +324,41 @@ or signed descriptor forks remain visible rather than being merged into a
 global fact. Immutable Memory IDs and original source proofs are the stable
 deduplication/evidence layer above transport sequences.
 
+Offline discovery starts from what B held **before** a new message was created,
+not an object key supplied later by a test driver. B retains a stable opaque
+mailbox anchor and its signed finite epoch policy. That policy names bounded
+independent writer/feed slots and scopes their append, read, retention and
+maintenance obligations. Ordinary admitted appends do not require B online;
+repair cannot authorize a new writer. Every feed has its own persistent writer
+sequence, immutable original admission entries and signed cumulative checkpoints
+over a bounded-fanout paged range index. The entry binds the original sender
+attempt, recipient permission and stable ciphertext key. Independent feeds merge
+additively; same-writer forks remain conflicts, not a global last-writer winner.
+
+The required chain is anchor -> finite feed -> authenticated range/page ->
+original admission -> opaque object key -> current provider -> original bytes.
+Each link has finite storage, read, repair and publication authority. Surviving
+metadata custodians keep exact reconstruction capsules and scoped maintenance
+jobs; a volatile mailbox notification is not the only copy of the association.
+They may republish original writer evidence and their own provider facts, never
+forge a fresh delivery, owner epoch or recipient receipt. Ciphertext retention
+alone does not satisfy this enumeration obligation. The full edge/actor and
+crash/merge rules are in [Cold mailbox discovery](OPEN_NETWORK_LIFECYCLE.md#cold-mailbox-discovery-is-part-of-custody).
+
+Public directory replies do not publish the mailbox membership graph: policies,
+index edges and admission evidence use scoped metadata reads, with private
+details sealed to B. Authorized custodians see only required opaque routing and
+repair evidence, never the Memory/message decryption keys. This is not metadata
+anonymity. B verifies the original inner evidence after decryption.
+
+`object_readable` means a known-key read works. `message_discoverable` additionally
+requires the valid enumeration path from the pre-offline anchor; only this
+message-level predicate counts for offline-delivery repair. Neither is B's
+`validated_saved`. Per-call work is bounded and resumable; observed checkpoint
+ranges and gaps remain explicit. Missing heads/pages cannot prove a globally
+empty mailbox or silently skip an unseen message. Unlimited offline appends are
+not promised after finite writer authority, lease or budget expiry.
+
 ## Sharded storage, replicas and repair
 
 Routing discovery and bulk storage are separate. A directory node need not
@@ -349,7 +384,10 @@ the immutable JWE. It can copy exact ciphertext to an approved new lease without
 the sender re-signing a delivery attempt or changing recipients. The new lease
 must allow the original authorized recipient to retrieve it, and its location
 must be discoverable through the permitted opaque pointer path, before it is
-counted as a usable replacement. Custody permission alone cannot create a new
+counted as an object-readable replacement. Message-level repair additionally
+preserves the complete original mailbox enumeration path and its separate
+`r_enum` obligations; an object-level receipt cannot stand in for it.
+Custody permission alone cannot create a new
 recipient, mailbox delivery event or receive acknowledgment. Serving a new
 mailbox additionally requires that recipient's mailbox permission.
 
@@ -382,7 +420,9 @@ small-group transition protocol; ad hoc signatures are insufficient.
 
 Planned shutdown transfers obligations and obtains destination receipts before
 retiring copies. It also requires discoverable provider publication/readback and
-valid recipient retrieval rights; a storage receipt alone is insufficient.
+valid recipient retrieval rights, including retained enumeration links and a
+walk from the original mailbox anchor for message obligations; a storage receipt
+alone is insufficient.
 Unexpired source promises remain unless explicitly released. The migration
 states are PREPARE, COPY, COMMIT, ADVERTISE, USABLE and RETIRE, with separate
 durable evidence at each boundary. A crashed holder can be replaced only from a surviving valid
@@ -433,6 +473,10 @@ unique useful capacity <= sum(eligible usable storage minus headroom) / replica 
 stable pending queue requires arrival rate < service rate after control/repair overhead
 minimum repair time >= missing bytes / effective repair bottleneck bandwidth
 ```
+
+Missing bytes and retained demand include required enumeration/path evidence,
+not just ciphertext. Identity count `A` and retained message/page count `N` are
+independent cost axes; aggregation does not make their metadata or renewal free.
 
 Sending to `G` independent recipients still requires `O(G)` delivery work.
 One consumer reading every message still processes those messages. The network
