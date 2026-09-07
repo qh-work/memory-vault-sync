@@ -36,14 +36,18 @@ export interface RememberArguments {
 export type RecallArguments = { query: string; handoff?: boolean; ranking_profile?: string; include_experience?: boolean } |
   { memory_id: string; include_experience?: boolean } | { cursor: string };
 export interface DiscoverArguments { online?: boolean }
-export interface SendArguments {
+export type HintSendControl = {schema_version:'memory-vault-hint/v1';kind:'query';query:string} |
+  {schema_version:'memory-vault-hint/v1';kind:'select';offer_message_id:string;memory_id:string};
+export type SendArguments = {
   request_id: RequestId;
   recipients: string[];
   text?: string;
   memory_ids?: string[];
-}
-export type ReceiveArguments = { limit?: number; message_id?: never; offset?: never } |
-  { message_id: string; offset?: number; limit?: never };
+  control?: never;
+} | {request_id: RequestId; recipients: string[]; control: HintSendControl; text?: never; memory_ids?: never};
+export type ReceiveArguments = { limit?: number; message_id?: never; offset?: never; respond_to?: never } |
+  { message_id: string; offset?: number; limit?: never; respond_to?: never } |
+  { respond_to: string; limit?: never; message_id?: never; offset?: never };
 
 export interface NativeError {
   code: string;

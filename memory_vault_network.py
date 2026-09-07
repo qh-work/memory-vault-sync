@@ -29,7 +29,7 @@ from memory_vault_network_crypto import (EncryptionIdentity, PublicKeyTrust, doc
 from memory_vault_network_control import (verify_roster, verify_status, verify_invite, sign_request,
     open_join_challenge, verify_request)
 from memory_vault_network_content import (CONTENT_SCHEMA, MAX_CONTENT_SHARE_BYTES,
-                                          validate_content, content_text)
+                                          validate_content, validate_control, content_text)
 from memory_vault_nodes import (check_outbox_receipt_bounds, verify_storage_receipt,
                                 MAX_OUTBOX_RECEIPT_ROW_BYTES)
 
@@ -626,12 +626,56 @@ class NetworkClient:
             content = {"schema_version": CONTENT_SCHEMA, "kind": "message", "text": text}
         return canonical_bytes(validate_content(content))
 
-    def send(self, request_id: str, recipients: list[str], text: str = "", memory_ids: list[str] | None = None) -> Mapping[str, Any]:
+    def set_hint_policy(self, policy: Mapping[str, Any]) -> Mapping[str, Any]:
+        from memory_vault_network_hints import set_policy
+        return set_policy(self, policy)
+
+    def respond_to(self, message_id: str) -> Mapping[str, Any]:
+        from memory_vault_network_hints import respond_to
+        return respond_to(self, message_id)
+
+    def _queue_body(self, request_id: str, recipients: list[str], input_sha: str, body: bytes) -> sqlite3.Row:
+        message_id = "msg_" + hashlib.sha256(canonical_bytes([self.network_id, self.identity.key_id, request_id])).hexdigest()
+        with self.db() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            prior = (self._outbox_rows(connection, request_id, full=True) or [None])[0]
+            if prior is None:
+                count, size = connection.execute("SELECT COUNT(*),COALESCE(SUM(length(body)+COALESCE(length(envelope),0)),0) FROM outbox").fetchone()
+                if count >= 1024 or size + len(body) * 3 > MAX_QUEUE_BYTES:
+                    raise MemoryError("network_outbox_capacity")
+                connection.execute("INSERT INTO outbox(request_id,message_id,input_sha,body,recipients) VALUES(?,?,?,?,?)",
+                                   (request_id, message_id, input_sha, body, canonical_bytes(recipients)))
+                prior = self._outbox_rows(connection, request_id, full=True)[0]
+            if prior["input_sha"] != input_sha:
+                raise MemoryError("network_request_id_conflict")
+            return prior
+
+    def _send_hint_response(self, request_id: str, recipient: str, content: Mapping[str, Any], source_id: str) -> Mapping[str, Any]:
+        from memory_vault_network_hints import guard
+        guard(self, content, [recipient])
+        input_sha = hashlib.sha256(canonical_bytes({"respond_to": source_id})).hexdigest()
+        prior = self._queue_body(request_id, [recipient], input_sha, canonical_bytes(validate_content(content)))
+        return self._deliver(prior, [recipient])
+
+    def send(self, request_id: str, recipients: list[str], text: str = "", memory_ids: list[str] | None = None,
+             control: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
         opaque(request_id)
         if (not isinstance(recipients, list) or not 1 <= len(recipients) <= 16
                 or any(not isinstance(key, str) for key in recipients)
                 or len(set(recipients)) != len(recipients) or not isinstance(text, str) or len(text.encode()) > 16384):
             raise MemoryError("network_invalid_send")
+        if control is not None:
+            if text or memory_ids is not None or len(recipients) != 1:
+                raise MemoryError("network_invalid_send")
+            control = validate_control(control)
+            if control["kind"] not in {"query", "select"}:
+                raise MemoryError("network_invalid_send")
+            from memory_vault_network_hints import guard
+            body = validate_content({"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": control})
+            guard(self, body, recipients)
+            input_sha = hashlib.sha256(canonical_bytes({"recipients": recipients, "text": "", "memory_ids": [], "control": control})).hexdigest()
+            prior = self._queue_body(request_id, recipients, input_sha, canonical_bytes(body))
+            return self._deliver(prior, recipients)
         memory_ids = memory_ids or []
         if not isinstance(memory_ids, list) or len(memory_ids) > 32:
             raise MemoryError("network_invalid_memory_selection")
@@ -691,6 +735,12 @@ class NetworkClient:
                 members = self._members(current)
                 if "send" not in members[self.identity.key_id]["scope"] or any(k not in members or "receive" not in members[k]["scope"] for k in recipients):
                     raise MemoryError("network_send_scope_denied")
+                if content["kind"] in {"hint_control", "hint_transfer"} and any(
+                        not {"send", "receive"}.issubset(members[key]["scope"])
+                        for key in [self.identity.key_id, *recipients]):
+                    raise MemoryError("network_send_scope_denied")
+                from memory_vault_network_hints import guard
+                guard(self, content, recipients)
                 if envelope is None:
                     candidate = seal(bytes(prior["body"]), signer=self.identity, network_id=self.network_id,
                                      message_id=message_id, recipients=[{"signing_key_id": k, "encryption_key": members[k]["encryption_key"]} for k in recipients],
@@ -703,6 +753,7 @@ class NetworkClient:
                 historical = self._members(frozen_roster)
                 if any(k not in historical or historical[k] != members[k] for k in [self.identity.key_id, *recipients]):
                     raise MemoryError("network_frozen_recipient_changed")
+                guard(self, content, recipients)
                 response = self._transport_request(relay, "POST", "/v1/messages", {"envelope": envelope, "roster": frozen_roster}, deadline=node_deadline)
                 if (response.get("state") != "stored" or response.get("message_id") != message_id
                         or response.get("envelope_sha256") != document_sha256(envelope)):
@@ -951,10 +1002,15 @@ class NetworkClient:
                 return existing
         try:
             content = validate_content(body)
+            if content["kind"] == "hint_transfer":
+                from memory_vault_network_hints import validate_incoming_transfer
+                validate_incoming_transfer(self, content, payload["sender_key_id"])
         except MemoryError as exc:
+            if exc.retryable:
+                raise
             return self._reject_content(envelope, exc.code)
         imported = None
-        if content["kind"] == "memory_transfer":
+        if content["kind"] in {"memory_transfer", "hint_transfer"}:
             from memory_vault_sharing import import_share, _scan
             selected = unb64url(content["share"], maximum=MAX_SHARE_BYTES)
             with tempfile.TemporaryDirectory(prefix="received-", dir=self.directory) as temporary:
@@ -1021,6 +1077,7 @@ class NetworkClient:
         fragment = text[offset:].encode("utf-8")[:1024].decode("utf-8", errors="ignore")
         end = offset + len(fragment)
         return {**result, "text": fragment, "text_partial": offset > 0 or end < len(text),
+                **({"control": content["control"]} if content["kind"] == "hint_control" else {}),
                 "offset": offset, "next_offset": end if end < len(text) else None,
                 "total_characters": len(text), "network_accessed": False}
 

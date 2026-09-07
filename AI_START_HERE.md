@@ -19,6 +19,10 @@ pins; obsolete alpha.3 trial URLs are not reused.
 separates communication from long-term memory. The downloaded preview has the
 earlier behavior. Compatibility and upgrade tooling are deferred; test this
 candidate with isolated synthetic state and preserve existing private data.
+The next [authorized Memory Hint candidate](docs/NETWORK_HINTS_V1.md) lets a
+known peer query a small explicit visible set and request one original record
+closure. Both hint and full-record grants require separate local configuration;
+network membership or chat cannot grant them. It is not global discovery.
 
 ## Use an endpoint
 

@@ -6,7 +6,7 @@
   "exports": {
     ".": "./crypto.ts", "./crypto": "./crypto.ts", "./control": "./control.ts",
     "./nodes": "./nodes.ts", "./records": "./records.ts", "./vault": "./vault.ts",
-    "./peer": "./peer.ts", "./content": "./content.ts", "./setup": "./setup.ts", "./transport": "./transport.ts",
+    "./peer": "./peer.ts", "./content": "./content.ts", "./hints": "./hints.ts", "./setup": "./setup.ts", "./transport": "./transport.ts",
     "./agent": "./agent.ts", "./retrieval": "./retrieval.ts", "./topics": "./topics.ts"
   },
   "types": "./crypto.ts",

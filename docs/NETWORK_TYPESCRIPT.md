@@ -319,3 +319,12 @@ These checks do not establish exact cross-runtime ranking at all numerical
 boundaries, complete legacy-client parity, Windows support,
 three-model/two-provider acceptance, physical fault-domain durability, or
 large-cluster capacity. Those gates remain separate from this preview.
+
+## Authorized Hint candidate
+
+The independent native endpoint also implements the [bounded Hint contract](NETWORK_HINTS_V1.md).
+`NetworkPeer.setHintPolicy` is a trusted local configuration method. The six
+operations accept the same typed `send(control=...)`, `receive(respond_to=...)`
+and local control-read semantics as Python. This does not make the HTTP SDK a
+key holder or permit an untrusted relay to decrypt content. Local policy is
+excluded from endpoint recovery and must be explicitly granted again.

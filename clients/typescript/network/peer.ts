@@ -19,6 +19,8 @@ import type { VaultOptions } from './vault.ts';
 import { parseShare, NetworkRecordsError } from './records.ts';
 import { CONTENT_SCHEMA, MAX_CONTENT_SHARE_BYTES, validateContent, contentText, contentChunk } from './content.ts';
 import type { NetworkContent } from './content.ts';
+import { HINT_SCHEMA, validateHintControl, hintMessageId, readHintPolicy, writeHintPolicy, grantFor } from './hints.ts';
+import type { HintControl, HintPolicy } from './hints.ts';
 import { absolutePath, readPrivate, openPrivateDatabase, transaction, NetworkError } from './io.ts';
 import { HTTPTransport, origin } from './transport.ts';
 import { readTrustedKeys } from './setup.ts';
@@ -277,6 +279,81 @@ export class NetworkPeer {
     const members=current.roster.payload.members.filter(member=>member.status==='active');
     return {network_id:this.networkId,members:members.slice(0,32).map(member=>({key_id:member.signing_key.key_id,scope:member.scope})),member_count:members.length,partial:members.length>32,configured_nodes:this.relays.length,network_accessed:true};
   });}
+  setHintPolicy(value:DocumentInput):Obj {
+    return transaction(this.db(),()=>{
+      const policy=writeHintPolicy(path.join(this.directory,'hint-policy.json'),value,this.networkId,this.identity.key_id,now());
+      return {state:'hint_policy_set',revision:policy.revision,network_accessed:false};
+    });
+  }
+  private hintPolicy():HintPolicy {
+    return readHintPolicy(path.join(this.directory,'hint-policy.json'),this.networkId,this.identity.key_id,now());
+  }
+  private hintMembers(current:CurrentRoster,recipient:string):void {
+    for(const action of ['send','receive'] as const){
+      authorizedMember(current,this.identity.key_id,action,{now:now(),expected_identity:this.localIdentity as any});
+      authorizedMember(current,recipient,action,{now:now()});
+    }
+  }
+  private inboxControl(messageId:string,sender?:string):HintControl {
+    hintMessageId(messageId);
+    const row=this.db().prepare('SELECT sender,body FROM inbox WHERE message_id=?').get(messageId) as Obj|undefined;
+    if(!row||sender!==undefined&&row.sender!==sender)fail('network_hint_not_available');
+    const content=validateContent(row.body);
+    if(content.kind!=='hint_control')fail('network_hint_not_available');
+    return content.control;
+  }
+  private receivedOffer(offerId:string,recipient:string,memoryId:string):Extract<HintControl,{kind:'hints'}> {
+    const control=this.inboxControl(offerId,recipient);
+    if(control.kind!=='hints'||control.expires_at<=now()||!control.hints.some(hint=>hint.memory_id===memoryId))fail('network_hint_not_available');
+    return control;
+  }
+  private ownOffer(offerId:string,recipient:string,memoryId:string):Extract<HintControl,{kind:'hints'}> {
+    hintMessageId(offerId);
+    const row=this.db().prepare('SELECT body,recipients FROM outbox WHERE message_id=?').get(offerId) as Obj|undefined;
+    if(!row||row.recipients===null||!equal(parse(row.recipients),[recipient]))fail('network_hint_not_available');
+    const content=validateContent(row.body);
+    if(content.kind!=='hint_control'||content.control.kind!=='hints'||content.control.expires_at<=now()||!content.control.hints.some(hint=>hint.memory_id===memoryId))fail('network_hint_not_available');
+    if(this.inboxControl(content.control.request_message_id,recipient).kind!=='query')fail('network_hint_not_available');
+    return content.control;
+  }
+  private selectedTransfer(content:Extract<NetworkContent,{kind:'hint_transfer'}>,sender:string):void {
+    const row=this.db().prepare('SELECT body,recipients FROM outbox WHERE message_id=?').get(content.request_message_id) as Obj|undefined;
+    if(!row||row.recipients===null||!equal(parse(row.recipients),[sender])||content.expires_at<=now())fail('network_invalid_content');
+    const selected=validateContent(row.body);
+    if(selected.kind!=='hint_control'||selected.control.kind!=='select'||selected.control.offer_message_id!==content.offer_message_id||selected.control.memory_id!==content.memory_id)fail('network_invalid_content');
+    const offer=this.inboxControl(content.offer_message_id,sender);
+    if(offer.kind!=='hints'||offer.expires_at!==content.expires_at||!offer.hints.some(hint=>hint.memory_id===content.memory_id))fail('network_invalid_content');
+  }
+  /** Typed payloads carry their guard: restored/retried outbox rows cannot
+   * become an unguarded manual export by losing auxiliary local state. */
+  private guardHint(content:NetworkContent,recipients:string[],current?:CurrentRoster):void {
+    if(content.kind!=='hint_control'&&content.kind!=='hint_transfer')return;
+    if(recipients.length!==1)fail('network_hint_not_available');
+    const recipient=recipients[0];if(current)this.hintMembers(current,recipient);
+    if(content.kind==='hint_control'){
+      const control=content.control;
+      if(control.kind==='query')return;
+      if(control.kind==='select'){this.receivedOffer(control.offer_message_id,recipient,control.memory_id);return;}
+      const request=this.inboxControl(control.request_message_id,recipient);
+      if(control.kind==='refusal'){
+        if(request.kind!=='query'&&request.kind!=='select')fail('network_hint_not_available');return;
+      }
+      if(request.kind!=='query'||control.expires_at<=now())fail('network_hint_not_available');
+      const policy=this.hintPolicy(),grant=grantFor(policy,recipient);
+      if(control.expires_at>policy.expires_at||control.hints.some(hint=>!grant.hint_memory_ids.includes(hint.memory_id)))fail('network_hint_not_available');
+      if(!equal(policy,this.hintPolicy()))fail('network_hint_not_available');
+      if(current)this.hintMembers(current,recipient);
+      return;
+    }
+    const request=this.inboxControl(content.request_message_id,recipient);
+    if(request.kind!=='select'||request.offer_message_id!==content.offer_message_id||request.memory_id!==content.memory_id)fail('network_hint_not_available');
+    const offer=this.ownOffer(content.offer_message_id,recipient,content.memory_id);
+    if(content.expires_at!==offer.expires_at||content.expires_at<=now())fail('network_hint_not_available');
+    const policy=this.hintPolicy(),grant=grantFor(policy,recipient),share=parseShare(decodeBase64url(content.share,MAX_SHARE));
+    if(!equal(share.roots,[content.memory_id])||share.records.some(item=>!grant.record_memory_ids.includes(item.record.memory_id)))fail('network_hint_not_available');
+    if(!equal(policy,this.hintPolicy())||content.expires_at<=now())fail('network_hint_not_available');
+    if(current)this.hintMembers(current,recipient);
+  }
   private prepareBody(text:string,memoryIds:string[]):Uint8Array {
     const selected=[...new Set(memoryIds)];
     if(!selected.length)return canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'message',text}));
@@ -284,18 +361,28 @@ export class NetworkPeer {
     if(raw.length>MAX_SHARE)fail('network_share_too_large_use_existing_pack');
     return canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'memory_transfer',note:text,share:encodeBase64url(raw)}));
   }
-  send(requestId:string,recipients:string[],text='',memoryIds:string[]=[]):Promise<Obj>{return this.serial(async()=>{
+  send(requestId:string,recipients:string[],text='',memoryIds:string[]=[],control?:DocumentInput):Promise<Obj>{return this.serial(async()=>{
     opaqueId(requestId);
     if(!Array.isArray(recipients)||recipients.length<1||recipients.length>16||new Set(recipients).size!==recipients.length||recipients.some(key=>typeof key!=='string')||typeof text!=='string'||Buffer.byteLength(text)>16384)fail('network_invalid_send');
     if(!Array.isArray(memoryIds)||memoryIds.length>32)fail('network_invalid_memory_selection');
-    if(!text&&!memoryIds.length)fail('network_empty_message');
-    const inputSha=sha256(canonicalBytes({recipients,text,memory_ids:memoryIds}));
+    let checked:HintControl|undefined;
+    if(control!==undefined){
+      if(text||memoryIds.length||recipients.length!==1)fail('network_invalid_send');
+      checked=validateHintControl(control);
+      if(checked.kind!=='query'&&checked.kind!=='select')fail('network_invalid_send');
+    }else if(!text&&!memoryIds.length)fail('network_empty_message');
+    const inputSha=sha256(canonicalBytes({recipients,text,memory_ids:memoryIds,...(checked===undefined?{}:{control:checked})}));
+    return this.queue(requestId,recipients,inputSha,()=>checked===undefined?this.prepareBody(text,memoryIds):canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control:checked})));
+  });}
+  private async queue(requestId:string,recipients:string[],inputSha:string,prepare:()=>Uint8Array):Promise<Obj>{
+    opaqueId(requestId);
     const messageId='msg_'+sha256(canonicalBytes([this.networkId,this.identity.key_id,requestId]));
     let row=this.outboxRows(requestId,true)[0] as Obj|undefined;
     if(row&&row.input_sha!==inputSha)fail('network_request_id_conflict');
     if(row&&row.recipients===null){this.db().prepare('UPDATE outbox SET recipients=? WHERE request_id=? AND recipients IS NULL').run(canonicalBytes(recipients),requestId);row=this.outboxRows(requestId,true)[0];}
     if(!row){
-      const body=this.prepareBody(text,memoryIds);
+      const body=prepare();
+      this.guardHint(validateContent(body),recipients);
       transaction(this.db(),()=>{
         const totals=this.db().prepare('SELECT COUNT(*) count,COALESCE(SUM(length(body)+COALESCE(length(envelope),0)),0) bytes FROM outbox').get() as Obj;
         if(totals.count>=1024||totals.bytes+body.length*3>MAX_QUEUE)fail('network_outbox_capacity');
@@ -305,6 +392,39 @@ export class NetworkPeer {
       });
     }
     return this.deliver(row!,recipients);
+  }
+  respondTo(messageId:string):Promise<Obj>{return this.serial(async()=>{
+    hintMessageId(messageId);
+    const incoming=this.db().prepare('SELECT sender FROM inbox WHERE message_id=?').get(messageId) as Obj|undefined;
+    if(!incoming)fail('network_hint_not_available');
+    const recipient=incoming.sender,request=this.inboxControl(messageId,recipient);
+    if(request.kind!=='query'&&request.kind!=='select')fail('network_hint_not_available');
+    const {current}=await this.status(randomBytes(24).toString('hex'));
+    this.hintMembers(current,recipient);
+    const requestId='req_hint_response_'+sha256(Buffer.from(messageId,'ascii')).slice(0,32);
+    return this.queue(requestId,[recipient],sha256(canonicalBytes({respond_to:messageId})),()=>{
+      const refusal=()=>canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control:{schema_version:HINT_SCHEMA,kind:'refusal',request_message_id:messageId,reason:'not_available'}}));
+      let reader:CanonicalVault|undefined;
+      try{
+        const policy=this.hintPolicy(),grant=grantFor(policy,recipient);
+        let content:NetworkContent;
+        if(request.kind==='query'){
+          try{reader=new CanonicalVault({...this.vaultOptions,readOnly:true});}
+          catch(error){if((error as any)?.code!=='not_initialized')throw error;}
+          content=validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control:{schema_version:HINT_SCHEMA,kind:'hints',request_message_id:messageId,expires_at:Math.min(now()+300,policy.expires_at),hints:reader?reader.hintMatches(grant.hint_memory_ids,request.query):[]}});
+        }else{
+          reader=new CanonicalVault({...this.vaultOptions,readOnly:true});
+          const offer=this.ownOffer(request.offer_message_id,recipient,request.memory_id);
+          const share=reader.exportShare([request.memory_id],{maximumBytes:MAX_SHARE,authorizedMemoryIds:new Set(grant.record_memory_ids)});
+          content=validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_transfer',request_message_id:messageId,offer_message_id:request.offer_message_id,memory_id:request.memory_id,expires_at:offer.expires_at,share:encodeBase64url(share)});
+        }
+        this.guardHint(content,[recipient],current);
+        return canonicalBytes(content);
+      }catch(error){
+        if(['network_hint_not_available','not_initialized','memory_not_found','share_not_authorized','unknown_key','revoked_key','share_record_signature_required','share_independent_trust_required','share_too_large','share_record_limit','publication_secret_detected','publication_local_path_detected'].includes((error as any)?.code))return refusal();
+        throw error;
+      }finally{reader?.close();}
+    });
   });}
   private receipts(row:Obj):Obj{return Object.fromEntries(Object.entries(parse(row.receipts)).filter(([key])=>this.relays.includes(key)));}
   private async deliver(prior:Obj,recipients:string[],deadline?:number,pendingOnly=false,firstNode=0):Promise<Obj>{
@@ -325,6 +445,7 @@ export class NetworkPeer {
         if(nodeDeadline!==undefined&&performance.now()>=nodeDeadline)throw new NetworkError('network_budget_exhausted',true);
         authorizedMember(current,this.identity.key_id,'send',{now:now(),expected_identity:this.localIdentity as any});
         const destinations=recipients.map(id=>authorizedMember(current,id,'receive',{now:now()}));
+        this.guardHint(content,recipients,current);
         if(!envelope){
           const candidate=await seal(prior.body,{signer:this.identity,network_id:this.networkId,message_id:prior.message_id,
             recipients:destinations.map(member=>({signing_key_id:member.signing_key.key_id,encryption_key:member.encryption_key})),
@@ -337,6 +458,9 @@ export class NetworkPeer {
         for(const id of [this.identity.key_id,...recipients]){
           if(!equal(historical.members.find(member=>member.signing_key.key_id===id)??null,current.roster.payload.members.find(member=>member.signing_key.key_id===id)??null))fail('network_frozen_recipient_changed');
         }
+        // All refresh and seal awaits have finished. This synchronous recheck
+        // defines authorization at transport start, including frozen retries.
+        this.guardHint(content,recipients,current);
         const result=await this.http(relay,'POST','/v1/messages',{envelope,roster},nodeDeadline);
         if(result.state!=='stored'||result.message_id!==prior.message_id||result.envelope_sha256!==documentSha256(envelope))fail('network_invalid_storage_receipt');
         transaction(this.db(),()=>{
@@ -382,12 +506,16 @@ export class NetworkPeer {
     const digest=documentSha256(envelope),old=this.existing(payload.message_id,digest);if(old)return old;
     let content:NetworkContent;
     try{content=validateContent(body);}catch(error){return this.reject(envelope,errorData(error).code);}
+    if(content.kind==='hint_transfer'){
+      try{this.selectedTransfer(content,payload.sender_key_id);}
+      catch(error){if(error instanceof NetworkCryptoError)return this.reject(envelope,'network_invalid_content');throw error;}
+    }
     let imported:Obj|null=null;
-    if(content.kind==='memory_transfer'){
+    if(content.kind==='memory_transfer'||content.kind==='hint_transfer'){
       const share=decodeBase64url(content.share,MAX_SHARE);
       // Reject malformed authenticated payloads before opening the Vault, so
       // one bad transfer cannot prevent later inbox messages from advancing.
-      try{parseShare(share);}
+      try{const parsed=parseShare(share);if(content.kind==='hint_transfer'&&!equal(parsed.roots,[content.memory_id]))return this.reject(envelope,'network_invalid_content');}
       catch(error){if(error instanceof NetworkRecordsError)return this.reject(envelope,'network_invalid_content_share');throw error;}
       try{imported=this.vault.importShare(share,{admission:'verified'});}
       catch(error){if(!['unknown_key','revoked_key','share_record_signature_required','share_independent_trust_required'].includes((error as any)?.code))throw error;imported=this.vault.importShare(share,{admission:'quarantined'});}
@@ -407,7 +535,7 @@ export class NetworkPeer {
     const row=this.db().prepare('SELECT * FROM inbox WHERE message_id=?').get(messageId) as Obj|undefined;
     if(!row)fail('network_message_not_found');
     const content=validateContent(row.body),result=this.existing(messageId,row.digest)!;
-    return {...result,...contentChunk(contentText(content),offset),network_accessed:false};
+    return {...result,...contentChunk(contentText(content),offset),...(content.kind==='hint_control'?{control:content.control}:{}),network_accessed:false};
   }
   receive(limit=4):Promise<Obj>{return this.serial(()=>this.receiveInternal(limit));}
   private async receiveInternal(limit=4,deadline?:number):Promise<Obj>{

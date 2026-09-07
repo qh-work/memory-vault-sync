@@ -26,6 +26,25 @@ from tests.test_network_worker import fixture
 CONTENT_SCHEMA = "memory-vault-network-content/v2"
 
 
+def invalid_kind_vectors():
+    """Shared Python/TypeScript bytes exercise rejection, never number coercion."""
+    return [(value, canonical_bytes(value),
+             "network_invalid_content" if number <= 2**53 - 1 else "network_invalid_content_json")
+            for kind in ([], {}) for number in (2**53 - 1, 2**53, 2**63 - 1)
+            for value in [{"schema_version": CONTENT_SCHEMA, "kind": kind, "x": number}]]
+
+
+class ContentErrorClassificationTests(unittest.TestCase):
+    def test_invalid_kind_and_integer_matrix_is_bounded_for_bytes_and_mappings(self):
+        from memory_vault_network_content import validate_content
+        for mapping, raw, expected in invalid_kind_vectors():
+            for value in (mapping, raw):
+                with self.subTest(value=value):
+                    with self.assertRaises(MemoryError) as error:
+                        validate_content(value)
+                    self.assertEqual(error.exception.code, expected)
+
+
 def agent(endpoint, transport):
     return Agent(endpoint.client_config.path, endpoint.config_path, transport=transport)
 

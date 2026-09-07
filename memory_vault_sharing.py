@@ -251,7 +251,8 @@ def _new_output(output: Path) -> Iterator[Any]:
 
 
 def export_share(config_path: Path, output: Path | None, selector: Any, *,
-                 allow_local_paths: bool = False, maximum_seconds: int = 300) -> Mapping[str, Any]:
+                 allow_local_paths: bool = False, maximum_seconds: int = 300,
+                 authorized_memory_ids: set[str] | None = None) -> Mapping[str, Any]:
     """Review or publish a new private plaintext file, never a remote upload."""
     if type(allow_local_paths) is not bool:
         raise MemoryError("invalid_share_review_option")
@@ -264,6 +265,10 @@ def export_share(config_path: Path, output: Path | None, selector: Any, *,
     with contextlib.closing(vault._connect(writable=False)) as connection:
         connection.execute("BEGIN")
         roots, order = _selection(connection, selected, deadline)
+        # Internal remote-response guard: evaluate the full immutable closure
+        # in the same snapshot that writes it, before any plaintext output.
+        if authorized_memory_ids is not None and not set(order).issubset(authorized_memory_ids):
+            raise MemoryError("share_not_authorized")
         identifiers = sorted(order, key=lambda item: (order[item], item))
         reasons: Counter[str] = Counter()
         blocked = 0
