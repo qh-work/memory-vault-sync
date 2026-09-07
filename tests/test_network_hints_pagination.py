@@ -12,7 +12,7 @@ from memory_vault_network_content import validate_content
 from memory_vault_trust import TrustStore
 import memory_vault_network_recovery as recovery
 from tests.test_network_hints import (CONTENT_SCHEMA, control, policy, remember, query_offer,
-                                     select_pending, outbox_row)
+                                     select_pending, outbox_row, single_select)
 from tests.test_network_message_semantics import records, proofs, vault_snapshot, inject_ciphertext
 from tests.test_network_worker import fixture
 from tests.test_network_recovery import archive
@@ -174,7 +174,7 @@ class HintPaginationTests(unittest.TestCase):
             start = len(transport.calls)
             with patch("memory_vault_network_hints.time.time", return_value=first["expires_at"] + 1):
                 for index, selection in enumerate((control("page", query_message_id=query["message_id"], cursor=first["next_cursor"]),
-                    control("select", offer_message_id=offer["message_id"], memory_id=first["hints"][0]["memory_id"]))):
+                    single_select(query["message_id"], offer["message_id"], first["hints"][0]["memory_id"]))):
                     with self.assertRaises(MemoryError):
                         requester.send("req_hint_expired_cursor_" + str(index), [owner.identity.key_id], control=selection)
                 self.assertEqual(requester.read_message(offer["message_id"])["control"], first)

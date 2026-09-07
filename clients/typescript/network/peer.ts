@@ -399,6 +399,19 @@ export class NetworkPeer {
     if(!equal(content.control,this.pageControl(session,content.control.request_message_id,this.pageIndex(session,request,content.control.request_message_id))))fail('network_hint_not_available');
     return content.control;
   }
+  /** A batch refers only to seen pages of one live query. It preserves the
+   * caller's selection order; the transferred root set is checked separately. */
+  private selectOffers(control:Extract<HintControl,{kind:'select'}>,peer:string,incoming:boolean):number {
+    if(incoming)this.requesterSession(control.query_message_id,peer);
+    else this.ownerSession(control.query_message_id,peer);
+    let expires:number|undefined,revision:number|undefined;
+    for(const selection of control.selections){
+      const offer=incoming?this.receivedOffer(selection.offer_message_id,peer,selection.memory_id):this.ownOffer(selection.offer_message_id,peer,selection.memory_id);
+      if(offer.query_message_id!==control.query_message_id||expires!==undefined&&offer.expires_at!==expires||revision!==undefined&&offer.policy_revision!==revision)fail('network_hint_not_available');
+      expires=offer.expires_at;revision=offer.policy_revision;
+    }
+    if(expires===undefined||expires<=now())fail('network_hint_not_available');return expires;
+  }
   private incomingHints(control:Extract<HintControl,{kind:'hints'}>,sender:string):void {
     const session=this.requesterSession(control.query_message_id,sender),request=this.ownControl(control.request_message_id,sender);
     if(control.expires_at<=now()||control.expires_at>session.expires_at)fail('network_hint_not_available');
@@ -409,18 +422,18 @@ export class NetworkPeer {
       if(control.page_index!==prior.page_index+1||control.policy_revision!==prior.policy_revision||control.expires_at!==prior.expires_at)fail('network_hint_not_available');
     }else fail('network_hint_not_available');
   }
-  private selectedTransfer(content:Extract<NetworkContent,{kind:'hint_transfer'}>,sender:string):void {
+  private selectedTransfer(content:Extract<NetworkContent,{kind:'hint_batch_transfer'}>,sender:string):string[] {
     const row=this.db().prepare('SELECT body,recipients FROM outbox WHERE message_id=?').get(content.request_message_id) as Obj|undefined;
     if(!row||row.recipients===null||!equal(parse(row.recipients),[sender])||content.expires_at<=now())fail('network_invalid_content');
     const selected=validateContent(row.body);
-    if(selected.kind!=='hint_control'||selected.control.kind!=='select'||selected.control.offer_message_id!==content.offer_message_id||selected.control.memory_id!==content.memory_id)fail('network_invalid_content');
-    const offer=this.receivedOffer(content.offer_message_id,sender,content.memory_id);
-    if(offer.expires_at!==content.expires_at)fail('network_invalid_content');
+    if(selected.kind!=='hint_control'||selected.control.kind!=='select'||selected.control.query_message_id!==content.query_message_id)fail('network_invalid_content');
+    if(this.selectOffers(selected.control,sender,true)!==content.expires_at)fail('network_invalid_content');
+    return selected.control.selections.map(item=>item.memory_id);
   }
   /** Typed payloads carry their guard: restored/retried outbox rows cannot
    * become an unguarded manual export by losing auxiliary local state. */
   private guardHint(content:NetworkContent,recipients:string[],current?:CurrentRoster,ownMessageId?:string):void {
-    if(content.kind!=='hint_control'&&content.kind!=='hint_transfer')return;
+    if(content.kind!=='hint_control'&&content.kind!=='hint_batch_transfer')return;
     if(recipients.length!==1)fail('network_hint_not_available');
     const recipient=recipients[0];if(current)this.hintMembers(current,recipient);
     if(content.kind==='hint_control'){
@@ -431,7 +444,7 @@ export class NetworkPeer {
         return;
       }
       if(control.kind==='page'){this.precedingOffer(control.query_message_id,control.cursor,recipient);return;}
-      if(control.kind==='select'){this.receivedOffer(control.offer_message_id,recipient,control.memory_id);return;}
+      if(control.kind==='select'){this.selectOffers(control,recipient,true);if(current)this.hintMembers(current,recipient);return;}
       const request=this.inboxControl(control.request_message_id,recipient);
       if(control.kind==='refusal'){
         if(!['query','page','select'].includes(request.kind))fail('network_hint_not_available');return;
@@ -445,12 +458,14 @@ export class NetworkPeer {
       return;
     }
     const request=this.inboxControl(content.request_message_id,recipient);
-    if(request.kind!=='select'||request.offer_message_id!==content.offer_message_id||request.memory_id!==content.memory_id)fail('network_hint_not_available');
-    const offer=this.ownOffer(content.offer_message_id,recipient,content.memory_id);
-    if(content.expires_at!==offer.expires_at||content.expires_at<=now())fail('network_hint_not_available');
-    const policy=this.hintPolicy(),grant=grantFor(policy,recipient),share=parseShare(decodeBase64url(content.share,MAX_SHARE));
-    if(!equal(share.roots,[content.memory_id])||share.records.some(item=>!grant.record_memory_ids.includes(item.record.memory_id)))fail('network_hint_not_available');
-    if(!equal(policy,this.hintPolicy())||content.expires_at<=now())fail('network_hint_not_available');
+    if(request.kind!=='select'||request.query_message_id!==content.query_message_id)fail('network_hint_not_available');
+    if(content.expires_at!==this.selectOffers(request,recipient,false)||content.expires_at<=now())fail('network_hint_not_available');
+    const policy=this.hintPolicy(),session=this.ownerSession(request.query_message_id,recipient),grant=grantFor(policy,recipient);
+    if(session.policy_revision!==policy.revision||session.policy_sha256!==sha256(canonicalBytes(policy)))fail('network_hint_not_available');
+    const share=parseShare(decodeBase64url(content.share,MAX_SHARE));
+    const roots=request.selections.map(item=>item.memory_id);
+    if(!equal([...share.roots].sort(),roots.sort())||share.records.some(item=>!grant.record_memory_ids.includes(item.record.memory_id)))fail('network_hint_not_available');
+    if(content.expires_at!==this.selectOffers(request,recipient,false)||!equal(policy,this.hintPolicy())||content.expires_at<=now())fail('network_hint_not_available');
     if(current)this.hintMembers(current,recipient);
   }
   private prepareBody(text:string,memoryIds:string[]):Uint8Array {
@@ -518,15 +533,15 @@ export class NetworkPeer {
           content=validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control:this.pageControl(session,messageId,this.pageIndex(session,request,messageId))});
         }else{
           const policy=this.hintPolicy(),grant=grantFor(policy,recipient);
+          const expires=this.selectOffers(request,recipient,false);
           reader=new CanonicalVault({...this.vaultOptions,readOnly:true});
-          const offer=this.ownOffer(request.offer_message_id,recipient,request.memory_id);
-          const share=reader.exportShare([request.memory_id],{maximumBytes:MAX_SHARE,authorizedMemoryIds:new Set(grant.record_memory_ids)});
-          content=validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_transfer',request_message_id:messageId,offer_message_id:request.offer_message_id,memory_id:request.memory_id,expires_at:offer.expires_at,share:encodeBase64url(share)});
+          const share=reader.exportShare(request.selections.map(item=>item.memory_id),{maximumBytes:MAX_SHARE,authorizedMemoryIds:new Set(grant.record_memory_ids)});
+          content=validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_batch_transfer',request_message_id:messageId,query_message_id:request.query_message_id,expires_at:expires,share:encodeBase64url(share)});
         }
         this.guardHint(content,[recipient],current);
         return canonicalBytes(content);
       }catch(error){
-        if(['network_hint_not_available','not_initialized','memory_not_found','share_not_authorized','unknown_key','revoked_key','share_record_signature_required','share_independent_trust_required','share_too_large','share_record_limit','publication_secret_detected','publication_local_path_detected'].includes((error as any)?.code))return refusal();
+        if(['network_hint_not_available','not_initialized','memory_not_found','share_not_authorized','unknown_key','revoked_key','share_record_signature_required','share_independent_trust_required','share_too_large','share_record_limit','vault_work_limit','publication_secret_detected','publication_local_path_detected'].includes((error as any)?.code))return refusal();
         throw error;
       }finally{reader?.close();}
     });
@@ -615,17 +630,24 @@ export class NetworkPeer {
       try{this.incomingHints(content.control,payload.sender_key_id);}
       catch(error){if(error instanceof NetworkCryptoError)return this.reject(envelope,'network_invalid_content');throw error;}
     }
-    if(content.kind==='hint_transfer'){
-      try{this.selectedTransfer(content,payload.sender_key_id);}
+    let expectedRoots:string[]|undefined;
+    if(content.kind==='hint_batch_transfer'){
+      try{expectedRoots=this.selectedTransfer(content,payload.sender_key_id);}
       catch(error){if(error instanceof NetworkCryptoError)return this.reject(envelope,'network_invalid_content');throw error;}
     }
     let imported:Obj|null=null;
-    if(content.kind==='memory_transfer'||content.kind==='hint_transfer'){
+    if(content.kind==='memory_transfer'||content.kind==='hint_batch_transfer'){
       const share=decodeBase64url(content.share,MAX_SHARE);
       // Reject malformed authenticated payloads before opening the Vault, so
       // one bad transfer cannot prevent later inbox messages from advancing.
-      try{const parsed=parseShare(share);if(content.kind==='hint_transfer'&&!equal(parsed.roots,[content.memory_id]))return this.reject(envelope,'network_invalid_content');}
+      try{const parsed=parseShare(share);if(expectedRoots!==undefined&&!equal([...parsed.roots].sort(),[...expectedRoots].sort()))return this.reject(envelope,'network_invalid_content');}
       catch(error){if(error instanceof NetworkRecordsError)return this.reject(envelope,'network_invalid_content_share');throw error;}
+      if(content.kind==='hint_batch_transfer'){
+        // Recheck the live query/offer expiry after bounded share parsing and
+        // before opening the Vault; accepted historical inbox reads are exempt.
+        try{this.selectedTransfer(content,payload.sender_key_id);}
+        catch(error){if(error instanceof NetworkCryptoError)return this.reject(envelope,'network_invalid_content');throw error;}
+      }
       try{imported=this.vault.importShare(share,{admission:'verified'});}
       catch(error){if(!['unknown_key','revoked_key','share_record_signature_required','share_independent_trust_required'].includes((error as any)?.code))throw error;imported=this.vault.importShare(share,{admission:'quarantined'});}
     }

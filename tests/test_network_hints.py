@@ -16,7 +16,7 @@ from tests.test_network_message_semantics import agent, records, proofs, vault_s
 
 
 CONTENT_SCHEMA = "memory-vault-network-content/v2"
-HINT_SCHEMA = "memory-vault-hint/v2"
+HINT_SCHEMA = "memory-vault-hint/v3"
 POLICY_SCHEMA = "memory-vault-hint-policy/v1"
 MEMORY_ID = "mem_" + "a" * 40
 MESSAGE_ID = "msg_" + "a" * 64
@@ -31,6 +31,12 @@ def control(kind, **values):
         values.setdefault("policy_revision", 1)
         values.setdefault("next_cursor", None)
     return {"schema_version": HINT_SCHEMA, "kind": kind, **values}
+
+
+def single_select(query_message_id, offer_message_id, memory_id):
+    """Explicit one-item v3 fixture; never a production legacy conversion."""
+    return control("select", query_message_id=query_message_id,
+                   selections=[{"offer_message_id": offer_message_id, "memory_id": memory_id}])
 
 
 def policy(owner, peer, hints, full, *, revision=1, expires_at=None):
@@ -61,8 +67,9 @@ def query_offer(test, owner, requester, transport, *, query="Synthetic needle", 
 
 
 def select_pending(test, owner, requester, offer, memory_id, *, suffix="initial"):
+    query_id = requester.read_message(offer["message_id"])["control"]["query_message_id"]
     selected = requester.send("req_hint_select_" + suffix, [owner.identity.key_id],
-        control=control("select", offer_message_id=offer["message_id"], memory_id=memory_id))
+        control=single_select(query_id, offer["message_id"], memory_id))
     test.assertEqual(selected["stored_nodes"], 2, selected)
     test.assertFalse(owner.receive()["errors"])
     return selected
@@ -78,7 +85,7 @@ def parser_vectors():
     hint = {"memory_id": MEMORY_ID, "excerpt": "Synthetic 😀", "epistemic_type": "hearsay"}
     controls = [control("query", query="中" * 85 + "x"),
         control("hints", request_message_id=MESSAGE_ID, expires_at=expires, hints=[hint]),
-        control("select", offer_message_id=MESSAGE_ID, memory_id=MEMORY_ID),
+        single_select(MESSAGE_ID, MESSAGE_ID, MEMORY_ID),
         control("refusal", request_message_id=MESSAGE_ID, reason="not_available"),
         control("page", query_message_id=MESSAGE_ID, cursor="hintcur_" + "a" * 64)]
     good = [{"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": item} for item in controls]
@@ -86,8 +93,8 @@ def parser_vectors():
         control("hints", request_message_id=MESSAGE_ID, expires_at=expires, hints=[
             {"memory_id": "mem_" + str(i) * 40, "excerpt": "\0" * 64 + "😀" * 16,
              "epistemic_type": "unspecified"} for i in range(4)])})
-    good += [{"schema_version": CONTENT_SCHEMA, "kind": "hint_transfer", "request_message_id": MESSAGE_ID,
-              "offer_message_id": MESSAGE_ID, "memory_id": MEMORY_ID, "expires_at": expires, "share": b64url(b"synthetic parser-only bytes\n")}]
+    good += [{"schema_version": CONTENT_SCHEMA, "kind": "hint_batch_transfer", "request_message_id": MESSAGE_ID,
+              "query_message_id": MESSAGE_ID, "expires_at": expires, "share": b64url(b"synthetic parser-only bytes\n")}]
     bad_controls = [control("query", query=""), control("query", query="中" * 86),
         control("query", query="x", key_id="payload cannot choose requester"),
         control("query", query="x", record_memory_ids=[MEMORY_ID]),
@@ -99,6 +106,14 @@ def parser_vectors():
         {**controls[1], "expires_at": True}, {**controls[1], "expires_at": 0}, {**controls[1], "expires_at": 2**53},
         {**controls[2], "memory_id": "mem_not_valid"},
         {**controls[2], "offer_message_id": "not-a-message"},
+        {**controls[2], "selections": []},
+        {**controls[2], "selections": controls[2]["selections"] * 2},
+        {**controls[2], "selections": [{"offer_message_id": MESSAGE_ID, "memory_id": "mem_" + str(i) * 40} for i in range(5)]},
+        {**controls[2], "selections": [{"offer_message_id": MESSAGE_ID, "memory_id": MEMORY_ID, "permission": "all"}]},
+        control("select", offer_message_id=MESSAGE_ID, memory_id=MEMORY_ID),
+        {**controls[0], "schema_version": "memory-vault-hint/v2"},
+        {"schema_version": "memory-vault-hint/v2", "kind": "select",
+         "offer_message_id": MESSAGE_ID, "memory_id": MEMORY_ID},
         {**controls[3], "reason": "secret dependency " + MEMORY_ID},
         {**controls[3], "missing_ids": [MEMORY_ID]},
         {**controls[0], "expires_at": 0},
@@ -113,7 +128,9 @@ def parser_vectors():
         control("set_policy", peers=[]), {**controls[0], "schema_version": "memory-vault-hint/v99"}]
     bad = [{"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": item} for item in bad_controls]
     bad += [{**good[0], "text": "mixed body"}, {**good[-1], "note": "mixed transfer"},
-            {**good[-1], "expires_at": 1.5}, {**good[-1], "memory_id": "mem_bad"}]
+            {**good[-1], "expires_at": 1.5}, {**good[-1], "memory_id": "mem_bad"},
+            {"schema_version": CONTENT_SCHEMA, "kind": "hint_transfer", "request_message_id": MESSAGE_ID,
+             "offer_message_id": MESSAGE_ID, "memory_id": MEMORY_ID, "expires_at": expires, "share": b64url(b"old preview")}]
     return good, bad
 
 
@@ -234,7 +251,7 @@ class NetworkHintTests(unittest.TestCase):
             delivered = requester.receive()
             self.assertFalse(delivered["errors"], delivered)
             message, = delivered["messages"]
-            self.assertEqual(message["content_kind"], "hint_transfer")
+            self.assertEqual(message["content_kind"], "hint_batch_transfer")
             self.assertEqual(message["share"]["records_added"], 2)
             self.assertEqual(message["share"]["admission"], "verified")
             for mid in (root, selected):
@@ -251,7 +268,7 @@ class NetworkHintTests(unittest.TestCase):
                 # A previously validated inbox remains locally readable after
                 # the offer expires; this does not authorize another transfer.
                 local = requester.read_message(transferred["message_id"])
-                self.assertEqual(local["content_kind"], "hint_transfer")
+                self.assertEqual(local["content_kind"], "hint_batch_transfer")
                 self.assertFalse(local["network_accessed"])
 
     def test_four_escaped_multibyte_hints_fit_local_read_budget_without_memory_writes(self):
@@ -360,7 +377,7 @@ class NetworkHintTests(unittest.TestCase):
             self.assertEqual(vault_snapshot(owner), vault_before)
 
     def test_guarded_offline_and_frozen_retries_recheck_current_grant_and_expiration(self):
-        for kind in ("hints", "hint_transfer"):
+        for kind in ("hints", "hint_batch_transfer"):
             for frozen in (False, True):
                 for revoke in (True, False):
                     with self.subTest(kind=kind, frozen=frozen, revoke=revoke), fixture() as (owner, requester, transport):
@@ -383,7 +400,7 @@ class NetworkHintTests(unittest.TestCase):
                         self.assertEqual(prior["envelope"] is not None, frozen)
                         if revoke:
                             owner.set_hint_policy(policy(owner, requester, [] if kind == "hints" else [mid],
-                                                        [mid] if kind == "hint_transfer" else [mid, dependency], revision=2))
+                                                        [mid] if kind == "hint_batch_transfer" else [mid, dependency], revision=2))
                         else:
                             # Simulate an already-expired local policy without
                             # sleeping or bypassing the runtime policy loader.
@@ -441,14 +458,14 @@ class NetworkHintTests(unittest.TestCase):
             mid = remember(self, owner, transport, "bound_offer", "Synthetic needle offered record")
             hidden = remember(self, owner, transport, "bound_hidden", "Synthetic never offered private record")
             owner.set_hint_policy(policy(owner, requester, [mid], [mid, hidden]))
-            _, offer, _ = query_offer(self, owner, requester, transport)
+            query, offer, _ = query_offer(self, owner, requester, transport)
             for selected, offer_id in ((hidden, offer["message_id"]), (mid, "msg_" + "c" * 64)):
                 before = vault_snapshot(owner)
                 # A malicious authorized requester bypasses its own local
                 # selection checks; the responder must independently reject.
                 identifier = "msg_" + ("d" if selected == hidden else "e") * 64
                 inject_ciphertext(requester, owner, canonical_bytes({"schema_version": CONTENT_SCHEMA,
-                    "kind": "hint_control", "control": control("select", offer_message_id=offer_id, memory_id=selected)}), identifier)
+                    "kind": "hint_control", "control": single_select(query["message_id"], offer_id, selected)}), identifier)
                 self.assertFalse(owner.receive()["errors"])
                 refused = owner.respond_to(identifier)
                 self.assertFalse(requester.receive()["errors"])
@@ -458,7 +475,7 @@ class NetworkHintTests(unittest.TestCase):
                 self.assertEqual(vault_snapshot(owner), before)
             for recipient_id, selected in ((requester.identity.key_id, mid), (owner.identity.key_id, hidden)):
                 result = agent(requester, transport).handle({"op": "send", "request_id": "req_hint_wrong_select_" + selected,
-                    "recipients": [recipient_id], "control": control("select", offer_message_id=offer["message_id"], memory_id=selected)})
+                    "recipients": [recipient_id], "control": single_select(query["message_id"], offer["message_id"], selected)})
                 self.assertFalse(result["ok"], result)
             self.assertIsNone(vault_snapshot(requester))
 
@@ -491,9 +508,9 @@ class NetworkHintTests(unittest.TestCase):
             # Build a genuine signed share by explicit local owner action, then
             # send it as an unsolicited hint transfer with no requester select.
             share = strict_json_loads(owner._prepare_body("req_hint_unsolicited_share", "", [mid]))["share"]
-            body = {"schema_version": CONTENT_SCHEMA, "kind": "hint_transfer",
-                "request_message_id": "msg_" + "1" * 64, "offer_message_id": "msg_" + "2" * 64,
-                "memory_id": mid, "expires_at": int(time.time()) + 300, "share": share}
+            body = {"schema_version": CONTENT_SCHEMA, "kind": "hint_batch_transfer",
+                "request_message_id": "msg_" + "1" * 64, "query_message_id": "msg_" + "2" * 64,
+                "expires_at": int(time.time()) + 300, "share": share}
             identifier = "msg_" + "3" * 64
             inject_ciphertext(owner, requester, canonical_bytes(body), identifier)
             before = vault_snapshot(owner)

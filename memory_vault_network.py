@@ -737,7 +737,7 @@ class NetworkClient:
                 members = self._members(current)
                 if "send" not in members[self.identity.key_id]["scope"] or any(k not in members or "receive" not in members[k]["scope"] for k in recipients):
                     raise MemoryError("network_send_scope_denied")
-                if content["kind"] in {"hint_control", "hint_transfer"} and any(
+                if content["kind"] in {"hint_control", "hint_batch_transfer"} and any(
                         not {"send", "receive"}.issubset(members[key]["scope"])
                         for key in [self.identity.key_id, *recipients]):
                     raise MemoryError("network_send_scope_denied")
@@ -1004,7 +1004,7 @@ class NetworkClient:
                 return existing
         try:
             content = validate_content(body)
-            if content["kind"] == "hint_transfer":
+            if content["kind"] == "hint_batch_transfer":
                 from memory_vault_network_hints import validate_incoming_transfer
                 validate_incoming_transfer(self, content, payload["sender_key_id"])
             elif content["kind"] == "hint_control" and content["control"]["kind"] == "hints":
@@ -1015,7 +1015,7 @@ class NetworkClient:
                 raise
             return self._reject_content(envelope, exc.code)
         imported = None
-        if content["kind"] in {"memory_transfer", "hint_transfer"}:
+        if content["kind"] in {"memory_transfer", "hint_batch_transfer"}:
             from memory_vault_sharing import import_share, _scan
             selected = unb64url(content["share"], maximum=MAX_SHARE_BYTES)
             with tempfile.TemporaryDirectory(prefix="received-", dir=self.directory) as temporary:
@@ -1030,6 +1030,15 @@ class NetworkClient:
                     if exc.retryable or exc.code in {"share_integer_index_unavailable", "share_source_changed"}:
                         raise
                     return self._reject_content(envelope, "network_invalid_content_share")
+                if content["kind"] == "hint_batch_transfer":
+                    # Parsing may consume the remaining query lifetime. This
+                    # final binding-only check does not rescan share bytes.
+                    try:
+                        validate_incoming_transfer(self, content, payload["sender_key_id"], check_share=False)
+                    except MemoryError as exc:
+                        if exc.retryable:
+                            raise
+                        return self._reject_content(envelope, exc.code)
                 try:
                     imported = import_share(self.client_config.path, source, verify_signatures=True, maximum_seconds=10)
                 except (TrustError, MemoryError) as exc:

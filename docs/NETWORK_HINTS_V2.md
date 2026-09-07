@@ -1,6 +1,10 @@
 # Authorized Memory Hint v2: frozen, explicit pages
 
-This is an unreleased candidate for already known, authorized endpoints. It is
+Historical specification and test evidence for the merged v2 batch. The
+current candidate uses [Hint v3 batch selection](NETWORK_HINTS_V3.md) and no
+longer accepts v2 controls. The design below describes v2, not the current API.
+
+This was an unreleased candidate for already known, authorized endpoints. It is
 not global discovery, Gossip, a public search index or a capacity certification.
 The downloadable alpha.4 release has not been replaced. Preview v1 Hint controls
 are deliberately unsupported; private upgrades and migration are deferred.

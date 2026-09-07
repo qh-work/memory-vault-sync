@@ -157,7 +157,7 @@ running background worker, real-model validation, or public deployment.
 
 ## Authorized Hint recovery
 
-The [Hint candidate](NETWORK_HINTS_V2.md) includes bounded control traffic and
+The [Hint candidate](NETWORK_HINTS_V3.md) includes bounded control traffic and
 original selected shares in transport snapshots. The local `hint-policy.json`
 and both provider and requester discovery sessions are deliberately excluded.
 Restore reports `hint_policy_restored:false`, `hint_sessions_restored:false`,

@@ -11,7 +11,7 @@ from tests.test_network_message_semantics import agent, records, proofs, saved_b
 from tests.test_network_recovery import archive, fixture
 
 
-HINT = "memory-vault-hint/v2"
+HINT = "memory-vault-hint/v3"
 
 
 def policy(endpoint, peer, ids=(), revision=1):
@@ -42,7 +42,8 @@ class HintRecoveryTests(unittest.TestCase):
         self.assertEqual(offer["stored_nodes"], 2)
         self.assertFalse(b.receive()["errors"])
         selected = b.send("req_hint_recovery_select" + suffix, [a.identity.key_id], control={
-            "schema_version": HINT, "kind": "select", "offer_message_id": offer["message_id"], "memory_id": root})
+            "schema_version": HINT, "kind": "select", "query_message_id": queried,
+            "selections": [{"offer_message_id": offer["message_id"], "memory_id": root}]})
         self.assertFalse(a.receive()["errors"])
         return selected["message_id"]
 
