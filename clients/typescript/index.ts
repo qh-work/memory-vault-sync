@@ -10,7 +10,12 @@ export const MAX_RESPONSE_BYTES = 8 * 1024;
 export const OPERATIONS = ["connect", "remember", "recall", "discover", "send", "receive"] as const;
 
 export type Operation = typeof OPERATIONS[number];
-export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+/** Unsafe Experience integers use genuine JSON.rawJSON values. JSON.stringify
+ * preserves their numeric literals; BigInt(value.rawJSON) permits arithmetic.
+ * This representation never widens numeric bounds on other response fields.
+ */
+export interface ExperienceInt64 { readonly rawJSON: string }
+export type JsonValue = null | boolean | number | string | ExperienceInt64 | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
 export type RequestId = `req_${string}`;
 export type MemoryKind = "event" | "fact" | "observation" | "decision" | "artifact" |
@@ -162,7 +167,55 @@ function endpointUrl(options: ClientOptions): string {
   return url.origin + "/v1/agent";
 }
 
-async function readBounded(response: Response, maximum: number): Promise<unknown> {
+type SourceParser = (text: string, reviver: (key: string, value: unknown, context?: {source?: string}) => unknown) => unknown;
+const losslessJSON = JSON as typeof JSON & {
+  rawJSON?: (text: string) => ExperienceInt64;
+  isRawJSON?: (value: unknown) => boolean;
+};
+
+/** Preserve int64 only within successful native recall Experience objects.
+ * No crypto/network module or package dependency is introduced by this parser.
+ */
+function parseEndpointResponse(text: string, operation: Operation): unknown {
+  const parse = JSON.parse as SourceParser;
+  if (typeof losslessJSON.rawJSON !== "function" || typeof losslessJSON.isRawJSON !== "function") {
+    throw new Error("experience_lossless_json_unavailable");
+  }
+  let sourceAvailable = false;
+  parse("0", (_key, value, context) => { sourceAvailable = context?.source === "0"; return value; });
+  if (!sourceAvailable) throw new Error("experience_lossless_json_unavailable");
+  const value = parse(text, (_key, item, context) => {
+    if (typeof item !== "number") return item;
+    if (typeof context?.source !== "string") throw new Error("experience_lossless_json_unavailable");
+    if (context.source.length > 20 || !/^-?(?:0|[1-9][0-9]*)$/.test(context.source)) throw new Error("invalid_endpoint_response_integer");
+    const integer = BigInt(context.source);
+    if (integer < -(1n << 63n) || integer > (1n << 63n) - 1n) throw new Error("invalid_endpoint_response_integer");
+    return integer >= BigInt(Number.MIN_SAFE_INTEGER) && integer <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(integer) : losslessJSON.rawJSON!(integer.toString());
+  });
+  const pending: {item: unknown; path: string[]}[] = [{item: value, path: []}];
+  let nodes = 0;
+  while (pending.length) {
+    const {item, path} = pending.pop()!;
+    if (++nodes > 16384 || path.length > 32) throw new Error("invalid_endpoint_response");
+    if (losslessJSON.isRawJSON(item)) {
+      const result = record(value) && value.ok === true && record(value.result) ? value.result : null;
+      const hit = result && Array.isArray(result.hits) && /^(?:0|[1-9][0-9]*)$/.test(path[2] ?? "")
+        ? result.hits[Number(path[2])] : null;
+      if (operation !== "recall" || path.length <= 4 || path[0] !== "result" || path[1] !== "hits" ||
+          path[3] !== "experience" || !record(hit) || !record(hit.experience) || losslessJSON.isRawJSON(hit.experience)) {
+        throw new Error("invalid_endpoint_response_integer");
+      }
+      continue;
+    }
+    if (item !== null && typeof item === "object") {
+      for (const [key, child] of Object.entries(item)) pending.push({item: child, path: [...path, key]});
+    }
+  }
+  return value;
+}
+
+async function readBounded(response: Response, maximum: number, operation: Operation): Promise<unknown> {
   const length = response.headers.get("content-length");
   if (length !== null && /^\d+$/.test(length) && Number(length) > maximum) {
     void response.body?.cancel().catch(() => {});
@@ -191,8 +244,11 @@ async function readBounded(response: Response, maximum: number): Promise<unknown
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
-  catch { throw new Error("invalid_endpoint_response"); }
+  try { return parseEndpointResponse(new TextDecoder("utf-8", { fatal: true }).decode(bytes), operation); }
+  catch (error) {
+    if (error instanceof Error && ["experience_lossless_json_unavailable", "invalid_endpoint_response_integer"].includes(error.message)) throw error;
+    throw new Error("invalid_endpoint_response");
+  }
 }
 
 /** Six operations sharing the already configured endpoint's native core. */
@@ -283,7 +339,7 @@ export class MemoryVaultClient {
         signal: controller.signal,
       });
       status = response.status;
-      const value = await readBounded(response, this.#responseLimit);
+      const value = await readBounded(response, this.#responseLimit, operation);
       if (!record(value) || value.schema_version !== "universal-agent-memory-result/v1" ||
           !record(value.authority) || typeof value.ok !== "boolean" ||
           (value.ok ? !record(value.result) : (!record(value.error) || typeof value.error.code !== "string" || typeof value.error.retryable !== "boolean")) ||
@@ -294,7 +350,7 @@ export class MemoryVaultClient {
       // commit_state, hide retry hints, or turn queued_local into delivery.
       return value as AgentResponse;
     } catch (error) {
-      const known = error instanceof Error && ["request_cancelled", "response_too_large", "invalid_endpoint_response"].includes(error.message);
+      const known = error instanceof Error && ["request_cancelled", "response_too_large", "invalid_endpoint_response", "experience_lossless_json_unavailable", "invalid_endpoint_response_integer"].includes(error.message);
       const code = timedOut ? "request_timeout" : options.signal?.aborted ? "request_cancelled" : known ? (error as Error).message : "transport_failed";
       const mutation = operation === "remember" || operation === "send" || operation === "connect" || operation === "receive";
       throw new MemoryVaultTransportError(code, !dispatched ? "not_sent" : mutation ? "unknown" : "not_applicable", {

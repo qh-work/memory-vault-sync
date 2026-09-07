@@ -1,5 +1,10 @@
 # Experience Semantics
 
+Development note: the post-alpha.4 review repair below has not yet received a
+new independent approval. The review of alpha.4 returned `CHANGES_REQUESTED`;
+its two blockers and separate repair evidence are recorded in
+[Experience validation](EXPERIENCE_VALIDATION.md#post-alpha4-repair-local-validation-complete-independent-re-review-pending).
+
 `experience-v1` is an optional interpretation of an existing Memory Record.
 It introduces neither a second database nor a parent container. Local memory,
 IDs, signatures, network-v1 transport and the six native operations remain in
@@ -107,15 +112,53 @@ locally connected claim neighborhood, `provenance_summary` reports:
 
 Repeated import of the same immutable record, duplicate edges, multiple
 forwarding paths and descendants of one declared source do not manufacture
-independent confirmations. Where an admitted signature is available, a
-publisher's repeated confirming records are grouped by signer key; unsigned
-independent claims can only be distinguished by record ID. These counts are
-not Sybil resistant, cannot prove experimental independence, and do not certify
-that two keys belong to different actors.
+independent confirmations. **The current attester is not a new historical
+origin.** The developing review repair groups eligible confirmation and
+contradiction claims by their first locally known verified signer, using the
+existing `metadata` entry `state_author:<memory_id>`. If P authored two historical
+experiments, later B/C attestations of those same bytes do not split that one
+known origin into two independent publishers.
+
+This pin is local deduplication and state-adoption policy, not an authenticated
+cross-node original-author certificate. It does not prove that an experiment
+happened or that two keys belong to different actors. Another node may have a
+different first-known attestation. Counts remain non-Sybil-resistant and
+`independence_verified:false`; the pin is not a replacement for provenance
+proofs that were never received or have already been discarded.
+
+Current admission and revocation still decide which records are eligible. An
+eligible record re-attested by B may retain P as a local deduplication clue,
+but P remains revoked and receives no rights from that pin. An explicit
+`accepted_unsigned` re-admission also retains an existing valid pin for counting;
+it cannot split previously known same-origin records by losing their current
+signature. This does not give unsigned imports destructive state-adoption rights.
+Only never-pinned unsigned records use distinct record IDs as their declared
+origins. The standalone summary helper with no verification input similarly
+reports record-level claims, not authenticated independent publishers.
+
+When an eligible signed claim has no pin, or an existing pin is malformed, the
+claim is conservatively **not counted** as a confirmation or contradiction.
+There is no fallback to its current attester. An invalid existing pin is not
+treated as a never-signed record. Reads do not write a guessed pin. Existing
+admission update logic can retain a still-available old signer before replacing
+its proof, but cannot reconstruct history that is no longer available.
+
+The summary adds these derived fields without changing canonical memory:
+
+| Field | Interpretation |
+| --- | --- |
+| `origin_identity_basis` | `local_first_verified_signer_or_unsigned_record`; a local counting policy, not a proof format |
+| `origin_identity_incomplete` | Some otherwise eligible evidence claims have missing or invalid local origin attribution |
+| `unattributed_evidence_count` | Number of distinct affected evidence records, deduplicated across confirmation and contradiction edges |
+
+An origin-attribution gap also sets `truncated:true`. A single record with both
+confirmation and contradiction edges contributes one missing-identity count,
+not two. Zero incomplete records does not establish global provenance
+completeness or experimental independence.
 
 The summary is derived on demand from existing local admitted records and
 relations. Traversal is bounded to 128 nodes, 1,024 edges and depth 8. Missing
-references, a detected lineage cycle or an exhausted graph budget mark the
+references, an unresolved local origin identity, a detected lineage cycle or an exhausted graph budget mark the
 summary `truncated`; it must not be represented as a complete network census.
 Unrelated claims need explicit relation links to join a component. Environment
 labels are exposed, not automatically interpreted as logical equivalence or
@@ -225,3 +268,61 @@ The targeted runtime tests are documented in [the validation report](EXPERIENCE_
 canonical vectors, old-reader round trips, signed admission and network tests
 must be reported separately from this demonstration. No benchmark, internet
 scale, real-model verification or public consensus result is implied.
+
+## Native TypeScript Experience integer boundary
+
+Experience metadata uses exact signed 64-bit integers, including unknown
+metadata fields. The native client preserves these values with an
+Experience-specific codec; it does not widen the network/control JSON profile.
+Safe integers remain JavaScript numbers. Values outside the safe range are
+genuine `JSON.rawJSON` objects containing the exact decimal literal, so
+`JSON.stringify` preserves endpoint and paging output without rounding. Native
+remember calls may supply int64 `bigint` or genuine raw-JSON values inside
+`experience`. Already-rounded unsafe JavaScript numbers are rejected.
+
+The codec rejects duplicate JSON fields (including escaped equivalent names),
+floats, exponents, out-of-range integers, invalid Unicode and malformed values.
+It retains the existing bounded metadata size/depth/node budgets and rejects
+integer tokens longer than 20 characters before BigInt conversion. The
+source-aware JSON reviver and raw-JSON support were tested with Node 22.19.0.
+Do not use ordinary `JSON.parse` to preserve unsafe integer literals downstream;
+inspect `value.rawJSON` and use `BigInt` when arithmetic is needed. This
+representation affects derived Experience views and new metadata construction;
+it does not rewrite stored record bytes, IDs or source signatures.
+
+## Dependency-free HTTP SDK integer boundary
+
+The developing HTTP client in `clients/typescript/index.ts` uses the native
+JSON reviver's source text and genuine `JSON.rawJSON` values to preserve unsafe
+JavaScript integers in the signed int64 range. Only a successful native
+`recall` result's `result.hits[index].experience` object subtree may contain
+these values. This covers query recall, `handoff:true`, exact-ID recall and
+cursor responses, because the six-operation endpoint returns all of them as
+hits. Other response/control fields remain bounded safe integers; they do not
+inherit the Experience extension.
+
+Safe integers remain ordinary JavaScript numbers. Unsafe integers become raw
+JSON values whose `rawJSON` string is the exact decimal integer;
+`JSON.stringify(response)` preserves the numeric literal, and callers may use
+`BigInt(value.rawJSON)` for explicit integer arithmetic. A plain user object
+with a field named `rawJSON` is not a raw JSON value and gets no special meaning.
+No crypto module, JOSE package, key store or new dependency is used by this SDK.
+The response walker is capped at depth 32 and 16,384 nodes within the existing
+8 KiB body budget; integer tokens longer than 20 characters are rejected before
+BigInt conversion.
+
+The HTTP SDK reports typed `MemoryVaultTransportError` failures rather than
+rounding: `invalid_endpoint_response_integer` for out-of-range/noninteger
+numbers or unsafe integers outside the permitted Experience subtree, and
+`experience_lossless_json_unavailable` when the runtime lacks source-aware
+reviver or raw-JSON support. Native endpoint JSON errors remain ordinary
+responses; these codes identify a local response-processing failure. They do
+not silently trigger retries or authorize a different endpoint.
+
+For request metadata, callers with runtime support may supply
+`JSON.rawJSON("9223372036854775807")` inside `experience`; the frozen serialized
+request preserves the literal. Unwrapped JavaScript `bigint` remains an explicit
+`invalid_request_json` error before dispatch. Do not first construct an unsafe
+numeric literal as a JavaScript `number`: that value has already been rounded
+before the SDK receives it. This transport representation does not change
+canonical Memory Record bytes, IDs or proof verification.
