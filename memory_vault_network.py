@@ -14,22 +14,24 @@ from pathlib import Path
 import secrets
 import re
 import sqlite3
+import stat
 import tempfile
 import threading
 import time
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
-from memory_vault import MemoryError, canonical_bytes, strict_json_loads
+from memory_vault import MemoryError, canonical_bytes, strict_json_loads, _sqlite_memory_error
 from memory_vault_client import ClientConfig
-from memory_vault_storage import private_directory, open_file, atomic_write, StorageError
+from memory_vault_storage import (private_directory, open_file, atomic_write, StorageError,
+                                 check_fd, require_supported_storage, validate_path)
 from memory_vault_trust import Identity, TrustError, _read_private
 from memory_vault_network_crypto import (EncryptionIdentity, PublicKeyTrust, document_sha256,
     seal, open_envelope, verify_envelope, b64url, unb64url, opaque, object_fields, integer, digest)
 from memory_vault_network_control import (verify_roster, verify_status, verify_invite, sign_request,
     open_join_challenge, verify_request)
-from memory_vault_network_content import (CONTENT_SCHEMA, MAX_CONTENT_SHARE_BYTES,
-                                          validate_content, validate_control, content_text)
+from memory_vault_network_content import (CONTENT_SCHEMA, MAX_CONTENT_BYTES, MAX_CONTENT_SHARE_BYTES,
+                                          validate_content, validate_control, content_text, hint_identifier)
 from memory_vault_nodes import (check_outbox_receipt_bounds, verify_storage_receipt,
                                 MAX_OUTBOX_RECEIPT_ROW_BYTES)
 
@@ -204,27 +206,58 @@ class NetworkClient:
     def __exit__(self, *exc: Any) -> None:
         self.close()
 
+    def _check_transport_sidecars(self) -> None:
+        """Check only optional SQLite auxiliaries, never accept a deleted file.
+
+        SQLite can unlink an auxiliary after open but before fstat. A retained
+        descriptor lets us distinguish that exact harmless disappearance from
+        an unsafe existing file; nothing from the discarded descriptor is read.
+        """
+        for suffix in ("-wal", "-shm", "-journal"):
+            sibling = self.directory / ("network.sqlite3" + suffix)
+            if not (sibling.exists() or sibling.is_symlink()):
+                continue
+            descriptor = None
+            try:
+                if os.name != "posix":
+                    descriptor = open_file(sibling, os.O_RDONLY, private=True)
+                else:
+                    require_supported_storage()
+                    sibling = validate_path(sibling)
+                    descriptor = os.open(sibling, os.O_RDONLY | os.O_NOFOLLOW |
+                                         getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0), 0o600)
+                    try:
+                        check_fd(descriptor, private=True)
+                    except StorageError as exc:
+                        if exc.code != "unsafe_storage_file":
+                            raise
+                        info = os.fstat(descriptor)
+                        if (stat.S_ISREG(info.st_mode) and info.st_nlink == 0
+                                and info.st_uid == os.getuid() and not info.st_mode & 0o077):
+                            try:
+                                sibling.lstat()
+                            except FileNotFoundError:
+                                continue
+                        raise
+            except FileNotFoundError:
+                # An open-time disappearance is also optional, but a named
+                # replacement (including a dangling link) still fails closed.
+                try:
+                    sibling.lstat()
+                except FileNotFoundError:
+                    continue
+                raise
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+
     @contextmanager
     def db(self):
         private_directory(self.directory)
         database = self.directory / "network.sqlite3"
         descriptor = open_file(database, os.O_CREAT | os.O_RDWR, private=True)
         os.close(descriptor)
-        for suffix in ("-wal", "-shm", "-journal"):
-            sibling = Path(str(database) + suffix)
-            if sibling.exists() or sibling.is_symlink():
-                try:
-                    descriptor = open_file(sibling, os.O_RDONLY, private=True)
-                except FileNotFoundError:
-                    # Another SQLite connection can remove an optional sidecar
-                    # after the existence check. Skip only a now-absent name;
-                    # a remaining entry (including a dangling link) still fails.
-                    try:
-                        sibling.lstat()
-                    except FileNotFoundError:
-                        continue
-                    raise
-                os.close(descriptor)
+        self._check_transport_sidecars()
         connection = sqlite3.connect(database, timeout=2)
         connection.row_factory = sqlite3.Row
         try:
@@ -1185,6 +1218,126 @@ class NetworkClient:
                 **({"control": content["control"]} if content["kind"] == "hint_control" else {}),
                 "offset": offset, "next_offset": end if end < len(text) else None,
                 "total_characters": len(text), "network_accessed": False}
+
+    @contextmanager
+    def _read_transport(self):
+        """One existing local snapshot, without initialization or recovery."""
+        database = self.directory / "network.sqlite3"
+        try:
+            private_directory(self.directory, create=False)
+            descriptor = open_file(database, os.O_RDONLY, private=True)
+        except FileNotFoundError:
+            raise MemoryError("received_batch_not_available") from None
+        connection = None
+        try:
+            before = os.fstat(descriptor)
+            self._check_transport_sidecars()
+            connection = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=2)
+            named = database.stat(follow_symlinks=False)
+            if (named.st_dev, named.st_ino) != (before.st_dev, before.st_ino):
+                raise StorageError("unsafe_storage_file")
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA query_only=ON")
+            connection.execute("PRAGMA trusted_schema=OFF")
+            connection.execute("BEGIN")
+            size = connection.execute("SELECT length(CAST(value AS BLOB)) FROM state WHERE key='configuration_binding'").fetchone()
+            if size is None:
+                raise MemoryError("network_state_binding_missing")
+            if type(size[0]) is not int or not 1 <= size[0] <= 65536:
+                raise MemoryError("network_state_configuration_mismatch")
+            binding = connection.execute("SELECT value FROM state WHERE key='configuration_binding'").fetchone()[0]
+            if strict_json_loads(binding) != self._binding:
+                raise MemoryError("network_state_configuration_mismatch")
+            yield connection
+        except sqlite3.Error as exc:
+            raise _sqlite_memory_error(exc) from None
+        finally:
+            if connection is not None:
+                connection.close()
+            os.close(descriptor)
+
+    def read_received_batch(self, message_id: str) -> list[str]:
+        """Index accepted local history; never re-admit or return share text.
+
+        Selection order belongs to the original explicit request. The retained
+        share is only a bounded consistency check, not fresh signature proof.
+        Current record content and admission remain the Vault's responsibility.
+        """
+        if not hint_identifier(message_id):
+            raise MemoryError("received_batch_not_available")
+        with self._read_transport() as connection:
+            sizes = connection.execute("""SELECT length(body),length(CAST(result AS BLOB)),
+                length(CAST(sender AS BLOB)),length(digest),typeof(body)
+                FROM inbox WHERE message_id=?""", (message_id,)).fetchone()
+            if (sizes is None or sizes[4] != "blob"
+                    or any(type(value) is not int or not 1 <= value <= bound
+                           for value, bound in zip(sizes[:4], (MAX_CONTENT_BYTES, 8192, 128, 64)))):
+                raise MemoryError("received_batch_not_available")
+            row = connection.execute("SELECT sender,digest,body,result FROM inbox WHERE message_id=?", (message_id,)).fetchone()
+            try:
+                body, result = validate_content(bytes(row["body"])), strict_json_loads(row["result"])
+                if (body["kind"] != "hint_batch_transfer" or not isinstance(result, dict)
+                        or result.get("state") != "validated_saved" or result.get("content_kind") != body["kind"]
+                        or result.get("message_id") != message_id or result.get("sender_key_id") != row["sender"]
+                        or result.get("understood") is not False or result.get("text_memory_id") is not None
+                        or not isinstance(result.get("share"), dict) or result["share"].get("state") != "share_imported"
+                        or result["share"].get("admission") != "verified"
+                        or re.fullmatch(r"ed25519_[0-9a-f]{64}", row["sender"]) is None
+                        or re.fullmatch(r"[0-9a-f]{64}", row["digest"]) is None):
+                    raise ValueError()
+                sizes = connection.execute("""SELECT length(body),length(CAST(recipients AS BLOB)),
+                    length(CAST(request_id AS BLOB)),length(input_sha),typeof(body)
+                    FROM outbox WHERE message_id=?""", (body["request_message_id"],)).fetchone()
+                if (sizes is None or sizes[4] != "blob"
+                        or any(type(value) is not int or not 1 <= value <= bound
+                               for value, bound in zip(sizes[:4], (8192, 2048, 128, 64)))):
+                    raise ValueError()
+                selection = connection.execute("SELECT body,recipients,request_id,input_sha FROM outbox WHERE message_id=?",
+                                               (body["request_message_id"],)).fetchone()
+                selected_body = validate_content(bytes(selection["body"]))
+                control = selected_body.get("control", {})
+                recipients = strict_json_loads(selection["recipients"])
+                if (selected_body["kind"] != "hint_control" or control.get("kind") != "select"
+                        or control["query_message_id"] != body["query_message_id"] or recipients != [row["sender"]]):
+                    raise ValueError()
+                expected_message = "msg_" + hashlib.sha256(canonical_bytes([self.network_id, self.identity.key_id, selection["request_id"]])).hexdigest()
+                expected_input = hashlib.sha256(canonical_bytes({"recipients": recipients, "text": "", "memory_ids": [], "control": control})).hexdigest()
+                if expected_message != body["request_message_id"] or selection["input_sha"] != expected_input:
+                    raise ValueError()
+                selected = [item["memory_id"] for item in control["selections"]]
+                raw = unb64url(body["share"], maximum=MAX_CONTENT_SHARE_BYTES)
+                from memory_vault_sharing import SHARE_SCHEMA, MAX_LINE_BYTES
+                lines = raw.splitlines(keepends=True)
+                if len(lines) < 3:
+                    raise ValueError()
+                roots: set[str] = set()
+                for index, line in enumerate(lines):
+                    if not line.endswith(b"\n") or len(line) > MAX_LINE_BYTES:
+                        raise ValueError()
+                    frame = strict_json_loads(line)
+                    if not isinstance(frame, dict):
+                        raise ValueError()
+                    if index == 0:
+                        if frame.get("type") != "header" or frame.get("schema_version") != SHARE_SCHEMA:
+                            raise ValueError()
+                    elif index == len(lines) - 1:
+                        if frame.get("type") != "footer":
+                            raise ValueError()
+                    else:
+                        if (set(frame) != {"type", "record", "attestation", "selected"} or frame["type"] != "record"
+                                or type(frame["selected"]) is not bool or not isinstance(frame["record"], dict)
+                                or not hint_identifier(frame["record"].get("memory_id"), memory=True)):
+                            raise ValueError()
+                        if frame["selected"]:
+                            memory_id = frame["record"]["memory_id"]
+                            if memory_id in roots or len(roots) >= 4:
+                                raise ValueError()
+                            roots.add(memory_id)
+                if roots != set(selected):
+                    raise ValueError()
+                return selected
+            except (MemoryError, ValueError, TypeError, KeyError, RecursionError):
+                raise MemoryError("received_batch_not_available") from None
 
     def receive(self, limit: int = 4, *, _deadline: float | None = None) -> Mapping[str, Any]:
         if type(limit) is not int or not 1 <= limit <= 16:
