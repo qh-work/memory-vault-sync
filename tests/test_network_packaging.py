@@ -83,6 +83,8 @@ class NetworkPackagingTests(unittest.TestCase):
         for name in ("docs/EXPERIENCE_SEMANTICS.md", "docs/EXPERIENCE_VALIDATION.md"):
             self.assertIn(name, documents)
             self.assertIn(name, protocol)
+        self.assertTrue({"tests/test_experience_origin_identity.py", "tests/test_experience_origin_typescript.py",
+                         "tests/test_experience_int64.py", "tests/test_experience_http_int64.py"} <= set(review))
         self.assertIn("scripts/demo_experience.py", documents)
         self.assertNotIn("scripts/demo_experience.py", protocol)
         self.assertIn("docs/RETRIEVAL_V2.md", documents)

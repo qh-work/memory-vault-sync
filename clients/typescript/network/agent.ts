@@ -10,7 +10,7 @@ import { canonicalBytes, document, validateSigningIdentity } from './crypto.ts';
 import type { SigningIdentityDocument } from './crypto.ts';
 import { NetworkError, readPrivate } from './io.ts';
 import { CanonicalVault } from './vault.ts';
-import { decodeExperience, EXPERIENCE_PREFIX } from './records.ts';
+import { canonicalExperienceBytes, parseExperienceJSON, decodeExperience, EXPERIENCE_PREFIX } from './records.ts';
 import { NetworkPeer } from './peer.ts';
 import { RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2 } from './retrieval.ts';
 import { RANKING_MATH_PROFILE } from './ranking_math.ts';
@@ -35,7 +35,7 @@ function object(value: unknown): value is Obj {
 }
 /** Clone ordinary JSON values without invoking accessors, toJSON or a prototype.
  * Native input is JSON, not an arbitrary executable JavaScript object graph. */
-function plain(value: unknown, depth = 0): any {
+function plain(value: unknown, depth = 0, remember = false): any {
   if (depth > 64) fail('invalid_json_value');
   if (value === null || typeof value === 'boolean') return value;
   if (typeof value === 'number') { if (!Number.isFinite(value)) fail('invalid_json_value'); return value; }
@@ -54,7 +54,11 @@ function plain(value: unknown, depth = 0): any {
     if (typeof key !== 'string') fail('invalid_json_value');
     const field = Object.getOwnPropertyDescriptor(value, key)!;
     if (!field.enumerable || !('value' in field)) fail('invalid_json_value');
-    result[key] = plain(field.value, depth + 1);
+    // Only the local remember metadata has the canonical record int64 domain.
+    // Other input, including invitation/control state, keeps its existing rules.
+    result[key] = remember && depth === 0 && key === 'experience'
+      ? parseExperienceJSON(canonicalExperienceBytes(field.value, MAX_INPUT), MAX_INPUT)
+      : plain(field.value, depth + 1);
   }
   return result;
 }
@@ -277,7 +281,7 @@ export class Agent {
     let requestId: unknown;
     try {
       if (!object(request)) fail('invalid_agent_request');
-      const value = plain(request) as Obj; requestId = value.request_id;
+      const value = plain(request, 0, Object.getOwnPropertyDescriptor(request, 'op')?.value === 'remember') as Obj; requestId = value.request_id;
       if (encoded(value).length > MAX_INPUT) fail('invalid_agent_request');
       const operation = value.op;
       if (!OPERATIONS.includes(operation)) fail('unsupported_agent_operation');

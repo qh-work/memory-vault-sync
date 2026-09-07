@@ -703,6 +703,94 @@ const EXPERIENCE_RELATIONS = new Set(['heard_from', 'derived_from', 'independent
 const EXPERIENCE_LINEAGE = new Set(['heard_from', 'derived_from', 'summarizes']);
 const EXPERIENCE_EVIDENCE = new Set([...EXPERIENCE_LINEAGE, 'independently_confirms', 'contradicts']);
 type Experience = Record<string, any>;
+/** Unsafe JS integers are genuine JSON.rawJSON values in decoded views, not
+ * rounded Number values. JSON.stringify emits their exact integer token;
+ * arithmetic callers may use BigInt(value.rawJSON). Encoding also accepts
+ * native bigint within int64. These helpers never change network-v1 JSON.
+ */
+export interface ExperienceInt64 { readonly rawJSON: string }
+const experienceJSON = JSON as typeof JSON & {
+  rawJSON(value: string): ExperienceInt64;
+  isRawJSON(value: unknown): value is ExperienceInt64;
+};
+const EXPERIENCE_INT_MIN = -(1n << 63n), EXPERIENCE_INT_MAX = (1n << 63n) - 1n;
+function experienceInteger(value: string): bigint {
+  if (value.length > 20) fail('integer_out_of_range');
+  if (!/^-?(?:0|[1-9][0-9]*)$/.test(value)) fail('floating_point_forbidden');
+  const integer = BigInt(value);
+  if (integer < EXPERIENCE_INT_MIN || integer > EXPERIENCE_INT_MAX) fail('integer_out_of_range');
+  return integer;
+}
+export function canonicalExperienceBytes(value: unknown, maximum = 2048): Uint8Array {
+  return checked(() => {
+    if (!Number.isSafeInteger(maximum) || maximum < 0 || maximum > MAX_RECORD_BYTES) fail('experience_too_large');
+    const chunks: string[] = []; let bytes = 0, nodes = 0;
+    const emit = (value: string) => { bytes += Buffer.byteLength(value); if (bytes > maximum) fail('experience_too_large'); chunks.push(value); };
+    const string = (value: string) => {
+      if (value.includes('\0') || Buffer.from(value).toString('utf8') !== value) fail('invalid_text');
+      emit(JSON.stringify(value));
+    };
+    const visit = (item: unknown, depth: number): void => {
+      if (++nodes > 16384 || depth > 12) fail('structure_too_large');
+      if (item === null || typeof item === 'boolean') { emit(JSON.stringify(item)); return; }
+      if (typeof item === 'number') {
+        if (!Number.isInteger(item)) fail('floating_point_forbidden');
+        if (!Number.isSafeInteger(item)) fail('unsafe_experience_integer');
+        emit(String(item)); return;
+      }
+      if (typeof item === 'bigint') { emit(experienceInteger(String(item)).toString()); return; }
+      if (typeof item === 'string') { string(item); return; }
+      if (typeof experienceJSON.isRawJSON !== 'function') fail('experience_lossless_json_unavailable');
+      if (experienceJSON.isRawJSON(item)) { emit(experienceInteger(item.rawJSON).toString()); return; }
+      if (!item || typeof item !== 'object' || ![Object.prototype, null, ...(Array.isArray(item) ? [Array.prototype] : [])].includes(Object.getPrototypeOf(item))) fail('invalid_experience');
+      const descriptors = Object.getOwnPropertyDescriptors(item), keys = Reflect.ownKeys(item);
+      if (Array.isArray(item)) {
+        if (keys.length !== item.length + 1) fail('invalid_experience');
+        emit('[');
+        for (let i = 0; i < item.length; i++) {
+          const property = descriptors[String(i)];
+          if (!property || !property.enumerable || !('value' in property)) fail('invalid_experience');
+          if (i) emit(','); visit(property.value, depth + 1);
+        }
+        emit(']'); return;
+      }
+      if (keys.some(key => !match(key, /^[A-Za-z][A-Za-z0-9_.:-]{0,127}/))) fail('invalid_key');
+      emit('{'); let first = true;
+      for (const key of (keys as string[]).sort()) {
+        const property = descriptors[key];
+        if (!property.enumerable || !('value' in property)) fail('invalid_experience');
+        if (!first) emit(','); first = false;
+        string(key); emit(':'); visit(property.value, depth + 1);
+      }
+      emit('}');
+    };
+    visit(value, 0); return Buffer.from(chunks.join(''), 'utf8');
+  });
+}
+export function parseExperienceJSON(value: string | Uint8Array, maximum = 2048): Experience {
+  return checked(() => {
+    const raw = typeof value === 'string' ? Buffer.from(value, 'utf8') : value;
+    if (raw.byteLength > maximum || (typeof value === 'string' && Buffer.from(raw).toString('utf8') !== value)) fail('experience_too_large');
+    const source = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true}).decode(raw);
+    // Reuse the strict token/duplicate-field parser on a numeric mask. Every
+    // quoted string is preserved; only complete outside-string number tokens
+    // become zero. Actual integer spelling/range comes from JSON.parse source.
+    const masked = source.replace(/"(?:[^"\\]|\\.)*"|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/g,
+      token => token.startsWith('"') ? token : '0');
+    document(Buffer.from(masked, 'utf8'), maximum);
+    if (typeof experienceJSON.rawJSON !== 'function') fail('experience_lossless_json_unavailable');
+    const parse = JSON.parse as (text: string, reviver: (key: string, item: any, context?: {source?: string}) => any) => any;
+    const result = parse(source, (_key, item, context) => {
+      if (typeof item !== 'number') return item;
+      if (typeof context?.source !== 'string') fail('experience_lossless_json_unavailable');
+      const integer = experienceInteger(context.source);
+      return integer >= BigInt(Number.MIN_SAFE_INTEGER) && integer <= BigInt(Number.MAX_SAFE_INTEGER)
+        ? Number(integer) : experienceJSON.rawJSON(integer.toString());
+    });
+    canonicalExperienceBytes(result, maximum);
+    return result;
+  });
+}
 function experienceOrder(a: string, b: string): number {
   const x = Array.from(a), y = Array.from(b);
   for (let i = 0; i < Math.min(x.length, y.length); i++) {
@@ -717,7 +805,7 @@ function experiencePairs(values: {type: string; target: string}[]): {type: strin
 export function normalizeExperience(value: unknown): Experience {
   return checked(() => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) fail('invalid_experience');
-    const result = document(canonicalBytes(value as Obj, MAX_RECORD_BYTES), MAX_RECORD_BYTES) as Experience;
+    const result = parseExperienceJSON(canonicalExperienceBytes(value, MAX_RECORD_BYTES), MAX_RECORD_BYTES);
     const kind = Object.hasOwn(result, 'epistemic_type') ? result.epistemic_type : 'unspecified';
     if (typeof kind !== 'string' || !kind || Array.from(kind).length > 64) fail('invalid_experience');
     result.epistemic_type = kind;
@@ -742,14 +830,14 @@ export function normalizeExperience(value: unknown): Experience {
     if (pairs.length || Object.hasOwn(result, 'relations')) result.relations = pairs;
     if (Object.hasOwn(result, 'source_memory_refs')) result.source_memory_refs = [...new Set(refs)].sort(experienceOrder);
     if (Object.hasOwn(result, 'evidence_refs')) result.evidence_refs = [...new Set(evidence)].sort(experienceOrder);
-    const bytes = canonicalBytes(result, MAX_RECORD_BYTES);
+    const bytes = canonicalExperienceBytes(result, MAX_RECORD_BYTES);
     if (bytes.length > 2048 || Buffer.from(bytes).includes(Buffer.from('\\u0000'))) fail('experience_too_large');
     return result;
   });
 }
 function inheritNativeExperience(value: unknown, relations: readonly {type: string; target: string}[]): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-  const candidate = document(canonicalBytes(value as Obj, MAX_RECORD_BYTES), MAX_RECORD_BYTES) as Experience;
+  const candidate = parseExperienceJSON(canonicalExperienceBytes(value, MAX_RECORD_BYTES), MAX_RECORD_BYTES);
   const typed = Object.hasOwn(candidate, 'relations') ? candidate.relations : [];
   if (!Array.isArray(typed)) return candidate;
   const targets = new Set(typed.filter(r => r && typeof r === 'object' && typeof r.type === 'string' && EXPERIENCE_LINEAGE.has(r.type) && typeof r.target === 'string').map(r => r.target));
@@ -764,7 +852,7 @@ export function encodeExperience(value: unknown, provenance: Readonly<Record<str
     if (provenance.source_ref.startsWith(EXPERIENCE_PREFIX)) fail('ambiguous_experience_source');
     wrapper.source_ref = provenance.source_ref;
   }
-  const encoded = EXPERIENCE_PREFIX + Buffer.from(canonicalBytes(wrapper)).toString('utf8');
+  const encoded = EXPERIENCE_PREFIX + Buffer.from(canonicalExperienceBytes(wrapper)).toString('utf8');
   if (Buffer.byteLength(encoded) > 2048) fail('experience_too_large');
   const projected = [...relations];
   for (const edge of metadata.relations ?? []) if (EXPERIENCE_RELATIONS.has(edge.type)) {
@@ -780,7 +868,7 @@ export function decodeExperience(record: Pick<MemoryRecord, 'provenance'> & Part
     return {epistemic_type: 'unspecified', ...(inherited.length ? {relations: inherited} : {})};
   }
   try {
-    const wrapper = document(Buffer.from(ref.slice(EXPERIENCE_PREFIX.length), 'utf8'), 2048) as Experience, value = normalizeExperience(inheritNativeExperience(wrapper.metadata, record.relations ?? []));
+    const wrapper = parseExperienceJSON(ref.slice(EXPERIENCE_PREFIX.length)), value = normalizeExperience(inheritNativeExperience(wrapper.metadata, record.relations ?? []));
     if (!EPISTEMIC_TYPES.has(value.epistemic_type)) {
       value.declared_epistemic_type = value.epistemic_type; value.epistemic_type = 'unspecified';
     }
@@ -822,19 +910,31 @@ export function summarizeExperience(records: ReadonlyMap<string, MemoryRecord>, 
     for (const child of children.get(node)!) { degrees.set(child, degrees.get(child)! - 1); if (!degrees.get(child)) queue.push(child); }
   }
   const cycle = processed !== connected.size;
+  const unattributed = new Set<string>();
   const independentSources = (relation: string): Set<string> => {
     const identities = new Set<string>();
     for (const edge of edges) {
       if (edge.type !== relation || !connected.has(edge.source) || !connected.has(edge.target) || parents.get(edge.source)!.size ||
           !['observation', 'experiment'].includes(decoded.get(edge.source)!.epistemic_type)) continue;
       const proof = verifications.get(edge.source) ?? {};
-      identities.add((proof.signature_verified_at_admission ? proof.signer_key_id : null) || edge.source);
+      if (proof.eligible_for_context === false || proof.admission === 'quarantined') continue;
+      // Current attestation admits bytes; it does not create a new historical
+      // experiment. The pin is a local grouping clue, never transferred author
+      // proof and never authority to revive a revoked key.
+      const origin = proof.local_origin_key_id;
+      if (typeof origin === 'string' && match(origin, /^ed25519_[0-9a-f]{64}/)) identities.add(origin);
+      else if (proof.local_origin_key_present === true || origin != null || proof.signature_verified_at_admission === true || proof.admission === 'verified') unattributed.add(edge.source);
+      else identities.add(edge.source); // Never-signed local/accepted declarations.
     }
     return identities;
   };
+  const confirmations = independentSources('independently_confirms').size;
+  const contradictions = independentSources('contradicts').size;
   return {propagation_count: [...connected].filter(node => decoded.get(node)!.epistemic_type === 'hearsay' || edges.some(e => e.source === node && e.type === 'heard_from')).length,
-    unique_origin_roots: roots.length, independent_confirmation_count: independentSources('independently_confirms').size,
-    contradiction_count: independentSources('contradicts').size, records_considered: connected.size,
-    cycle_detected: cycle, truncated: truncated || missing.size > 0 || cycle, missing_reference_count: missing.size,
+    unique_origin_roots: roots.length, independent_confirmation_count: confirmations,
+    contradiction_count: contradictions, records_considered: connected.size,
+    cycle_detected: cycle, truncated: truncated || missing.size > 0 || cycle || unattributed.size > 0, missing_reference_count: missing.size,
+    origin_identity_basis: 'local_first_verified_signer_or_unsigned_record',
+    unattributed_evidence_count: unattributed.size, origin_identity_incomplete: unattributed.size > 0,
     basis: 'local_declared_provenance', independence_verified: false, truth_score: null};
 }

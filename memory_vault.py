@@ -2743,7 +2743,15 @@ class Vault:
             through = int(connection.execute("SELECT COALESCE(MAX(ingest_seq),0) FROM memories").fetchone()[0])
             graph = self._graph_rows(connection, root=memory_id, through=through,
                 maximum_nodes=128, maximum_edges=1024, maximum_depth=8)
-            proofs = {key: self._verification(connection, key) for key in graph["records"]}
+            proofs = {}
+            for key in graph["records"]:
+                origin = connection.execute("SELECT value FROM metadata WHERE key=?",
+                                            ("state_author:" + key,)).fetchone()
+                # Only the derived experience summary consumes this local pin.
+                # Current admission/trust and public verification stay separate.
+                proofs[key] = {**self._verification(connection, key),
+                    "local_origin_key_id": origin[0] if origin is not None else None,
+                    "local_origin_key_present": origin is not None}
             summary = summarize(graph["records"], memory_id, proofs, truncated=graph["truncated"])
         else:
             summary = summarize({}, memory_id, truncated=True)

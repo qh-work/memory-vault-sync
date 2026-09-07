@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Memory Vault optional experience-v1 metadata",
-  "$comment": "Request metadata is encoded in the existing record/v1 provenance.source_ref string, not in a new canonical record field. The complete prefix plus canonical wrapper must fit 2048 UTF-8 bytes. Strict JSON, normalization, source attribution and typed-relation projection require semantic validation. Fields are publisher claims, never authority or proof of independent observation. Unknown fields and type labels are preserved; unknown epistemic types are viewed as unspecified.",
+  "$comment": "Request metadata is encoded in the existing record/v1 provenance.source_ref string, not in a new canonical record field. The complete prefix plus canonical wrapper must fit 2048 UTF-8 bytes. Metadata numbers are exact signed 64-bit integers; floating point, rounding, and out-of-range integers are forbidden, including in unknown fields. Strict JSON, normalization, source attribution and typed-relation projection require semantic validation. Fields are publisher claims, never authority or proof of independent observation. Unknown fields and type labels are preserved; unknown epistemic types are viewed as unspecified.",
   "type": "object",
   "properties": {
     "epistemic_type": {

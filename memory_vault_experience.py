@@ -169,6 +169,7 @@ def summarize(records: Mapping[str, Mapping[str, Any]], root: str,
             if degrees[child] == 0:
                 queue.append(child)
     cycle = processed != len(connected)
+    unattributed: set[str] = set()
     def independent_sources(relation: str) -> set[str]:
         identities = set()
         for source, typ, target in edges:
@@ -176,17 +177,36 @@ def summarize(records: Mapping[str, Mapping[str, Any]], root: str,
                     or decoded[source]['epistemic_type'] not in {'observation', 'experiment'}):
                 continue
             proof = (verifications or {}).get(source, {})
-            identity = proof.get('signer_key_id') if proof.get('signature_verified_at_admission') else None
-            identities.add(identity or source)
+            if proof.get('eligible_for_context') is False or proof.get('admission') == 'quarantined':
+                continue
+            # A current attester is not the origin of these immutable claims.
+            # This first-known local pin is only a deduplication clue, never
+            # portable authorship proof or permission for a revoked identity.
+            origin = proof.get('local_origin_key_id')
+            if isinstance(origin, str) and re.fullmatch(r'ed25519_[0-9a-f]{64}', origin):
+                identities.add(origin)
+            elif (proof.get('local_origin_key_present') is True or origin is not None
+                    or proof.get('signature_verified_at_admission') is True
+                    or proof.get('admission') == 'verified'):
+                unattributed.add(source)
+            else:
+                # Never-signed records (and standalone claim-only summaries)
+                # retain record identity, without certifying independence.
+                identities.add(source)
         return identities
+    confirmations = independent_sources('independently_confirms')
+    contradictions = independent_sources('contradicts')
     return {
         'propagation_count': sum(decoded[node]['epistemic_type'] == 'hearsay' or
                                  any(s == node and t == 'heard_from' for s, t, _ in edges) for node in connected),
         'unique_origin_roots': len(roots),
-        'independent_confirmation_count': len(independent_sources('independently_confirms')),
-        'contradiction_count': len(independent_sources('contradicts')),
+        'independent_confirmation_count': len(confirmations),
+        'contradiction_count': len(contradictions),
         'records_considered': len(connected), 'cycle_detected': cycle,
-        'truncated': truncated or bool(missing) or cycle,
+        'truncated': truncated or bool(missing) or cycle or bool(unattributed),
+        'origin_identity_basis': 'local_first_verified_signer_or_unsigned_record',
+        'origin_identity_incomplete': bool(unattributed),
+        'unattributed_evidence_count': len(unattributed),
         'missing_reference_count': len(missing),
         'basis': 'local_declared_provenance', 'independence_verified': False,
         'truth_score': None,

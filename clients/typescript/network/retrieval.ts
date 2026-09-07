@@ -7,7 +7,7 @@ import { document, canonicalBytes } from './crypto.ts';
 import type { DocumentInput } from './crypto.ts';
 import { NetworkError } from './io.ts';
 import type { MemoryRecord, MemoryRelation } from './records.ts';
-import { decodeExperience, summarizeExperience } from './records.ts';
+import { canonicalExperienceBytes, decodeExperience, summarizeExperience } from './records.ts';
 import { normalizeText, tokenize, semanticFeatures, semanticSimilarity, semanticCardinality, expandedQueryTokens,
   entityQueryMatches, fragmentLocator, memoryFragments, boundedText, LATIN_PATTERN, NEGATION_MARKERS } from './retrieval_text.ts';
 import type { MemoryFragment } from './retrieval_text.ts';
@@ -468,7 +468,7 @@ export class Retrieval {
       let label = `\n${index + 1}. [${id}; ${hit.kind}; ${hit.status}; ${hit.created_at}; ${hit.verification?.admission ?? 'unknown'}]\n`;
       if (hit.experience) {
         const condition = Object.fromEntries(['epistemic_type', 'observed_under'].filter(key => Object.hasOwn(hit.experience, key)).map(key => [key, hit.experience[key]]));
-        let encodedCondition = canonicalBytes(condition);
+        let encodedCondition = canonicalExperienceBytes(condition);
         if (encodedCondition.length > 512) encodedCondition = canonicalBytes({epistemic_type: hit.experience.epistemic_type, context_in_structured_output: true});
         label += 'Experience claims: ' + Buffer.from(encodedCondition).toString('utf8') + '\n';
       }
@@ -528,7 +528,11 @@ export class Retrieval {
           edges.add(key);
         }
       }
-      for (const key of records.keys()) proofs.set(key, this.host.verification(key));
+      for (const key of records.keys()) {
+        const pin = this.db.prepare('SELECT value FROM metadata WHERE key=?').get('state_author:' + key);
+        proofs.set(key, {...this.host.verification(key), local_origin_key_id: pin?.value ?? null,
+          local_origin_key_present: pin !== undefined});
+      }
     }
     const summary = summarizeExperience(records, id, proofs, truncated);
     return {...metadata, content: record.text,

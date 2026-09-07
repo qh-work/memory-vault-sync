@@ -8,7 +8,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { canonicalBytes, document, sha256, validateSigningIdentity, validateSigningPublic } from './crypto.ts';
 import type { DocumentInput, SigningIdentityDocument, SigningPublicDescriptor } from './crypto.ts';
 import { NetworkError, openPrivateDatabase, transaction } from './io.ts';
-import { buildRecord, validateRecord, canonicalRecordBytes, signRecord, verifyRecord, parseShare, encodeShare, normalizeText, encodeExperience } from './records.ts';
+import { buildRecord, validateRecord, canonicalRecordBytes, signRecord, verifyRecord, parseShare, encodeShare, normalizeText, encodeExperience, canonicalExperienceBytes, parseExperienceJSON } from './records.ts';
 import type { MemoryRecord, RecordAttestation, SignedMemory } from './records.ts';
 import { Retrieval, RETRIEVAL_INDEX_PROFILE } from './retrieval.ts';
 import type { RecallArguments } from './retrieval.ts';
@@ -293,13 +293,20 @@ export class CanonicalVault {
   }
   remember(input: RememberInput): Row & SignedMemory {
     if (!this.#identity && !this.#allowUnsigned) fail('vault_signing_identity_required');
-    const value = document(input as unknown as DocumentInput, MAX_RECORD) as Row;
+    // Isolate Experience's int64 metadata; the remaining fields still pass
+    // through the unchanged strict safe-integer network/document validator.
+    if (!input || typeof input !== 'object' || ![Object.prototype, null].includes(Object.getPrototypeOf(input))) fail('invalid_request_id');
+    const fields = Object.getOwnPropertyDescriptors(input), experience = fields.experience;
+    if (experience && (!experience.enumerable || !('value' in experience))) fail('invalid_experience');
+    if (experience) delete fields.experience;
+    const value = document(Object.create(Object.getPrototypeOf(input), fields) as DocumentInput, MAX_RECORD) as Row;
+    if (experience) value.experience = parseExperienceJSON(canonicalExperienceBytes(experience.value, MAX_RECORD), MAX_RECORD);
     if (Object.keys(value).some(key => !['requestId', 'kind', 'text', 'entities', 'relations', 'provenance', 'experience'].includes(key)) ||
         typeof value.requestId !== 'string' || !/^req_[A-Za-z0-9_-]{8,96}$/.test(value.requestId)) fail('invalid_request_id');
     if (value.kind === 'episode') fail('invalid_kind');
     const request: Row = { op: 'remember', kind: value.kind, text: value.text, request_id: value.requestId };
     for (const key of ['entities', 'relations', 'provenance', 'experience']) if (Object.hasOwn(value, key)) request[key] = value[key];
-    const digest = sha256(canonicalBytes(request, MAX_RECORD)), deadline = performance.now() + 5000;
+    const digest = sha256(canonicalExperienceBytes(request, MAX_RECORD)), deadline = performance.now() + 5000;
     return this.#run(true, () => {
       const trusted = this.#trusted();
       if (this.#identity && !trusted.some(key => key.key_id === this.#identity!.key_id)) fail('unknown_key');
