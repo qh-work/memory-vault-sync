@@ -6,12 +6,16 @@ import { canonicalBytes, document, objectFields, opaqueId } from './crypto.ts';
 import type { DocumentInput } from './crypto.ts';
 import { readPrivate, privateDirectory, NetworkError } from './io.ts';
 
-export const HINT_SCHEMA = 'memory-vault-hint/v1';
+export const HINT_SCHEMA = 'memory-vault-hint/v2';
 export const POLICY_SCHEMA = 'memory-vault-hint-policy/v1';
+export const SESSION_SCHEMA = 'memory-vault-hint-session/v1';
+export const SESSION_PREFIX = 'hint-session:';
+export const MAX_SESSION_BYTES = 32768;
 export interface Hint { memory_id: string; excerpt: string; epistemic_type: string }
 export type HintControl =
-  {schema_version: typeof HINT_SCHEMA; kind: 'query'; query: string} |
-  {schema_version: typeof HINT_SCHEMA; kind: 'hints'; request_message_id: string; expires_at: number; hints: Hint[]} |
+  {schema_version: typeof HINT_SCHEMA; kind: 'query'; query: string; expires_at: number} |
+  {schema_version: typeof HINT_SCHEMA; kind: 'page'; query_message_id: string; cursor: string} |
+  {schema_version: typeof HINT_SCHEMA; kind: 'hints'; request_message_id: string; query_message_id: string; page_index: number; policy_revision: number; expires_at: number; hints: Hint[]; next_cursor: string | null} |
   {schema_version: typeof HINT_SCHEMA; kind: 'select'; offer_message_id: string; memory_id: string} |
   {schema_version: typeof HINT_SCHEMA; kind: 'refusal'; request_message_id: string; reason: 'not_available'};
 export interface HintGrant { key_id: string; hint_memory_ids: string[]; record_memory_ids: string[] }
@@ -19,6 +23,13 @@ export interface HintPolicy {
   schema_version: typeof POLICY_SCHEMA; network_id: string; owner_key_id: string;
   revision: number; expires_at: number; peers: HintGrant[];
 }
+interface SessionCommon {
+  schema_version: typeof SESSION_SCHEMA; network_id: string; owner_key_id: string;
+  peer_key_id: string; query_message_id: string; query: string; expires_at: number;
+}
+export type RequesterSession = SessionCommon & {role: 'requester'};
+export type OwnerSession = SessionCommon & {role: 'owner'; policy_revision: number; policy_sha256: string; hints: Hint[]; cursors: string[]};
+export type HintSession = RequesterSession | OwnerSession;
 const memory = /^mem_[0-9a-f]{40}$/;
 const message = /^msg_[0-9a-f]{64}$/;
 const signer = /^ed25519_[0-9a-f]{64}$/;
@@ -33,23 +44,39 @@ export function hintMessageId(value: unknown): string {
 function integer(value: unknown, minimum = 0): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) fail(); return value;
 }
+function cursor(value:unknown):string {
+  if(typeof value!=='string'||value.length!==72||!/^hintcur_[0-9a-f]{64}$/.test(value))fail();return value;
+}
+function query(value:unknown):string {
+  if(typeof value!=='string'||!value.length||Buffer.byteLength(value)>256)fail();return value;
+}
+function hints(value:unknown,maximum:number):Hint[] {
+  if(!Array.isArray(value)||value.length>maximum)fail();
+  const ids=new Set<string>();
+  for(const item of value){
+    const hint=objectFields(item,['memory_id','excerpt','epistemic_type'],'network_invalid_content');
+    const id=hintMemoryId(hint.memory_id);if(ids.has(id))fail();ids.add(id);
+    if(typeof hint.excerpt!=='string'||Buffer.byteLength(hint.excerpt)>128||!EPISTEMIC_TYPES.has(hint.epistemic_type as string))fail();
+  }
+  return value;
+}
 export function validateHintControl(value: DocumentInput): HintControl {
   try {
     const control = document(value, 4096);
     if (control.schema_version !== HINT_SCHEMA) fail();
     if (control.kind === 'query') {
-      objectFields(control, ['schema_version','kind','query'], 'network_invalid_content');
-      if (typeof control.query !== 'string' || !control.query.length || Buffer.byteLength(control.query) > 256) fail();
+      objectFields(control, ['schema_version','kind','query','expires_at'], 'network_invalid_content');
+      query(control.query);integer(control.expires_at,1);
+    } else if(control.kind==='page'){
+      objectFields(control,['schema_version','kind','query_message_id','cursor'],'network_invalid_content');
+      hintMessageId(control.query_message_id);cursor(control.cursor);
     } else if (control.kind === 'hints') {
-      objectFields(control, ['schema_version','kind','request_message_id','expires_at','hints'], 'network_invalid_content');
-      hintMessageId(control.request_message_id); integer(control.expires_at,1);
-      if (!Array.isArray(control.hints) || control.hints.length > 4) fail();
-      const ids = new Set<string>();
-      for (const value of control.hints) {
-        const hint = objectFields(value, ['memory_id','excerpt','epistemic_type'], 'network_invalid_content');
-        const id = hintMemoryId(hint.memory_id); if (ids.has(id)) fail(); ids.add(id);
-        if (typeof hint.excerpt !== 'string' || Buffer.byteLength(hint.excerpt) > 128 || !EPISTEMIC_TYPES.has(hint.epistemic_type as string)) fail();
-      }
+      objectFields(control, ['schema_version','kind','request_message_id','query_message_id','page_index','policy_revision','expires_at','hints','next_cursor'], 'network_invalid_content');
+      hintMessageId(control.request_message_id);hintMessageId(control.query_message_id);integer(control.expires_at,1);integer(control.policy_revision,1);
+      const page=integer(control.page_index);if(page>3)fail();
+      const items=hints(control.hints,4);
+      if(control.next_cursor!==null)cursor(control.next_cursor);
+      if(page===3&&control.next_cursor!==null||control.next_cursor!==null&&items.length!==4||page>0&&!items.length)fail();
     } else if (control.kind === 'select') {
       objectFields(control, ['schema_version','kind','offer_message_id','memory_id'], 'network_invalid_content');
       hintMessageId(control.offer_message_id); hintMemoryId(control.memory_id);
@@ -60,6 +87,26 @@ export function validateHintControl(value: DocumentInput): HintControl {
     canonicalBytes(control, 4096);
     return control as HintControl;
   } catch { fail(); }
+}
+/** Shared local shape, used by both runtimes without conferring live authority. */
+export function validateHintSession(key:string,value:DocumentInput,networkId:string,ownerKeyId:string):HintSession {
+  try{
+    const session=document(value,MAX_SESSION_BYTES),fields=['schema_version','role','network_id','owner_key_id','peer_key_id','query_message_id','query','expires_at'];
+    if(session.role==='owner')fields.push('policy_revision','policy_sha256','hints','cursors');
+    else if(session.role!=='requester')fail();
+    objectFields(session,fields);
+    if(session.schema_version!==SESSION_SCHEMA||session.network_id!==networkId||session.owner_key_id!==ownerKeyId||key!==SESSION_PREFIX+hintMessageId(session.query_message_id))fail();
+    for(const value of [session.owner_key_id,session.peer_key_id])if(typeof value!=='string'||value.length!==72||!signer.test(value))fail();
+    query(session.query);integer(session.expires_at,1);
+    if(session.role==='owner'){
+      integer(session.policy_revision,1);
+      if(typeof session.policy_sha256!=='string'||session.policy_sha256.length!==64||!/^[0-9a-f]{64}$/.test(session.policy_sha256))fail();
+      const items=hints(session.hints,16),ids=items.map(item=>item.memory_id);
+      if(ids.some((id,index)=>index>0&&id<=ids[index-1]))fail();
+      if(!Array.isArray(session.cursors)||session.cursors.length!==Math.max(0,Math.ceil(items.length/4)-1)||new Set(session.cursors.map(cursor)).size!==session.cursors.length)fail();
+    }
+    canonicalBytes(session,MAX_SESSION_BYTES);return session as unknown as HintSession;
+  }catch{fail('network_hint_not_available');}
 }
 export function validateHintPolicy(value: DocumentInput, networkId: string, ownerKeyId: string): HintPolicy {
   try {

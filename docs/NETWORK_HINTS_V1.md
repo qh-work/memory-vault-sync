@@ -1,5 +1,8 @@
 # Authorized Memory Hint exchange
 
+Historical v1 design and validation notes. The current candidate uses
+[Hint v2 frozen pagination](NETWORK_HINTS_V2.md); v1 control shapes are no longer accepted.
+
 Status: **unreleased candidate after v0.26.0-alpha.4**. This is a bounded
 exchange between known, configured endpoints. It is not global search, open
 P2P, a public service, or a capacity certification. Test only with isolated

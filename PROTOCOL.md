@@ -126,10 +126,14 @@ canonical Memory Record or classify it as an observation. A `memory_transfer`
 carries explicitly selected existing records and their existing dependency
 closure; accompanying text remains a note even if it equals a record's text.
 The closure rule is not a remote-discovery or per-recipient export grant.
-The developing [Memory Hint contract](docs/NETWORK_HINTS_V1.md) adds typed,
+The developing [Memory Hint contract](docs/NETWORK_HINTS_V2.md) adds typed,
 recipient-bound queries and explicit selection. Hint visibility and full-record
 grants MUST be separate. Every dependency MUST be authorized before export;
 current policy MUST be checked again at actual send start, including retries.
+Hint v2 freezes at most 16 permitted projections, returning at most four per
+explicitly requested page. Cursors MUST bind the network, participants, query,
+frozen projection, policy revision and expiry. Policy changes MUST invalidate
+old pages, and restoration MUST NOT resume historical discovery sessions.
 Controls MUST NOT become canonical memories or execution permissions.
 Saving new knowledge is a separate `remember` decision with appropriate source
 attribution. Reading saved communication locally grants no execution authority.

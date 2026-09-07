@@ -19,8 +19,8 @@ import type { VaultOptions } from './vault.ts';
 import { parseShare, NetworkRecordsError } from './records.ts';
 import { CONTENT_SCHEMA, MAX_CONTENT_SHARE_BYTES, validateContent, contentText, contentChunk } from './content.ts';
 import type { NetworkContent } from './content.ts';
-import { HINT_SCHEMA, validateHintControl, hintMessageId, readHintPolicy, writeHintPolicy, grantFor } from './hints.ts';
-import type { HintControl, HintPolicy } from './hints.ts';
+import { HINT_SCHEMA, SESSION_SCHEMA, SESSION_PREFIX, MAX_SESSION_BYTES, validateHintControl, validateHintSession, hintMessageId, readHintPolicy, writeHintPolicy, grantFor } from './hints.ts';
+import type { HintControl, HintPolicy, HintSession, RequesterSession, OwnerSession } from './hints.ts';
 import { absolutePath, readPrivate, openPrivateDatabase, transaction, NetworkError } from './io.ts';
 import { HTTPTransport, origin } from './transport.ts';
 import { readTrustedKeys } from './setup.ts';
@@ -288,6 +288,87 @@ export class NetworkPeer {
   private hintPolicy():HintPolicy {
     return readHintPolicy(path.join(this.directory,'hint-policy.json'),this.networkId,this.identity.key_id,now());
   }
+  private hintSessions():Map<string,HintSession> {
+    const db=this.db(),owns=!db.isTransaction;if(owns)db.exec('BEGIN');
+    try{
+      const rows=db.prepare('SELECT key,length(CAST(value AS BLOB)) bytes FROM state WHERE substr(key,1,?)=? ORDER BY key LIMIT 65').all(SESSION_PREFIX.length,SESSION_PREFIX) as Obj[];
+      if(rows.length>64||rows.some(row=>row.bytes>MAX_SESSION_BYTES))fail('network_hint_not_available');
+      const result=new Map<string,HintSession>();
+      for(const row of rows)result.set(row.key,validateHintSession(row.key,this.state(row.key),this.networkId,this.identity.key_id));
+      if(owns)db.exec('COMMIT');return result;
+    }catch(error){if(owns)db.exec('ROLLBACK');throw error;}
+  }
+  private insertHintSession(session:HintSession):void {
+    const db=this.db();if(!db.isTransaction)throw Error('hint session insertion requires existing transaction');
+    const key=SESSION_PREFIX+session.query_message_id,checked=validateHintSession(key,session,this.networkId,this.identity.key_id),sessions=this.hintSessions();
+    if(sessions.has(key)||checked.expires_at<=now())fail('network_hint_not_available');
+    for(const [key,value] of sessions)if(value.expires_at<=now()){db.prepare('DELETE FROM state WHERE key=?').run(key);sessions.delete(key);}
+    if(sessions.size>=64)fail('network_hint_not_available');this.put(key,checked);
+  }
+  private hintSession(queryId:string,role:'owner'|'requester',peer:string):HintSession {
+    hintMessageId(queryId);
+    const session=this.hintSessions().get(SESSION_PREFIX+queryId);
+    if(!session||session.role!==role||session.peer_key_id!==peer||session.expires_at<=now())fail('network_hint_not_available');return session;
+  }
+  private queryExpiry(expiry:number):void {
+    const at=now();if(expiry<=at||expiry>at+300)fail('network_hint_not_available');
+  }
+  private ownControl(messageId:string,peer:string):HintControl {
+    hintMessageId(messageId);
+    const row=this.db().prepare('SELECT body,recipients FROM outbox WHERE message_id=?').get(messageId) as Obj|undefined;
+    if(!row||row.recipients===null||!equal(parse(row.recipients),[peer]))fail('network_hint_not_available');
+    const content=validateContent(row.body);if(content.kind!=='hint_control')fail('network_hint_not_available');return content.control;
+  }
+  private requesterSession(queryId:string,peer:string):RequesterSession {
+    const session=this.hintSession(queryId,'requester',peer) as RequesterSession,query=this.ownControl(queryId,peer);
+    if(query.kind!=='query'||query.query!==session.query||query.expires_at!==session.expires_at)fail('network_hint_not_available');
+    this.queryExpiry(query.expires_at);return session;
+  }
+  private originalQuery(queryId:string,peer:string):Extract<HintControl,{kind:'query'}> {
+    const query=this.inboxControl(queryId,peer);if(query.kind!=='query')fail('network_hint_not_available');this.queryExpiry(query.expires_at);
+    const boundary=this.state('hint_recovery_boundary');
+    if(boundary!==undefined){
+      objectFields(boundary,['inbox_rowid','outbox_rowid']);safeInteger(boundary.inbox_rowid);safeInteger(boundary.outbox_rowid);
+      const row=this.db().prepare('SELECT rowid position FROM inbox WHERE message_id=?').get(queryId) as Obj;
+      if(row.position<=boundary.inbox_rowid)fail('network_hint_not_available');
+    }
+    return query;
+  }
+  private ownerSession(queryId:string,peer:string):OwnerSession {
+    const session=this.hintSession(queryId,'owner',peer) as OwnerSession,query=this.originalQuery(queryId,peer),policy=this.hintPolicy(),grant=grantFor(policy,peer);
+    if(session.query!==query.query||session.expires_at!==Math.min(query.expires_at,policy.expires_at)||session.policy_revision!==policy.revision||session.policy_sha256!==sha256(canonicalBytes(policy))||session.hints.some(hint=>!grant.hint_memory_ids.includes(hint.memory_id)))fail('network_hint_not_available');
+    return session;
+  }
+  private freezeHints(queryId:string,peer:string):OwnerSession {
+    return transaction(this.db(),()=>{
+      const query=this.originalQuery(queryId,peer),sessions=this.hintSessions(),key=SESSION_PREFIX+queryId;
+      if(sessions.has(key))return this.ownerSession(queryId,peer);
+      const policy=this.hintPolicy(),grant=grantFor(policy,peer);let reader:CanonicalVault|undefined;
+      try{
+        try{reader=new CanonicalVault({...this.vaultOptions,readOnly:true});}catch(error){if((error as any)?.code!=='not_initialized')throw error;}
+        const hints=reader?reader.hintMatches(grant.hint_memory_ids,query.query,16):[];
+        const session:OwnerSession={schema_version:SESSION_SCHEMA,role:'owner',network_id:this.networkId,owner_key_id:this.identity.key_id,peer_key_id:peer,query_message_id:queryId,query:query.query,expires_at:Math.min(query.expires_at,policy.expires_at),policy_revision:policy.revision,policy_sha256:sha256(canonicalBytes(policy)),hints,cursors:Array.from({length:Math.max(0,Math.ceil(hints.length/4)-1)},()=> 'hintcur_'+randomBytes(32).toString('hex'))};
+        if(!equal(policy,this.hintPolicy()))fail('network_hint_not_available');
+        this.insertHintSession(session);return session;
+      }finally{reader?.close();}
+    });
+  }
+  private pageIndex(session:OwnerSession,request:HintControl,messageId:string):number {
+    if(request.kind==='query'&&messageId===session.query_message_id&&request.query===session.query&&request.expires_at>=session.expires_at)return 0;
+    if(request.kind!=='page'||request.query_message_id!==session.query_message_id)fail('network_hint_not_available');
+    const index=session.cursors.indexOf(request.cursor);if(index<0)fail('network_hint_not_available');return index+1;
+  }
+  private pageControl(session:OwnerSession,requestId:string,index:number):Extract<HintControl,{kind:'hints'}> {
+    return validateHintControl({schema_version:HINT_SCHEMA,kind:'hints',request_message_id:requestId,query_message_id:session.query_message_id,page_index:index,policy_revision:session.policy_revision,expires_at:session.expires_at,hints:session.hints.slice(index*4,index*4+4),next_cursor:session.cursors[index]??null}) as Extract<HintControl,{kind:'hints'}>;
+  }
+  private precedingOffer(queryId:string,cursor:string,peer:string):Extract<HintControl,{kind:'hints'}> {
+    this.requesterSession(queryId,peer);
+    const rows=this.db().prepare("SELECT body FROM inbox WHERE sender=? AND json_extract(CAST(body AS TEXT),'$.kind')='hint_control' AND json_extract(CAST(body AS TEXT),'$.control.kind')='hints' AND json_extract(CAST(body AS TEXT),'$.control.query_message_id')=? AND json_extract(CAST(body AS TEXT),'$.control.next_cursor')=? ORDER BY rowid LIMIT 2").all(peer,queryId,cursor) as Obj[];
+    if(!rows.length)fail('network_hint_not_available');
+    const offers=rows.map(row=>{const content=validateContent(row.body);if(content.kind!=='hint_control'||content.control.kind!=='hints'||content.control.expires_at<=now())fail('network_hint_not_available');return content.control;});
+    const samePage=(value:Extract<HintControl,{kind:'hints'}>)=>({...value,request_message_id:queryId});
+    if(offers.length>1&&!equal(samePage(offers[0]),samePage(offers[1])))fail('network_hint_not_available');return offers[0];
+  }
   private hintMembers(current:CurrentRoster,recipient:string):void {
     for(const action of ['send','receive'] as const){
       authorizedMember(current,this.identity.key_id,action,{now:now(),expected_identity:this.localIdentity as any});
@@ -296,8 +377,8 @@ export class NetworkPeer {
   }
   private inboxControl(messageId:string,sender?:string):HintControl {
     hintMessageId(messageId);
-    const row=this.db().prepare('SELECT sender,body FROM inbox WHERE message_id=?').get(messageId) as Obj|undefined;
-    if(!row||sender!==undefined&&row.sender!==sender)fail('network_hint_not_available');
+    const row=this.db().prepare('SELECT sender,body,result FROM inbox WHERE message_id=?').get(messageId) as Obj|undefined;
+    if(!row||sender!==undefined&&row.sender!==sender||parse(row.result).state!=='validated_saved')fail('network_hint_not_available');
     const content=validateContent(row.body);
     if(content.kind!=='hint_control')fail('network_hint_not_available');
     return content.control;
@@ -305,6 +386,7 @@ export class NetworkPeer {
   private receivedOffer(offerId:string,recipient:string,memoryId:string):Extract<HintControl,{kind:'hints'}> {
     const control=this.inboxControl(offerId,recipient);
     if(control.kind!=='hints'||control.expires_at<=now()||!control.hints.some(hint=>hint.memory_id===memoryId))fail('network_hint_not_available');
+    this.requesterSession(control.query_message_id,recipient);
     return control;
   }
   private ownOffer(offerId:string,recipient:string,memoryId:string):Extract<HintControl,{kind:'hints'}> {
@@ -313,32 +395,49 @@ export class NetworkPeer {
     if(!row||row.recipients===null||!equal(parse(row.recipients),[recipient]))fail('network_hint_not_available');
     const content=validateContent(row.body);
     if(content.kind!=='hint_control'||content.control.kind!=='hints'||content.control.expires_at<=now()||!content.control.hints.some(hint=>hint.memory_id===memoryId))fail('network_hint_not_available');
-    if(this.inboxControl(content.control.request_message_id,recipient).kind!=='query')fail('network_hint_not_available');
+    const session=this.ownerSession(content.control.query_message_id,recipient),request=this.inboxControl(content.control.request_message_id,recipient);
+    if(!equal(content.control,this.pageControl(session,content.control.request_message_id,this.pageIndex(session,request,content.control.request_message_id))))fail('network_hint_not_available');
     return content.control;
+  }
+  private incomingHints(control:Extract<HintControl,{kind:'hints'}>,sender:string):void {
+    const session=this.requesterSession(control.query_message_id,sender),request=this.ownControl(control.request_message_id,sender);
+    if(control.expires_at<=now()||control.expires_at>session.expires_at)fail('network_hint_not_available');
+    if(request.kind==='query'){
+      if(control.page_index!==0||control.query_message_id!==control.request_message_id||request.query!==session.query||request.expires_at!==session.expires_at)fail('network_hint_not_available');
+    }else if(request.kind==='page'&&request.query_message_id===session.query_message_id){
+      const prior=this.precedingOffer(request.query_message_id,request.cursor,sender);
+      if(control.page_index!==prior.page_index+1||control.policy_revision!==prior.policy_revision||control.expires_at!==prior.expires_at)fail('network_hint_not_available');
+    }else fail('network_hint_not_available');
   }
   private selectedTransfer(content:Extract<NetworkContent,{kind:'hint_transfer'}>,sender:string):void {
     const row=this.db().prepare('SELECT body,recipients FROM outbox WHERE message_id=?').get(content.request_message_id) as Obj|undefined;
     if(!row||row.recipients===null||!equal(parse(row.recipients),[sender])||content.expires_at<=now())fail('network_invalid_content');
     const selected=validateContent(row.body);
     if(selected.kind!=='hint_control'||selected.control.kind!=='select'||selected.control.offer_message_id!==content.offer_message_id||selected.control.memory_id!==content.memory_id)fail('network_invalid_content');
-    const offer=this.inboxControl(content.offer_message_id,sender);
-    if(offer.kind!=='hints'||offer.expires_at!==content.expires_at||!offer.hints.some(hint=>hint.memory_id===content.memory_id))fail('network_invalid_content');
+    const offer=this.receivedOffer(content.offer_message_id,sender,content.memory_id);
+    if(offer.expires_at!==content.expires_at)fail('network_invalid_content');
   }
   /** Typed payloads carry their guard: restored/retried outbox rows cannot
    * become an unguarded manual export by losing auxiliary local state. */
-  private guardHint(content:NetworkContent,recipients:string[],current?:CurrentRoster):void {
+  private guardHint(content:NetworkContent,recipients:string[],current?:CurrentRoster,ownMessageId?:string):void {
     if(content.kind!=='hint_control'&&content.kind!=='hint_transfer')return;
     if(recipients.length!==1)fail('network_hint_not_available');
     const recipient=recipients[0];if(current)this.hintMembers(current,recipient);
     if(content.kind==='hint_control'){
       const control=content.control;
-      if(control.kind==='query')return;
+      if(control.kind==='query'){
+        this.queryExpiry(control.expires_at);
+        if(ownMessageId!==undefined){const session=this.requesterSession(ownMessageId,recipient);if(session.query!==control.query||session.expires_at!==control.expires_at)fail('network_hint_not_available');}
+        return;
+      }
+      if(control.kind==='page'){this.precedingOffer(control.query_message_id,control.cursor,recipient);return;}
       if(control.kind==='select'){this.receivedOffer(control.offer_message_id,recipient,control.memory_id);return;}
       const request=this.inboxControl(control.request_message_id,recipient);
       if(control.kind==='refusal'){
-        if(request.kind!=='query'&&request.kind!=='select')fail('network_hint_not_available');return;
+        if(!['query','page','select'].includes(request.kind))fail('network_hint_not_available');return;
       }
-      if(request.kind!=='query'||control.expires_at<=now())fail('network_hint_not_available');
+      const session=this.ownerSession(control.query_message_id,recipient),index=this.pageIndex(session,request,control.request_message_id);
+      if(!equal(control,this.pageControl(session,control.request_message_id,index)))fail('network_hint_not_available');
       const policy=this.hintPolicy(),grant=grantFor(policy,recipient);
       if(control.expires_at>policy.expires_at||control.hints.some(hint=>!grant.hint_memory_ids.includes(hint.memory_id)))fail('network_hint_not_available');
       if(!equal(policy,this.hintPolicy()))fail('network_hint_not_available');
@@ -369,7 +468,7 @@ export class NetworkPeer {
     if(control!==undefined){
       if(text||memoryIds.length||recipients.length!==1)fail('network_invalid_send');
       checked=validateHintControl(control);
-      if(checked.kind!=='query'&&checked.kind!=='select')fail('network_invalid_send');
+      if(checked.kind!=='query'&&checked.kind!=='page'&&checked.kind!=='select')fail('network_invalid_send');
     }else if(!text&&!memoryIds.length)fail('network_empty_message');
     const inputSha=sha256(canonicalBytes({recipients,text,memory_ids:memoryIds,...(checked===undefined?{}:{control:checked})}));
     return this.queue(requestId,recipients,inputSha,()=>checked===undefined?this.prepareBody(text,memoryIds):canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control:checked})));
@@ -384,8 +483,15 @@ export class NetworkPeer {
       const body=prepare();
       this.guardHint(validateContent(body),recipients);
       transaction(this.db(),()=>{
+        const concurrent=this.outboxRows(requestId,true)[0];
+        if(concurrent){if(concurrent.input_sha!==inputSha)fail('network_request_id_conflict');row=concurrent;return;}
         const totals=this.db().prepare('SELECT COUNT(*) count,COALESCE(SUM(length(body)+COALESCE(length(envelope),0)),0) bytes FROM outbox').get() as Obj;
         if(totals.count>=1024||totals.bytes+body.length*3>MAX_QUEUE)fail('network_outbox_capacity');
+        const content=validateContent(body);
+        if(content.kind==='hint_control'&&content.control.kind==='query'){
+          this.queryExpiry(content.control.expires_at);
+          this.insertHintSession({schema_version:SESSION_SCHEMA,role:'requester',network_id:this.networkId,owner_key_id:this.identity.key_id,peer_key_id:recipients[0],query_message_id:messageId,query:content.control.query,expires_at:content.control.expires_at});
+        }
         this.db().prepare('INSERT OR IGNORE INTO outbox(request_id,message_id,input_sha,body,recipients) VALUES(?,?,?,?,?)').run(requestId,messageId,inputSha,body,canonicalBytes(recipients));
         row=this.outboxRows(requestId,true)[0];
         if(row.input_sha!==inputSha)fail('network_request_id_conflict');
@@ -398,7 +504,7 @@ export class NetworkPeer {
     const incoming=this.db().prepare('SELECT sender FROM inbox WHERE message_id=?').get(messageId) as Obj|undefined;
     if(!incoming)fail('network_hint_not_available');
     const recipient=incoming.sender,request=this.inboxControl(messageId,recipient);
-    if(request.kind!=='query'&&request.kind!=='select')fail('network_hint_not_available');
+    if(request.kind!=='query'&&request.kind!=='page'&&request.kind!=='select')fail('network_hint_not_available');
     const {current}=await this.status(randomBytes(24).toString('hex'));
     this.hintMembers(current,recipient);
     const requestId='req_hint_response_'+sha256(Buffer.from(messageId,'ascii')).slice(0,32);
@@ -406,13 +512,12 @@ export class NetworkPeer {
       const refusal=()=>canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control:{schema_version:HINT_SCHEMA,kind:'refusal',request_message_id:messageId,reason:'not_available'}}));
       let reader:CanonicalVault|undefined;
       try{
-        const policy=this.hintPolicy(),grant=grantFor(policy,recipient);
         let content:NetworkContent;
-        if(request.kind==='query'){
-          try{reader=new CanonicalVault({...this.vaultOptions,readOnly:true});}
-          catch(error){if((error as any)?.code!=='not_initialized')throw error;}
-          content=validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control:{schema_version:HINT_SCHEMA,kind:'hints',request_message_id:messageId,expires_at:Math.min(now()+300,policy.expires_at),hints:reader?reader.hintMatches(grant.hint_memory_ids,request.query):[]}});
+        if(request.kind==='query'||request.kind==='page'){
+          const session=request.kind==='query'?this.freezeHints(messageId,recipient):this.ownerSession(request.query_message_id,recipient);
+          content=validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control:this.pageControl(session,messageId,this.pageIndex(session,request,messageId))});
         }else{
+          const policy=this.hintPolicy(),grant=grantFor(policy,recipient);
           reader=new CanonicalVault({...this.vaultOptions,readOnly:true});
           const offer=this.ownOffer(request.offer_message_id,recipient,request.memory_id);
           const share=reader.exportShare([request.memory_id],{maximumBytes:MAX_SHARE,authorizedMemoryIds:new Set(grant.record_memory_ids)});
@@ -445,7 +550,7 @@ export class NetworkPeer {
         if(nodeDeadline!==undefined&&performance.now()>=nodeDeadline)throw new NetworkError('network_budget_exhausted',true);
         authorizedMember(current,this.identity.key_id,'send',{now:now(),expected_identity:this.localIdentity as any});
         const destinations=recipients.map(id=>authorizedMember(current,id,'receive',{now:now()}));
-        this.guardHint(content,recipients,current);
+        this.guardHint(content,recipients,current,prior.message_id);
         if(!envelope){
           const candidate=await seal(prior.body,{signer:this.identity,network_id:this.networkId,message_id:prior.message_id,
             recipients:destinations.map(member=>({signing_key_id:member.signing_key.key_id,encryption_key:member.encryption_key})),
@@ -460,7 +565,7 @@ export class NetworkPeer {
         }
         // All refresh and seal awaits have finished. This synchronous recheck
         // defines authorization at transport start, including frozen retries.
-        this.guardHint(content,recipients,current);
+        this.guardHint(content,recipients,current,prior.message_id);
         const result=await this.http(relay,'POST','/v1/messages',{envelope,roster},nodeDeadline);
         if(result.state!=='stored'||result.message_id!==prior.message_id||result.envelope_sha256!==documentSha256(envelope))fail('network_invalid_storage_receipt');
         transaction(this.db(),()=>{
@@ -506,6 +611,10 @@ export class NetworkPeer {
     const digest=documentSha256(envelope),old=this.existing(payload.message_id,digest);if(old)return old;
     let content:NetworkContent;
     try{content=validateContent(body);}catch(error){return this.reject(envelope,errorData(error).code);}
+    if(content.kind==='hint_control'&&content.control.kind==='hints'){
+      try{this.incomingHints(content.control,payload.sender_key_id);}
+      catch(error){if(error instanceof NetworkCryptoError)return this.reject(envelope,'network_invalid_content');throw error;}
+    }
     if(content.kind==='hint_transfer'){
       try{this.selectedTransfer(content,payload.sender_key_id);}
       catch(error){if(error instanceof NetworkCryptoError)return this.reject(envelope,'network_invalid_content');throw error;}

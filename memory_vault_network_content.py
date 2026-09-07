@@ -11,7 +11,7 @@ CONTENT_SCHEMA = "memory-vault-network-content/v2"
 MAX_CONTENT_TEXT_BYTES = 16384
 MAX_CONTENT_SHARE_BYTES = 2 * 1024 * 1024
 MAX_CONTENT_BYTES = 4 * 1024 * 1024
-HINT_SCHEMA = "memory-vault-hint/v1"
+HINT_SCHEMA = "memory-vault-hint/v2"
 HINT_TYPES = {"observation", "experiment", "inference", "hearsay", "speculation", "summary", "external_source", "unspecified"}
 
 
@@ -23,6 +23,17 @@ def hint_expiry(value: Any) -> bool:
     return type(value) is int and 1 <= value <= 2**53 - 1
 
 
+def hint_cursor(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"hintcur_[0-9a-f]{64}", value) is not None
+
+
+def hint_projection(value: Any) -> bool:
+    return (isinstance(value, dict) and set(value) == {"memory_id", "excerpt", "epistemic_type"}
+            and hint_identifier(value.get("memory_id"), memory=True)
+            and isinstance(value.get("excerpt"), str) and len(value["excerpt"].encode("utf-8")) <= 128
+            and isinstance(value.get("epistemic_type"), str) and value["epistemic_type"] in HINT_TYPES)
+
+
 def validate_control(value: Any) -> dict[str, Any]:
     try:
         control = document(value, maximum=4096)
@@ -31,8 +42,12 @@ def validate_control(value: Any) -> dict[str, Any]:
             raise ValueError()
         fields = {"schema_version", "kind"}
         if kind == "query":
-            fields |= {"query"}
-            valid = isinstance(control.get("query"), str) and 1 <= len(control["query"].encode("utf-8")) <= 256
+            fields |= {"query", "expires_at"}
+            valid = (isinstance(control.get("query"), str) and 1 <= len(control["query"].encode("utf-8")) <= 256
+                     and hint_expiry(control.get("expires_at")))
+        elif kind == "page":
+            fields |= {"query_message_id", "cursor"}
+            valid = hint_identifier(control.get("query_message_id")) and hint_cursor(control.get("cursor"))
         elif kind == "select":
             fields |= {"offer_message_id", "memory_id"}
             valid = hint_identifier(control.get("offer_message_id")) and hint_identifier(control.get("memory_id"), memory=True)
@@ -40,17 +55,20 @@ def validate_control(value: Any) -> dict[str, Any]:
             fields |= {"request_message_id", "reason"}
             valid = hint_identifier(control.get("request_message_id")) and control.get("reason") == "not_available"
         elif kind == "hints":
-            fields |= {"request_message_id", "expires_at", "hints"}
+            fields |= {"request_message_id", "query_message_id", "page_index", "policy_revision", "expires_at", "hints", "next_cursor"}
             items = control.get("hints")
             valid = (hint_identifier(control.get("request_message_id")) and hint_expiry(control.get("expires_at"))
-                     and isinstance(items, list) and len(items) <= 4)
+                     and hint_identifier(control.get("query_message_id")) and hint_expiry(control.get("policy_revision"))
+                     and type(control.get("page_index")) is int and 0 <= control["page_index"] <= 3
+                     and (control.get("next_cursor") is None or hint_cursor(control.get("next_cursor")))
+                     and (control["page_index"] != 3 or control["next_cursor"] is None)
+                     and isinstance(items, list) and len(items) <= 4
+                     and (control["next_cursor"] is None or len(items) == 4)
+                     and (control["page_index"] == 0 or len(items) > 0))
             if valid:
                 ids = set()
                 for item in items:
-                    if (not isinstance(item, dict) or set(item) != {"memory_id", "excerpt", "epistemic_type"}
-                            or not hint_identifier(item.get("memory_id"), memory=True) or item["memory_id"] in ids
-                            or not isinstance(item.get("excerpt"), str) or len(item["excerpt"].encode("utf-8")) > 128
-                            or not isinstance(item.get("epistemic_type"), str) or item["epistemic_type"] not in HINT_TYPES):
+                    if not hint_projection(item) or item["memory_id"] in ids:
                         valid = False
                         break
                     ids.add(item["memory_id"])

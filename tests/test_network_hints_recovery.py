@@ -11,7 +11,7 @@ from tests.test_network_message_semantics import agent, records, proofs, saved_b
 from tests.test_network_recovery import archive, fixture
 
 
-HINT = "memory-vault-hint/v1"
+HINT = "memory-vault-hint/v2"
 
 
 def policy(endpoint, peer, ids=(), revision=1):
@@ -29,18 +29,19 @@ class HintRecoveryTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         return result["result"]["memory_id"]
 
-    def query(self, a, b, query="Synthetic"):
-        sent = b.send("req_hint_recovery_query", [a.identity.key_id],
-                      control={"schema_version": HINT, "kind": "query", "query": query})
+    def query(self, a, b, query="Synthetic", suffix=""):
+        sent = b.send("req_hint_recovery_query" + suffix, [a.identity.key_id],
+                      control={"schema_version": HINT, "kind": "query", "query": query,
+                               "expires_at": int(time.time()) + 300})
         self.assertFalse(a.receive()["errors"])
         return sent["message_id"]
 
-    def selected_request(self, a, b, root):
-        queried = self.query(a, b)
+    def selected_request(self, a, b, root, suffix=""):
+        queried = self.query(a, b, suffix=suffix)
         offer = a.respond_to(queried)
         self.assertEqual(offer["stored_nodes"], 2)
         self.assertFalse(b.receive()["errors"])
-        selected = b.send("req_hint_recovery_select", [a.identity.key_id], control={
+        selected = b.send("req_hint_recovery_select" + suffix, [a.identity.key_id], control={
             "schema_version": HINT, "kind": "select", "offer_message_id": offer["message_id"], "memory_id": root})
         self.assertFalse(a.receive()["errors"])
         return selected["message_id"]
@@ -100,8 +101,15 @@ class HintRecoveryTests(unittest.TestCase):
                 c.pump(receive_limit=0)
                 self.assertFalse(any(call[2] == "/v1/messages" for call in transport.calls))
                 c.set_hint_policy(policy(c, b, [parent, root], revision=2))
-                self.assertEqual(c.pump(receive_limit=0)["remaining_outbox"], 0)
+                transport.calls.clear()
+                self.assertGreater(c.pump(receive_limit=0)["remaining_outbox"], 0)
+                self.assertFalse(any(call[2] == "/v1/messages" for call in transport.calls))
                 self.assertEqual(saved_body(c, "outbox", pending["message_id"]), frozen)
+                # The pre-restore replica may still contain a previously
+                # authorized transfer. It does not restore the owner's session.
+                self.assertFalse(b.receive()["errors"])
+                fresh = self.selected_request(c, b, root, suffix="_new_after_restore")
+                self.assertEqual(c.respond_to(fresh)["stored_nodes"], 2)
                 self.assertFalse(b.receive()["errors"])
                 self.assertEqual(records(b), original)
                 self.assertEqual(proofs(b), original_proofs)

@@ -30,7 +30,7 @@ class TypeScriptHintCodecTests(unittest.TestCase):
         import base64
         valid, invalid = parser_vectors()
         values = [json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode() for value in valid + invalid]
-        values += [b'{"schema_version":"memory-vault-network-content/v2","kind":"hint_control","control":{"schema_version":"memory-vault-hint/v1","kind":"query","query":"one","query":"two"}}']
+        values += [b'{"schema_version":"memory-vault-network-content/v2","kind":"hint_control","control":{"schema_version":"memory-vault-hint/v2","kind":"query","query":"one","query":"two"}}']
         expected = []
         for raw in values:
             try:
@@ -284,6 +284,10 @@ const agent=new Agent""").replace("{results,calls,subprocessCalls}", "{results,c
         host = self.host
         host.join_receiver()
         body = parser_vectors()[0][-2]
+        requested = self.ts_value(1, {"op": "send", "request_id": "req_hint_ts_budget_query",
+            "recipients": [host.identities[0].key_id], "control": control("query", query="Synthetic budget")})
+        body["control"].update(request_message_id=requested["message_id"], query_message_id=requested["message_id"],
+                               expires_at=int(time.time()) + 120)
         identifier = "msg_" + "5" * 64
         envelope = seal(canonical_bytes(body), signer=host.identities[0], network_id=host.network_id,
             message_id=identifier, recipients=[{"signing_key_id": host.identities[1].key_id,
