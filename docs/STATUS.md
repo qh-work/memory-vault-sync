@@ -1,5 +1,13 @@
 # Memory Vault development status
 
+**Current development priority:** a globally decentralized network with bounded
+local routing and sharded resource growth, not a larger private relay pool.
+The [open-network roadmap](OPEN_NETWORK_ROADMAP.md) and its architecture,
+first-contact/custody flows and falsifiable acceptance model supersede the older
+private-first sequence. They are design candidates; no new open-network or
+scale test has passed merely because these documents exist. Source/release
+capabilities below remain unchanged.
+
 Current source: **0.27.0-alpha.1**. The optional communication-memory network
 has a six-operation endpoint, independent issuer control, signed invitations,
 JWE encryption, bounded relay-pool delivery, durable retries and endpoint receipts.
