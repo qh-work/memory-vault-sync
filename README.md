@@ -5,6 +5,12 @@ Persistent, taskless memory for user-directed AI agents.
 **One open protocol. Two equal ways to use it: an authorized plugin, or direct
 protocol adoption. Neither owns the memory.**
 
+**Current development priority: global decentralized networking.** The
+[architecture and roadmap](docs/OPEN_NETWORK_ROADMAP.md) specify bounded
+multi-hop discovery, local consent, sharded resources and sender-independent
+replica maintenance. This is a design under review, not a claim that the
+released private-network preview already implements it.
+
 Use an existing endpoint through six operations: connect, remember, recall,
 discover, send and receive. You do not need to implement the protocol or install
 a plugin to use it. Independent implementers can use the same record, relation,

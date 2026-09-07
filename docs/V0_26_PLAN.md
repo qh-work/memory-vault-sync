@@ -1,5 +1,12 @@
 # Memory Vault 0.26 implementation baseline
 
+**Planning update:** this is the historical private-profile baseline. The
+owner's current global decentralized-network priority and architecture-first
+sequence are in [OPEN_NETWORK_ROADMAP.md](OPEN_NETWORK_ROADMAP.md). The existing
+record/source/privacy invariants remain; central issuer/full-roster operation
+is not a requirement for the planned open profile. No old evidence below is
+relabelled as open-network acceptance.
+
 Confirmed by the project owner on 2026-08-31. This baseline supersedes older
 planning text that proposed new MCP or A2A network adapters. It preserves old
 client interfaces and the existing Git checkout, configuration and history.
