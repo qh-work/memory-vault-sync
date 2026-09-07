@@ -1,4 +1,4 @@
-# Memory Vault v0.26.0-alpha.3 independent review kit
+# Memory Vault v0.26.0-alpha.4 independent review kit
 
 This separate archive contains public source and synthetic tests, not private
 memory or a preconfigured installation. The [validation index](docs/VALIDATION.md)
@@ -13,6 +13,13 @@ process tests. These do not establish real-model, live-cloud, cross-machine,
 native Windows or thousand-agent acceptance. The earlier two-mode entry tests
 share one Python reference. Full P01–P14 acceptance remains open. This alpha
 kit is not a stable-release certification, installed client or publication claim.
+
+Alpha.4 includes `docs/EXPERIENCE_SEMANTICS.md`, its
+[measured validation report](docs/EXPERIENCE_VALIDATION.md), the new synthetic
+Experience tests and `scripts/demo_experience.py`. The legacy-reader regression
+uses the alpha.3 commit from a full Git checkout; this source archive alone does
+not include Git history. The report distinguishes socket-policy blocks and the
+pre-existing Unicode mismatch from passing tests.
 
 The kit includes attributed adaptations of the three cases from PR #11 and a
 new actual core → client/MCP write → core exchange case. The contributor's

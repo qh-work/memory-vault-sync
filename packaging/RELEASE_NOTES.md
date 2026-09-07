@@ -1,4 +1,4 @@
-# Memory Vault v0.26.0-alpha.3 — package/review notes
+# Memory Vault v0.26.0-alpha.4 — package/review notes
 
 **Alpha candidate; not a stable-release or runtime-certification claim.** This
 document describes the current build target. It does not establish that a
@@ -25,11 +25,20 @@ starts no scheduler or default background service. The native network has no
 MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility claim; the existing
 eleven-tool MCP memory interface remains unchanged.
 
-Alpha.3 also makes current records an explicit deterministic ranking tier ahead
+Alpha.4 adds optional Experience Semantics, bounded local provenance summaries,
+source-preserving structured recall and cross-author state protection.
+Observation, experiment, inference, hearsay, speculation, summary and external
+sources remain separate claims; transmission counts are not truth or independent
+evidence. Existing record IDs, canonical bytes and Ed25519 signatures are
+unchanged. No new database, global P2P or consensus system is introduced.
+
+Alpha.3 already made current records an explicit deterministic ranking tier ahead
 of superseded/resolved history across Python and TypeScript recall and handoff.
-The separate synthetic trial package runs one temporary endpoint against an
-operator-supplied HTTPS service and one-time code; it never reads the installed
-plugin or an existing Vault.
+The separate synthetic trial retains its temporary endpoint implementation;
+alpha.4 ships with service trust unconfigured, so it fails before setup/network
+activity until an operator publishes reviewed pinned service bytes. It never
+reads the installed plugin or an existing Vault. Old alpha.3 service URLs are
+not reused as working infrastructure.
 
 Existing Ed25519 record attestations and the independent protocol remain.
 Task ownership, mandatory Git runtime and the old monolith do not return.
@@ -37,15 +46,17 @@ Memory cannot install software, enroll trust, activate hooks or execute goals.
 
 ## Build artifacts
 
-- `memory-vault-protocol-v0.26.0-alpha.3.zip`: documentation, structural schemas and
+- `memory-vault-protocol-v0.26.0-alpha.4.zip`: documentation, structural schemas and
   synthetic interchange vectors, with no executable.
-- `memory-vault-client-v0.26.0-alpha.3.zip`: source-built plugin, all required runtime
+- `memory-vault-client-v0.26.0-alpha.4.zip`: source-built plugin, all required runtime
   modules and a local marketplace catalog.
-- `memory-vault-review-v0.26.0-alpha.3.zip`: public source, synthetic cases and bounded
+- `memory-vault-review-v0.26.0-alpha.4.zip`: public source, synthetic cases and bounded
   review handoff for independent reviewers; no automatic test execution.
-- `memory-vault-network-test-v0.26.0-alpha.3.zip`: isolated one-command synthetic
-  endpoint; no Docker or plugin, and fails closed without release-pinned service trust.
-- `PROTOCOL.md` and `memory_vault.py`: standalone agreement and optional core.
+- `memory-vault-network-test-v0.26.0-alpha.4.zip`: isolated one-command synthetic
+  endpoint template; no Docker or plugin; unconfigured service trust requires
+  operator provisioning.
+- `PROTOCOL.md` and `memory_vault.py`: agreement and core source; use the full
+  client/review package for the Experience companion module.
 - `release-manifest.json` / `SHA256SUMS`: exact source reference, asset hashes
   and actual verification scope. Checksums are not publisher signatures.
 
@@ -60,6 +71,14 @@ ordinary local memory still has a standard-library path. See
 artifact hashes do not establish package security or platform runtime success.
 
 ## Verification boundary
+
+This is an owner-authorized prerelease with disclosed limits. Initial Experience
+validation recorded **37 new tests passed**, **132 selected regressions passed**
+and **five socket tests blocked by sandbox policy**. The A/B/C/D logical-Agent
+demo passed. A Unicode normalization difference was also reproduced on the
+unchanged alpha.3 baseline; the full suite is not claimed green. Exact commands
+and remaining bounds are in [Experience validation](../docs/EXPERIENCE_VALIDATION.md).
+Source/archive checks and publication evidence are recorded separately.
 
 The [validation index](../docs/VALIDATION.md) preserves earlier source-pinned
 evidence; results do not transfer between versions. The current

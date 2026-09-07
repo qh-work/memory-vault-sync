@@ -1,13 +1,15 @@
-# Experience Core: local implementation and validation
+# Experience Core: implementation and validation evidence
 
 This implements the first Experience Semantics / Provenance phase on the
 existing `v0.26.0-alpha.3` source (`3592b96`), on local branch
 `feat/experience-epistemic-core`. It does not implement or claim global P2P,
 a new consensus system, a second memory database or an Internet-scale test.
-No release, push, plugin replacement or modification of the original working
-copy was performed. The implementation is in an isolated local Git clone
-because the original checkout is read-only in the current task sandbox.
-The original checkout's network/recovery edits remain untouched.
+At the end of the initial implementation phase (`70985ea`), no release, push,
+plugin replacement or modification of the original working copy had been
+performed. The following evidence records that phase. The owner subsequently
+authorized publishing this work as `v0.26.0-alpha.4` with the disclosed limits;
+publication and artifact verification are recorded separately by its release
+manifest/body. The original checkout's network/recovery edits remain untouched.
 
 ## Delivered behavior
 
@@ -188,6 +190,12 @@ Tests:
 
 ## Remaining limits and next phase
 
+Alpha.4 packaging preparation ran
+`PYTHONPATH=tests python3 -m unittest test_network_packaging test_network_trial_packaging -v`:
+**9 passed in 1.035 seconds**. This checks the isolated launcher/import closure,
+public Experience document/demo allowlists and fail-closed unconfigured trial
+service; it does not build or publish an archive or validate an operated service.
+
 Counts represent declared local evidence, not experimentally verified
 independence or Sybil-resistant trust. An author can omit a source or lie about
 an experiment. Contradictions require explicit links; semantic truth and
@@ -200,6 +208,7 @@ large-scale benchmark was added.
 Next: Memory Hint and authorized Experience Discovery, followed by controlled
 peer exchange and Topic Gossip. Reuse these record/epistemic/provenance
 semantics. Keep chat/group-chat transient by default, and require explicit
-remember for durable memory. Before a release, rerun the blocked socket tests
-in a permitted environment and complete the normal source/archive privacy
-and dependency checks; no release archive was built in this phase.
+remember for durable memory. The blocked socket tests still require a permitted
+environment; their status remains unverified in this authorized preview release.
+Source/archive privacy and dependency checks apply separately at publication.
+No release archive was built during the initial implementation/test phase.

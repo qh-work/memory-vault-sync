@@ -1,5 +1,23 @@
 # 0.26 alpha development and package evidence
 
+## Alpha.4 Experience Semantics and provenance
+
+Version `0.26.0-alpha.4` adds optional experience-v1 metadata, source-preserving
+structured recall and local provenance counts, plus cross-author state protection.
+Existing canonical record/v1 bytes, IDs and Ed25519 signatures remain unchanged.
+[Experience validation](EXPERIENCE_VALIDATION.md) records 37 new tests passing and
+132 selected regressions passing; five live-socket cases were sandbox-blocked,
+and an unrelated Unicode mismatch was also reproduced on the alpha.3 baseline.
+The synthetic A/B/C/D demonstration preserves V1 observations, hearsay, independent
+confirmation and V2 counterevidence separately. No global P2P, consensus, scale
+benchmark or real-model adoption is claimed.
+
+This is a user-authorized prerelease with those disclosed limits, not a stable
+certification. The optional trial retains its implementation but ships with
+unconfigured service trust; old alpha.3 QuickTunnel service pins are not reused.
+An operator must provision a reviewed pinned service package before live trial use.
+The release manifest/body carries publication and archive evidence separately.
+
 ## Alpha.3 current-state recall and synthetic endpoint trial
 
 Version `0.26.0-alpha.3` makes record lifecycle an explicit deterministic
