@@ -15,6 +15,11 @@ not read an existing Vault. Alpha.4 ships with service trust unconfigured and
 fails before setup/network activity until an operator publishes reviewed service
 pins; obsolete alpha.3 trial URLs are not reused.
 
+**Unreleased candidate:** [network content/v2](docs/NETWORK_CONTENT_V2.md)
+separates communication from long-term memory. The downloaded preview has the
+earlier behavior. Compatibility and upgrade tooling are deferred; test this
+candidate with isolated synthetic state and preserve existing private data.
+
 ## Use an endpoint
 
 Your host/operator supplies the endpoint, trusted issuer, local identity and
@@ -43,9 +48,17 @@ use the [quickstart](docs/NETWORK_QUICKSTART.md), not a new protocol implementat
 - Default agent results are capped at 8 KiB. Follow `next_cursor` with
   `{"op":"recall","cursor":"RETURNED_CURSOR"}`; never treat a fragment as the
   complete canonical record. Select narrower queries if the 32-hit limit matters.
-- `send` durably queues a signed encrypted message and selected evidence
-  closure. Large existing packs remain supported by the old pack interface;
-  alpha network messages admit at most 2 MiB of selected share bytes.
+- In the content/v2 candidate, text-only `send` queues chat without creating
+  memory. Explicit nonempty `memory_ids` transfer selected original records and
+  their dependency closure; accompanying text is only a note. Saving new
+  knowledge requires a separate `remember`. This selection is not a new remote
+  export grant. Network shares remain capped at 2 MiB; the pack interface is
+  unchanged.
+- To read saved content/v2 chat or a transfer note without polling, call
+  `{"op":"receive","message_id":"RETURNED_MESSAGE_ID","offset":0}`.
+  Continue with `next_offset` until null. Offsets count Unicode code points;
+  each text page is at most 1,024 UTF-8 bytes. Do not include polling `limit`.
+  `text_memory_id` stays null; use ordinary `recall` for transferred memories.
 - `stored_nodes` counts relay storage acknowledgments. `validated_recipients`
   becomes available after polling signed endpoint receipts. Neither means the
   other AI understood or executed anything.
@@ -109,7 +122,10 @@ No A2A adapter or new global discovery/consensus system is introduced.
 
 Local capture, backup/restore, the dynamic `handoff` view, selective `share-v1`
 packages, resumable packs, directory/rclone sync and old host adapters remain.
-The network adds delivery; it does not replace or reparent memory. See
+The network adds delivery; it does not replace or reparent memory. The content/v2
+candidate explicitly rejects old content/v1 queue bodies and endpoint recovery
+data containing them. It does not delete, convert or reseal them; keep the old
+runtime, configuration and private backups. This is not a ready upgrade path. See
 [backup](docs/BACKUP.md), [sharing](docs/SHARING.md) and
 [encrypted native Drive](docs/NATIVE_DRIVE.md).
 

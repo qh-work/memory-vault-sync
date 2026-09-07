@@ -20,11 +20,15 @@ import time
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
-from memory_vault import MemoryError, canonical_bytes, strict_json_loads
+from memory_vault import MemoryError, canonical_bytes, strict_json_loads, validate_record
 from memory_vault_agent import Agent
 from memory_vault_network import NetworkClient, origin
 from memory_vault_network_admin import configure_network, create_identity
-from memory_vault_network_crypto import PublicKeyTrust, integer, object_fields, opaque, public_signing_key
+from memory_vault_network_content import MAX_CONTENT_SHARE_BYTES, validate_content
+from memory_vault_network_control import verify_roster
+from memory_vault_network_crypto import (PublicKeyTrust, integer, object_fields, opaque,
+                                        public_signing_key, unb64url)
+from memory_vault_trust import TrustError
 from memory_vault_storage import atomic_write, private_directory
 from memory_vault_update import read_file
 
@@ -247,6 +251,7 @@ def _require_ok(response: Mapping[str, Any], fallback: str) -> Mapping[str, Any]
 
 
 def _recall_text(agent: Agent, memory_id: str) -> str:
+    """Inspect an exact ID, including quarantined data; do not assert trust."""
     request: dict[str, Any] = {"op": "recall", "memory_id": memory_id}
     pieces: list[str] = []
     for _ in range(32):
@@ -262,6 +267,51 @@ def _recall_text(agent: Agent, memory_id: str) -> str:
             raise _trial_error("trial_recall_failed")
         request = {"op": "recall", "cursor": cursor}
     raise _trial_error("trial_recall_failed")
+
+
+def _selected_trial_memory(agent: Agent, message: Mapping[str, Any]) -> str:
+    """Check the one explicitly selected trial record, without enrolling trust.
+
+    The inbox body already passed the network's share/closure validation. Its
+    selected flag identifies the record; a matching note never identifies it.
+    Membership supplies a verification key, not trusted evidence admission.
+    """
+    try:
+        if (message.get("state") != "validated_saved" or message.get("content_kind") != "memory_transfer"
+                or not isinstance(message.get("message_id"), str)):
+            raise _trial_error("trial_memory_proof_invalid")
+        with agent._network() as network:
+            with network.db() as db:
+                stored = db.execute("SELECT sender,body FROM inbox WHERE message_id=?",
+                                    (message["message_id"],)).fetchone()
+                roster_row = db.execute("SELECT value FROM state WHERE key='roster'").fetchone()
+            if stored is None or roster_row is None or stored["sender"] != message.get("sender_key_id"):
+                raise _trial_error("trial_memory_proof_invalid")
+            roster = verify_roster(strict_json_loads(roster_row[0]), network.issuers,
+                                  network_id=network.network_id, allow_expired=True)
+            member = next((item for item in roster["members"]
+                           if item["signing_key"]["key_id"] == stored["sender"]), None)
+            content = validate_content(bytes(stored["body"]))
+            if member is None or content["kind"] != "memory_transfer":
+                raise _trial_error("trial_memory_proof_invalid")
+            selected = None
+            for line in unb64url(content["share"], maximum=MAX_CONTENT_SHARE_BYTES).splitlines():
+                frame = strict_json_loads(line)
+                if frame.get("type") == "record" and frame.get("selected") is True:
+                    if selected is not None:
+                        raise _trial_error("trial_memory_proof_invalid")
+                    selected = frame
+            if selected is None:
+                raise _trial_error("trial_memory_proof_invalid")
+            record = validate_record(selected["record"])
+            PublicKeyTrust([member["signing_key"]]).verify_record(record, selected.get("attestation"))
+            local = _require_ok(network.client_config.vault().handle({"op": "get", "memory_id": record["memory_id"]}),
+                                "trial_memory_proof_invalid")
+            if canonical_bytes(local["record"]) != canonical_bytes(record):
+                raise _trial_error("trial_memory_proof_invalid")
+            return record["memory_id"]
+    except (MemoryError, TrustError, ValueError, TypeError, KeyError):
+        raise _trial_error("trial_memory_proof_invalid") from None
 
 
 def run_trial(*, service_trust: Mapping[str, Any], run_code: str,
@@ -345,8 +395,8 @@ def run_trial(*, service_trust: Mapping[str, Any], run_code: str,
         retried = _require_ok(agent.handle(send_request), "trial_receipt_check_failed")
         if retried.get("endpoint_validated") is not True:
             raise _trial_error("trial_peer_validation_unconfirmed", retryable=True)
-        memory_id = reply.get("text_memory_id")
-        if not isinstance(memory_id, str) or _recall_text(agent, memory_id) != expected_reply:
+        memory_id = _selected_trial_memory(agent, reply)
+        if _recall_text(agent, memory_id) != expected_reply:
             raise _trial_error("trial_local_recall_mismatch")
 
         result = {"schema_version": RESULT_SCHEMA, "ok": True, "synthetic_only": True,
@@ -359,7 +409,8 @@ def run_trial(*, service_trust: Mapping[str, Any], run_code: str,
                     "pump": {"completed": pumped.get("state") == "completed", "remaining_outbox": 0},
                     "peer_validated_saved": {"confirmed": True},
                     "receive": {"validated_saved": True, "attempts": receive_attempts},
-                    "local_recall": {"matched_synthetic_nonce": True}},
+                    "local_recall": {"matched_synthetic_nonce": True,
+                                     "inspection_only": True, "trusted_context_asserted": False}},
                   "privacy": {"existing_vault_accessed": False, "plugin_accessed": False,
                               "hook_accessed": False, "private_keys_uploaded": False,
                               "plaintext_visible_to_relay": False},

@@ -191,7 +191,7 @@ class NetworkClientTests(unittest.TestCase):
                 with self.assertRaises(MemoryError) as denied:
                     receiving._accept(encrypted, restricted)
                 self.assertEqual(denied.exception.code, "network_receive_scope_denied")
-            switched = seal(canonical_bytes({"schema_version": "memory-vault-network-content/v1", "text": "fixture", "share": None}),
+            switched = seal(canonical_bytes({"schema_version": "memory-vault-network-content/v2", "kind": "message", "text": "fixture"}),
                 signer=identities[0], network_id=network, message_id="fixture-switched-recipient",
                 recipients=[{"signing_key_id": identities[1].key_id, "encryption_key": encryption[0].public_descriptor()}],
                 roster_version=1, roster_sha256=document_sha256(roster), created_at=clock[0])
@@ -199,7 +199,7 @@ class NetworkClientTests(unittest.TestCase):
                 receiving._accept(switched, roster)
             self.assertEqual(swapped.exception.code, "network_encryption_recipient_changed")
             third_key = EncryptionIdentity.generate()
-            multirecipient = seal(canonical_bytes({"schema_version": "memory-vault-network-content/v1", "text": "fixture", "share": None}),
+            multirecipient = seal(canonical_bytes({"schema_version": "memory-vault-network-content/v2", "kind": "message", "text": "fixture"}),
                 signer=identities[0], network_id=network, message_id="fixture-multiple-recipients",
                 recipients=[{"signing_key_id": identities[1].key_id, "encryption_key": encryption[1].public_descriptor()},
                             {"signing_key_id": identities[0].key_id, "encryption_key": third_key.public_descriptor()}],
@@ -377,8 +377,8 @@ class NetworkClientTests(unittest.TestCase):
             before_cursors = {row["key"]: row["value"] for row in db.execute("SELECT key,value FROM state WHERE key LIKE 'cursor:%'")}
         with closing(recipient.client_config.vault()._connect()) as db:
             records = db.execute("SELECT text FROM memories").fetchall()
-            self.assertEqual(len(records), before_count + 1)
-            self.assertTrue(any(row[0] == followup["text"] for row in records))
+            self.assertEqual(len(records), before_count)
+            self.assertFalse(any(row[0] == followup["text"] for row in records))
             self.assertFalse(any("SYNTHETIC_INVALID_CONTENT_MUST_NEVER_ENTER_VAULT" in row[0] for row in records))
         for relay in sender.relays:
             with sender.transport.clients[relay].app.state.relay._transaction() as db:

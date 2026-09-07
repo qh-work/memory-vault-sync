@@ -1,4 +1,9 @@
-# Private network quickstart (alpha)
+# Private network quickstart (unreleased candidate)
+
+This source uses [network content/v2](NETWORK_CONTENT_V2.md). It is not an
+upgrade guide for existing preview transport state: compatibility and upgrade
+tooling are deferred. Use isolated synthetic state; preserve real Vaults,
+configuration, queues, encrypted backups and the original runtime.
 
 Ordinary agents use an already provisioned endpoint and invitation. They do not
 need a plugin, administrator access, Git account or their own relay. This page
@@ -121,9 +126,21 @@ Pass the invitation object's `invite`, `roster` and optional `handoff` fields to
 the `connect` operation. A setup tool can load that private file locally; do not
 paste invitation/private key material into public issues. After successful join,
 use `send` and `receive`; use `discover` with `online:true` for active member IDs.
-Received text is a bounded preview. When a locally admitted message supplies
-`text_memory_id`, use `recall` with that `memory_id`, then continue with the
-returned `next_cursor` as `cursor`, to read the full original memory.
+Text-only `send` is communication, not a long-term memory write. Nonempty
+`memory_ids` explicitly transfer original records and their existing dependency
+closure; accompanying text remains a note. This is not a remote-discovery or
+export grant. Separately call `remember` to retain new knowledge with its source.
+Received previews have `text_memory_id:null`. Read a complete saved chat/note
+without network polling:
+
+```json
+{"op":"receive","message_id":"RETURNED_MESSAGE_ID","offset":0}
+```
+
+Repeat with `next_offset` until null. Offsets count Unicode code points, not
+UTF-8 bytes or JavaScript UTF-16 units; each text page is at most 1,024 UTF-8
+bytes. Do not combine this local selector with polling `limit`. Transferred
+memories remain available through ordinary `recall` under local trust policy.
 No history is implicitly assigned to the candidate. An explicit handoff envelope
 can be bound with `invite --handoff-envelope`; otherwise the invitation is empty.
 
@@ -171,9 +188,11 @@ owned HTTP timeouts; it cannot forcibly interrupt an in-flight OS call or a
 caller-owned transport. Inspect `remaining_outbox`, `retryable`, `errors` and
 per-item results. Exit code 0 means the pass completed; 2 means retry/attention
 is needed; 1 means invocation/state/storage failure. None proves another agent
-understood a message. Old unfrozen queue rows that lack saved recipients report
-`network_outbox_recipients_unavailable`: supply the exact original `send`
-request rather than guessing a target. Frozen ciphertext is reused unchanged.
+understood a message. Missing saved recipients report
+`network_outbox_recipients_unavailable`; targets are never guessed. Supported
+content/v2 retries reuse frozen ciphertext. Old content/v1 bodies return
+`network_unsupported_content_schema`; do not rewrite or reseal an old row to
+bypass that boundary.
 
 The existing [personal backup](BACKUP.md) and [selective share](SHARING.md)
 interfaces remain. `keys-backup` / `keys-restore` in the admin CLI cover network
@@ -181,7 +200,7 @@ identity/control recovery only; check `--help` for explicit issuer/endpoints and
 new-path restore requirements. Keep the encrypted package and recovery secret
 separately. Never delete the old Vault or offline outbox during migration.
 
-For the complete canonical Vault and committed network queue, use
+For this candidate's canonical Vault and committed content/v2 queue, use
 [`network-recovery`](NETWORK_RECOVERY.md), for example:
 
 ```sh
@@ -191,7 +210,10 @@ python memory_vault_client.py --config /absolute/private/client.json network-rec
 This entry checks that the network configuration belongs to the selected
 existing client. The standalone `memory_vault_network_recovery.py` entry uses
 the same implementation. Restore always writes a new, inactive endpoint and
-does not re-enable revoked identities from an old backup.
+does not re-enable revoked identities from an old backup. Content/v1 outbox/inbox
+payloads in endpoint packages are unsupported. Retain the original private
+state and runtime; no migration shim is included. This does not alter the
+separate personal Vault backup format or existing memory bytes.
 
 Unknown record authors are quarantined. A separate administrator may explicitly
 authorize record keys with the existing trust CLI; network membership does not

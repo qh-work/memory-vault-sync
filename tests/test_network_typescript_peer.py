@@ -51,6 +51,7 @@ try{
       else if(operation.op==='send')result=await peer.send(operation.request_id,operation.recipients,operation.text,operation.memory_ids);
       else if(operation.op==='receive')result=await peer.receive(operation.limit);
       else if(operation.op==='pump')result=await peer.pump(operation.maximum_messages,operation.maximum_seconds,operation.receive_limit);
+      else if(operation.op==='remember')result=peer.vault.remember({requestId:operation.request_id,kind:'observation',text:operation.text});
       else if(operation.op==='get')result=peer.vault.get(operation.memory_id);
       else throw Error('unsupported fixture operation');
       results.push({ok:true,result});
@@ -83,7 +84,7 @@ class TypeScriptPeerTests(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory(prefix="memory-vault-ts-peer-synthetic-")
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.fixture = Path(cls.temporary.name).resolve()
-        for name in ("crypto.ts", "control.ts", "nodes.ts", "records.ts", "vault.ts", "io.ts", "transport.ts", "peer.ts", "setup.ts", "retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "package.json"):
+        for name in ("crypto.ts", "content.ts", "control.ts", "nodes.ts", "records.ts", "vault.ts", "io.ts", "transport.ts", "peer.ts", "setup.ts", "retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "package.json"):
             shutil.copyfile(ROOT / "clients/typescript/network" / name, cls.fixture / name)
         (cls.fixture / "node_modules").mkdir()
         (cls.fixture / "node_modules/jose").symlink_to(package, target_is_directory=True)
@@ -114,6 +115,9 @@ class TypeScriptPeerTests(unittest.TestCase):
         with closing(config.vault()._connect()) as db:
             return {row["memory_id"]: row["record_json"] for row in db.execute("SELECT * FROM memories")}
 
+    def remember(self, index, request_id, text):
+        return self.value(index, {"op": "remember", "request_id": request_id, "text": text})["memory_id"]
+
     def test_ts_invitation_and_two_way_python_messages_preserve_original_proofs(self):
         host = self.host
         joined = self.value(1, {"op": "connect", "invitation": host.invitation, "request_id": "req_ts_join_synthetic"})
@@ -121,17 +125,19 @@ class TypeScriptPeerTests(unittest.TestCase):
         # Restart into Python at the exact same transport DB; consumed invite
         # retries reuse the TS-signed request rather than another identity.
         self.assertEqual(host.receiver.connect(host.invitation)["joined_nodes"], 2)
-        sent = self.value(1, {"op": "send", "request_id": "req_ts_synthetic_send", "recipients": [host.identities[0].key_id], "text": "Synthetic TS→Python 记忆 👩🏽‍🚀"})
+        selected = self.remember(1, "req_ts_synthetic_original", "Synthetic independently recorded TS evidence 👩🏽‍🚀")
+        sent = self.value(1, {"op": "send", "request_id": "req_ts_synthetic_send", "recipients": [host.identities[0].key_id], "text": "Synthetic TS→Python 记忆 👩🏽‍🚀", "memory_ids": [selected]})
         self.assertEqual(sent["stored_nodes"], 2, sent)
         received = host.sender.receive()
         self.assertFalse(received["errors"], received)
         self.assertEqual(len(received["messages"]), 1, received)
         original = self.records(1)
+        self.assertEqual(set(original), {selected})
         for memory_id, record in original.items():
             self.assertEqual(self.records(0)[memory_id], record)
             result = ClientConfig.load(host.configs[0]).vault().handle({"op": "get", "memory_id": memory_id})
             self.assertTrue(result["result"]["verification"]["signature_verified_at_admission"])
-        reply = host.sender.send("req_python_synthetic_reply", [host.identities[1].key_id], "Synthetic Python→TS persistent reply")
+        reply = host.sender.send("req_python_synthetic_reply", [host.identities[1].key_id], "Synthetic Python→TS persistent reply", [selected])
         self.assertEqual(reply["stored_nodes"], 2, reply)
         ts_received = self.value(1, {"op": "receive"})
         self.assertFalse(ts_received["errors"], ts_received)
@@ -196,10 +202,11 @@ class TypeScriptPeerTests(unittest.TestCase):
         at = int(time.time())
         revoked = issue_roster(host.issuer, network_id=host.network_id, version=2, previous_sha256=document_sha256(host.roster), members=members, issued_at=at, expires_at=at+300)
         atomic_write(host.roster_path, canonical_bytes(revoked), replace=True)
-        rejected = self.value(0, {"op": "send", "request_id": "req_ts_revoked_queue", "recipients": [host.identities[1].key_id], "text": "Synthetic locally kept after network revocation"})
+        memory_id = self.remember(0, "req_ts_revoked_local_memory", "Synthetic locally kept after network revocation")
+        rejected = self.value(0, {"op": "send", "request_id": "req_ts_revoked_queue", "recipients": [host.identities[1].key_id], "text": "Synthetic locally kept after network revocation", "memory_ids": [memory_id]})
         self.assertEqual(rejected["stored_nodes"], 0, rejected)
         self.assertEqual({error["code"] for error in rejected["errors"]}, {"unknown_key"})
-        memory_id = next(memory_id for memory_id, text in self.records(0).items() if "locally kept" in text)
+        self.assertIn(memory_id, self.records(0))
         self.assertEqual(self.value(0, {"op": "get", "memory_id": memory_id})["record"]["memory_id"], memory_id)
 
     def test_ts_offline_queue_survives_encrypted_endpoint_restore_and_requires_fresh_status(self):
@@ -208,7 +215,8 @@ class TypeScriptPeerTests(unittest.TestCase):
         host.authority.stop()
         for relay in host.relays:
             relay.stop()
-        pending = self.value(0, {"op": "send", "request_id": "req_ts_recovery_offline", "recipients": [host.identities[1].key_id], "text": "Synthetic TS recovery with no prior control checkpoint"})
+        selected = self.remember(0, "req_ts_recovery_original", "Synthetic explicitly saved evidence for encrypted recovery")
+        pending = self.value(0, {"op": "send", "request_id": "req_ts_recovery_offline", "recipients": [host.identities[1].key_id], "text": "Synthetic TS recovery with no prior control checkpoint", "memory_ids": [selected]})
         self.assertEqual(pending["stored_nodes"], 0, pending)
         before = host.outbox()["req_ts_recovery_offline"]
         original = self.records(0)
@@ -258,7 +266,8 @@ class TypeScriptPeerTests(unittest.TestCase):
     def test_active_network_member_does_not_bypass_independent_memory_trust(self):
         host = self.host
         host.join_receiver()
-        sent = host.sender.send("req_ts_independent_trust", [host.identities[1].key_id], "Synthetic signed member memory requiring separate admission")
+        selected = self.remember(0, "req_ts_independent_trust_original", "Synthetic signed member memory requiring separate admission")
+        sent = host.sender.send("req_ts_independent_trust", [host.identities[1].key_id], "Synthetic explicit transfer requiring separate memory admission", [selected])
         self.assertEqual(sent["stored_nodes"], 2, sent)
         trust_path = host.configs[1].parent / "trust.json"
         TrustStore(trust_path).revoke(host.identities[0].key_id)

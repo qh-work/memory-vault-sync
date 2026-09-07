@@ -1,4 +1,11 @@
-# Full endpoint recovery (0.26.0-alpha.1)
+# Full endpoint recovery (unreleased content/v2 candidate)
+
+This candidate accepts [network content/v2](NETWORK_CONTENT_V2.md) transport
+payloads. An endpoint package containing content/v1 outbox/inbox bodies fails
+with `network_unsupported_content_schema`. Compatibility and migration are
+deferred; there is no automatic conversion, fallback or deletion. Preserve the
+original runtime, endpoint directory and encrypted package. Test only with
+isolated synthetic state, not the only copy of private data.
 
 This is an explicit native management operation. It snapshots the existing
 canonical Vault and the endpoint's committed transport state: signing and
@@ -40,8 +47,11 @@ Metadata outside the encryption identifies the network and package, algorithm,
 chunk size and chunk count; it does not contain memory text or keys.
 
 No network request occurs during backup. The source configuration is not
-modified. The canonical Vault uses the existing SQLite backup implementation.
-Both the Vault and transport database hold SQLite `BEGIN IMMEDIATE` write
+modified. An existing Vault uses the existing SQLite backup implementation.
+For a chat-only endpoint with no source Vault, a temporary empty snapshot uses
+the same Vault format; the source stays absent and recovery restores zero memory
+records. Chat is not promoted to memory to make backup succeed.
+The Vault snapshot source and transport database hold SQLite `BEGIN IMMEDIATE` write
 reservations while the snapshots are made. These are actual cross-process
 locks, so concurrent writers may need to retry. Config and key files are read
 and rechecked; they are not globally locked. This is a snapshot of committed
@@ -109,9 +119,14 @@ issuer status and satisfy the restored monotonic checkpoints. An expired or
 unavailable authority, revoked member, invalid key binding, or invalid node
 state stops delivery. Local Vault access remains independent. Resending keeps
 the original request/message IDs and frozen ciphertext; the two relays dedupe
-the same message. Existing cached `text_memory_id` references still point to
-the canonical Vault; use native `recall` and its cursor to read text beyond the
-bounded receive preview.
+the same supported content/v2 message. Chat stays in transport storage;
+`memory_transfer` contains selected original records and a non-memory note.
+`text_memory_id` stays null. Read saved chat/notes through local
+`receive(message_id, offset)` under the existing host access boundary; this
+does not poll the network, refresh remote authorization or create memory.
+Each text page is at most 1,024 UTF-8 bytes; offsets count
+Unicode code points and `next_offset:null` ends the read. Transferred records
+remain accessible through ordinary local recall and memory trust policy.
 
 ## Limits and failure handling
 
@@ -128,7 +143,7 @@ bounded operations; an in-flight OS file operation is not forcibly killed.
 Transport SQLite files and executable schemas are never imported. Bounded
 transport data is parsed into fixed, locally defined tables with parameterized
 inserts. Unknown tables, state keys, fields, malformed receipts, broken bindings
-and memory references fail closed. The canonical SQLite snapshot uses the
+and unsupported content schemas fail closed. The canonical SQLite snapshot uses the
 existing closed-schema validator and rebuild path. Authentication failures,
 unexpected files, resource limits, and I/O errors do not silently drop rows.
 

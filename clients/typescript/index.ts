@@ -42,7 +42,8 @@ export interface SendArguments {
   text?: string;
   memory_ids?: string[];
 }
-export interface ReceiveArguments { limit?: number }
+export type ReceiveArguments = { limit?: number; message_id?: never; offset?: never } |
+  { message_id: string; offset?: number; limit?: never };
 
 export interface NativeError {
   code: string;

@@ -173,8 +173,12 @@ class TypeScriptAgentNetworkTests(unittest.TestCase):
         self.assertEqual(message["text"], text)
         self.assertEqual(message["state"], "validated_saved")
         self.assertFalse(message["understood"])
-        self.assertTrue(message["text_memory_id"])
-        self.assertGreaterEqual(message["share"]["records_added"], 2 if selected_id else 1)
+        self.assertIsNone(message["text_memory_id"])
+        self.assertEqual(message["content_kind"], "memory_transfer" if selected_id else "message")
+        if selected_id:
+            self.assertEqual(message["share"]["records_added"], 1)
+        else:
+            self.assertIsNone(message["share"])
         return message
 
     def test_native_six_operations_share_same_queue_records_and_proofs_across_languages(self):
@@ -205,7 +209,7 @@ class TypeScriptAgentNetworkTests(unittest.TestCase):
         self.assertEqual(self.outbox(1)[request["request_id"]]["envelope"], frozen["envelope"])
         delivered = self.assert_delivered(self.py_value(0, {"op": "receive"}), text, selected)
         self.assertEqual(self.py_value(0, {"op": "recall", "memory_id": selected})["hits"][0]["text"], remember["text"])
-        self.assertEqual(self.py_value(0, {"op": "recall", "memory_id": delivered["text_memory_id"]})["hits"][0]["text"], text)
+        self.assertEqual(self.py_value(0, {"op": "receive", "message_id": delivered["message_id"]})["text"], text)
         self.assertFalse(self.ts_value(1, {"op": "receive"})["errors"])
         self.assertEqual(self.records(0), self.records(1))
 
@@ -226,7 +230,7 @@ class TypeScriptAgentNetworkTests(unittest.TestCase):
         self.assertTrue(restored["hits"][0]["verification"]["eligible_for_context"])
         self.assertFalse(self.py_value(0, {"op": "receive"})["errors"])
         self.assertEqual(self.records(0), self.records(1))
-        self.assertEqual(len(self.records(0)), 4)
+        self.assertEqual(len(self.records(0)), 2)
         self.assert_relay_bytes([frozen, frozen_reply])
         for index, client in enumerate((host.sender, host.receiver)):
             with client.db() as db:

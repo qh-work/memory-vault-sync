@@ -28,13 +28,14 @@ from memory_vault_network_crypto import (EncryptionIdentity, PublicKeyTrust, doc
     seal, open_envelope, verify_envelope, b64url, unb64url, opaque, object_fields, integer, digest)
 from memory_vault_network_control import (verify_roster, verify_status, verify_invite, sign_request,
     open_join_challenge, verify_request)
+from memory_vault_network_content import (CONTENT_SCHEMA, MAX_CONTENT_SHARE_BYTES,
+                                          validate_content, content_text)
 from memory_vault_nodes import (check_outbox_receipt_bounds, verify_storage_receipt,
                                 MAX_OUTBOX_RECEIPT_ROW_BYTES)
 
 CONFIG_SCHEMA = "memory-vault-network-client/v1"
-CONTENT_SCHEMA = "memory-vault-network-content/v1"
 MAX_WIRE_BYTES = 8 * 1024 * 1024
-MAX_SHARE_BYTES = 2 * 1024 * 1024
+MAX_SHARE_BYTES = MAX_CONTENT_SHARE_BYTES
 MAX_QUEUE_BYTES = 256 * 1024 * 1024
 MAX_BODY_SECONDS = 10
 MAX_QUARANTINE_MESSAGES = 128
@@ -47,20 +48,6 @@ def _text_preview(text: str) -> str:
     while len(canonical_bytes(preview)) > 512:
         preview = preview[:max(1, len(preview) // 2)]
     return preview
-
-
-def _imported_text_reference(content: Mapping[str, Any], selected: bytes | None = None) -> str | None:
-    """Project an ID only from content already admitted by the share importer."""
-    if content["share"] is None:
-        return None
-    if selected is None:
-        selected = unb64url(content["share"], maximum=MAX_SHARE_BYTES)
-    for line in selected.splitlines():
-        frame = strict_json_loads(line)
-        if (frame.get("type") == "record" and frame["selected"]
-                and frame["record"]["text"] == content["text"]):
-            return frame["record"]["memory_id"]
-    return None
 
 
 def origin(value: Any) -> str:
@@ -625,18 +612,6 @@ class NetworkClient:
                 "member_count": len(members), "partial": len(members) > 32, "configured_nodes": len(self.relays), "network_accessed": True}
 
     def _prepare_body(self, request_id: str, text: str, memory_ids: list[str]) -> bytes:
-        memory_ids = list(memory_ids)
-        if text:
-            # A message's text is an ordinary signed canonical observation at
-            # its source, not a receiver-authored assertion about the sender.
-            # Its original bytes/proof travel in the unchanged share-v1 format.
-            written = self.client_config.vault(writing=True).handle({"op": "remember", "kind": "observation", "text": text,
-                "request_id": "req_" + hashlib.sha256(("network-message:" + request_id).encode()).hexdigest()})
-            if not written.get("ok"):
-                raise MemoryError(written["error"]["code"])
-            memory_ids.append(written["result"]["memory_id"])
-            memory_ids = list(dict.fromkeys(memory_ids))
-        share = None
         if memory_ids:
             from memory_vault_sharing import export_share
             private_directory(self.directory)
@@ -646,7 +621,10 @@ class NetworkClient:
                 if selected.stat().st_size > MAX_SHARE_BYTES:
                     raise MemoryError("network_share_too_large_use_existing_pack")
                 share = b64url(selected.read_bytes())
-        return canonical_bytes({"schema_version": CONTENT_SCHEMA, "text": text, "share": share})
+            content = {"schema_version": CONTENT_SCHEMA, "kind": "memory_transfer", "note": text, "share": share}
+        else:
+            content = {"schema_version": CONTENT_SCHEMA, "kind": "message", "text": text}
+        return canonical_bytes(validate_content(content))
 
     def send(self, request_id: str, recipients: list[str], text: str = "", memory_ids: list[str] | None = None) -> Mapping[str, Any]:
         opaque(request_id)
@@ -686,6 +664,7 @@ class NetworkClient:
     def _deliver(self, prior: sqlite3.Row, recipients: list[str], *, deadline: float | None = None,
                  pending_only: bool = False, first_node: int = 0) -> Mapping[str, Any]:
         """Reuse durable content; never export memory or reseal a frozen row."""
+        content = validate_content(bytes(prior["body"]))
         request_id, message_id = prior["request_id"], prior["message_id"]
         receipts = {node: receipt for node, receipt in strict_json_loads(prior["receipts"]).items() if node in self.relays}
         errors = []
@@ -755,7 +734,8 @@ class NetworkClient:
         return {"state": "stored" if len(receipts) == len(self.relays) else "queued_local", "message_id": message_id,
                 "stored_nodes": len(receipts), "configured_nodes": len(self.relays), "degraded": len(receipts) < len(self.relays),
                 "validated_recipients": validated, "endpoint_validated": set(recipients).issubset(validated),
-                "understood": False, "errors": errors, "retry_same_request_id": True}
+                "understood": False, "errors": errors, "retry_same_request_id": True,
+                "content_kind": content["kind"], "text_memory_id": None}
 
     def _pending_outbox(self) -> tuple[list[tuple[int, str]], int]:
         with self.db() as connection:
@@ -906,16 +886,10 @@ class NetworkClient:
             if existing["digest"] != envelope_digest:
                 raise MemoryError("network_inbox_identity_conflict")
             result = strict_json_loads(existing["result"])
-            # Older alpha caches used a character cap. Keep their durable
-            # evidence untouched while applying the current response budget.
-            preview = _text_preview(result["text"])
-            result["text_partial"] = result["text_partial"] or preview != result["text"]
-            result["text"] = preview
-            if "text_memory_id" not in result:
-                # This inbox row was committed only after successful import.
-                # Reconstruct its missing view without importing/re-signing or
-                # changing either the cached evidence or the canonical Vault.
-                result["text_memory_id"] = _imported_text_reference(strict_json_loads(existing["body"]))
+            content = validate_content(bytes(existing["body"]))
+            text = content_text(content)
+            result.update(content_kind=content["kind"], text=_text_preview(text),
+                          text_partial=_text_preview(text) != text, text_memory_id=None)
             return result
         rejected = connection.execute("SELECT digest,sender,code FROM quarantine WHERE message_id=?", (message_id,)).fetchone()
         if rejected:
@@ -976,48 +950,37 @@ class NetworkClient:
             if existing is not None:
                 return existing
         try:
-            content = strict_json_loads(body)
+            content = validate_content(body)
         except MemoryError as exc:
-            if exc.code not in {"invalid_json", "json_bom_forbidden", "non_finite_json_number", "duplicate_json_key"}:
-                raise
-            return self._reject_content(envelope, "network_invalid_content_json")
-        if (not isinstance(content, dict) or set(content) != {"schema_version", "text", "share"}
-                or content["schema_version"] != CONTENT_SCHEMA or not isinstance(content["text"], str)):
-            return self._reject_content(envelope, "network_invalid_content")
-        try:
-            text_bytes = content["text"].encode("utf-8")
-        except UnicodeEncodeError:
-            return self._reject_content(envelope, "network_invalid_content")
-        if len(text_bytes) > 16384:
-            return self._reject_content(envelope, "network_invalid_content")
+            return self._reject_content(envelope, exc.code)
         imported = None
-        text_memory_id = None
-        if content["share"] is not None:
-            from memory_vault_sharing import import_share
-            try:
-                selected = unb64url(content["share"], maximum=MAX_SHARE_BYTES)
-            except MemoryError as exc:
-                if exc.code != "network_invalid_base64url":
-                    raise
-                return self._reject_content(envelope, "network_invalid_content_share_encoding")
+        if content["kind"] == "memory_transfer":
+            from memory_vault_sharing import import_share, _scan
+            selected = unb64url(content["share"], maximum=MAX_SHARE_BYTES)
             with tempfile.TemporaryDirectory(prefix="received-", dir=self.directory) as temporary:
                 source = Path(temporary) / "share.ndjson"
                 atomic_write(source, selected, replace=False)
+                # Validate the immutable received pack before opening any
+                # Vault. Bad frames/records/closures are sender content, while
+                # local resource failures remain errors and can be retried.
+                try:
+                    _scan(source, time.monotonic() + 10)
+                except MemoryError as exc:
+                    if exc.retryable or exc.code in {"share_integer_index_unavailable", "share_source_changed"}:
+                        raise
+                    return self._reject_content(envelope, "network_invalid_content_share")
                 try:
                     imported = import_share(self.client_config.path, source, verify_signatures=True, maximum_seconds=10)
                 except (TrustError, MemoryError) as exc:
                     if exc.code not in {"unknown_key", "revoked_key", "share_record_signature_required", "share_independent_trust_required"}:
                         raise
                     imported = import_share(self.client_config.path, source, maximum_seconds=10)
-            # Only inspect IDs after the unchanged share importer has checked
-            # every canonical record and the selected dependency closure.
-            # This reference is a local view, never a parent of the memory.
-            text_memory_id = _imported_text_reference(content, selected)
         # The native result budget counts serialized UTF-8, including JSON
         # escaping. Four 512-character emoji previews would already exceed it.
-        preview = _text_preview(content["text"])
+        text = content_text(content)
+        preview = _text_preview(text)
         result = {"message_id": message_id, "sender_key_id": payload["sender_key_id"], "text": preview,
-                  "text_partial": preview != content["text"], "text_memory_id": text_memory_id,
+                  "text_partial": preview != text, "text_memory_id": None, "content_kind": content["kind"],
                   "share": None if imported is None else
                     {"state": imported["state"], "records_added": imported["records_added"], "admission": imported.get("admission")},
                   "state": "validated_saved", "understood": False}
@@ -1036,6 +999,30 @@ class NetworkClient:
             if actual["digest"] != digest:
                 raise MemoryError("network_inbox_identity_conflict")
         return result
+
+    def read_message(self, message_id: str, offset: int = 0) -> Mapping[str, Any]:
+        """Read a local durable inbox body, without polling or creating memory.
+
+        Offsets count Unicode code points, identically to the TypeScript peer.
+        The page budget counts UTF-8 bytes; a character is never split.
+        """
+        opaque(message_id)
+        if type(offset) is not int or offset < 0:
+            raise MemoryError("network_invalid_message_offset")
+        with self.db() as connection:
+            row = connection.execute("SELECT digest,body FROM inbox WHERE message_id=?", (message_id,)).fetchone()
+            if row is None:
+                raise MemoryError("network_message_not_found")
+            content = validate_content(bytes(row["body"]))
+            text = content_text(content)
+            if offset > len(text):
+                raise MemoryError("network_invalid_message_offset")
+            result = dict(self._existing_delivery(connection, message_id, row["digest"]))
+        fragment = text[offset:].encode("utf-8")[:1024].decode("utf-8", errors="ignore")
+        end = offset + len(fragment)
+        return {**result, "text": fragment, "text_partial": offset > 0 or end < len(text),
+                "offset": offset, "next_offset": end if end < len(text) else None,
+                "total_characters": len(text), "network_accessed": False}
 
     def receive(self, limit: int = 4, *, _deadline: float | None = None) -> Mapping[str, Any]:
         if type(limit) is not int or not 1 <= limit <= 16:

@@ -117,7 +117,7 @@ class AgentTests(unittest.TestCase):
             self.assertEqual(client.get("/.well-known/agent-card.json", headers=headers).status_code, 404)
             self.assertEqual(client.post("/message:send", headers=headers, json={}).status_code, 404)
 
-    def test_receive_unicode_page_retains_full_text_references_after_ack(self):
+    def test_receive_unicode_page_retains_local_chat_body_after_ack(self):
         from tests.test_network_worker import fixture
         with fixture() as (sender, recipient, transport):
             texts = ["😀" * 600 + str(index) for index in range(4)]
@@ -131,31 +131,25 @@ class AgentTests(unittest.TestCase):
             self.assertEqual(len(messages), 4)
             for message, original in zip(messages, texts):
                 self.assertTrue(message["text_partial"])
-                request = {"op": "recall", "memory_id": message["text_memory_id"]}
-                fragments = []
+                self.assertIsNone(message["text_memory_id"])
+                offset, fragments = 0, []
                 for _ in range(16):
-                    page = agent.handle(request)
+                    page = agent.handle({"op": "receive", "message_id": message["message_id"], "offset": offset})
                     self.assertTrue(page["ok"], page)
-                    fragments.extend(hit["text"] for hit in page["result"]["hits"])
-                    cursor = page["result"]["next_cursor"]
-                    if cursor is None:
+                    self.assertFalse(page["result"]["network_accessed"])
+                    fragments.append(page["result"]["text"])
+                    offset = page["result"]["next_offset"]
+                    if offset is None:
                         break
-                    request = {"op": "recall", "cursor": cursor}
                 self.assertEqual("".join(fragments), original)
-            # A second relay may replay the larger cached previews produced by
-            # an earlier alpha. Projection must not mutate the stored evidence.
-            with recipient.db() as connection:
-                for message in messages:
-                    legacy = {**message, "text": "😀" * 512, "text_partial": True}
-                    legacy.pop("text_memory_id")
-                    connection.execute("UPDATE inbox SET result=? WHERE message_id=?",
-                                       (canonical_bytes(legacy).decode(), message["message_id"]))
+            # Replays from the other relay retain identical bounded projections
+            # without storing any chat as a canonical observation.
             replay = agent.handle({"op": "receive", "limit": 4})
             self.assertTrue(replay["ok"], replay)
-            self.assertEqual(len(replay["result"]["messages"]), 4)
+            self.assertEqual(replay["result"]["messages"], messages)
             self.assertLessEqual(len(canonical_bytes(replay)), 8192)
-            self.assertEqual([item["text_memory_id"] for item in replay["result"]["messages"]],
-                             [item["text_memory_id"] for item in messages])
+            self.assertFalse(recipient.client_config.vault_path.exists())
+
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 # network-v1: optional private communication carrier
 
-Status: 0.26.0-alpha.4 reference implementation. Core canonical records and
-share-v1 are unchanged. This independently defined network has no MCP, A2A,
+Status: **unreleased content/v2 candidate**. The
+[new application payload](NETWORK_CONTENT_V2.md) differs from the published
+preview; network-v1, core canonical records and share-v1 remain unchanged.
+This independently defined network has no MCP, A2A,
 Matrix, Nostr or Graphiti adapter or compatibility claim. These projects are
 design references only, with no imported task/room/relay/database model.
 
@@ -23,10 +25,15 @@ without replacing that default or changing canonical memory. Full graph/view-man
 TypeScript preview. The existing
 TypeScript HTTP SDK continues to use the shared six-operation endpoint above.
 
-`remember` and `recall` use the original client Vault and local trust. A sent
-text becomes a source-signed canonical observation. It travels with selected
-memories and their evidence closure in `universal-memory-share/v1`. No task,
-project, mailbox, model, node or member becomes those records' parent.
+`remember` and `recall` use the original client Vault and local trust. Text-only
+`send` queues a `message` in transport storage without creating a Memory Record.
+Nonempty `memory_ids` explicitly select `memory_transfer`: original records and
+their existing dependency closure travel in `universal-memory-share/v1`;
+accompanying text is only a `note`, even if equal to a selected record's text.
+The closure rule is not a remote-discovery or per-recipient export grant.
+Retaining new knowledge requires a separate `remember` with appropriate source
+attribution. No task, project, mailbox, model, node or member becomes a record's
+parent. A message signature does not classify its text as an observation.
 
 The facade caps requests at 64 KiB and results at 8 KiB. Recall cursors freeze
 up to 32 selected immutable IDs and page UTF-8 fragments, not canonical records.
@@ -43,9 +50,13 @@ signing key are distinct. Old failure evidence must be revalidated when relevant
 conditions change or its applicability is uncertain; no automatic retry or new
 execution permission is created. See the [agent usage rules](../AI_START_HERE.md#attribute-inherited-evidence-and-recheck-old-failures).
 
-Received text is a bounded preview. Where `text_memory_id` is provided for an
-imported record, native `recall(memory_id)` and subsequent `recall(cursor)`
-pages recover its full text under the existing local trust rules.
+Network `receive` returns a text preview and `content_kind`; `text_memory_id`
+is always null. To read a saved chat or transfer note completely, use
+`receive(message_id, offset)` locally, without polling or creating memory.
+Text pages are at most 1,024 UTF-8 bytes; offsets and `total_characters` count
+Unicode code points. Continue with `next_offset` until null, and do not include
+polling `limit`. See [content/v2](NETWORK_CONTENT_V2.md) for exact shapes and
+bounds. Transferred records use ordinary local recall and memory trust policy.
 
 Errors contain `code`, `retryable`, `retry_after_ms`, `commit_state` and a valid
 supplied `request_id`. Unknown commit state requires retrying the same ID and
@@ -158,20 +169,24 @@ admission; no fresh invitation or enrollment is silently created.
 
 The pump uses persisted request IDs, plaintext content and frozen ciphertext;
 it does not re-export or rewrite canonical memory. New rows save the original
-recipient list before attempting a connection. An older frozen row can recover
-its recipients from its existing envelope; an older unfrozen row without that
-list needs the original request and reports
-`network_outbox_recipients_unavailable`. The worker never guesses recipients,
+recipient list before attempting a connection. Missing recipient bookkeeping
+reports `network_outbox_recipients_unavailable`. Content/v1 queue bodies are
+unsupported and cannot be replayed as content/v2; compatibility and upgrades are
+deferred. This candidate does not convert, reseal or delete old state. The worker never guesses recipients,
 changes a frozen envelope or bypasses a failed fresh-status check. See the
 [one-pass command and exit states](NETWORK_QUICKSTART.md#preserve-retry-recover).
 
 After current authorization, signature verification and successful decryption,
-invalid application JSON/shape/text/share encoding is stored as rejected
+invalid application JSON/shape/text/share encoding or an unsupported content
+schema is stored as rejected
 ciphertext in bounded local delivery bookkeeping (128 entries / 16 MiB).
 `receive` reports `state: rejected` without exposing that plaintext, importing
 it as memory or sending `validated_saved`. Durable quarantine permits cursor
-progress; duplicate node copies use the same retained entry. Cryptographic,
-storage, capacity and deeper share/import errors still stop processing. A full
+progress; duplicate node copies use the same retained entry. Malformed share
+records, hashes and dependency closure are checked before Vault import and use
+`network_invalid_content_share` rejection without creating memory.
+Cryptographic, storage, capacity and import/work-budget errors still stop
+processing. A full
 quarantine requires operator attention; it is not an unbounded spam sink.
 
 Two nodes can receive identical ciphertext, with actual storage acknowledgment
@@ -236,8 +251,10 @@ Neither starts capture, a service or automatic delivery. Independently chosen
 issuer/network/endpoints and fresh issuer status are required to resume
 network operations; old member and node checkpoints remain rollback bounds.
 The archived memory trust registry cannot override current operator-selected
-trust. Keep the original private Vault and offline queues until recovery has
-been independently verified.
+trust. The candidate's payload validator rejects content/v1 outbox/inbox bodies
+in endpoint backups; it is not a migration path. Keep the original private Vault,
+queues, configuration, runtime and encrypted backups unchanged. Upgrade tooling
+and validation remain deferred.
 
 [Alpha evidence](RELEASE_NOTES_V0_26_ALPHA.md) does not satisfy real
 three-model/two-provider/local-runtime interoperability or adoption. Later

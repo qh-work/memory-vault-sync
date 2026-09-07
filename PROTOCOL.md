@@ -42,7 +42,13 @@ integrations can carry these records without becoming their owner.
 The optional [network-v1 carrier](docs/NETWORK_V1.md), introduced in the 0.26
 alpha, adds private transport, invitations and endpoint adapters **outside**
 core-v1. Core operations remain local and its original record/hash/authority
-contract is unchanged. Ordinary users can consume the
+contract is unchanged. This unreleased candidate adds
+[network content/v2](docs/NETWORK_CONTENT_V2.md): text-only communication stays
+in transport storage; explicit memory transfers carry selected original records
+and a non-memory note. The `network-v1` encryption, identity and receipt domains
+remain unchanged. Earlier content/v1 queue bodies and endpoint backups containing
+them are unsupported. Upgrade compatibility is deferred; this batch neither
+converts nor deletes old private state. Ordinary users can consume the
 [six-operation endpoint](AI_START_HERE.md) without implementing this protocol.
 
 `core-v1` is the baseline record, authority, append/retry, recall/handoff and
@@ -114,6 +120,14 @@ a new independent experiment appends a record linked to the original. Context,
 conditions and opposing evidence remain visible. Cross-author proposals do not
 authorize rewriting history or taking over another author's state decisions.
 Memory content remains non-authoritative regardless of epistemic type.
+
+In the content/v2 candidate, sending or receiving text alone MUST NOT create a
+canonical Memory Record or classify it as an observation. A `memory_transfer`
+carries explicitly selected existing records and their existing dependency
+closure; accompanying text remains a note even if it equals a record's text.
+The closure rule is not a remote-discovery or per-recipient export grant.
+Saving new knowledge is a separate `remember` decision with appropriate source
+attribution. Reading saved communication locally grants no execution authority.
 
 [JSON Schemas](schemas/README.md) describe the public shapes, and
 [synthetic exchange and hash vectors](examples/protocol/README.md) provide
