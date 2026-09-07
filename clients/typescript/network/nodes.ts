@@ -16,6 +16,16 @@ export const MAX_NODES = 256;
 export const MAX_STORAGE_RECEIPT_BYTES = 16 * 1024;
 export const MAX_OUTBOX_RECEIPT_ROW_BYTES = 64 * 1024;
 export const MAX_OUTBOX_RECEIPTS_BYTES = 16 * 1024 * 1024;
+export interface RelayPoolOptions { readonly maximum_nodes: number; readonly replica_target: number; }
+/** Local opt-in only; this configuration does not enroll nodes or members. */
+export function validateRelayPool(value: unknown): RelayPoolOptions {
+  const raw = objectFields(value, ['maximum_nodes', 'replica_target'], 'network_invalid_relay_pool');
+  if (!Number.isSafeInteger(raw.maximum_nodes) || !Number.isSafeInteger(raw.replica_target) ||
+      (raw.maximum_nodes as number) < 2 || (raw.maximum_nodes as number) > 4 ||
+      (raw.replica_target as number) < 1 || (raw.replica_target as number) > 2 ||
+      (raw.replica_target as number) > (raw.maximum_nodes as number)) throw new NetworkCryptoError('network_invalid_relay_pool');
+  return Object.freeze({maximum_nodes: raw.maximum_nodes as number, replica_target: raw.replica_target as number});
+}
 const MAX_CONTROL_BYTES = 1024 * 1024;
 type Obj = Record<string, unknown>;
 type Window = { readonly issued_at: number; readonly expires_at: number };

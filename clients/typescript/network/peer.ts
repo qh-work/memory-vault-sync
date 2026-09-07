@@ -13,7 +13,8 @@ import type { DocumentInput, SigningIdentityDocument, EncryptionIdentityDocument
 import { verifyCurrentRoster, verifyRoster, signRequest, verifyRequest, verifyInvitationPackage, openJoinChallenge, authorizedMember } from './control.ts';
 import type { CurrentRoster, RequestAction, RecoveryAnchor } from './control.ts';
 import { verifyCurrentNodes, authorizedNode, verifyNodeChallenge, verifyStorageReceipt,
-  MAX_OUTBOX_RECEIPT_ROW_BYTES, MAX_OUTBOX_RECEIPTS_BYTES } from './nodes.ts';
+  validateRelayPool, MAX_OUTBOX_RECEIPT_ROW_BYTES, MAX_OUTBOX_RECEIPTS_BYTES } from './nodes.ts';
+import type { RelayPoolOptions } from './nodes.ts';
 import { CanonicalVault, storageFailure } from './vault.ts';
 import type { VaultOptions } from './vault.ts';
 import { parseShare, NetworkRecordsError } from './records.ts';
@@ -27,6 +28,8 @@ import { readTrustedKeys } from './setup.ts';
 import type { Transport } from './transport.ts';
 
 type Obj = Record<string, any>;
+type RelayPlan = { readonly relays: readonly string[]; readonly target: number;
+  readonly bindings?: Readonly<Record<string,Obj>>; readonly nodes?: readonly {key_id:string}[]; readonly directory_version?: number; readonly pool_partial?: boolean };
 const MAX_SHARE = MAX_CONTENT_SHARE_BYTES, MAX_QUEUE = 256 * 1024 * 1024, MAX_WIRE = 8 * 1024 * 1024;
 const json = (value: unknown): string => Buffer.from(canonicalBytes(value, MAX_WIRE)).toString('utf8');
 function parse(value: string | Uint8Array): any {
@@ -53,6 +56,7 @@ export class NetworkPeer {
   readonly clientConfigPath: string;
   readonly configPath: string;
   readonly relays: string[];
+  readonly relayPool: RelayPoolOptions|null;
   readonly authorityUrl: string;
   readonly identity: SigningIdentityDocument;
   readonly encryption: EncryptionIdentityDocument;
@@ -70,8 +74,10 @@ export class NetworkPeer {
 
   constructor(configPath: string, options: {transport?: Transport; clientConfigPath?: string} = {}) {
     this.configPath = absolutePath(configPath);
-    const config = objectFields(document(readPrivate(this.configPath, 65536)!), ['schema_version','network_id','client_config_path','state_directory','encryption_key_path','issuer_public_key','relays','authority_url']);
+    const rawConfig = document(readPrivate(this.configPath, 65536)!);
+    const config = objectFields(rawConfig, ['schema_version','network_id','client_config_path','state_directory','encryption_key_path','issuer_public_key','relays','authority_url',...('relay_pool' in rawConfig?['relay_pool']:[])]);
     if (config.schema_version !== 'memory-vault-network-client/v1') fail('network_invalid_config');
+    this.relayPool = 'relay_pool' in config ? validateRelayPool(config.relay_pool) : null;
     this.networkId = opaqueId(config.network_id);
     this.clientConfigPath = absolutePath(config.client_config_path);
     if (options.clientConfigPath !== undefined && absolutePath(options.clientConfigPath) !== this.clientConfigPath) fail('network_client_config_mismatch');
@@ -157,7 +163,7 @@ export class NetworkPeer {
       for(const row of rows){
         if(Buffer.byteLength(row.receipts)>MAX_OUTBOX_RECEIPT_ROW_BYTES)fail('network_storage_receipt_capacity');
         const receipts=parse(row.receipts);
-        if(receipts===null||typeof receipts!=='object'||Array.isArray(receipts)||Object.keys(receipts).length>2)fail('network_invalid_storage_receipt');
+        if(receipts===null||typeof receipts!=='object'||Array.isArray(receipts)||Object.keys(receipts).length>4)fail('network_invalid_storage_receipt');
         if(!Object.keys(receipts).length)continue;
         const stored=db.prepare('SELECT envelope FROM outbox WHERE request_id=?').get(row.request_id) as Obj|undefined;
         if(!stored||stored.envelope===null)fail('network_invalid_storage_receipt');
@@ -199,6 +205,7 @@ export class NetworkPeer {
   private async refresh(relay: string, deadline?: number): Promise<{current:CurrentRoster;node:Obj|null}> {
     const challenge = await this.http(relay,'GET','/v1/status',undefined,deadline);
     const verified = await this.status(challenge.nonce,deadline), signed=challenge.node_challenge;
+    if(this.relayPool && !this.poolEntries(verified.response).some(entry=>entry.base_url===relay))fail('network_node_inactive');
     let node:Obj|null=null;
     if (!verified.nodes) {if(signed!==undefined) fail('network_node_directory_required');}
     else {
@@ -232,8 +239,52 @@ export class NetworkPeer {
     transaction(this.db(),()=>this.assertNode(relay,node));
     return {current:verified.current,node};
   }
+  private selectedEntries(directory:Obj):Obj[] {
+    return directory.nodes.filter((entry:Obj)=>entry.status==='active'&&entry.scope.includes('node.status'))
+      .sort((a:Obj,b:Obj)=>a.signing_key.key_id<b.signing_key.key_id?-1:a.signing_key.key_id>b.signing_key.key_id?1:0).slice(0,this.relayPool!.maximum_nodes);
+  }
+  private poolEntries(response:Obj):Obj[] {
+    if(!response.nodes||!response.node_status)fail('network_node_directory_required');
+    return this.selectedEntries(response.nodes.payload);
+  }
+  private async relayPlan(deadline?:number,response?:Obj):Promise<RelayPlan> {
+    if(!this.relayPool)return {relays:this.relays,target:this.relays.length};
+    response??=(await this.status(randomBytes(24).toString('hex'),deadline)).response;
+    const entries=this.poolEntries(response);
+    if(!entries.length)throw new NetworkError('network_relay_pool_empty',true);
+    const eligible=response.nodes.payload.nodes.filter((entry:Obj)=>entry.status==='active'&&entry.scope.includes('node.status')).length;
+    return {relays:entries.map(entry=>entry.base_url),target:this.relayPool.replica_target,
+      bindings:Object.fromEntries(entries.map(entry=>[entry.base_url,{signing_key:entry.signing_key,base_url:entry.base_url,storage_epoch:entry.storage_epoch}])),
+      nodes:entries.map(entry=>({key_id:entry.signing_key.key_id})),directory_version:response.nodes.payload.version,pool_partial:eligible>entries.length};
+  }
+  private poolResult(plan:RelayPlan):Obj {
+    return this.relayPool?{relay_pool_enabled:true,candidate_nodes:plan.relays.length,replica_target:plan.target}:{};
+  }
+  private checkPlanBinding(plan:RelayPlan,relay:string,binding:Obj|null):void {
+    if(this.relayPool&&!equal(plan.bindings?.[relay]??null,binding))fail('network_node_identity_changed');
+  }
+  private receiptAddresses(plan:RelayPlan):Set<string> {
+    if(!this.relayPool)return new Set(plan.relays);
+    const saved=this.state('node_directory');if(!saved)return new Set();
+    // Refresh can narrow this operation's eligible receipts, not change its
+    // iteration snapshot. Historical receipts remain in the original row.
+    return new Set(this.selectedEntries(saved.payload).filter(entry=>{
+      const expected={signing_key:entry.signing_key,base_url:entry.base_url,storage_epoch:entry.storage_epoch};
+      return plan.relays.includes(entry.base_url)&&equal(plan.bindings?.[entry.base_url]??null,expected)&&equal(this.state('node:'+entry.base_url)??null,expected);
+    }).map(entry=>entry.base_url));
+  }
+  private attemptDeadline(deadline:number|undefined,remaining:number):number|undefined {
+    if(!this.relayPool||deadline===undefined)return deadline;
+    const at=performance.now();return at+Math.max(0,deadline-at)/Math.max(1,remaining);
+  }
+  private attemptError(error:unknown,nodeDeadline:number|undefined,deadline:number|undefined):{code:string;retryable:boolean} {
+    const detail=errorData(error);
+    if(this.relayPool&&detail.code==='network_budget_exhausted'&&deadline!==undefined&&nodeDeadline!==undefined&&nodeDeadline<deadline&&performance.now()<deadline)detail.code='network_relay_attempt_budget';
+    return detail;
+  }
   connect(invitation?: Obj, requestId?: string): Promise<Obj> { return this.serial(()=>this.connectInternal(invitation,requestId)); }
   private async connectInternal(invitation?: Obj, requestId?: string): Promise<Obj> {
+    const deadline=this.relayPool?performance.now()+10000:undefined;
     let checked: any, expired=false;
     const options={network_id:this.networkId,issuers:this.issuers,now:now(),local_identity:this.localIdentity as any,encryption_identity:this.encryption};
     if (invitation) {
@@ -243,22 +294,25 @@ export class NetworkPeer {
         checked=await verifyInvitationPackage(invitation as any,{...options,now:invitation.invite?.payload?.issued_at});expired=true;
       }
     }
+    const plan=await this.relayPlan(deadline),relays=plan.relays;
     const joined:string[]=[],errors:Obj[]=[];let last:CurrentRoster|undefined;
-    for(const relay of this.relays) {
+    for(const [index,relay] of relays.entries()) {
+      const nodeDeadline=this.attemptDeadline(deadline,relays.length-index);
       try {
-        const {current,node}=await this.refresh(relay);
+        const {current,node}=await this.refresh(relay,nodeDeadline);
+        this.checkPlanBinding(plan,relay,node);
         if(invitation) {
           const key='join:'+relay+':'+checked.invite.invite_id;
           let proof=this.state(key);
           const fresh=async()=>{
             if(expired) fail('network_control_expired');
-            const challenge=(await this.http(relay,'POST','/v1/join',{invite:invitation.invite,roster:invitation.roster})).challenge;
+            const challenge=(await this.http(relay,'POST','/v1/join',{invite:invitation.invite,roster:invitation.roster},nodeDeadline)).challenge;
             const answer=await openJoinChallenge(challenge,{identity:this.encryption,network_id:this.networkId,invite_id:checked.invite.invite_id,now:now()});
             return this.request('join',{invite_sha256:checked.invite_sha256,challenge_id:challenge.challenge_id,challenge_answer:answer},requestId);
           };
           if(proof) {if(proof.payload.body.invite_sha256!==checked.invite_sha256) fail('network_invitation_retry_conflict');}
           else {const candidate=await fresh();transaction(this.db(),()=>{this.assertNode(relay,node);this.db().prepare('INSERT OR IGNORE INTO state VALUES(?,?)').run(key,json(candidate));});proof=this.state(key);}
-          const consume=()=>this.http(relay,'POST','/v1/join',{invite:invitation.invite,roster:invitation.roster,request:proof});
+          const consume=()=>this.http(relay,'POST','/v1/join',{invite:invitation.invite,roster:invitation.roster,request:proof},nodeDeadline);
           let result;
           try {result=await consume();}
           catch(error) {
@@ -266,18 +320,33 @@ export class NetworkPeer {
             const candidate=await fresh();transaction(this.db(),()=>{this.assertNode(relay,node);this.db().prepare('UPDATE state SET value=? WHERE key=? AND value=?').run(json(candidate),key,json(proof));proof=this.state(key);});result=await consume();
           }
           if(result.state!=='joined'||result.network_id!==this.networkId||result.member_key_id!==this.identity.key_id||result.invite_id!==checked.invite.invite_id) fail('network_invalid_join_receipt');
-        } else await this.http(relay,'POST','/v1/poll',this.request('poll',{cursor:0,receipt_cursor:0,limit:1,maximum_bytes:MAX_WIRE}));
+        } else await this.http(relay,'POST','/v1/poll',this.request('poll',{cursor:0,receipt_cursor:0,limit:1,maximum_bytes:MAX_WIRE}),nodeDeadline);
         transaction(this.db(),()=>this.assertNode(relay,node));
         joined.push(relay);last=current;
-      } catch(error) {errors.push({node:this.relays.indexOf(relay),code:errorData(error).code});}
+      } catch(error) {
+        if(this.relayPool&&invitation&&(error as any)?.code==='relay_member_already_joined'){
+          try{
+            // A fresh invitation can enroll a newly discovered node without
+            // requiring already joined nodes to consume a second invitation.
+            // Count only an independently refreshed, signed membership poll.
+            const {current,node}=await this.refresh(relay,nodeDeadline);
+            this.checkPlanBinding(plan,relay,node);
+            await this.http(relay,'POST','/v1/poll',this.request('poll',{cursor:0,receipt_cursor:0,limit:1,maximum_bytes:MAX_WIRE}),nodeDeadline);
+            transaction(this.db(),()=>this.assertNode(relay,node));
+            joined.push(relay);last=current;continue;
+          }catch(fallback){error=fallback;}
+        }
+        const detail=this.attemptError(error,nodeDeadline,deadline);errors.push({node:index,code:detail.code});if(detail.code==='network_budget_exhausted')break;
+      }
     }
     if(joined.length&&invitation?.handoff) await this.accept(invitation.handoff,last!);
-    return {state:joined.length?'connected':'not_connected',joined_nodes:joined.length,configured_nodes:this.relays.length,degraded:joined.length!==this.relays.length,errors,member_key_id:this.identity.key_id,network_accessed:true};
+    return {state:joined.length?'connected':'not_connected',joined_nodes:joined.length,configured_nodes:this.relays.length,degraded:joined.length!==relays.length,errors,member_key_id:this.identity.key_id,network_accessed:true,...this.poolResult(plan)};
   }
   discover():Promise<Obj>{return this.serial(async()=>{
-    const {current}=await this.status(randomBytes(24).toString('hex'));
+    const {current,response}=await this.status(randomBytes(24).toString('hex'),this.relayPool?performance.now()+10000:undefined);
     const members=current.roster.payload.members.filter(member=>member.status==='active');
-    return {network_id:this.networkId,members:members.slice(0,32).map(member=>({key_id:member.signing_key.key_id,scope:member.scope})),member_count:members.length,partial:members.length>32,configured_nodes:this.relays.length,network_accessed:true};
+    const plan=await this.relayPlan(undefined,response),pool=this.relayPool?{...this.poolResult(plan),nodes:plan.nodes,directory_version:plan.directory_version,pool_partial:plan.pool_partial}:{};
+    return {network_id:this.networkId,members:members.slice(0,32).map(member=>({key_id:member.signing_key.key_id,scope:member.scope})),member_count:members.length,partial:members.length>32,configured_nodes:this.relays.length,network_accessed:true,...pool};
   });}
   setHintPolicy(value:DocumentInput):Obj {
     return transaction(this.db(),()=>{
@@ -646,23 +715,33 @@ export class NetworkPeer {
       }finally{reader?.close();}
     });
   });}
-  private receipts(row:Obj):Obj{return Object.fromEntries(Object.entries(parse(row.receipts)).filter(([key])=>this.relays.includes(key)));}
-  private async deliver(prior:Obj,recipients:string[],deadline?:number,pendingOnly=false,firstNode=0):Promise<Obj>{
+  private receipts(row:Obj,plan:RelayPlan):Obj{const eligible=this.receiptAddresses(plan);return Object.fromEntries(Object.entries(parse(row.receipts)).filter(([key])=>eligible.has(key)));}
+  private async deliver(prior:Obj,recipients:string[],deadline?:number,pendingOnly=false,firstNode=0,plan?:RelayPlan):Promise<Obj>{
     const content=validateContent(prior.body);
-    let receipts=this.receipts(prior),envelope=prior.envelope?parse(prior.envelope):null,roster=prior.roster?parse(prior.roster):null;
+    let envelope=prior.envelope?parse(prior.envelope):null,roster=prior.roster?parse(prior.roster):null;
     const errors:Obj[]=[];
     if(envelope&&!equal([...envelope.recipient_key_ids].sort(),[...recipients].sort()))fail('network_outbox_routing_mismatch');
-    for(let offset=0;offset<this.relays.length;offset++){
-      const relay=this.relays[(firstNode+offset)%this.relays.length];
+    if(this.relayPool&&deadline===undefined)deadline=performance.now()+10000;
+    if(!plan){
+      if(this.relayPool&&this.queryStopped(content,prior.message_id))plan={relays:[],target:this.relayPool.replica_target};
+      else try{plan=await this.relayPlan(deadline);}catch(error){if(!this.relayPool||!(error instanceof NetworkCryptoError))throw error;plan={relays:[],target:this.relayPool.replica_target};errors.push(errorData(error));}
+    }
+    const {relays,target}=plan;
+    let receipts=this.receipts(prior,plan);
+    for(let offset=0;offset<relays.length;offset++){
+      const relay=relays[(firstNode+offset)%relays.length];
       if(this.queryStopped(content,prior.message_id))break;
-      if(pendingOnly&&relay in receipts)continue;
-      let nodeDeadline=deadline;
-      if(pendingOnly&&deadline!==undefined){
-        const remaining=this.relays.map((_,index)=>this.relays[(firstNode+index)%this.relays.length]).slice(offset).filter(node=>!(node in receipts)).length;
+      receipts=this.receipts(this.outboxRows(prior.request_id)[0],plan);
+      if(this.relayPool&&Object.keys(receipts).length>=target)break;
+      if((pendingOnly||this.relayPool)&&relay in receipts)continue;
+      let nodeDeadline=this.attemptDeadline(deadline,relays.length-offset);
+      if(!this.relayPool&&pendingOnly&&deadline!==undefined){
+        const remaining=relays.map((_,index)=>relays[(firstNode+index)%relays.length]).slice(offset).filter(node=>!(node in receipts)).length;
         const at=performance.now();nodeDeadline=at+Math.max(0,deadline-at)/remaining;
       }
       try{
         const {current,node}=await this.refresh(relay,nodeDeadline);
+        this.checkPlanBinding(plan,relay,node);
         if(nodeDeadline!==undefined&&performance.now()>=nodeDeadline)throw new NetworkError('network_budget_exhausted',true);
         authorizedMember(current,this.identity.key_id,'send',{now:now(),expected_identity:this.localIdentity as any});
         const destinations=recipients.map(id=>authorizedMember(current,id,'receive',{now:now()}));
@@ -682,26 +761,34 @@ export class NetworkPeer {
         // All refresh and seal awaits have finished. This synchronous recheck
         // defines authorization at transport start, including frozen retries.
         this.guardHint(content,recipients,current,prior.message_id);
+        const historicalReceipts=parse(this.outboxRows(prior.request_id)[0].receipts);
+        if(!(relay in historicalReceipts)&&Object.keys(historicalReceipts).length>=4)fail('network_storage_receipt_capacity');
         const result=await this.http(relay,'POST','/v1/messages',{envelope,roster},nodeDeadline);
         if(result.state!=='stored'||result.message_id!==prior.message_id||result.envelope_sha256!==documentSha256(envelope))fail('network_invalid_storage_receipt');
         transaction(this.db(),()=>{
           this.assertNode(relay,node);
           this.verifyStorageResponse(relay,result,prior.message_id,documentSha256(envelope));
-          receipts=this.receipts(this.outboxRows(prior.request_id)[0]);
-          receipts[relay]=result;this.db().prepare('UPDATE outbox SET receipts=? WHERE request_id=?').run(json(receipts),prior.request_id);
+          const latest=this.outboxRows(prior.request_id)[0],all=parse(latest.receipts);
+          if(!(relay in all)&&Object.keys(all).length>=4)fail('network_storage_receipt_capacity');
+          all[relay]=result;const encoded=json(all);
+          if(Buffer.byteLength(encoded)>MAX_OUTBOX_RECEIPT_ROW_BYTES)fail('network_storage_receipt_capacity');
+          this.db().prepare('UPDATE outbox SET receipts=? WHERE request_id=?').run(encoded,prior.request_id);
+          // Validate the resulting aggregate inside this same transaction, so
+          // crossing the existing global budget rolls back the new receipt.
+          this.outboxRows(prior.request_id);
         });
       }catch(error){
-        const detail=errorData(error);
-        if(pendingOnly&&detail.code==='network_budget_exhausted'&&deadline!==undefined&&nodeDeadline!==undefined&&nodeDeadline<deadline&&performance.now()<deadline)detail.code='network_replica_send_budget';
-        errors.push({node:this.relays.indexOf(relay),...detail});if(detail.code==='network_budget_exhausted')break;
+        const detail=this.attemptError(error,nodeDeadline,deadline);
+        if(!this.relayPool&&pendingOnly&&detail.code==='network_budget_exhausted'&&deadline!==undefined&&nodeDeadline!==undefined&&nodeDeadline<deadline&&performance.now()<deadline)detail.code='network_replica_send_budget';
+        errors.push({node:relays.indexOf(relay),...detail});if(detail.code==='network_budget_exhausted')break;
       }
     }
-    receipts=this.receipts(this.outboxRows(prior.request_id)[0]);
+    receipts=this.receipts(this.outboxRows(prior.request_id)[0],plan);
     const validated=(this.db().prepare('SELECT recipient FROM acknowledgements WHERE message_id=?').all(prior.message_id) as Obj[]).map(row=>row.recipient);
     const stopped=this.queryStopped(content,prior.message_id);
     if(stopped){errors.length=0;errors.push({code:'network_hint_not_available',retryable:false});}
     const cancellation=this.cancellationResult(content,prior.message_id);
-    return {state:stopped?'stopped_query':Object.keys(receipts).length===this.relays.length?'stored':'queued_local',message_id:prior.message_id,content_kind:content.kind,text_memory_id:null,stored_nodes:Object.keys(receipts).length,configured_nodes:this.relays.length,degraded:Object.keys(receipts).length<this.relays.length,validated_recipients:validated,endpoint_validated:recipients.every(key=>validated.includes(key)),understood:false,errors,retry_same_request_id:true,...cancellation};
+    return {state:stopped?'stopped_query':Object.keys(receipts).length>=target?'stored':'queued_local',message_id:prior.message_id,content_kind:content.kind,text_memory_id:null,stored_nodes:Object.keys(receipts).length,configured_nodes:this.relays.length,degraded:Object.keys(receipts).length<target,validated_recipients:validated,endpoint_validated:recipients.every(key=>validated.includes(key)),understood:false,errors,retry_same_request_id:true,...cancellation,...this.poolResult(plan)};
   }
   private existing(messageId:string,digest:string):Obj|undefined{
     const row=this.db().prepare('SELECT * FROM inbox WHERE message_id=?').get(messageId) as Obj|undefined;
@@ -827,15 +914,24 @@ export class NetworkPeer {
     finally{try{if(db.isTransaction)db.exec('ROLLBACK');}catch(error){storageFailure(error);}finally{db.close();}}
   }
   receive(limit=4):Promise<Obj>{return this.serial(()=>this.receiveInternal(limit));}
-  private async receiveInternal(limit=4,deadline?:number):Promise<Obj>{
+  private async receiveInternal(limit=4,deadline?:number,plan?:RelayPlan,firstNode?:number):Promise<Obj>{
     if(!Number.isSafeInteger(limit)||limit<1||limit>16)fail('network_invalid_limit');limit=Math.min(limit,4);
+    if(this.relayPool&&deadline===undefined)deadline=performance.now()+10000;
+    if(!plan)try{plan=await this.relayPlan(deadline);}catch(error){
+      if(!this.relayPool||!(error instanceof NetworkCryptoError))throw error;
+      return {messages:[],partial:false,errors:[errorData(error)],unmatched_receipts:0,network_accessed:true,receipts_mean:'endpoint_validated_saved_not_understood',...this.poolResult({relays:[],target:this.relayPool.replica_target})};
+    }
+    firstNode=this.relayPool?(firstNode??this.pumpStartNode(plan)):0;
+    const relays=plan.relays;
     const messages:Obj[]=[],errors:Obj[]=[],seen=new Set<string>();let unmatched=0;
-    for(const relay of this.relays){
+    for(let offset=0;offset<relays.length;offset++){
+      const index=(firstNode+offset)%relays.length,relay=relays[index],nodeDeadline=this.attemptDeadline(deadline,relays.length-offset);
       if(messages.length>=limit)break;
       try{
-        const {current,node}=await this.refresh(relay,deadline);
+        const {current,node}=await this.refresh(relay,nodeDeadline);
+        this.checkPlanBinding(plan,relay,node);
         const cursors=transaction(this.db(),()=>{this.assertNode(relay,node);return this.state('cursor:'+relay)??{cursor:0,receipt_cursor:0};});
-        const page=await this.http(relay,'POST','/v1/poll',this.request('poll',{...cursors,limit:limit-messages.length,maximum_bytes:MAX_WIRE}),deadline);
+        const page=await this.http(relay,'POST','/v1/poll',this.request('poll',{...cursors,limit:limit-messages.length,maximum_bytes:MAX_WIRE}),nodeDeadline);
         transaction(this.db(),()=>this.assertNode(relay,node));
         objectFields(page,['messages','cursor','receipts','receipt_cursor','has_more']);
         if(!Array.isArray(page.messages)||!Array.isArray(page.receipts)||page.messages.length>limit-messages.length||page.receipts.length>limit-messages.length||typeof page.has_more!=='boolean')fail('network_invalid_poll_page');
@@ -849,8 +945,8 @@ export class NetworkPeer {
           let ack=transaction(this.db(),()=>{this.assertNode(relay,node);const prior=this.state(key);if(prior)return prior;const created=this.request('ack',expected);this.put(key,created);return created;});
           if(!equal(ack.payload.body,expected))fail('network_receipt_binding_mismatch');
           let response;
-          try{response=await this.http(relay,'POST','/v1/ack',ack,deadline);}
-          catch(error){if((error as any)?.code!=='network_control_expired')throw error;const fresh=this.request('ack',expected);transaction(this.db(),()=>{this.assertNode(relay,node);this.db().prepare('UPDATE state SET value=? WHERE key=? AND value=?').run(json(fresh),key,json(ack));ack=this.state(key);});response=await this.http(relay,'POST','/v1/ack',ack,deadline);}
+          try{response=await this.http(relay,'POST','/v1/ack',ack,nodeDeadline);}
+          catch(error){if((error as any)?.code!=='network_control_expired')throw error;const fresh=this.request('ack',expected);transaction(this.db(),()=>{this.assertNode(relay,node);this.db().prepare('UPDATE state SET value=? WHERE key=? AND value=?').run(json(fresh),key,json(ack));ack=this.state(key);});response=await this.http(relay,'POST','/v1/ack',ack,nodeDeadline);}
           if(Object.entries(expected).some(([key,value])=>response[key]!==value)||response.recipient_key_id!==this.identity.key_id||safeInteger(response.receipt_sequence,1)>4096*32)fail('network_invalid_ack_receipt');
         }
         transaction(this.db(),()=>{
@@ -860,7 +956,7 @@ export class NetworkPeer {
             const body=objectFields(receipt?.payload?.body,['message_id','envelope_sha256','state']);opaqueId(body.message_id);digestHex(body.envelope_sha256);
             const id=receipt?.proof?.key_id,known=this.db().prepare('SELECT receipt FROM acknowledgements WHERE message_id=? AND recipient=?').get(body.message_id as string,id) as Obj|undefined;
             if(known&&Buffer.from(known.receipt).equals(canonicalBytes(receipt)))continue;
-            if(!peers.some(member=>member.signing_key.key_id===id&&member.scope.includes('receive'))){errors.push({node:this.relays.indexOf(relay),code:'network_receipt_peer_inactive',retryable:false});continue;}
+            if(!peers.some(member=>member.signing_key.key_id===id&&member.scope.includes('receive'))){errors.push({node:index,code:'network_receipt_peer_inactive',retryable:false});continue;}
             verifyRequest(receipt,{network_id:this.networkId,action:'ack',peers:peers.map(member=>member.signing_key),now:receipt.payload.issued_at});
             if(body.state!=='validated_saved')fail('network_receipt_binding_mismatch');
             const sent=this.db().prepare('SELECT envelope FROM outbox WHERE message_id=?').get(body.message_id as string) as Obj|undefined;
@@ -872,33 +968,34 @@ export class NetworkPeer {
           const latest=this.state('cursor:'+relay)??{cursor:0,receipt_cursor:0};
           this.put('cursor:'+relay,{cursor:Math.max(latest.cursor,next.cursor),receipt_cursor:Math.max(latest.receipt_cursor,next.receipt_cursor)});
         });
-      }catch(error){const detail=errorData(error);errors.push({node:this.relays.indexOf(relay),...detail});if(detail.code==='network_budget_exhausted')break;}
+      }catch(error){const detail=this.attemptError(error,nodeDeadline,deadline);errors.push({node:index,...detail});if(detail.code==='network_budget_exhausted')break;}
     }
-    return {messages,partial:messages.length>=limit,errors,unmatched_receipts:unmatched,network_accessed:true,receipts_mean:'endpoint_validated_saved_not_understood'};
+    return {messages,partial:messages.length>=limit,errors,unmatched_receipts:unmatched,network_accessed:true,receipts_mean:'endpoint_validated_saved_not_understood',...this.poolResult(plan)};
   }
-  private stoppedQueryMessages():Set<string>{
+  private stoppedQueryMessages(plan:RelayPlan):Set<string>{
     const cancelled=new Set([...this.hintSessions().values()].filter(session=>session.state==='cancelled').map(session=>session.query_message_id));
     if(!cancelled.size)return new Set();
-    const pending=new Set(this.outboxRows().filter(row=>!this.relays.every(relay=>relay in this.receipts(row))).map(row=>row.request_id));
+    const pending=new Set(this.outboxRows().filter(row=>Object.keys(this.receipts(row,plan)).length<plan.target).map(row=>row.request_id));
     // Project only bounded routing scalars; do not load or parse share bodies
     // merely to omit cancelled work from the existing bounded queue.
     const rows=this.db().prepare("SELECT request_id,message_id,json_extract(CAST(body AS TEXT),'$.kind') kind,json_extract(CAST(body AS TEXT),'$.control.kind') control_kind,json_extract(CAST(body AS TEXT),'$.query_message_id') query_id,json_extract(CAST(body AS TEXT),'$.control.query_message_id') control_query_id FROM outbox").all() as Obj[];
     if(rows.length>1024)fail('network_outbox_capacity');
     return new Set(rows.filter(row=>pending.has(row.request_id)&&cancelled.has(row.kind==='hint_batch_transfer'?row.query_id:row.kind==='hint_control'?(row.control_kind==='query'?row.message_id:['page','select','hints'].includes(row.control_kind)?row.control_query_id:undefined):undefined)).map(row=>row.request_id));
   }
-  private pending():Obj[]{
+  private pending(plan:RelayPlan):Obj[]{
     const rows=this.outboxRows();
     if(rows.length>1024)fail('network_outbox_capacity');
-    const stopped=this.stoppedQueryMessages();
-    return rows.filter(row=>!stopped.has(row.request_id)&&!this.relays.every(relay=>relay in this.receipts(row)));
+    const stopped=this.stoppedQueryMessages(plan);
+    return rows.filter(row=>!stopped.has(row.request_id)&&Object.keys(this.receipts(row,plan)).length<plan.target);
   }
-  private pumpStartNode():number{
+  private pumpStartNode(plan:RelayPlan):number{
+    if(!plan.relays.length)return 0;
     return transaction(this.db(),()=>{
-      const cursor=safeInteger(this.state('pump_node_cursor')??0)%this.relays.length;
-      this.put('pump_node_cursor',(cursor+1)%this.relays.length);return cursor;
+      const count=Math.max(1,plan.relays.length),cursor=safeInteger(this.state('pump_node_cursor')??0)%count;
+      this.put('pump_node_cursor',(cursor+1)%count);return cursor;
     });
   }
-  private async checkReplicaNodes(deadline:number,firstNode:number):Promise<Obj[]>{
+  private async checkReplicaNodes(deadline:number,firstNode:number,plan:RelayPlan):Promise<Obj[]>{
     // Historical receipts survive outages. Only a verified new incarnation
     // invalidates them, before pending work is selected (even without poll).
     const rows=this.outboxRows();
@@ -907,14 +1004,15 @@ export class NetworkPeer {
     for(const row of rows){
       const receipts=parse(row.receipts);
       if(receipts===null||typeof receipts!=='object'||Array.isArray(receipts))fail('network_invalid_storage_receipt');
-      for(const relay of Object.keys(receipts))if(this.relays.includes(relay))nodes.add(relay);
+      for(const relay of Object.keys(receipts))if(plan.relays.includes(relay))nodes.add(relay);
     }
-    const order=this.relays.map((_,offset)=>(firstNode+offset)%this.relays.length),checks:Obj[]=[];
-    for(const index of order){
-      const relay=this.relays[index];if(!nodes.has(relay))continue;
+    const order=plan.relays.map((_,offset)=>(firstNode+offset)%plan.relays.length),checks:Obj[]=[];
+    for(const [offset,index] of order.entries()){
+      const relay=plan.relays[index];if(!nodes.has(relay))continue;
       if(performance.now()>=deadline){checks.push({node:index,state:'deferred',code:'network_replica_check_budget',retryable:true});continue;}
       try{
-        const {node}=await this.refresh(relay,deadline);
+        const {node}=await this.refresh(relay,this.attemptDeadline(deadline,order.slice(offset).filter(index=>nodes.has(plan.relays[index])).length));
+        this.checkPlanBinding(plan,relay,node);
         checks.push({node:index,state:'current',node_identity_verified:node!==null});
       }catch(error){const detail=errorData(error);if(detail.code==='network_budget_exhausted')detail.code='network_replica_check_budget';checks.push({node:index,state:'failed',...detail});}
     }
@@ -923,28 +1021,32 @@ export class NetworkPeer {
   pump(maximumMessages=4,maximumSeconds=10,receiveLimit=4):Promise<Obj>{return this.serial(async()=>{
     if(!Number.isSafeInteger(maximumMessages)||maximumMessages<0||maximumMessages>16||!Number.isSafeInteger(maximumSeconds)||maximumSeconds<1||maximumSeconds>60||!Number.isSafeInteger(receiveLimit)||receiveLimit<0||receiveLimit>4)fail('network_invalid_pump_budget');
     const start=performance.now(),deadline=start+maximumSeconds*1000;
-    const firstNode=maximumMessages?this.pumpStartNode():0;
-    const replicaChecks=maximumMessages?await this.checkReplicaNodes(start+maximumSeconds*500,firstNode):[],rows=this.pending(),cursor=this.state('pump_cursor')??0;
-    const errors:Obj[]=replicaChecks.filter(check=>check.state!=='current').map(({node,code,retryable})=>({node,code,retryable}));
+    // A no-work pump must not acquire new network connectivity.
+    let plan:RelayPlan;const selectionErrors:Obj[]=[];
+    if(this.relayPool&&!maximumMessages&&!receiveLimit)plan={relays:[],target:this.relayPool.replica_target};
+    else try{plan=await this.relayPlan(deadline);}catch(error){if(!this.relayPool||!(error instanceof NetworkCryptoError))throw error;plan={relays:[],target:this.relayPool.replica_target};selectionErrors.push(errorData(error));}
+    const firstNode=maximumMessages||(this.relayPool&&receiveLimit)?this.pumpStartNode(plan):0;
+    const replicaChecks=maximumMessages?await this.checkReplicaNodes(start+maximumSeconds*500,firstNode,plan):[],rows=this.pending(plan),cursor=this.state('pump_cursor')??0;
+    const errors:Obj[]=[...selectionErrors,...replicaChecks.filter(check=>check.state!=='current').map(({node,code,retryable})=>({node,code,retryable}))];
     const ordered=[...rows.filter(row=>row.position>cursor),...rows.filter(row=>row.position<=cursor)],outbound:Obj[]=[],attempted=new Set<string>();
     for(const selected of ordered.slice(0,maximumMessages)){
-      if(performance.now()>=deadline)break;attempted.add(selected.request_id);
+      if(performance.now()>=deadline||selectionErrors.length)break;attempted.add(selected.request_id);
       try{
         const row=this.outboxRows(selected.request_id,true)[0];if(!row)continue;
         const recipients=row.recipients?parse(row.recipients):row.envelope?parse(row.envelope).recipient_key_ids:null;
         if(recipients===null)fail('network_outbox_recipients_unavailable');
         if(!Array.isArray(recipients)||recipients.length<1||recipients.length>16||new Set(recipients).size!==recipients.length)fail('network_outbox_routing_mismatch');recipients.forEach(opaqueId);
-        const result=await this.deliver(row,recipients,deadline,true,firstNode);outbound.push({request_id:row.request_id,message_id:result.message_id,state:result.state,stored_nodes:result.stored_nodes,errors:result.errors});
+        const result=await this.deliver(row,recipients,deadline,true,firstNode,plan);outbound.push({request_id:row.request_id,message_id:result.message_id,state:result.state,stored_nodes:result.stored_nodes,errors:result.errors});
       }catch(error){const detail=errorData(error);outbound.push({request_id:selected.request_id,state:'queued_local',errors:[{...detail,requires_original_request:detail.code==='network_outbox_recipients_unavailable'}]});}
       this.put('pump_cursor',selected.position);
     }
-    const incoming=receiveLimit&&performance.now()<deadline?await this.receiveInternal(receiveLimit,deadline):null;
+    const incoming=receiveLimit&&performance.now()<deadline&&!selectionErrors.length?await this.receiveInternal(receiveLimit,deadline,plan,firstNode):null;
     const exhausted=performance.now()>=deadline;if(exhausted)errors.push({code:'network_budget_exhausted',retryable:true});
-    const remaining=this.pending(),all=[...errors,...outbound.flatMap(item=>item.errors),...(incoming?.errors??[])];
+    const remaining=this.pending(plan),all=[...errors,...outbound.flatMap(item=>item.errors),...(incoming?.errors??[])];
     const pendingIds=new Set(remaining.map(row=>row.request_id));
     const retryPending=outbound.some(item=>pendingIds.has(item.request_id)&&item.errors.length===0);
     const retryable=exhausted||remaining.some(row=>!attempted.has(row.request_id))||retryPending||all.some(error=>error.retryable);
-    return {state:exhausted?'budget_exhausted':retryable?'needs_retry':all.length?'needs_attention':'completed',outbound_attempted:attempted.size,outbound,remaining_outbox:remaining.length,stopped_query_messages:this.stoppedQueryMessages().size,receive:incoming,replica_checks:replicaChecks,errors,retryable,retry_after_ms:retryable?1000:0,elapsed_ms:Math.max(0,Math.floor(performance.now()-start)),budget_exhausted:exhausted,
-      limits:{maximum_messages:maximumMessages,maximum_seconds:maximumSeconds,receive_limit:receiveLimit},deadline_semantics:'cooperative_no_new_requests_after_deadline',worker_started:false};
+    return {state:exhausted?'budget_exhausted':retryable?'needs_retry':all.length?'needs_attention':'completed',outbound_attempted:attempted.size,outbound,remaining_outbox:remaining.length,stopped_query_messages:this.stoppedQueryMessages(plan).size,receive:incoming,replica_checks:replicaChecks,errors,retryable,retry_after_ms:retryable?1000:0,elapsed_ms:Math.max(0,Math.floor(performance.now()-start)),budget_exhausted:exhausted,
+      limits:{maximum_messages:maximumMessages,maximum_seconds:maximumSeconds,receive_limit:receiveLimit},deadline_semantics:'cooperative_no_new_requests_after_deadline',worker_started:false,...this.poolResult(plan)};
   });}
 }

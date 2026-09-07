@@ -1,6 +1,6 @@
 # network-v1: optional private communication carrier
 
-Status: **included in the alpha.5 release target**. The
+Status: **retained in the 0.27.0-alpha.1 release target**. The
 [content/v2 application payload](NETWORK_CONTENT_V2.md) differs from earlier
 previews; network-v1, core canonical records and share-v1 remain unchanged.
 See [release scope](RELEASE.md) for publication and private-upgrade limits.
@@ -39,7 +39,9 @@ parent. A message signature does not classify its text as an observation.
 The facade caps requests at 64 KiB and results at 8 KiB. Recall cursors freeze
 up to 32 selected immutable IDs and page UTF-8 fragments, not canonical records.
 Wire requests/polls have a separate 8 MiB cap. Alpha share attachments are at
-most 2 MiB, recipients at most 16, configured relays at most two. Existing large
+most 2 MiB, recipients at most 16, configured bootstrap relays at most two. An opt-in [signed relay pool](RELAY_POOL.md)
+selects at most four authorized candidates with one or two requested storage
+confirmations; it does not grant relay membership. Existing large
 file-pack support is unchanged; larger network handoffs need a future chunked
 message profile, never silent truncation. The same 8 KiB operation-result limit
 applies to the native Python, native TypeScript, NDJSON and trusted HTTP entries.

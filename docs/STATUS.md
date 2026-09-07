@@ -1,15 +1,21 @@
 # Memory Vault development status
 
-Current source: **0.26.0-alpha.5**. The optional communication-memory network
+Current source: **0.27.0-alpha.1**. The optional communication-memory network
 has a six-operation endpoint, independent issuer control, signed invitations,
-JWE encryption, two-node delivery, durable retries and endpoint receipts.
+JWE encryption, bounded relay-pool delivery, durable retries and endpoint receipts.
 Existing core records, personal backups, handoff packages and plugin entrypoints
 remain. Native encrypted Drive is wired to the existing queue; live cloud
 credentials/upload/readback remain unverified. See
 [current alpha evidence](RELEASE_NOTES_V0_26_ALPHA.md) and
 [network setup](NETWORK_QUICKSTART.md). No real-model or scale acceptance is claimed.
 
-Alpha.5 packages reviewed mainline work: chat/memory separation, separately
+The 0.27.0-alpha.1 feature adds opt-in signed relay discovery, a common bounded
+pool across different bootstrap entries, and fallback until the requested one
+or two storage confirmations are obtained. See [relay-pool scope](RELAY_POOL.md).
+Fresh issuer control and relay-local invitation admission remain necessary.
+This does not complete the earlier 24-hour or thousand-agent acceptance targets.
+
+Published alpha.5 packaged reviewed mainline work: chat/memory separation, separately
 authorized Memory Hints, frozen pages, explicit batch selection, cancellation
 and local received-batch recall with current trust information. See the
 [release scope](RELEASE.md), [Hint profile](NETWORK_HINTS_V4.md) and
@@ -37,7 +43,7 @@ candidate archives. Current source also includes an independent TypeScript
 persistent endpoint and native six-operation facade with bounded retrieval and
 dynamic handoff. [Its scope](NETWORK_TYPESCRIPT.md) still excludes complete old
 graph/cloud-worker parity and scale certification. The current release target has
-an [explicit prerelease link](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.5);
+an [explicit prerelease link](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.27.0-alpha.1);
 the release page establishes publication and asset availability.
 The current source also includes opt-in [deterministic v2 retrieval](RETRIEVAL_V2.md),
 bounded sender repair and aligned signed-storage-response validation; those

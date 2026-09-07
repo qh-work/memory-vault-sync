@@ -1,6 +1,6 @@
 """Explicit endpoint client for the optional taskless network-v1 carrier.
 
-Only configured origins are contacted. The local outbox is durable before a
+Only configured origins or an opted-in verified relay pool are contacted. The local outbox is durable before a
 network attempt, and each frozen ciphertext is reused on retry. Inbox cursors
 advance only after endpoint verification and durable local evidence storage.
 """
@@ -42,6 +42,15 @@ MAX_QUEUE_BYTES = 256 * 1024 * 1024
 MAX_BODY_SECONDS = 10
 MAX_QUARANTINE_MESSAGES = 128
 MAX_QUARANTINE_BYTES = 16 * 1024 * 1024
+
+
+def validate_relay_pool(value: Any) -> dict[str, int]:
+    if (not isinstance(value, dict) or set(value) != {"maximum_nodes", "replica_target"}
+            or type(value["maximum_nodes"]) is not int or not 2 <= value["maximum_nodes"] <= 4
+            or type(value["replica_target"]) is not int or not 1 <= value["replica_target"] <= 2
+            or value["replica_target"] > value["maximum_nodes"]):
+        raise MemoryError("network_invalid_relay_pool")
+    return dict(value)
 
 
 def _text_preview(text: str) -> str:
@@ -170,8 +179,10 @@ class NetworkClient:
             raise MemoryError("network_not_configured")
         config = strict_json_loads(raw)
         fields = {"schema_version", "network_id", "client_config_path", "state_directory", "encryption_key_path", "issuer_public_key", "relays", "authority_url"}
-        if not isinstance(config, dict) or set(config) != fields or config["schema_version"] != CONFIG_SCHEMA:
+        if (not isinstance(config, dict) or not fields <= set(config)
+                or set(config) - fields - {"relay_pool"} or config["schema_version"] != CONFIG_SCHEMA):
             raise MemoryError("network_invalid_config")
+        self.relay_pool = validate_relay_pool(config["relay_pool"]) if "relay_pool" in config else None
         self.network_id = opaque(config["network_id"])
         self.client_config = ClientConfig.load(Path(config["client_config_path"]))
         if self.client_config.identity_path is None or self.client_config.trust_path is None:
@@ -481,7 +492,7 @@ class NetworkClient:
                 if len(raw.encode() if isinstance(raw, str) else raw) > MAX_OUTBOX_RECEIPT_ROW_BYTES:
                     raise MemoryError("network_storage_receipt_capacity")
                 receipts = strict_json_loads(raw)
-                if not isinstance(receipts, dict) or len(receipts) > 2:
+                if not isinstance(receipts, dict) or len(receipts) > 4:
                     raise MemoryError("network_invalid_storage_receipt")
                 if not receipts:
                     continue
@@ -544,12 +555,84 @@ class NetworkClient:
     def _refresh_bound(self, relay: str, *, deadline: float | None = None) -> tuple[Mapping[str, Any], Mapping[str, Any] | None]:
         challenge = self._transport_request(relay, "GET", "/v1/status", deadline=deadline)
         response = self._status(challenge["nonce"], deadline=deadline)
+        if self.relay_pool is not None and relay not in [entry["base_url"] for entry in self._pool_entries(response)]:
+            raise MemoryError("network_node_inactive")
         binding = self._bind_node(relay, challenge, response)
         self._transport_request(relay, "POST", "/v1/status", response, deadline=deadline)
         with self.db() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._assert_node(connection, relay, binding)
         return response["roster"], binding
+
+    def _pool_entries(self, response: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        if "nodes" not in response or "node_status" not in response:
+            raise MemoryError("network_node_directory_required")
+        return self._selected_entries(response["nodes"]["payload"])
+
+    def _selected_entries(self, directory: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+        entries = sorted((entry for entry in directory["nodes"]
+                          if entry["status"] == "active" and "node.status" in entry["scope"]),
+                         key=lambda entry: entry["signing_key"]["key_id"])
+        return entries[:self.relay_pool["maximum_nodes"]]
+
+    def _relay_plan(self, *, response: Mapping[str, Any] | None = None,
+                    deadline: float | None = None) -> dict[str, Any]:
+        if self.relay_pool is None:
+            return {"relays": tuple(self.relays), "replica_target": len(self.relays)}
+        response = response if response is not None else self._status("nonce_" + secrets.token_hex(24), deadline=deadline)
+        entries = self._pool_entries(response)
+        if not entries:
+            raise MemoryError("network_relay_pool_empty", retryable=True)
+        eligible = sum(entry["status"] == "active" and "node.status" in entry["scope"]
+                       for entry in response["nodes"]["payload"]["nodes"])
+        return {"relays": tuple(entry["base_url"] for entry in entries),
+                "replica_target": self.relay_pool["replica_target"],
+                "bindings": {entry["base_url"]: {key: entry[key] for key in ("signing_key", "base_url", "storage_epoch")}
+                             for entry in entries},
+                "nodes": tuple({"key_id": entry["signing_key"]["key_id"]} for entry in entries),
+                "directory_version": response["nodes"]["payload"]["version"], "pool_partial": eligible > len(entries)}
+
+    def _pool_result(self, plan: Mapping[str, Any]) -> dict[str, Any]:
+        return ({} if self.relay_pool is None else {"relay_pool_enabled": True,
+                "candidate_nodes": len(plan["relays"]), "replica_target": plan["replica_target"]})
+
+    def _check_plan_binding(self, plan: Mapping[str, Any], relay: str, binding: Any) -> None:
+        if self.relay_pool is not None and plan["bindings"].get(relay) != binding:
+            raise MemoryError("network_node_identity_changed")
+
+    def _receipt_addresses(self, connection: sqlite3.Connection, plan: Mapping[str, Any]) -> set[str]:
+        selected = set(plan["relays"])
+        if self.relay_pool is None:
+            return selected
+        saved = connection.execute("SELECT value FROM state WHERE key='node_directory'").fetchone()
+        if saved is None:
+            return set()
+        # The checkpoint was independently verified by this operation's status
+        # refresh. A later refresh can narrow eligibility, never alter its loop.
+        directory = strict_json_loads(saved["value"])["payload"]
+        result = set()
+        for entry in self._selected_entries(directory):
+            address = entry["base_url"]
+            if address not in selected:
+                continue
+            binding = connection.execute("SELECT value FROM state WHERE key=?", ("node:" + address,)).fetchone()
+            expected = {key: entry[key] for key in ("signing_key", "base_url", "storage_epoch")}
+            if (binding is not None and strict_json_loads(binding["value"]) == expected
+                    and plan.get("bindings", {}).get(address) == expected):
+                result.add(address)
+        return result
+
+    def _attempt_deadline(self, deadline: float | None, remaining: int) -> float | None:
+        if self.relay_pool is None or deadline is None:
+            return deadline
+        now = time.monotonic()
+        return now + max(0, deadline - now) / max(1, remaining)
+
+    def _attempt_code(self, code: str, node_deadline: float | None, deadline: float | None) -> str:
+        if (self.relay_pool is not None and code == "network_budget_exhausted" and deadline is not None
+                and node_deadline is not None and node_deadline < deadline and time.monotonic() < deadline):
+            return "network_relay_attempt_budget"
+        return code
 
     @staticmethod
     def _members(roster: Mapping[str, Any]) -> dict[str, Any]:
@@ -586,10 +669,15 @@ class NetworkClient:
                 # after a successful admission and independent current status.
                 trust = PublicKeyTrust([m["signing_key"] for m in self._members(invited_roster).values()])
                 open_envelope(handoff, self.encryption, trust, network_id=self.network_id)
+        deadline = time.monotonic() + 10 if self.relay_pool is not None else None
+        plan = self._relay_plan(deadline=deadline)
+        relays = plan["relays"]
         joined, errors = [], []
-        for relay in self.relays:
+        for index, relay in enumerate(relays):
+            node_deadline = self._attempt_deadline(deadline, len(relays) - index)
             try:
-                current, node_binding = self._refresh_bound(relay)
+                current, node_binding = self._refresh_bound(relay, deadline=node_deadline)
+                self._check_plan_binding(plan, relay, node_binding)
                 if invitation is not None:
                     join_key = "join:" + relay + ":" + invite["invite_id"]
                     with self.db() as connection:
@@ -603,7 +691,7 @@ class NetworkClient:
                     else:
                         if expired_invitation:
                             raise MemoryError("network_control_expired")
-                        challenge = self.transport.request(relay, "POST", "/v1/join", {"invite": invite_doc, "roster": invited_roster})["challenge"]
+                        challenge = self._transport_request(relay, "POST", "/v1/join", {"invite": invite_doc, "roster": invited_roster}, deadline=node_deadline)["challenge"]
                         answer = open_join_challenge(challenge, self.encryption, network_id=self.network_id, invite_id=invite["invite_id"])
                         proof = self._request("join", {"invite_sha256": document_sha256(invite_doc),
                                                        "challenge_id": challenge["challenge_id"], "challenge_answer": answer}, request_id=request_id)
@@ -613,13 +701,13 @@ class NetworkClient:
                             connection.execute("INSERT OR IGNORE INTO state VALUES(?,?)", (join_key, canonical_bytes(proof).decode()))
                             proof = strict_json_loads(connection.execute("SELECT value FROM state WHERE key=?", (join_key,)).fetchone()[0])
                     try:
-                        joined_result = self.transport.request(relay, "POST", "/v1/join", {"invite": invite_doc, "roster": invited_roster, "request": proof})
+                        joined_result = self._transport_request(relay, "POST", "/v1/join", {"invite": invite_doc, "roster": invited_roster, "request": proof}, deadline=node_deadline)
                     except MemoryError as exc:
                         if expired_invitation or exc.code not in {"network_control_expired", "relay_join_challenge_required"}:
                             raise
                         # Exact retry comes first. Only an explicit rejection
                         # of an unconsumed/expired proof permits a new one.
-                        challenge = self.transport.request(relay, "POST", "/v1/join", {"invite": invite_doc, "roster": invited_roster})["challenge"]
+                        challenge = self._transport_request(relay, "POST", "/v1/join", {"invite": invite_doc, "roster": invited_roster}, deadline=node_deadline)["challenge"]
                         answer = open_join_challenge(challenge, self.encryption, network_id=self.network_id, invite_id=invite["invite_id"])
                         fresh_proof = self._request("join", {"invite_sha256": document_sha256(invite_doc),
                             "challenge_id": challenge["challenge_id"], "challenge_answer": answer})
@@ -629,30 +717,54 @@ class NetworkClient:
                             connection.execute("UPDATE state SET value=? WHERE key=? AND value=?",
                                 (canonical_bytes(fresh_proof).decode(), join_key, canonical_bytes(proof).decode()))
                             proof = strict_json_loads(connection.execute("SELECT value FROM state WHERE key=?", (join_key,)).fetchone()[0])
-                        joined_result = self.transport.request(relay, "POST", "/v1/join", {"invite": invite_doc, "roster": invited_roster, "request": proof})
+                        joined_result = self._transport_request(relay, "POST", "/v1/join", {"invite": invite_doc, "roster": invited_roster, "request": proof}, deadline=node_deadline)
                     if (joined_result.get("state") != "joined" or joined_result.get("network_id") != self.network_id
                             or joined_result.get("member_key_id") != self.identity.key_id or joined_result.get("invite_id") != invite["invite_id"]):
                         raise MemoryError("network_invalid_join_receipt")
                 else:
                     # A status refresh is not proof the member has joined.
-                    self.transport.request(relay, "POST", "/v1/poll", self._request("poll", {"cursor": 0, "receipt_cursor": 0, "limit": 1, "maximum_bytes": MAX_WIRE_BYTES}))
+                    self._transport_request(relay, "POST", "/v1/poll", self._request("poll", {"cursor": 0, "receipt_cursor": 0, "limit": 1, "maximum_bytes": MAX_WIRE_BYTES}), deadline=node_deadline)
                 with self.db() as connection:
                     connection.execute("BEGIN IMMEDIATE")
                     self._assert_node(connection, relay, node_binding)
                 joined.append(relay)
             except (MemoryError, TrustError) as exc:
-                errors.append({"node": self.relays.index(relay), "code": exc.code})
+                if self.relay_pool is not None and exc.code == "relay_member_already_joined":
+                    # A new invitation can add a candidate without consuming
+                    # another invitation at already-admitted nodes. Count those
+                    # only after the ordinary signed membership check succeeds.
+                    try:
+                        current, node_binding = self._refresh_bound(relay, deadline=node_deadline)
+                        self._check_plan_binding(plan, relay, node_binding)
+                        self._transport_request(relay, "POST", "/v1/poll", self._request("poll", {
+                            "cursor": 0, "receipt_cursor": 0, "limit": 1, "maximum_bytes": MAX_WIRE_BYTES}), deadline=node_deadline)
+                        with self.db() as connection:
+                            connection.execute("BEGIN IMMEDIATE")
+                            self._assert_node(connection, relay, node_binding)
+                        joined.append(relay)
+                        continue
+                    except (MemoryError, TrustError) as membership_error:
+                        exc = membership_error
+                code = self._attempt_code(exc.code, node_deadline, deadline)
+                errors.append({"node": index, "code": code})
+                if code == "network_budget_exhausted":
+                    break
         if joined and invitation is not None and invitation.get("handoff") is not None:
             self._accept(invitation["handoff"], current)
         return {"state": "connected" if joined else "not_connected", "joined_nodes": len(joined),
-                "configured_nodes": len(self.relays), "degraded": len(joined) != len(self.relays), "errors": errors,
+                "configured_nodes": len(self.relays), "degraded": len(joined) != len(relays), "errors": errors, **self._pool_result(plan),
                 "member_key_id": self.identity.key_id, "network_accessed": True}
 
     def discover(self, online: bool = True) -> Mapping[str, Any]:
-        response = self._status(secrets.token_hex(24))
+        response = self._status(secrets.token_hex(24), deadline=time.monotonic() + 10 if self.relay_pool is not None else None)
         members = list(self._members(response["roster"]).values())
+        pool = {}
+        if self.relay_pool is not None:
+            plan = self._relay_plan(response=response)
+            pool = {**self._pool_result(plan), "nodes": list(plan["nodes"]),
+                    "directory_version": plan["directory_version"], "pool_partial": plan["pool_partial"]}
         return {"network_id": self.network_id, "members": [{"key_id": item["signing_key"]["key_id"], "scope": item["scope"]} for item in members[:32]],
-                "member_count": len(members), "partial": len(members) > 32, "configured_nodes": len(self.relays), "network_accessed": True}
+                "member_count": len(members), "partial": len(members) > 32, "configured_nodes": len(self.relays), "network_accessed": True, **pool}
 
     def _prepare_body(self, request_id: str, text: str, memory_ids: list[str]) -> bytes:
         if memory_ids:
@@ -762,10 +874,10 @@ class NetworkClient:
         return self._deliver(prior, recipients)
 
     def _deliver(self, prior: Mapping[str, Any], recipients: list[str], *, deadline: float | None = None,
-                 pending_only: bool = False, first_node: int = 0) -> Mapping[str, Any]:
+                 pending_only: bool = False, first_node: int = 0, _plan: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
         local_cancellation = prior.get("_local_cancellation") if isinstance(prior, dict) else None
         try:
-            return self._deliver_impl(prior, recipients, deadline=deadline, pending_only=pending_only, first_node=first_node)
+            return self._deliver_impl(prior, recipients, deadline=deadline, pending_only=pending_only, first_node=first_node, _plan=_plan)
         except StorageError as exc:
             if not local_cancellation:
                 raise
@@ -777,11 +889,11 @@ class NetworkClient:
                     "retry_same_request_id": True, "understood": False, **local_cancellation}
 
     def _deliver_impl(self, prior: Mapping[str, Any], recipients: list[str], *, deadline: float | None = None,
-                 pending_only: bool = False, first_node: int = 0) -> Mapping[str, Any]:
+                 pending_only: bool = False, first_node: int = 0, _plan: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
         """Reuse durable content; never export memory or reseal a frozen row."""
         content = validate_content(bytes(prior["body"]))
         request_id, message_id = prior["request_id"], prior["message_id"]
-        receipts = {node: receipt for node, receipt in strict_json_loads(prior["receipts"]).items() if node in self.relays}
+        receipts = strict_json_loads(prior["receipts"])
         errors = []
         envelope = strict_json_loads(prior["envelope"]) if prior["envelope"] else None
         frozen_roster = strict_json_loads(prior["roster"]) if prior["roster"] else None
@@ -789,24 +901,47 @@ class NetworkClient:
             raise MemoryError("network_outbox_routing_mismatch")
         from memory_vault_network_hints import stopped, cancellation_result
         is_stopped = stopped(self, content, message_id)
-        for offset in range(len(self.relays)):
+        if self.relay_pool is not None and deadline is None:
+            deadline = time.monotonic() + 10
+        if _plan is None:
+            if self.relay_pool is not None and is_stopped:
+                _plan = {"relays": (), "replica_target": self.relay_pool["replica_target"]}
+            else:
+                try:
+                    _plan = self._relay_plan(deadline=deadline)
+                except (MemoryError, TrustError) as exc:
+                    if self.relay_pool is None:
+                        raise
+                    _plan = {"relays": (), "replica_target": self.relay_pool["replica_target"]}
+                    errors.append({"code": exc.code, "retryable": getattr(exc, "retryable", False)})
+        relays, target = _plan["relays"], _plan["replica_target"]
+        if is_stopped:
+            errors = [{"code": "network_hint_not_available", "retryable": False}]
+        for offset in range(len(relays)):
             if is_stopped or stopped(self, content, message_id):
                 is_stopped = True
                 errors = [{"code": "network_hint_not_available", "retryable": False}]
                 break
-            relay = self.relays[(first_node + offset) % len(self.relays)]
-            if pending_only and relay in receipts:
+            with self.db() as connection:
+                latest = self._outbox_rows(connection, request_id)[0]
+                receipts = strict_json_loads(latest["receipts"])
+                eligible = self._receipt_addresses(connection, _plan)
+            if self.relay_pool is not None and len(eligible.intersection(receipts)) >= target:
+                break
+            relay = relays[(first_node + offset) % len(relays)]
+            if (pending_only or self.relay_pool is not None) and relay in receipts and relay in eligible:
                 continue
-            node_deadline = deadline
-            if pending_only and deadline is not None:
+            node_deadline = self._attempt_deadline(deadline, len(relays) - offset)
+            if self.relay_pool is None and pending_only and deadline is not None:
                 # Leave each remaining missing replica an opportunity even
                 # when row rotation repeatedly meets the same slow first node.
-                remaining_nodes = sum(self.relays[(first_node + index) % len(self.relays)] not in receipts
-                                      for index in range(offset, len(self.relays)))
+                remaining_nodes = sum(relays[(first_node + index) % len(relays)] not in receipts
+                                      for index in range(offset, len(relays)))
                 at = time.monotonic()
                 node_deadline = at + max(0, deadline - at) / remaining_nodes
             try:
                 current, node_binding = self._refresh_bound(relay, deadline=node_deadline)
+                self._check_plan_binding(_plan, relay, node_binding)
                 if node_deadline is not None and time.monotonic() >= node_deadline:
                     raise MemoryError("network_budget_exhausted", retryable=True)
                 members = self._members(current)
@@ -831,6 +966,10 @@ class NetworkClient:
                 if any(k not in historical or historical[k] != members[k] for k in [self.identity.key_id, *recipients]):
                     raise MemoryError("network_frozen_recipient_changed")
                 guard(self, content, recipients, own_message_id=message_id)
+                with self.db() as connection:
+                    existing_receipts = strict_json_loads(self._outbox_rows(connection, request_id)[0]["receipts"])
+                    if relay not in existing_receipts and len(existing_receipts) >= 4:
+                        raise MemoryError("network_storage_receipt_capacity")
                 response = self._transport_request(relay, "POST", "/v1/messages", {"envelope": envelope, "roster": frozen_roster}, deadline=node_deadline)
                 if (response.get("state") != "stored" or response.get("message_id") != message_id
                         or response.get("envelope_sha256") != document_sha256(envelope)):
@@ -844,27 +983,34 @@ class NetworkClient:
                     # historical receipt while this request was in flight.
                     # Merge with the current row, not a stale pre-I/O snapshot.
                     latest = self._outbox_rows(connection, request_id)[0]
-                    receipts = {node: receipt for node, receipt in strict_json_loads(latest["receipts"]).items() if node in self.relays}
+                    receipts = strict_json_loads(latest["receipts"])
+                    if relay not in receipts and len(receipts) >= 4:
+                        raise MemoryError("network_storage_receipt_capacity")
                     receipts[relay] = response
-                    connection.execute("UPDATE outbox SET receipts=? WHERE request_id=?", (canonical_bytes(receipts).decode(), request_id))
+                    encoded_receipts = canonical_bytes(receipts)
+                    if len(encoded_receipts) > MAX_OUTBOX_RECEIPT_ROW_BYTES:
+                        raise MemoryError("network_storage_receipt_capacity")
+                    connection.execute("UPDATE outbox SET receipts=? WHERE request_id=?", (encoded_receipts.decode(), request_id))
+                    check_outbox_receipt_bounds(connection)
             except (MemoryError, TrustError) as exc:
                 if stopped(self, content, message_id):
                     is_stopped = True
                     errors = [{"code": "network_hint_not_available", "retryable": False}]
                     break
-                code = exc.code
-                if (pending_only and code == "network_budget_exhausted" and deadline is not None
+                code = self._attempt_code(exc.code, node_deadline, deadline)
+                if (self.relay_pool is None and pending_only and code == "network_budget_exhausted" and deadline is not None
                         and node_deadline is not None and node_deadline < deadline and time.monotonic() < deadline):
                     code = "network_replica_send_budget"
-                errors.append({"node": self.relays.index(relay), "code": code, "retryable": getattr(exc, "retryable", False)})
+                errors.append({"node": relays.index(relay), "code": code, "retryable": getattr(exc, "retryable", False)})
                 if code == "network_budget_exhausted":
                     break
         with self.db() as connection:
             latest = self._outbox_rows(connection, request_id)[0]
-            receipts = {node: receipt for node, receipt in strict_json_loads(latest["receipts"]).items() if node in self.relays}
+            receipts = strict_json_loads(latest["receipts"])
+            stored_count = len(self._receipt_addresses(connection, _plan).intersection(receipts))
             validated = [row[0] for row in connection.execute("SELECT recipient FROM acknowledgements WHERE message_id=?", (message_id,))]
-        return {"state": "stopped_query" if is_stopped else "stored" if len(receipts) == len(self.relays) else "queued_local", "message_id": message_id,
-                "stored_nodes": len(receipts), "configured_nodes": len(self.relays), "degraded": len(receipts) < len(self.relays),
+        return {"state": "stopped_query" if is_stopped else "stored" if stored_count >= target else "queued_local", "message_id": message_id,
+                "stored_nodes": stored_count, "configured_nodes": len(self.relays), "degraded": stored_count < target, **self._pool_result(_plan),
                 "validated_recipients": validated, "endpoint_validated": set(recipients).issubset(validated),
                 "understood": False, "errors": errors, "retry_same_request_id": True,
                 "content_kind": content["kind"], "text_memory_id": None,
@@ -889,11 +1035,14 @@ class NetworkClient:
             raise MemoryError("network_outbox_capacity")
         return {row["request_id"] for row in rows if row["query_id"] in cancelled}
 
-    def _pending_outbox(self) -> tuple[list[tuple[int, str]], int]:
+    def _pending_outbox(self, _plan: Mapping[str, Any] | None = None) -> tuple[list[tuple[int, str]], int]:
+        _plan = _plan if _plan is not None else {"relays": tuple(self.relays),
+                "replica_target": self.relay_pool["replica_target"] if self.relay_pool else len(self.relays)}
         with self.db() as connection:
             rows = self._outbox_rows(connection)
             cursor = connection.execute("SELECT value FROM state WHERE key='pump_cursor'").fetchone()
             stopped = self._stopped_outbox(connection)
+            eligible = self._receipt_addresses(connection, _plan)
         if len(rows) > 1024:
             raise MemoryError("network_outbox_capacity")
         pending = []
@@ -901,26 +1050,31 @@ class NetworkClient:
             receipts = strict_json_loads(row["receipts"])
             if not isinstance(receipts, dict):
                 raise MemoryError("network_invalid_storage_receipt")
-            if not set(self.relays).issubset(receipts) and row["request_id"] not in stopped:
+            if len(eligible.intersection(receipts)) < _plan["replica_target"] and row["request_id"] not in stopped:
                 pending.append((row["position"], row["request_id"]))
         return pending, integer(strict_json_loads(cursor["value"])) if cursor else 0
 
-    def _pump_start_node(self) -> int:
+    def _pump_start_node(self, node_count: int | None = None) -> int:
+        node_count = len(self.relays) if node_count is None else node_count
+        if not node_count:
+            return 0
         with self.db() as connection:
             connection.execute("BEGIN IMMEDIATE")
             saved = connection.execute("SELECT value FROM state WHERE key='pump_node_cursor'").fetchone()
-            cursor = integer(strict_json_loads(saved["value"])) % len(self.relays) if saved else 0
+            cursor = integer(strict_json_loads(saved["value"])) % node_count if saved else 0
             connection.execute("INSERT OR REPLACE INTO state VALUES('pump_node_cursor',?)",
-                               (str((cursor + 1) % len(self.relays)),))
+                               (str((cursor + 1) % node_count),))
         return cursor
 
-    def _check_replica_nodes(self, deadline: float, first_node: int) -> list[Mapping[str, Any]]:
+    def _check_replica_nodes(self, deadline: float, first_node: int, _plan: Mapping[str, Any] | None = None) -> list[Mapping[str, Any]]:
         """Recheck configured nodes with historical receipts before selecting work.
 
         A receipt proves an earlier save, not that the same node incarnation
         still serves this address. Only authenticated replacement invalidates
         it; unavailability or an invalid challenge must not erase that evidence.
         """
+        _plan = self._relay_plan(deadline=deadline) if _plan is None else _plan
+        relays = _plan["relays"]
         with self.db() as connection:
             rows = self._outbox_rows(connection)
         if len(rows) > 1024:
@@ -930,21 +1084,24 @@ class NetworkClient:
             receipts = strict_json_loads(row["receipts"])
             if not isinstance(receipts, dict):
                 raise MemoryError("network_invalid_storage_receipt")
-            nodes.update(node for node in receipts if node in self.relays)
+            nodes.update(node for node in receipts if node in relays)
         checks = []
-        for offset in range(len(self.relays)):
-            index = (first_node + offset) % len(self.relays)
-            relay = self.relays[index]
+        for offset in range(len(relays)):
+            index = (first_node + offset) % len(relays)
+            relay = relays[index]
             if relay not in nodes:
                 continue
             if time.monotonic() >= deadline:
                 checks.append({"node": index, "state": "deferred", "code": "network_replica_check_budget", "retryable": True})
                 continue
             try:
-                _, binding = self._refresh_bound(relay, deadline=deadline)
+                node_deadline = self._attempt_deadline(deadline, len(relays) - offset)
+                _, binding = self._refresh_bound(relay, deadline=node_deadline)
+                self._check_plan_binding(_plan, relay, binding)
                 checks.append({"node": index, "state": "current", "node_identity_verified": binding is not None})
             except (MemoryError, TrustError) as exc:
-                code = "network_replica_check_budget" if exc.code == "network_budget_exhausted" else exc.code
+                code = self._attempt_code(exc.code, node_deadline, deadline)
+                code = "network_replica_check_budget" if code == "network_budget_exhausted" else code
                 checks.append({"node": index, "state": "failed", "code": code,
                                "retryable": getattr(exc, "retryable", False)})
         return checks
@@ -953,7 +1110,7 @@ class NetworkClient:
         """Explicit bounded retry/receive pass, never a daemon or scheduler.
 
         maximum_messages caps outbox attempts (0..16); a nonzero value also
-        refreshes up to two configured nodes with historical storage receipts,
+        refreshes the bounded selected nodes with historical storage receipts,
         before choosing pending rows. receive_limit separately
         caps incoming messages (0..4). The 1..60 second cooperative deadline
         starts no new network requests after expiry and limits HTTP timeouts.
@@ -966,18 +1123,28 @@ class NetworkClient:
             raise MemoryError("network_invalid_pump_budget")
         started = time.monotonic()
         deadline = started + maximum_seconds
+        selection_errors = []
+        if self.relay_pool is not None and (maximum_messages or receive_limit):
+            try:
+                plan = self._relay_plan(deadline=deadline)
+            except (MemoryError, TrustError) as exc:
+                plan = {"relays": (), "replica_target": self.relay_pool["replica_target"]}
+                selection_errors.append({"code": exc.code, "retryable": getattr(exc, "retryable", False)})
+        else:
+            plan = {"relays": tuple(self.relays) if self.relay_pool is None else (),
+                    "replica_target": self.relay_pool["replica_target"] if self.relay_pool else len(self.relays)}
         # Rotate once per pass, even when no receipt exists yet. Otherwise a
         # slow first node can starve all delivery to the other configured node.
-        first_node = self._pump_start_node() if maximum_messages else 0
-        replica_checks = self._check_replica_nodes(started + maximum_seconds / 2, first_node) if maximum_messages else []
-        pending, cursor = self._pending_outbox()
+        first_node = self._pump_start_node(len(plan["relays"])) if maximum_messages or (self.relay_pool and receive_limit) else 0
+        replica_checks = self._check_replica_nodes(started + maximum_seconds / 2, first_node, plan) if maximum_messages else []
+        pending, cursor = self._pending_outbox(plan)
         ordered = [item for item in pending if item[0] > cursor] + [item for item in pending if item[0] <= cursor]
         outgoing = []
-        errors = [{"node": check["node"], "code": check["code"], "retryable": check["retryable"]}
+        errors = selection_errors + [{"node": check["node"], "code": check["code"], "retryable": check["retryable"]}
                   for check in replica_checks if check["state"] != "current"]
         attempted = set()
         for position, request_id in ordered[:maximum_messages]:
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= deadline or selection_errors:
                 break
             attempted.add(request_id)
             try:
@@ -996,7 +1163,7 @@ class NetworkClient:
                     raise MemoryError("network_outbox_routing_mismatch")
                 for key in recipients:
                     opaque(key)
-                result = self._deliver(prior, recipients, deadline=deadline, pending_only=True, first_node=first_node)
+                result = self._deliver(prior, recipients, deadline=deadline, pending_only=True, first_node=first_node, _plan=plan)
                 outgoing.append({"request_id": request_id, "message_id": result["message_id"],
                                  "state": result["state"], "stored_nodes": result["stored_nodes"], "errors": result["errors"]})
             except (MemoryError, TrustError) as exc:
@@ -1008,15 +1175,16 @@ class NetworkClient:
                 # item cannot starve other queued deliveries on every pass.
                 connection.execute("INSERT OR REPLACE INTO state VALUES('pump_cursor',?)", (str(position),))
         incoming = None
-        if receive_limit and time.monotonic() < deadline:
-            incoming = self.receive(receive_limit, _deadline=deadline)
+        if receive_limit and time.monotonic() < deadline and not selection_errors:
+            incoming = self.receive(receive_limit, _deadline=deadline, _plan=plan, _first_node=first_node)
         exhausted = time.monotonic() >= deadline
         if exhausted:
             errors.append({"code": "network_budget_exhausted", "retryable": True})
-        remaining, _ = self._pending_outbox()
+        remaining, _ = self._pending_outbox(plan)
         with self.db() as connection:
             stopped_ids = self._stopped_outbox(connection)
-            stopped_count = sum(row["request_id"] in stopped_ids and not set(self.relays).issubset(strict_json_loads(row["receipts"]))
+            eligible = self._receipt_addresses(connection, plan)
+            stopped_count = sum(row["request_id"] in stopped_ids and len(eligible.intersection(strict_json_loads(row["receipts"]))) < plan["replica_target"]
                                 for row in self._outbox_rows(connection))
         item_errors = [error for item in outgoing for error in item["errors"]]
         receive_errors = [] if incoming is None else incoming["errors"]
@@ -1035,7 +1203,8 @@ class NetworkClient:
                 "errors": errors, "retryable": retryable, "retry_after_ms": 1000 if retryable else 0,
                 "elapsed_ms": max(0, int((time.monotonic() - started) * 1000)), "budget_exhausted": exhausted,
                 "limits": {"maximum_messages": maximum_messages, "maximum_seconds": maximum_seconds, "receive_limit": receive_limit},
-                "deadline_semantics": "cooperative_no_new_requests_after_deadline", "worker_started": False}
+                "deadline_semantics": "cooperative_no_new_requests_after_deadline", "worker_started": False,
+                **self._pool_result(plan)}
 
     @staticmethod
     def _existing_delivery(connection: sqlite3.Connection, message_id: str, envelope_digest: str) -> Mapping[str, Any] | None:
@@ -1339,7 +1508,8 @@ class NetworkClient:
             except (MemoryError, ValueError, TypeError, KeyError, RecursionError):
                 raise MemoryError("received_batch_not_available") from None
 
-    def receive(self, limit: int = 4, *, _deadline: float | None = None) -> Mapping[str, Any]:
+    def receive(self, limit: int = 4, *, _deadline: float | None = None,
+                _plan: Mapping[str, Any] | None = None, _first_node: int | None = None) -> Mapping[str, Any]:
         if type(limit) is not int or not 1 <= limit <= 16:
             raise MemoryError("network_invalid_limit")
         # Keep the high-level result small; further invocations continue from
@@ -1347,17 +1517,36 @@ class NetworkClient:
         limit = min(limit, 4)
         received, errors, seen = [], [], set()
         unmatched_receipts = 0
-        for relay in self.relays:
+        if self.relay_pool is not None and _deadline is None:
+            _deadline = time.monotonic() + 10
+        if _plan is None:
+            try:
+                _plan = self._relay_plan(deadline=_deadline)
+            except (MemoryError, TrustError) as exc:
+                if self.relay_pool is None:
+                    raise
+                return {"messages": [], "partial": False,
+                        "errors": [{"code": exc.code, "retryable": getattr(exc, "retryable", False)}],
+                        "unmatched_receipts": 0, "network_accessed": True,
+                        "receipts_mean": "endpoint_validated_saved_not_understood",
+                        **self._pool_result({"relays": (), "replica_target": self.relay_pool["replica_target"]})}
+        relays = _plan["relays"]
+        first = (_first_node if _first_node is not None else self._pump_start_node(len(relays))) if self.relay_pool is not None else 0
+        for offset in range(len(relays)):
+            index = (first + offset) % len(relays)
+            relay = relays[index]
+            node_deadline = self._attempt_deadline(_deadline, len(relays) - offset)
             if len(received) >= limit:
                 break
             try:
-                current, node_binding = self._refresh_bound(relay, deadline=_deadline)
+                current, node_binding = self._refresh_bound(relay, deadline=node_deadline)
+                self._check_plan_binding(_plan, relay, node_binding)
                 with self.db() as connection:
                     connection.execute("BEGIN IMMEDIATE")
                     self._assert_node(connection, relay, node_binding)
                     row = connection.execute("SELECT value FROM state WHERE key=?", ("cursor:" + relay,)).fetchone()
                     cursors = strict_json_loads(row["value"]) if row else {"cursor": 0, "receipt_cursor": 0}
-                response = self._transport_request(relay, "POST", "/v1/poll", self._request("poll", {**cursors, "limit": limit - len(received), "maximum_bytes": MAX_WIRE_BYTES}), deadline=_deadline)
+                response = self._transport_request(relay, "POST", "/v1/poll", self._request("poll", {**cursors, "limit": limit - len(received), "maximum_bytes": MAX_WIRE_BYTES}), deadline=node_deadline)
                 with self.db() as connection:
                     connection.execute("BEGIN IMMEDIATE")
                     self._assert_node(connection, relay, node_binding)
@@ -1396,7 +1585,7 @@ class NetworkClient:
                     if ack["payload"]["body"] != expected_ack:
                         raise MemoryError("network_receipt_binding_mismatch")
                     try:
-                        ack_result = self._transport_request(relay, "POST", "/v1/ack", ack, deadline=_deadline)
+                        ack_result = self._transport_request(relay, "POST", "/v1/ack", ack, deadline=node_deadline)
                     except MemoryError as exc:
                         if exc.code != "network_control_expired":
                             raise
@@ -1407,7 +1596,7 @@ class NetworkClient:
                             connection.execute("UPDATE state SET value=? WHERE key=? AND value=?",
                                 (canonical_bytes(fresh_ack).decode(), ack_key, canonical_bytes(ack).decode()))
                             ack = strict_json_loads(connection.execute("SELECT value FROM state WHERE key=?", (ack_key,)).fetchone()[0])
-                        ack_result = self._transport_request(relay, "POST", "/v1/ack", ack, deadline=_deadline)
+                        ack_result = self._transport_request(relay, "POST", "/v1/ack", ack, deadline=node_deadline)
                     if (any(ack_result.get(key) != value for key, value in expected_ack.items())
                             or ack_result.get("recipient_key_id") != self.identity.key_id
                             or integer(ack_result.get("receipt_sequence"), minimum=1) > 4096 * 32):
@@ -1431,7 +1620,7 @@ class NetworkClient:
                             # revocation. Do not accept a new validated claim;
                             # retain already verified local receipts and make
                             # progress without trusting this first-seen claim.
-                            errors.append({"node": self.relays.index(relay), "code": "network_receipt_peer_inactive", "retryable": False})
+                            errors.append({"node": index, "code": "network_receipt_peer_inactive", "retryable": False})
                             continue
                         signed = verify_request(receipt, peers, network_id=self.network_id, action="ack", now=receipt["payload"]["issued_at"])
                         body = signed["body"]
@@ -1465,9 +1654,10 @@ class NetworkClient:
                     advanced = {key: max(integer(latest_cursors[key]), value) for key, value in next_cursors.items()}
                     connection.execute("INSERT OR REPLACE INTO state VALUES(?,?)", ("cursor:" + relay, canonical_bytes(advanced).decode()))
             except (MemoryError, TrustError) as exc:
-                errors.append({"node": self.relays.index(relay), "code": exc.code, "retryable": getattr(exc, "retryable", False)})
-                if exc.code == "network_budget_exhausted":
+                code = self._attempt_code(exc.code, node_deadline, _deadline)
+                errors.append({"node": index, "code": code, "retryable": getattr(exc, "retryable", False)})
+                if code == "network_budget_exhausted":
                     break
         return {"messages": received, "partial": len(received) >= limit, "errors": errors,
                 "unmatched_receipts": unmatched_receipts, "network_accessed": True,
-                "receipts_mean": "endpoint_validated_saved_not_understood"}
+                "receipts_mean": "endpoint_validated_saved_not_understood", **self._pool_result(_plan)}

@@ -13,6 +13,8 @@ import {
 import type { DocumentInput, SigningIdentityDocument, SigningPublicDescriptor, EncryptionIdentityDocument } from './crypto.ts';
 import { absolutePath, readPrivate, NetworkError } from './io.ts';
 import { origin } from './transport.ts';
+import { validateRelayPool } from './nodes.ts';
+import type { RelayPoolOptions } from './nodes.ts';
 
 const CLIENT_SCHEMA = 'memory-vault-client-config/v1';
 const TRUST_SCHEMA = 'universal-memory-trust-store/v1';
@@ -29,6 +31,7 @@ export interface ConfigureNetworkOptions {
   readonly clientConfig: string; readonly encryptionKey: string; readonly issuerPublic: string;
   readonly networkId: string; readonly authorityUrl: string; readonly relays: readonly string[];
   readonly output: string;
+  readonly relayPool?: RelayPoolOptions;
 }
 export interface NetworkConfigured {
   readonly state: 'network_configured'; readonly config: string; readonly member_key_id: string;
@@ -291,8 +294,10 @@ export function createIdentity(directory: string): IdentityCreated {
 }
 export function configureNetwork(options: ConfigureNetworkOptions): NetworkConfigured {
   return checked(() => {
-    const raw = objectFields(document(options as unknown as DocumentInput, 65536),
-      ['clientConfig', 'encryptionKey', 'issuerPublic', 'networkId', 'authorityUrl', 'relays', 'output']);
+    const input = document(options as unknown as DocumentInput, 65536);
+    const raw = objectFields(input,
+      ['clientConfig', 'encryptionKey', 'issuerPublic', 'networkId', 'authorityUrl', 'relays', 'output', ...('relayPool' in input ? ['relayPool'] : [])]);
+    const relayPool = 'relayPool' in raw ? validateRelayPool(raw.relayPool) : null;
     const networkId = opaqueId(raw.networkId), authorityUrl = origin(raw.authorityUrl);
     if (!Array.isArray(raw.relays) || raw.relays.length < 1 || raw.relays.length > 2) fail('network_one_or_two_relays_required');
     const relays = raw.relays.map(origin);
@@ -316,7 +321,8 @@ export function configureNetwork(options: ConfigureNetworkOptions): NetworkConfi
     // to the selected issuer. No issuer is added to memory-author trust here.
     const issuer = validateSigningPublic(publicDocument(issuerPath));
     const configuration = { schema_version: NETWORK_SCHEMA, network_id: networkId, client_config_path: client.client,
-      state_directory: state, encryption_key_path: encryptionPath, issuer_public_key: issuer, relays, authority_url: authorityUrl };
+      state_directory: state, encryption_key_path: encryptionPath, issuer_public_key: issuer, relays, authority_url: authorityUrl,
+      ...(relayPool ? {relay_pool: relayPool} : {}) };
     const bytes = encoded(configuration);
     // Recheck current trust before the only output mutation.
     if (!readTrustedKeys(client.trust).some(key => key.key_id === signer.key_id)) fail('unknown_key');

@@ -9,6 +9,7 @@ Use:
 - AI_START_HERE.md — six operations; use an endpoint without implementing a protocol
 - docs/NETWORK_QUICKSTART.md — explicit low-permission setup and foreground services
 - docs/NETWORK_V1.md — signed invitations, E2EE, delivery and endpoint boundaries
+- docs/RELAY_POOL.md — optional signed node discovery, different bootstrap entries and failover
 - docs/V0_26_PLAN.md — current native-interface baseline; no external protocol adapters
 - .well-known/agent-memory.json — repository metadata, NOT a running endpoint
 
@@ -28,8 +29,9 @@ Implement, review, contribute:
 - CONTRIBUTING.md — useful contributions with synthetic data, never private logs or keys
 - SECURITY.md — limits of trust, ciphertext relays and local process isolation
 
-0.26.0-alpha.5 separates chat from memory and adds authorized, frozen Memory Hint
-pages, explicit batch selection, query cancellation and local received-batch recall.
+0.27.0-alpha.1 adds an opt-in bounded relay pool with independently signed node
+discovery, different bootstrap entries and automatic fallback. It retains chat/memory
+separation, authorized frozen Hint pages, batch selection, cancellation and local batch recall.
 See docs/NETWORK_HINTS_V4.md, docs/RECEIVED_BATCH_RECALL.md and docs/RELEASE.md.
 Experience Semantics and local provenance views preserve canonical records;
 docs/EXPERIENCE_VALIDATION.md retains the exact scope of earlier test campaigns.

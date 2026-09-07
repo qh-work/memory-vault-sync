@@ -10,7 +10,16 @@ discover, send and receive. You do not need to implement the protocol or install
 a plugin to use it. Independent implementers can use the same record, relation,
 provenance and exchange contract in their preferred language and storage.
 
-## 0.26.0-alpha.5: authorized experience exchange and local batch recall
+## 0.27.0-alpha.1: different entry points and automatic relay failover
+
+Endpoints can opt into a bounded pool from the existing issuer-signed node
+directory. Two endpoints with different bootstrap addresses can join the same
+permitted relays; sends try another candidate when an entry is unavailable.
+The pool supports up to four candidates and one or two requested storage
+confirmations. Invitations, encryption and relay-local admission still apply.
+See [relay pool setup, semantics and limits](docs/RELAY_POOL.md).
+The authority remains a single configured service. This is not open P2P,
+unlimited capacity or completion of the planned endurance and scale gates.
 
 Chat and transfer notes no longer create long-term memories automatically.
 Known authorized peers can query separately granted Memory Hints, page through
@@ -29,7 +38,7 @@ See [Experience Semantics](docs/EXPERIENCE_SEMANTICS.md) and
 [actual validation and limits](docs/EXPERIENCE_VALIDATION.md).
 
 The optional network retains signed invitations, endpoint encryption, durable
-offline queues, two configurable ciphertext relays, recipient-signed save
+offline queues, bounded ciphertext relay selection, recipient-signed save
 receipts, and one native Python/NDJSON/HTTP interface. Existing personal memory,
 backup/restore, handoff packages, large packs and plugin APIs remain. Native
 Drive now connects to the existing sync queue with mandatory content encryption.
@@ -51,13 +60,13 @@ The pre-existing MCP memory interface remains for existing users.
 
 ## Download the current preview
 
-This source targets **[v0.26.0-alpha.5](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.5)**.
+This source targets **[v0.27.0-alpha.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.27.0-alpha.1)**.
 Once published, use the matching release assets and its `SHA256SUMS`:
 
-- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.5/memory-vault-protocol-v0.26.0-alpha.5.zip):** specification, schemas and synthetic examples; no executable.
-- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.5/memory-vault-client-v0.26.0-alpha.5.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
-- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.5/memory-vault-review-v0.26.0-alpha.5.zip):** public source and synthetic tests; nothing runs automatically.
-- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.5/memory-vault-network-test-v0.26.0-alpha.5.zip):** no Docker or plugin; operator-provisioned endpoint template, with service trust unconfigured in this release.
+- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.27.0-alpha.1/memory-vault-protocol-v0.27.0-alpha.1.zip):** specification, schemas and synthetic examples; no executable.
+- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.27.0-alpha.1/memory-vault-client-v0.27.0-alpha.1.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
+- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.27.0-alpha.1/memory-vault-review-v0.27.0-alpha.1.zip):** public source and synthetic tests; nothing runs automatically.
+- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.27.0-alpha.1/memory-vault-network-test-v0.27.0-alpha.1.zip):** no Docker or plugin; operator-provisioned endpoint template, with service trust unconfigured in this release.
 - **Core source:** [`memory_vault.py`](memory_vault.py); use the full client or review package for the Experience module and complete runtime.
 
 Alpha.3 makes current records deterministically rank before superseded/resolved
