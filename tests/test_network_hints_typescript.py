@@ -9,7 +9,7 @@ from memory_vault_network_content import validate_content, content_text
 from memory_vault_network_crypto import document_sha256, seal
 from memory_vault_storage import atomic_write
 from tests import test_network_typescript_agent_network as runtime
-from tests.test_network_hints import control, policy, parser_vectors, outbox_row
+from tests.test_network_hints import control, policy, parser_vectors, outbox_row, single_select
 from tests.test_network_message_semantics import vault_snapshot, records, proofs
 
 
@@ -30,7 +30,7 @@ class TypeScriptHintCodecTests(unittest.TestCase):
         import base64
         valid, invalid = parser_vectors()
         values = [json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode() for value in valid + invalid]
-        values += [b'{"schema_version":"memory-vault-network-content/v2","kind":"hint_control","control":{"schema_version":"memory-vault-hint/v2","kind":"query","query":"one","query":"two"}}']
+        values += [b'{"schema_version":"memory-vault-network-content/v2","kind":"hint_control","control":{"schema_version":"memory-vault-hint/v3","kind":"query","query":"one","query":"two"}}']
         expected = []
         for raw in values:
             try:
@@ -138,8 +138,7 @@ const agent=new Agent""").replace("{results,calls,subprocessCalls}", "{results,c
                     self.assertNotIn(secret, canonical_bytes(hint).decode())
                 self.assertEqual([vault_snapshot(endpoint) for endpoint in endpoints], before)
                 chosen = requester_call(requester, {"op": "send", "request_id": "req_hint_ts_select_" + str(owner),
-                    "recipients": [host.identities[owner].key_id], "control": control("select",
-                        offer_message_id=offered["message_id"], memory_id=item["memory_id"])})
+                    "recipients": [host.identities[owner].key_id], "control": single_select(queried["message_id"], offered["message_id"], item["memory_id"])})
                 self.assertEqual(chosen["stored_nodes"], 2)
                 self.assertFalse(owner_call(owner, {"op": "receive"})["errors"])
                 transfer = owner_call(owner, {"op": "receive", "respond_to": chosen["message_id"]})
@@ -148,7 +147,7 @@ const agent=new Agent""").replace("{results,calls,subprocessCalls}", "{results,c
                 received = requester_call(requester, {"op": "receive"})
                 self.assertFalse(received["errors"], received)
                 message, = received["messages"]
-                self.assertEqual(message["content_kind"], "hint_transfer")
+                self.assertEqual(message["content_kind"], "hint_batch_transfer")
                 self.assertEqual(message["share"]["admission"], "verified")
                 self.assertEqual(message["share"]["records_added"], 2)
                 for memory_id in (root, selected):
@@ -169,9 +168,9 @@ const agent=new Agent""").replace("{results,calls,subprocessCalls}", "{results,c
         for index, full in enumerate(([], [visible])):
             self.set_policy(1, 0, [visible], full, revision=index + 1)
             before = [vault_snapshot(endpoint) for endpoint in (host.sender, host.receiver)]
-            _, offer, _ = self.exchange_offer(1, 0, self.ts_value, self.py_value, "denied_" + str(index))
+            queried, offer, _ = self.exchange_offer(1, 0, self.ts_value, self.py_value, "denied_" + str(index))
             selected = self.py_value(0, {"op": "send", "request_id": "req_hint_ts_denied_select_" + str(index),
-                "recipients": [host.identities[1].key_id], "control": control("select", offer_message_id=offer["message_id"], memory_id=visible)})
+                "recipients": [host.identities[1].key_id], "control": single_select(queried["message_id"], offer["message_id"], visible)})
             self.assertFalse(self.ts_value(1, {"op": "receive"})["errors"])
             refused = self.ts_value(1, {"op": "receive", "respond_to": selected["message_id"]})
             self.assertFalse(self.py_value(0, {"op": "receive"})["errors"])
@@ -207,8 +206,7 @@ const agent=new Agent""").replace("{results,calls,subprocessCalls}", "{results,c
                     self.assertNotIn(dependency, canonical_bytes(hints).decode())
                     self.assertNotIn(sensitive, canonical_bytes(hints).decode())
                     chosen = requester_call(requester, {"op": "send", "request_id": "req_hint_privacy_select_" + suffix,
-                        "recipients": [host.identities[owner].key_id], "control": control("select",
-                            offer_message_id=offered["message_id"], memory_id=selected)})
+                        "recipients": [host.identities[owner].key_id], "control": single_select(hints["query_message_id"], offered["message_id"], selected)})
                     self.assertEqual(chosen["stored_nodes"], 2, chosen)
                     self.assertFalse(owner_call(owner, {"op": "receive"})["errors"])
                     refused = owner_call(owner, {"op": "receive", "respond_to": chosen["message_id"]})
@@ -234,9 +232,9 @@ const agent=new Agent""").replace("{results,calls,subprocessCalls}", "{results,c
         dependency = self.remember(1, "retry_dependency", "Synthetic private retry dependency")
         mid = self.remember(1, "retry", "Synthetic needle guarded retry", [{"type": "derived_from", "target": dependency}])
         self.set_policy(1, 0, [mid], [mid, dependency])
-        _, offer, _ = self.exchange_offer(1, 0, self.ts_value, self.py_value, "retry")
+        queried, offer, _ = self.exchange_offer(1, 0, self.ts_value, self.py_value, "retry")
         selected = self.py_value(0, {"op": "send", "request_id": "req_hint_ts_guarded_selection",
-            "recipients": [host.identities[1].key_id], "control": control("select", offer_message_id=offer["message_id"], memory_id=mid)})
+            "recipients": [host.identities[1].key_id], "control": single_select(queried["message_id"], offer["message_id"], mid)})
         self.assertFalse(self.ts_value(1, {"op": "receive"})["errors"])
         host.relays[1].stop()
         pending = self.ts_value(1, {"op": "receive", "respond_to": selected["message_id"]})

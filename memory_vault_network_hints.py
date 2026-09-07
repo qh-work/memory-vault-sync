@@ -365,26 +365,37 @@ def _offer(network: Any, offer_id: str, recipient: str, memory_id: str, *, incom
     return control
 
 
+def _selection_offers(network: Any, control: Mapping[str, Any], recipient: str, *, incoming: bool) -> int:
+    expires_at, revision = None, None
+    for selected in control["selections"]:
+        offer = _offer(network, selected["offer_message_id"], recipient, selected["memory_id"], incoming=incoming)
+        if (offer["query_message_id"] != control["query_message_id"]
+                or expires_at is not None and offer["expires_at"] != expires_at
+                or revision is not None and offer["policy_revision"] != revision):
+            raise _denied()
+        expires_at, revision = offer["expires_at"], offer["policy_revision"]
+    if expires_at is None:
+        raise _denied()
+    return expires_at
+
+
 def validate_select(network: Any, control: Mapping[str, Any], recipient: str) -> None:
-    _offer(network, control["offer_message_id"], recipient, control["memory_id"], incoming=True)
+    _selection_offers(network, control, recipient, incoming=True)
 
 
-def validate_incoming_transfer(network: Any, body: Mapping[str, Any], sender: str) -> None:
+def validate_incoming_transfer(network: Any, body: Mapping[str, Any], sender: str, *, check_share: bool = True) -> None:
     """A signed peer cannot skip this endpoint's explicit selection step."""
     try:
-        with network.db() as db:
-            row = db.execute("SELECT request_id FROM outbox WHERE message_id=?", (body["request_message_id"],)).fetchone()
-            prior = network._outbox_rows(db, row["request_id"], full=True)[0] if row else None
-        if prior is None or strict_json_loads(prior["recipients"]) != [sender]:
+        selection = _outbox(network, body["request_message_id"], sender)
+        control = selection.get("control", {})
+        if (selection["kind"] != "hint_control" or control.get("kind") != "select"
+                or control["query_message_id"] != body["query_message_id"]):
             raise _denied()
-        selection = validate_content(bytes(prior["body"]))
-        if selection != {"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": {
-                "schema_version": HINT_SCHEMA, "kind": "select", "offer_message_id": body["offer_message_id"], "memory_id": body["memory_id"]}}:
+        expires_at = _selection_offers(network, control, sender, incoming=True)
+        if body["expires_at"] != expires_at or body["expires_at"] <= int(time.time()):
             raise _denied()
-        offer = _offer(network, body["offer_message_id"], sender, body["memory_id"], incoming=True)
-        if body["expires_at"] != offer["expires_at"] or body["expires_at"] <= int(time.time()):
-            raise _denied()
-        _share_ids(network, body)
+        if check_share:
+            _share_ids(network, body, {item["memory_id"] for item in control["selections"]})
     except (MemoryError, TrustError, ValueError, TypeError, KeyError) as exc:
         if getattr(exc, "retryable", False) or getattr(exc, "code", None) in {
                 "share_integer_index_unavailable", "share_source_changed"}:
@@ -392,7 +403,7 @@ def validate_incoming_transfer(network: Any, body: Mapping[str, Any], sender: st
         raise MemoryError("network_invalid_content") from None
 
 
-def _share_ids(network: Any, body: Mapping[str, Any]) -> set[str]:
+def _share_ids(network: Any, body: Mapping[str, Any], expected_roots: set[str]) -> set[str]:
     raw = unb64url(body["share"], maximum=MAX_CONTENT_SHARE_BYTES)
     ids: set[str] = set()
     with tempfile.TemporaryDirectory(prefix="hint-check-", dir=network.directory) as temporary:
@@ -401,7 +412,7 @@ def _share_ids(network: Any, body: Mapping[str, Any]) -> set[str]:
         _scan(source, time.monotonic() + 10, visitor=lambda record, proof: ids.add(record["memory_id"]))
     selected = [frame["record"]["memory_id"] for line in raw.splitlines()
                 if (frame := strict_json_loads(line)).get("type") == "record" and frame["selected"]]
-    if selected != [body["memory_id"]]:
+    if set(selected) != expected_roots or len(selected) != len(expected_roots):
         raise _denied()
     return ids
 
@@ -409,7 +420,7 @@ def _share_ids(network: Any, body: Mapping[str, Any]) -> set[str]:
 def guard(network: Any, body: Mapping[str, Any], recipients: list[str], own_message_id: str | None = None) -> None:
     """Recheck immediately before send-start, including frozen outbox retries."""
     kind, control = body["kind"], body.get("control", {})
-    if kind not in {"hint_control", "hint_transfer"}:
+    if kind not in {"hint_control", "hint_batch_transfer"}:
         return
     if len(recipients) != 1:
         raise _denied()
@@ -438,11 +449,17 @@ def guard(network: Any, body: Mapping[str, Any], recipients: list[str], own_mess
             raise _denied()
     else:
         _, request = _inbox(network, body["request_message_id"], recipient)
-        offer = _offer(network, body["offer_message_id"], recipient, body["memory_id"], incoming=False)
-        if (request["kind"] != "hint_control" or request["control"] != {
-                "schema_version": HINT_SCHEMA, "kind": "select", "offer_message_id": body["offer_message_id"], "memory_id": body["memory_id"]}
-                or body["expires_at"] != offer["expires_at"] or body["expires_at"] <= int(time.time())
-                or not _share_ids(network, body).issubset(peer["record_memory_ids"])):
+        selected = request.get("control", {})
+        if (request["kind"] != "hint_control" or selected.get("kind") != "select"
+                or selected["query_message_id"] != body["query_message_id"]):
+            raise _denied()
+        expires_at = _selection_offers(network, selected, recipient, incoming=False)
+        if (body["expires_at"] != expires_at or body["expires_at"] <= int(time.time())
+                or not _share_ids(network, body, {item["memory_id"] for item in selected["selections"]}).issubset(peer["record_memory_ids"])):
+            raise _denied()
+        # A bounded share parse can outlast this query. Recheck its offers
+        # before the final policy checkpoint and actual transport send.
+        if _selection_offers(network, selected, recipient, incoming=False) != body["expires_at"]:
             raise _denied()
     # File checks performed after share parsing are the actual send-start
     # checkpoint, not the earlier snapshot used to prepare the response.
@@ -498,21 +515,21 @@ def respond_to(network: Any, message_id: str) -> Mapping[str, Any]:
             index = _request_page(session, message_id, request)
             body = {"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": _page_control(session, message_id, index)}
         else:
-            offer = _offer(network, control["offer_message_id"], sender, control["memory_id"], incoming=False)
+            expires_at = _selection_offers(network, control, sender, incoming=False)
             with tempfile.TemporaryDirectory(prefix="hint-share-", dir=network.directory) as temporary:
                 destination = Path(temporary) / "share.ndjson"
                 export_share(network.client_config.path, destination,
-                    {"schema_version": "universal-memory-selection/v1", "memory_ids": [control["memory_id"]]},
+                    {"schema_version": "universal-memory-selection/v1", "memory_ids": [item["memory_id"] for item in control["selections"]]},
                     maximum_seconds=10, authorized_memory_ids=set(peer["record_memory_ids"]))
                 if destination.stat().st_size > MAX_CONTENT_SHARE_BYTES:
                     raise _denied()
                 share = b64url(destination.read_bytes())
-            body = {"schema_version": CONTENT_SCHEMA, "kind": "hint_transfer", "request_message_id": message_id,
-                "offer_message_id": control["offer_message_id"], "memory_id": control["memory_id"],
-                "expires_at": offer["expires_at"], "share": share}
+            body = {"schema_version": CONTENT_SCHEMA, "kind": "hint_batch_transfer", "request_message_id": message_id,
+                "query_message_id": control["query_message_id"], "expires_at": expires_at, "share": share}
         guard(network, body, [sender])
     except (MemoryError, TrustError) as exc:
-        if getattr(exc, "retryable", False) or exc.code in {"share_integer_index_unavailable", "share_source_changed"}:
+        if (getattr(exc, "retryable", False) and exc.code != "share_work_limit"
+                or exc.code in {"share_integer_index_unavailable", "share_source_changed"}):
             raise
         body = {"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": {
             "schema_version": HINT_SCHEMA, "kind": "refusal", "request_message_id": message_id, "reason": "not_available"}}

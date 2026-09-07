@@ -6,17 +6,18 @@ import { canonicalBytes, document, objectFields, opaqueId } from './crypto.ts';
 import type { DocumentInput } from './crypto.ts';
 import { readPrivate, privateDirectory, NetworkError } from './io.ts';
 
-export const HINT_SCHEMA = 'memory-vault-hint/v2';
+export const HINT_SCHEMA = 'memory-vault-hint/v3';
 export const POLICY_SCHEMA = 'memory-vault-hint-policy/v1';
 export const SESSION_SCHEMA = 'memory-vault-hint-session/v1';
 export const SESSION_PREFIX = 'hint-session:';
 export const MAX_SESSION_BYTES = 32768;
 export interface Hint { memory_id: string; excerpt: string; epistemic_type: string }
+export interface HintSelection { offer_message_id: string; memory_id: string }
 export type HintControl =
   {schema_version: typeof HINT_SCHEMA; kind: 'query'; query: string; expires_at: number} |
   {schema_version: typeof HINT_SCHEMA; kind: 'page'; query_message_id: string; cursor: string} |
   {schema_version: typeof HINT_SCHEMA; kind: 'hints'; request_message_id: string; query_message_id: string; page_index: number; policy_revision: number; expires_at: number; hints: Hint[]; next_cursor: string | null} |
-  {schema_version: typeof HINT_SCHEMA; kind: 'select'; offer_message_id: string; memory_id: string} |
+  {schema_version: typeof HINT_SCHEMA; kind: 'select'; query_message_id: string; selections: HintSelection[]} |
   {schema_version: typeof HINT_SCHEMA; kind: 'refusal'; request_message_id: string; reason: 'not_available'};
 export interface HintGrant { key_id: string; hint_memory_ids: string[]; record_memory_ids: string[] }
 export interface HintPolicy {
@@ -78,8 +79,15 @@ export function validateHintControl(value: DocumentInput): HintControl {
       if(control.next_cursor!==null)cursor(control.next_cursor);
       if(page===3&&control.next_cursor!==null||control.next_cursor!==null&&items.length!==4||page>0&&!items.length)fail();
     } else if (control.kind === 'select') {
-      objectFields(control, ['schema_version','kind','offer_message_id','memory_id'], 'network_invalid_content');
-      hintMessageId(control.offer_message_id); hintMemoryId(control.memory_id);
+      objectFields(control, ['schema_version','kind','query_message_id','selections'], 'network_invalid_content');
+      hintMessageId(control.query_message_id);
+      if(!Array.isArray(control.selections)||control.selections.length<1||control.selections.length>4)fail();
+      const selected=new Set<string>();
+      for(const value of control.selections){
+        const item=objectFields(value,['offer_message_id','memory_id'],'network_invalid_content');
+        hintMessageId(item.offer_message_id);const id=hintMemoryId(item.memory_id);
+        if(selected.has(id))fail();selected.add(id);
+      }
     } else if (control.kind === 'refusal') {
       objectFields(control, ['schema_version','kind','request_message_id','reason'], 'network_invalid_content');
       hintMessageId(control.request_message_id); if (control.reason !== 'not_available') fail();

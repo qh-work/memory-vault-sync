@@ -1,7 +1,7 @@
 /** Disjoint encrypted payloads. Chat transport never manufactures memory. */
 import { document, objectFields, decodeBase64url, NetworkCryptoError } from './crypto.ts';
 import type { DocumentInput } from './crypto.ts';
-import { validateHintControl, hintMessageId, hintMemoryId } from './hints.ts';
+import { validateHintControl, hintMessageId } from './hints.ts';
 import type { HintControl } from './hints.ts';
 
 export const CONTENT_SCHEMA = 'memory-vault-network-content/v2';
@@ -26,16 +26,15 @@ export interface HintControlContent {
   readonly kind: 'hint_control';
   readonly control: HintControl;
 }
-export interface HintTransferContent {
+export interface HintBatchTransferContent {
   readonly schema_version: typeof CONTENT_SCHEMA;
-  readonly kind: 'hint_transfer';
+  readonly kind: 'hint_batch_transfer';
   readonly request_message_id: string;
-  readonly offer_message_id: string;
-  readonly memory_id: string;
+  readonly query_message_id: string;
   readonly expires_at: number;
   readonly share: string;
 }
-export type NetworkContent = MessageContent | MemoryTransferContent | HintControlContent | HintTransferContent;
+export type NetworkContent = MessageContent | MemoryTransferContent | HintControlContent | HintBatchTransferContent;
 
 function fail(code: string): never { throw new NetworkCryptoError(code); }
 /** Classify well-formed but numerically disallowed Hint JSON without accepting
@@ -53,7 +52,7 @@ function rejectedHintShape(value:DocumentInput):boolean {
     }else candidate=value;
     if(candidate===null||typeof candidate!=='object')return false;
     const kind=Object.getOwnPropertyDescriptor(candidate,'kind');
-    return !!kind&&'value'in kind&&(kind.value==='hint_control'||kind.value==='hint_transfer');
+    return !!kind&&'value'in kind&&(kind.value==='hint_control'||kind.value==='hint_batch_transfer');
   }catch{return false;}
 }
 
@@ -77,9 +76,9 @@ export function validateContent(value: DocumentInput): NetworkContent {
   } else if (content.kind === 'hint_control') {
     objectFields(content, ['schema_version','kind','control'], 'network_invalid_content');
     content.control = validateHintControl(content.control as DocumentInput);
-  } else if (content.kind === 'hint_transfer') {
-    objectFields(content, ['schema_version','kind','request_message_id','offer_message_id','memory_id','expires_at','share'], 'network_invalid_content');
-    hintMessageId(content.request_message_id); hintMessageId(content.offer_message_id); hintMemoryId(content.memory_id);
+  } else if (content.kind === 'hint_batch_transfer') {
+    objectFields(content, ['schema_version','kind','request_message_id','query_message_id','expires_at','share'], 'network_invalid_content');
+    hintMessageId(content.request_message_id); hintMessageId(content.query_message_id);
     if (typeof content.expires_at !== 'number' || !Number.isSafeInteger(content.expires_at) || content.expires_at < 1) fail('network_invalid_content');
     try { decodeBase64url(content.share, MAX_CONTENT_SHARE_BYTES); }
     catch { fail('network_invalid_content'); }

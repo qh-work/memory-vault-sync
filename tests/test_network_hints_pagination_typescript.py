@@ -3,7 +3,7 @@ import unittest
 
 from memory_vault import canonical_bytes
 from memory_vault_network import NetworkClient
-from tests.test_network_hints import CONTENT_SCHEMA, control, policy, outbox_row
+from tests.test_network_hints import CONTENT_SCHEMA, control, policy, outbox_row, single_select
 from tests import test_network_hints_typescript as hint_harness
 from tests.test_network_message_semantics import records, proofs, vault_snapshot, inject_ciphertext
 
@@ -69,8 +69,7 @@ class TypeScriptHintPaginationTests(unittest.TestCase):
                 selected = page["hints"][0]["memory_id"]
                 originals, original_proofs = records(endpoints[owner]), proofs(endpoints[owner])
                 chosen = requester_call(requester, {"op": "send", "request_id": "req_hint_ts_last_page_" + str(owner),
-                    "recipients": [host.identities[owner].key_id], "control": control("select",
-                        offer_message_id=offered["message_id"], memory_id=selected)})
+                    "recipients": [host.identities[owner].key_id], "control": single_select(query["message_id"], offered["message_id"], selected)})
                 self.assertFalse(owner_call(owner, {"op": "receive"})["errors"])
                 transferred = owner_call(owner, {"op": "receive", "respond_to": chosen["message_id"]})
                 self.assertEqual(transferred["stored_nodes"], 2, transferred)
