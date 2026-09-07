@@ -10,6 +10,7 @@ import { canonicalBytes, document, validateSigningIdentity } from './crypto.ts';
 import type { SigningIdentityDocument } from './crypto.ts';
 import { NetworkError, readPrivate } from './io.ts';
 import { CanonicalVault } from './vault.ts';
+import { decodeExperience, EXPERIENCE_PREFIX } from './records.ts';
 import { NetworkPeer } from './peer.ts';
 import { RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2 } from './retrieval.ts';
 import { RANKING_MATH_PROFILE } from './ranking_math.ts';
@@ -76,9 +77,9 @@ const SHAPES: Obj = {
   connect: shape({invitation: {type: 'object'}, request_id: identifier}),
   remember: shape({request_id: identifier, kind: {type: 'string', enum: ['event','fact','observation','decision','artifact','entity','relation','provenance','summary','goal','continuity']},
     text, entities: {type: 'array', maxItems: 32, items: {type: 'string', maxLength: 512}},
-    relations: {type: 'array', maxItems: 32, items: {type: 'object'}}}, ['request_id','kind','text']),
+    relations: {type: 'array', maxItems: 32, items: {type: 'object'}}, experience: {type: 'object'}}, ['request_id','kind','text']),
   recall: shape({query: text, memory_id: {type: 'string', maxLength: 64}, cursor: {type: 'string', maxLength: 4096}, handoff: {type: 'boolean'},
-    ranking_profile: {type: 'string', maxLength: 128}}),
+    ranking_profile: {type: 'string', maxLength: 128}, include_experience: {type: 'boolean'}}),
   discover: shape({online: {type: 'boolean'}}),
   send: shape({request_id: identifier, recipients: {type: 'array', maxItems: 16, items: {type: 'string', maxLength: 128}},
     text, memory_ids: {type: 'array', maxItems: 32, items: {type: 'string', maxLength: 64}}}, ['request_id','recipients']),
@@ -177,7 +178,11 @@ function fragment(raw: Buffer, offset: number, maximum = 768): string {
 }
 /** Bounded claims from the immutable source, not an authenticated biography. */
 function evidenceMetadata(record: Obj): Obj {
-  const provenance = record.provenance ?? {}, refs: Obj = {};
+  const provenance = {...(record.provenance ?? {})}, refs: Obj = {};
+  if (typeof provenance.source_ref === 'string' && provenance.source_ref.startsWith(EXPERIENCE_PREFIX)) {
+    const original = decodeExperience(record as any).original_source_ref; delete provenance.source_ref;
+    if (typeof original === 'string') provenance.source_ref = original;
+  }
   let truncated = false, claimed = false;
   for (const key of PROVENANCE_REFS) {
     const original = provenance[key]; if (typeof original !== 'string') continue;
@@ -190,9 +195,9 @@ function evidenceMetadata(record: Obj): Obj {
   return {recorded_at: record.created_at, provenance_refs: refs,
     provenance_refs_truncated: truncated, provenance_status: claimed ? 'claimed' : 'unknown'};
 }
-function recallResult(hits: Obj[], remaining: unknown[], offset: number, retrieval?: Obj): Obj {
+function recallResult(hits: Obj[], remaining: unknown[], offset: number, retrieval?: Obj, includeExperience = false): Obj {
   const metadata=retrieval===undefined?{}:{retrieval};
-  return success({hits, next_cursor: remaining.length ? Buffer.from(canonicalBytes({ids: remaining, offset, ...metadata})).toString('base64url') : null,
+  return success({hits, next_cursor: remaining.length ? Buffer.from(canonicalBytes({ids: remaining, offset, ...metadata, ...(includeExperience ? {include_experience: true} : {})})).toString('base64url') : null,
     partial: remaining.length > 0, query_candidate_limit: 32, network_accessed: false, evidence_usage: {...EVIDENCE_USAGE}, ...metadata});
 }
 
@@ -204,21 +209,22 @@ export class Agent {
     this.clientConfigPath = clientConfigPath; this.networkConfigPath = networkConfigPath; this.transport = options.transport;
   }
   discovery(): Obj {
-    return {profile: 'network-v1', role: 'trusted_endpoint', operations: [...OPERATIONS], network_configured: this.networkConfigPath !== undefined,
+    return {profile: 'network-v1', experience_profile: 'experience-v1', role: 'trusted_endpoint', operations: [...OPERATIONS], network_configured: this.networkConfigPath !== undefined,
       limits: {request_bytes: MAX_INPUT, result_bytes: MAX_RESULT}, memory_owned_by_task: false, memory_grants_authority: false,
       automatic_execution: false, network_accessed: false, http_requires_trusted_endpoint_crypto: true,
       retrieval_profile: RETRIEVAL_PROFILE, retrieval_profiles: [RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2],
       legacy_interfaces_preserved: ['handoff','share-v1','backup','restore','protocol','mcp']};
   }
   private recall(args: Obj): Obj {
-    const config = loadClient(this.clientConfigPath); let ids: unknown[], offset = 0, retrieval:Obj|undefined;
+    const config = loadClient(this.clientConfigPath); let ids: unknown[], offset = 0, retrieval:Obj|undefined, includeExperience = args.include_experience === true;
     if (args.cursor) {
       if (Object.keys(args).length !== 1) fail('ambiguous_recall_cursor');
       try {
         const state = document(Buffer.from(args.cursor, 'base64url'), 4096);
-        if (!['ids,offset','ids,offset,retrieval'].includes(Object.keys(state).sort().join(',')) || !Array.isArray(state.ids) || state.ids.length > 32 ||
+        if (!['ids,offset','ids,offset,retrieval','ids,include_experience,offset','ids,include_experience,offset,retrieval'].includes(Object.keys(state).sort().join(',')) || !Array.isArray(state.ids) || state.ids.length > 32 ||
             typeof state.offset !== 'number' || !Number.isSafeInteger(state.offset) || state.offset < 0) fail('invalid_recall_cursor');
         ids = state.ids; offset = state.offset;
+        if (Object.hasOwn(state, 'include_experience')) { if (state.include_experience !== true) fail('invalid_recall_cursor'); includeExperience = true; }
         if(Object.hasOwn(state,'retrieval')){
           const metadata: unknown = state.retrieval;
           if(!object(metadata)||Object.keys(metadata).sort().join(',')!=='math_profile,profile,ranking_time_ms'||
@@ -228,7 +234,7 @@ export class Agent {
         }
       } catch { fail('invalid_recall_cursor'); }
     } else if (Object.hasOwn(args, 'memory_id')) {
-      if (Object.keys(args).length !== 1) fail('ambiguous_recall_selector');
+      if (Object.keys(args).some(key => !['memory_id', 'include_experience'].includes(key))) fail('ambiguous_recall_selector');
       ids = [args.memory_id];
     } else {
       if (!args.query) fail('recall_query_required');
@@ -243,7 +249,7 @@ export class Agent {
     }
     const remaining = [...ids], hits: Obj[] = [];
     while (remaining.length && hits.length < 4) {
-      const result = localRead(config, vault => vault.inspect(remaining[0] as string));
+      const result = localRead(config, vault => vault.inspect(remaining[0] as string, includeExperience));
       if (!result.ok) return result;
       const record = result.result.record, raw = Buffer.from(record.text, 'utf8');
       if (offset > raw.length || offset < raw.length && (raw[offset] & 0xc0) === 0x80) fail('invalid_recall_cursor');
@@ -254,10 +260,10 @@ export class Agent {
         hit = {memory_id: record.memory_id, record_sha256: record.record_sha256, kind: record.kind, status: result.result.status,
           text, text_offset_bytes: offset, partial: next < raw.length, verification: result.result.verification,
           source_ids: record.relations.filter((edge: Obj) => ['derived_from','supports'].includes(edge.type)).slice(0,8).map((edge: Obj) => edge.target),
-          ...evidenceMetadata(record)};
+          ...evidenceMetadata(record), ...(includeExperience ? {experience: {...result.result.experience, content: text}} : {})};
         const afterIds = next < raw.length ? remaining : remaining.slice(1), afterOffset = next < raw.length ? next : 0;
-        if (encoded(recallResult([...hits,hit],afterIds,afterOffset,retrieval)).length <= MAX_RESULT) break;
-        if (hits.length) return recallResult(hits,remaining,offset,retrieval);
+        if (encoded(recallResult([...hits,hit],afterIds,afterOffset,retrieval,includeExperience)).length <= MAX_RESULT) break;
+        if (hits.length) return recallResult(hits,remaining,offset,retrieval,includeExperience);
         maximum = Math.floor(maximum / 2);
         if (maximum < 1) fail('agent_result_exceeds_budget');
       }
@@ -265,7 +271,7 @@ export class Agent {
       if (next < raw.length) { offset = next; break; }
       remaining.shift(); offset = 0;
     }
-    return recallResult(hits,remaining,offset,retrieval);
+    return recallResult(hits,remaining,offset,retrieval,includeExperience);
   }
   async handle(request: unknown): Promise<Obj> {
     let requestId: unknown;
@@ -284,7 +290,7 @@ export class Agent {
         try {
           vault = openVault(config, true, identity);
           const input: Obj = {requestId: args.request_id, kind: args.kind, text: args.text};
-          for (const key of ['entities','relations']) if (Object.hasOwn(args, key)) input[key] = args[key];
+          for (const key of ['entities','relations','experience']) if (Object.hasOwn(args, key)) input[key] = args[key];
           const result = vault.remember(input as any);
           response = success({state: 'accepted_local', memory_id: result.memory_id, verification: result.verification, network_accessed: false}, requestId);
         } catch (error) { response = failure(error, requestId); }

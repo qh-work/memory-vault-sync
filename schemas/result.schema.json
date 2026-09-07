@@ -247,7 +247,7 @@
         "type": {"enum": ["related_to", "derived_from", "supports", "supersedes", "conflicts_with", "resolves", "continues"]},
         "state_effective": {"type": "boolean"},
         "source_state_effective": {"type": "boolean"},
-        "state_effective_reason": {"enum": ["non_state_relation", "weaker_than_target", "explicit_endpoint_resolution", "admitted_relation"]},
+        "state_effective_reason": {"enum": ["non_state_relation", "weaker_than_target", "explicit_endpoint_resolution", "admitted_relation", "cross_author_proposal"]},
         "resolution_memory_id": {"anyOf": [{"$ref": "common.schema.json#/$defs/memory_id"}, {"type": "null"}]},
         "resolution_target_id": {"anyOf": [{"$ref": "common.schema.json#/$defs/memory_id"}, {"type": "null"}]}
       },

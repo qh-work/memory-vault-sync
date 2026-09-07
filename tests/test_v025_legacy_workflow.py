@@ -338,8 +338,17 @@ class LegacyWorkflowTests(unittest.TestCase):
                 self.assertFalse(view["inferred_grouping_is_ownership"])
                 self.assertFalse(view["has_more"])
                 states = {item["memory_id"]: item["status"] for item in view["timeline"]}
-                self.assertEqual(states[expected_claim_ids[0]], "superseded")
-                self.assertEqual(states[expected_claim_ids[2]], "resolved")
+                # Legacy unsigned imports retain every record and edge, but
+                # a shared claimed source does not authenticate common authors.
+                # The new local view therefore keeps the conflict open instead
+                # of adopting unsigned supersedes/resolves from that history.
+                self.assertEqual(states[expected_claim_ids[0]], "conflicted")
+                self.assertEqual(states[expected_claim_ids[2]], "conflicted")
+                for item in view["timeline"]:
+                    for edge in item["state_relations"]:
+                        if edge["type"] in {"supersedes", "resolves"}:
+                            self.assertFalse(edge["state_effective"])
+                            self.assertEqual(edge["state_effective_reason"], "cross_author_proposal")
 
                 request["request_id"] = "synthetic.legacy.after-admission"
                 remembered = compat.handle(config_path, request)

@@ -52,6 +52,7 @@ PROTOCOL_DOCUMENTS = (
 # Each executable network review fixture is selected deliberately. A matching
 # filename alone never enrolls a new local test into the public review kit.
 NETWORK_REVIEW_TESTS = (
+    "tests/test_experience.py", "tests/test_experience_edges.py", "tests/test_experience_typescript.py", "tests/test_cross_author_state.py",
     "tests/test_network_agent.py", "tests/test_network_admin.py", "tests/test_network_client.py",
     "tests/test_network_client_race.py",
     "tests/test_network_cloud_compat.py", "tests/test_network_crypto.py", "tests/test_network_http.py",

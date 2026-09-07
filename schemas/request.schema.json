@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "UAMP core request binding v1, with optional changes and cognitive-view extensions",
+  "title": "UAMP core request binding v1, with optional changes, cognitive-view and experience extensions",
   "$comment": "No permission, signing, admission or execution field is accepted. request_id is optional on the wire but required for exact-effect mutation retries. JSON lexical floats/exponents and duplicate keys require a strict parser.",
   "oneOf": [
     {
@@ -40,6 +40,9 @@
         },
         "op": {
           "const": "remember"
+        },
+        "experience": {
+          "$ref": "experience.schema.json"
         },
         "kind": {
           "enum": [
@@ -160,6 +163,10 @@
           "minimum": 512,
           "maximum": 65536
         },
+        "include_experience": {
+          "type": "boolean",
+          "description": "Include a bounded local experience-v1 view; does not change record bytes, ranking or authority."
+        },
         "semantic": {
           "type": "boolean",
           "description": "Enable the reference implementation's deterministic concept hints; false retains lexical/graph recall."
@@ -187,6 +194,9 @@
         },
         "op": {
           "const": "get"
+        },
+        "include_experience": {
+          "type": "boolean"
         },
         "memory_id": {
           "$ref": "common.schema.json#/$defs/memory_id"

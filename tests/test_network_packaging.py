@@ -49,7 +49,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 46)
+        self.assertEqual(len(allowed), 47)
         self.assertTrue(NEW_MODULES <= allowed)
         for name in allowed:
             path = ROOT / name

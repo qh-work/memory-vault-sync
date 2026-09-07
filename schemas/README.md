@@ -12,6 +12,7 @@ make a network request.
 | --- | --- |
 | `common.schema.json` | Shared IDs, text bounds, types, relations, provenance and fixed authority |
 | `record.schema.json` | Complete canonical v1 record shape; no signatures or admission fields inside it |
+| `experience.schema.json` | Optional experience-v1 request metadata encoded in the existing opaque source reference; unknown metadata preserved |
 | `request.schema.json` | Seven core operations plus optional `changes`, `memory.views`, `memory.graph`, `memory.reindex`; unknown fields rejected |
 | `result.schema.json` | Success/error envelope, echoed request ID, fixed non-authority flags and explicit client/partial-result extensions |
 | `bundle-line.schema.json` | One header, record or footer line; stream ordering is checked separately |
@@ -40,6 +41,17 @@ The core graph limits (512 nodes / 4,096 edges) and the full client's smaller
 MCP limits (64 nodes / 512 edges) are intentionally different transport bounds.
 An implementation must advertise its supported operations and bounds; it need
 not implement every optional extension to exchange canonical core records.
+
+The optional [Experience Semantics](../docs/EXPERIENCE_SEMANTICS.md) extension
+adds `experience` to `remember` and `include_experience` to `get`, `recall` and
+`handoff`. It does not add canonical record fields or change the core relation
+enum. The complete canonical envelope in `provenance.source_ref`, including
+its prefix and any preserved old source reference, is capped at 2,048 UTF-8
+bytes. Metadata schemas alone cannot check that envelope budget or establish
+independent evidence. Old strict request parsers require extension fields to
+be omitted; old record readers safely preserve the source-reference string.
+The graph edge reason `cross_author_proposal` identifies an admitted proposal
+that does not have local authority to supersede or resolve the target.
 
 ## Mandatory checks beyond JSON Schema
 

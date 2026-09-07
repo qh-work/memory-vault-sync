@@ -138,7 +138,7 @@ class ConflictResolutionTests(unittest.TestCase):
         current_records = self.snapshot()[0]
         self.assertEqual({memory_id: current_records[memory_id] for memory_id in originals}, originals)
 
-    def test_weaker_and_quarantined_resolvers_cannot_close_a_stronger_edge_and_revocation_reopens_it(self) -> None:
+    def test_weaker_quarantined_and_other_author_resolvers_cannot_close_a_stronger_edge(self) -> None:
         publisher, resolver_key = "ed25519_" + "1" * 64, "ed25519_" + "2" * 64
         admitted_keys = {publisher, resolver_key}
 
@@ -169,12 +169,16 @@ class ConflictResolutionTests(unittest.TestCase):
         strong_resolver = self.remember("Synthetic independently admitted stronger resolution", vault=resolution_writer,
                                        relations=[{"type": "resolves", "target": low_endpoint}])
         frozen = self.snapshot()
-        self.assertEqual(self.ask("get", memory_id=strong_conflict)["status"], "current")
+        # Rank no longer grants a third party authority over an unsigned
+        # endpoint. This deliberately changes the former rank-only view rule.
+        self.assertEqual(self.ask("get", memory_id=strong_conflict)["status"], "conflicted")
         edge = self.conflicts(self.graph(strong_conflict))[(strong_conflict, low_endpoint)]
-        self.assertFalse(edge["state_effective"])
-        self.assertEqual(edge["resolution_memory_id"], strong_resolver)
-        self.assertEqual(edge["resolution_target_id"], low_endpoint)
-        self.assertEqual(self.ask("memory.views", memory_id=strong_conflict)["views"][0]["state"], "current")
+        self.assertTrue(edge["state_effective"])
+        self.assertIsNone(edge["resolution_memory_id"])
+        self.assertIsNone(edge["resolution_target_id"])
+        self.assertEqual(self.ask("memory.views", memory_id=strong_conflict)["views"][0]["state"], "conflicted")
+        proposed = next(item for item in self.graph(low_endpoint)["edges"] if item["source_id"] == strong_resolver)
+        self.assertEqual(proposed["state_effective_reason"], "cross_author_proposal")
         self.assertEqual(self.snapshot(), frozen)
 
         admitted_keys.remove(resolver_key)
@@ -220,15 +224,17 @@ class ConflictResolutionTests(unittest.TestCase):
         resolver = self.remember("Synthetic stronger explicit endpoint resolution", vault=resolution_writer,
                                  relations=[{"type": "resolves", "target": source}])
         frozen = self.snapshot()
-        self.assertEqual(self.ask("get", memory_id=source)["status"], "resolved")
+        # A trusted signature still does not make this third party the author
+        # of the local unsigned source or permit retirement of that source.
+        self.assertEqual(self.ask("get", memory_id=source)["status"], "conflicted")
         self.assertEqual(self.ask("get", memory_id=target)["status"], "current")
         edge = self.conflicts(self.graph(source))[(source, target)]
         self.assertFalse(edge["state_effective"])
-        self.assertFalse(edge["source_state_effective"])
-        self.assertEqual(edge["resolution_memory_id"], resolver)
-        self.assertEqual(edge["resolution_target_id"], source)
+        self.assertTrue(edge["source_state_effective"])
+        self.assertIsNone(edge["resolution_memory_id"])
+        self.assertIsNone(edge["resolution_target_id"])
         view = self.ask("memory.views", memory_id=source)["views"][0]
-        self.assertEqual({node["memory_id"] for node in view["timeline"]}, {source, resolver})
+        self.assertEqual({node["memory_id"] for node in view["timeline"]}, {source})
         self.assertNotIn(target, view["current_memory_ids"])
 
         admitted_keys.remove(resolver_key)

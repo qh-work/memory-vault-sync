@@ -692,3 +692,149 @@ export function encodeShare(values: readonly SignedMemory[], rootValues: readonl
     return Buffer.concat(parts, size);
   });
 }
+
+/** Experience-v1 is optional signed metadata in the existing opaque source_ref.
+ * It creates no second object or storage schema and never authenticates truth. */
+export const EXPERIENCE_PREFIX = 'memory-vault:experience:v1:';
+export const EPISTEMIC_TYPES = new Set(['observation', 'experiment', 'inference', 'hearsay',
+  'speculation', 'summary', 'external_source', 'unspecified']);
+const EXPERIENCE_RELATIONS = new Set(['heard_from', 'derived_from', 'independently_confirms',
+  'contradicts', 'summarizes', 'applies_to', 'fails_under', 'proposes_supersession']);
+const EXPERIENCE_LINEAGE = new Set(['heard_from', 'derived_from', 'summarizes']);
+const EXPERIENCE_EVIDENCE = new Set([...EXPERIENCE_LINEAGE, 'independently_confirms', 'contradicts']);
+type Experience = Record<string, any>;
+function experienceOrder(a: string, b: string): number {
+  const x = Array.from(a), y = Array.from(b);
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    const difference = x[i].codePointAt(0)! - y[i].codePointAt(0)!; if (difference) return difference;
+  }
+  return x.length - y.length;
+}
+function experiencePairs(values: {type: string; target: string}[]): {type: string; target: string}[] {
+  return [...new Map(values.map(value => [JSON.stringify([value.type, value.target]), value])).values()]
+    .sort((a, b) => experienceOrder(a.type, b.type) || experienceOrder(a.target, b.target));
+}
+export function normalizeExperience(value: unknown): Experience {
+  return checked(() => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) fail('invalid_experience');
+    const result = document(canonicalBytes(value as Obj, MAX_RECORD_BYTES), MAX_RECORD_BYTES) as Experience;
+    const kind = Object.hasOwn(result, 'epistemic_type') ? result.epistemic_type : 'unspecified';
+    if (typeof kind !== 'string' || !kind || Array.from(kind).length > 64) fail('invalid_experience');
+    result.epistemic_type = kind;
+    const refs = Object.hasOwn(result, 'source_memory_refs') ? result.source_memory_refs : [],
+      evidence = Object.hasOwn(result, 'evidence_refs') ? result.evidence_refs : [];
+    if (!Array.isArray(refs) || refs.length > 16 || refs.some(x => !match(x, /^mem_[0-9a-f]{40}/)) ||
+        !Array.isArray(evidence) || evidence.length > 16 || evidence.some(x => typeof x !== 'string' || !x || Buffer.byteLength(x) > 512)) fail('invalid_experience');
+    const edges = Object.hasOwn(result, 'relations') ? result.relations : [];
+    if (!Array.isArray(edges) || edges.length > 16) fail('invalid_experience');
+    for (const edge of edges) {
+      if (!edge || typeof edge !== 'object' || Array.isArray(edge) || Object.keys(edge).sort().join(',') !== 'target,type' ||
+          typeof edge.type !== 'string' || !edge.type || Array.from(edge.type).length > 64 || !match(edge.target, /^mem_[0-9a-f]{40}/)) fail('invalid_experience');
+    }
+    let pairs = experiencePairs(edges);
+    const independent = ['observation', 'experiment'].includes(kind) && pairs.some(r => ['independently_confirms', 'contradicts'].includes(r.type));
+    if (kind === 'observation' && !independent && (refs.length || pairs.some(r => EXPERIENCE_LINEAGE.has(r.type)))) result.epistemic_type = 'hearsay';
+    if (!independent || result.epistemic_type === 'hearsay') {
+      const type = result.epistemic_type === 'hearsay' ? 'heard_from' : result.epistemic_type === 'summary' ? 'summarizes' : 'derived_from';
+      pairs = experiencePairs([...pairs, ...refs.map(target => ({type, target}))]);
+    }
+    if (pairs.length > 16) fail('invalid_experience');
+    if (pairs.length || Object.hasOwn(result, 'relations')) result.relations = pairs;
+    if (Object.hasOwn(result, 'source_memory_refs')) result.source_memory_refs = [...new Set(refs)].sort(experienceOrder);
+    if (Object.hasOwn(result, 'evidence_refs')) result.evidence_refs = [...new Set(evidence)].sort(experienceOrder);
+    const bytes = canonicalBytes(result, MAX_RECORD_BYTES);
+    if (bytes.length > 2048 || Buffer.from(bytes).includes(Buffer.from('\\u0000'))) fail('experience_too_large');
+    return result;
+  });
+}
+function inheritNativeExperience(value: unknown, relations: readonly {type: string; target: string}[]): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const candidate = document(canonicalBytes(value as Obj, MAX_RECORD_BYTES), MAX_RECORD_BYTES) as Experience;
+  const typed = Object.hasOwn(candidate, 'relations') ? candidate.relations : [];
+  if (!Array.isArray(typed)) return candidate;
+  const targets = new Set(typed.filter(r => r && typeof r === 'object' && typeof r.type === 'string' && EXPERIENCE_LINEAGE.has(r.type) && typeof r.target === 'string').map(r => r.target));
+  const native = relations.filter(r => r.type === 'derived_from' && !targets.has(r.target));
+  return native.length ? {...candidate, relations: [...typed, ...native]} : candidate;
+}
+export function encodeExperience(value: unknown, provenance: Readonly<Record<string, string>>, relations: readonly {type: string; target: string}[]):
+    {provenance: Record<string, string>; relations: MemoryRelation[]} {
+  value = inheritNativeExperience(value, relations);
+  const metadata = normalizeExperience(value), wrapper: Experience = {metadata};
+  if (Object.hasOwn(provenance, 'source_ref')) {
+    if (provenance.source_ref.startsWith(EXPERIENCE_PREFIX)) fail('ambiguous_experience_source');
+    wrapper.source_ref = provenance.source_ref;
+  }
+  const encoded = EXPERIENCE_PREFIX + Buffer.from(canonicalBytes(wrapper)).toString('utf8');
+  if (Buffer.byteLength(encoded) > 2048) fail('experience_too_large');
+  const projected = [...relations];
+  for (const edge of metadata.relations ?? []) if (EXPERIENCE_RELATIONS.has(edge.type)) {
+    projected.push({type: EXPERIENCE_LINEAGE.has(edge.type) ? 'derived_from' : 'related_to', target: edge.target});
+  }
+  for (const target of metadata.source_memory_refs ?? []) projected.push({type: 'related_to', target});
+  return {provenance: {...provenance, source_ref: encoded}, relations: experiencePairs(projected) as MemoryRelation[]};
+}
+export function decodeExperience(record: Pick<MemoryRecord, 'provenance'> & Partial<Pick<MemoryRecord, 'relations'>>): Experience {
+  const ref = record.provenance?.source_ref ?? '';
+  if (typeof ref !== 'string' || !ref.startsWith(EXPERIENCE_PREFIX)) {
+    const inherited = (record.relations ?? []).filter(r => r.type === 'derived_from');
+    return {epistemic_type: 'unspecified', ...(inherited.length ? {relations: inherited} : {})};
+  }
+  try {
+    const wrapper = document(Buffer.from(ref.slice(EXPERIENCE_PREFIX.length), 'utf8'), 2048) as Experience, value = normalizeExperience(inheritNativeExperience(wrapper.metadata, record.relations ?? []));
+    if (!EPISTEMIC_TYPES.has(value.epistemic_type)) {
+      value.declared_epistemic_type = value.epistemic_type; value.epistemic_type = 'unspecified';
+    }
+    if (Object.hasOwn(wrapper, 'source_ref')) value.original_source_ref = wrapper.source_ref;
+    return value;
+  } catch {
+    const inherited = (record.relations ?? []).filter(r => r.type === 'derived_from');
+    return {epistemic_type: 'unspecified', metadata_status: 'unrecognized', ...(inherited.length ? {relations: inherited} : {})};
+  }
+}
+export function summarizeExperience(records: ReadonlyMap<string, MemoryRecord>, root: string,
+    verifications: ReadonlyMap<string, Experience> = new Map(), truncated = false): Experience {
+  const decoded = new Map([...records].map(([key, record]) => [key, decodeExperience(record)]));
+  const edges: {source: string; type: string; target: string}[] = [];
+  for (const [source, value] of decoded) for (const r of value.relations ?? []) {
+    if (EXPERIENCE_EVIDENCE.has(r.type)) edges.push({source, type: r.type, target: r.target});
+  }
+  const adjacent = new Map([...records.keys()].map(key => [key, new Set<string>()]));
+  for (const edge of edges) if (records.has(edge.target)) {
+    adjacent.get(edge.source)!.add(edge.target); adjacent.get(edge.target)!.add(edge.source);
+  }
+  const connected = new Set<string>(), todo = [root];
+  while (todo.length) {
+    const node = todo.pop()!; if (connected.has(node) || !records.has(node)) continue;
+    connected.add(node); for (const neighbor of adjacent.get(node)!) if (!connected.has(neighbor)) todo.push(neighbor);
+  }
+  const parents = new Map([...connected].map(node => [node, new Set<string>()])), missing = new Set<string>();
+  for (const edge of edges) if (connected.has(edge.source)) {
+    if (!records.has(edge.target)) missing.add(edge.target);
+    if (EXPERIENCE_LINEAGE.has(edge.type)) parents.get(edge.source)!.add(edge.target);
+  }
+  const roots = [...connected].filter(node => !parents.get(node)!.size);
+  const degrees = new Map([...connected].map(node => [node, 0])), children = new Map([...connected].map(node => [node, new Set<string>()]));
+  for (const node of connected) for (const parent of parents.get(node)!) if (connected.has(parent)) {
+    degrees.set(node, degrees.get(node)! + 1); children.get(parent)!.add(node);
+  }
+  const queue = [...degrees].filter(([, degree]) => degree === 0).map(([node]) => node); let processed = 0;
+  while (queue.length) { const node = queue.pop()!; processed++;
+    for (const child of children.get(node)!) { degrees.set(child, degrees.get(child)! - 1); if (!degrees.get(child)) queue.push(child); }
+  }
+  const cycle = processed !== connected.size;
+  const independentSources = (relation: string): Set<string> => {
+    const identities = new Set<string>();
+    for (const edge of edges) {
+      if (edge.type !== relation || !connected.has(edge.source) || !connected.has(edge.target) || parents.get(edge.source)!.size ||
+          !['observation', 'experiment'].includes(decoded.get(edge.source)!.epistemic_type)) continue;
+      const proof = verifications.get(edge.source) ?? {};
+      identities.add((proof.signature_verified_at_admission ? proof.signer_key_id : null) || edge.source);
+    }
+    return identities;
+  };
+  return {propagation_count: [...connected].filter(node => decoded.get(node)!.epistemic_type === 'hearsay' || edges.some(e => e.source === node && e.type === 'heard_from')).length,
+    unique_origin_roots: roots.length, independent_confirmation_count: independentSources('independently_confirms').size,
+    contradiction_count: independentSources('contradicts').size, records_considered: connected.size,
+    cycle_detected: cycle, truncated: truncated || missing.size > 0 || cycle, missing_reference_count: missing.size,
+    basis: 'local_declared_provenance', independence_verified: false, truth_score: null};
+}
