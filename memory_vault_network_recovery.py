@@ -358,7 +358,7 @@ def _validate_transport(connection: sqlite3.Connection, client: NetworkClient, m
                  and result.get("understood") is False and result.get("content_kind") == content["kind"]
                  and result.get("text_memory_id") is None
                  and result.get("message_id") == row["message_id"] and result.get("sender_key_id") == row["sender"], "endpoint_backup_invalid_inbox")
-        if content["kind"] == "message":
+        if content["kind"] in {"message", "hint_control"}:
             _require(result.get("share") is None, "endpoint_backup_invalid_inbox")
         else:
             # validated_saved refers to both the inbox and the admitted
@@ -526,7 +526,7 @@ def backup_endpoint(*, network_config: Path, output: Path, secret_file: Path,
                 if memory_absent:
                     for row in transport.execute("SELECT body FROM outbox UNION ALL SELECT body FROM inbox"):
                         _check(deadline)
-                        _require(validate_content(bytes(row["body"]))["kind"] == "message",
+                        _require(validate_content(bytes(row["body"]))["kind"] in {"message", "hint_control"},
                                  "endpoint_backup_memory_reference_missing")
                 _validate_transport(transport, client, memory, deadline)
                 vault_result = vault_backup.backup_database(snapshot_memory_db, stage / "memory", timeout=_timeout(deadline))
@@ -541,6 +541,7 @@ def backup_endpoint(*, network_config: Path, output: Path, secret_file: Path,
                 "network_id": client.network_id, "member_key_id": client.identity.key_id, "transport_rows": counts,
                 "memory_records": vault_result["records"], **sealed, "keep_secret_separately": True,
                 "offline_outbox_included": True, "frozen_envelopes_preserved": True,
+                "hint_policy_included": False,
                 "issuer_key_shared_with_endpoint": keys["issuer_key_shared_with_endpoint"],
                 "consistency": "sqlite_write_locks_and_config_recheck", "all_host_files_globally_quiesced": False,
                 "network_accessed": False}
@@ -620,6 +621,7 @@ def restore_endpoint(*, package: Path, secret_file: Path, directory: Path,
                     "automatic_sending_enabled": False, "requires_fresh_issuer_status": True,
                     "runtime_memory_trust": "operator_selected_snapshot" if selected_trust is not None else "restored_identity_only",
                     "offline_outbox_restored": True, "frozen_envelopes_preserved": True,
+                    "hint_policy_restored": False, "hint_sharing_requires_local_policy": True,
                     "cached_results_are_historical": True, "network_accessed": False}
 
 

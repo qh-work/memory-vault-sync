@@ -43,6 +43,7 @@ class ExperienceInt64Tests(unittest.TestCase):
       else if(value.test_status)""")
         (cls.fixture / "driver.mjs").write_text(driver)
         shutil.copyfile(retrieval_fixture.ROOT / "clients/typescript/network/vault.ts", cls.fixture / "vault.ts")
+        shutil.copyfile(retrieval_fixture.ROOT / "clients/typescript/network/privacy.ts", cls.fixture / "privacy.ts")
 
     setUp = retrieval_fixture.TypeScriptRetrievalTests.setUp
     seed = retrieval_fixture.TypeScriptRetrievalTests.seed

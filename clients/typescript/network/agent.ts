@@ -13,6 +13,7 @@ import { CanonicalVault } from './vault.ts';
 import { canonicalExperienceBytes, parseExperienceJSON, decodeExperience, EXPERIENCE_PREFIX } from './records.ts';
 import { NetworkPeer } from './peer.ts';
 import { CONTENT_SCHEMA } from './content.ts';
+import { HINT_SCHEMA } from './hints.ts';
 import { RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2 } from './retrieval.ts';
 import { RANKING_MATH_PROFILE } from './ranking_math.ts';
 import { readTrustedKeys, requireTrustedKey } from './setup.ts';
@@ -87,9 +88,9 @@ const SHAPES: Obj = {
     ranking_profile: {type: 'string', maxLength: 128}, include_experience: {type: 'boolean'}}),
   discover: shape({online: {type: 'boolean'}}),
   send: shape({request_id: identifier, recipients: {type: 'array', maxItems: 16, items: {type: 'string', maxLength: 128}},
-    text, memory_ids: {type: 'array', maxItems: 32, items: {type: 'string', maxLength: 64}}}, ['request_id','recipients']),
+    text, memory_ids: {type: 'array', maxItems: 32, items: {type: 'string', maxLength: 64}}, control: {type:'object'}}, ['request_id','recipients']),
   receive: shape({limit: {type: 'integer', minimum: 1, maximum: 16}, message_id: {type:'string', maxLength:128},
-    offset: {type:'integer', minimum:0, maximum:16384}}),
+    offset: {type:'integer', minimum:0, maximum:16384}, respond_to: {type:'string', maxLength:128}}),
 };
 function validate(value: unknown, schema: Obj): void {
   switch (schema.type) {
@@ -215,7 +216,7 @@ export class Agent {
     this.clientConfigPath = clientConfigPath; this.networkConfigPath = networkConfigPath; this.transport = options.transport;
   }
   discovery(): Obj {
-    return {profile: 'network-v1', content_profile: CONTENT_SCHEMA, experience_profile: 'experience-v1', role: 'trusted_endpoint', operations: [...OPERATIONS], network_configured: this.networkConfigPath !== undefined,
+    return {profile: 'network-v1', content_profile: CONTENT_SCHEMA, hint_profile: HINT_SCHEMA, experience_profile: 'experience-v1', role: 'trusted_endpoint', operations: [...OPERATIONS], network_configured: this.networkConfigPath !== undefined,
       limits: {request_bytes: MAX_INPUT, result_bytes: MAX_RESULT}, memory_owned_by_task: false, memory_grants_authority: false,
       automatic_execution: false, network_accessed: false, http_requires_trusted_endpoint_crypto: true,
       retrieval_profile: RETRIEVAL_PROFILE, retrieval_profiles: [RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2],
@@ -290,9 +291,11 @@ export class Agent {
       const args = Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'op'));
       validate(args, SHAPES[operation]); let response: Obj;
       if(operation==='receive'){
+        if(Object.hasOwn(args,'respond_to')&&Object.keys(args).length!==1)fail('ambiguous_receive_selector');
         if(Object.hasOwn(args,'message_id')&&Object.hasOwn(args,'limit'))fail('ambiguous_receive_selector');
         if(Object.hasOwn(args,'offset')&&!Object.hasOwn(args,'message_id'))fail('message_id_required');
       }
+      if(operation==='send'&&Object.hasOwn(args,'control')&&(Object.hasOwn(args,'text')||Object.hasOwn(args,'memory_ids')))fail('network_invalid_send');
       if (operation === 'discover' && !args.online) response = success(this.discovery());
       else if (operation === 'remember') {
         const config = loadClient(this.clientConfigPath), identity = identityFor(config);
@@ -311,8 +314,8 @@ export class Agent {
         const peer = new NetworkPeer(this.networkConfigPath, {transport: this.transport, clientConfigPath: this.clientConfigPath});
         try {
           const result = operation === 'connect' ? await peer.connect(args.invitation, args.request_id) :
-            operation === 'discover' ? await peer.discover() : operation === 'send' ? await peer.send(args.request_id, args.recipients, args.text ?? '', args.memory_ids ?? []) :
-              Object.hasOwn(args,'message_id')?peer.readMessage(args.message_id,args.offset??0):await peer.receive(args.limit ?? 4);
+            operation === 'discover' ? await peer.discover() : operation === 'send' ? await peer.send(args.request_id, args.recipients, args.text ?? '', args.memory_ids ?? [],args.control) :
+              Object.hasOwn(args,'respond_to')?await peer.respondTo(args.respond_to):Object.hasOwn(args,'message_id')?peer.readMessage(args.message_id,args.offset??0):await peer.receive(args.limit ?? 4);
           response = success(operation === 'receive' ? {...result,evidence_usage:{...EVIDENCE_USAGE}} : result, requestId);
         } finally { peer.close(); }
       }

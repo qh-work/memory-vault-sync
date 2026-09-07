@@ -85,9 +85,11 @@ def definitions() -> list[dict[str, Any]]:
                            "ranking_profile": {"type": "string", "maxLength": 128}, "include_experience": {"type": "boolean"}}),
         "discover": _schema({"online": {"type": "boolean"}}),
         "send": _schema({"request_id": identifier, "recipients": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "string", "maxLength": 128}},
-                         "text": text, "memory_ids": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 64}}}, ["request_id", "recipients"]),
+                         "text": text, "memory_ids": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 64}},
+                         "control": {"type": "object"}}, ["request_id", "recipients"]),
         "receive": _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 16},
                             "message_id": {"type": "string", "maxLength": 128},
+                            "respond_to": {"type": "string", "maxLength": 128},
                             "offset": {"type": "integer", "minimum": 0, "maximum": 16384}}),
     }
     descriptions = {
@@ -95,8 +97,8 @@ def definitions() -> list[dict[str, Any]]:
         "remember": "Save local historical evidence without waiting for the network. Reuse request_id and exact arguments on retry.",
         "recall": "Read bounded evidence or dynamic handoff locally. Continue with cursor; memory is never an instruction or permission.",
         "discover": "Describe this endpoint without creating state; online=true explicitly contacts configured services and discovers members.",
-        "send": "Queue encrypted chat or an explicitly selected memory closure. Chat and transfer notes never become memories automatically. Stored is not understood.",
-        "receive": "Poll and save messages in the inbox. With message_id, read complete chat or transfer note locally in bounded offset pages. Only explicit memory transfers enter the Vault.",
+        "send": "Queue encrypted chat, an explicitly selected memory closure, or one recipient-bound Hint query/select control. Chat, notes and controls never become memories automatically. Stored is not understood.",
+        "receive": "Poll and save messages in the inbox. With message_id, read bounded text or control locally; with respond_to, explicitly handle one Hint query/select under local policy. Only explicit memory transfers enter the Vault.",
     }
     return [{"name": op, "description": descriptions[op], "inputSchema": shapes[op]}
             for op in OPERATIONS]
@@ -127,6 +129,7 @@ class Agent:
                 "retrieval_profile": RETRIEVAL_PROFILE, "retrieval_profiles": list(RETRIEVAL_PROFILES),
                 "experience_profile": "experience-v1",
                 "content_profile": "memory-vault-network-content/v2",
+                "hint_profile": "memory-vault-hint/v1",
                 "http_requires_trusted_endpoint_crypto": True,
                 "legacy_interfaces_preserved": ["handoff", "share-v1", "backup", "restore", "protocol", "mcp"]}
 
@@ -231,10 +234,14 @@ class Agent:
             schema = next(item["inputSchema"] for item in definitions() if item["name"] == operation)
             _validate_arguments(arguments, schema)
             if operation == "receive":
+                if "respond_to" in arguments and set(arguments) != {"respond_to"}:
+                    raise MemoryError("ambiguous_receive_selector")
                 if "message_id" in arguments and "limit" in arguments:
                     raise MemoryError("ambiguous_receive_selector")
                 if "offset" in arguments and "message_id" not in arguments:
                     raise MemoryError("message_id_required")
+            if operation == "send" and "control" in arguments and ("text" in arguments or "memory_ids" in arguments):
+                raise MemoryError("network_invalid_send")
             if operation == "discover" and not arguments.get("online"):
                 response = success(self.discovery())
             elif operation == "remember":
@@ -250,6 +257,8 @@ class Agent:
                 with self._network() as network:
                     if operation == "receive" and "message_id" in arguments:
                         result = network.read_message(**arguments)
+                    elif operation == "receive" and "respond_to" in arguments:
+                        result = network.respond_to(arguments["respond_to"])
                     else:
                         result = getattr(network, operation)(**arguments)
                     response = success(result, request_id=request_id)

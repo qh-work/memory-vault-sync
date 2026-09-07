@@ -154,3 +154,13 @@ retry. This backup excludes host permissions, installed plugins, automatic
 capture queues, sync configuration, artifacts, and operating-system settings.
 It does not promise arbitrary-size backups, zero interruption to writers, a
 running background worker, real-model validation, or public deployment.
+
+## Authorized Hint recovery
+
+The [Hint candidate](NETWORK_HINTS_V1.md) includes bounded control traffic and
+original selected shares in transport snapshots. The local `hint-policy.json`
+is deliberately excluded. Restore reports `hint_policy_restored:false`; pending
+policy-dependent offers and transfers require new explicit local sharing grants
+and fresh network checks. An old snapshot cannot revive revoked sharing rights.
+Control-only backup leaves an absent source Vault absent; a received transfer
+still requires the original records in the memory snapshot.

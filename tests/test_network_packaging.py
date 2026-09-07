@@ -22,10 +22,10 @@ BUILDER = ROOT / "scripts/build_client_plugin.py"
 RELEASE = ROOT / "scripts/build_release.py"
 LAUNCHER = ROOT / "plugins/memory-vault-client/scripts/launcher.py"
 NEW_MODULES = {"memory_vault_nodes.py", "memory_vault_node.py", "memory_vault_network_recovery.py", "memory_vault_node_transfer.py",
-               "memory_vault_topics.py", "memory_vault_topic_store.py"}
+               "memory_vault_topics.py", "memory_vault_topic_store.py", "memory_vault_network_hints.py"}
 TS_NETWORK = {"clients/typescript/network/" + name for name in
-              ("README.md", "crypto.ts", "content.ts", "control.ts", "package.json", "package-lock.json",
-               "io.ts", "nodes.ts", "peer.ts", "records.ts", "transport.ts", "vault.ts", "setup.ts",
+              ("README.md", "crypto.ts", "content.ts", "hints.ts", "control.ts", "package.json", "package-lock.json",
+               "io.ts", "nodes.ts", "peer.ts", "records.ts", "transport.ts", "vault.ts", "privacy.ts", "setup.ts",
                "agent.ts", "retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "topics.ts")}
 TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
                      ("nodes", "records", "vault", "peer", "peer_race", "transport", "setup",
@@ -49,7 +49,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 48)
+        self.assertEqual(len(allowed), 49)
         self.assertTrue(NEW_MODULES <= allowed)
         for name in allowed:
             path = ROOT / name
@@ -75,12 +75,14 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
         self.assertGreaterEqual(len(review), 39)
-        self.assertEqual(len(TS_NETWORK), 18)
+        self.assertEqual(len(TS_NETWORK), 20)
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
+        self.assertTrue({"tests/test_network_hints.py", "tests/test_network_hints_typescript.py",
+                         "tests/test_network_hints_recovery.py"} <= set(review))
         self.assertIn("docs/NETWORK_TYPESCRIPT.md", documents)
         self.assertIn("docs/NETWORK_TYPESCRIPT.md", protocol)
-        for name in ("docs/EXPERIENCE_SEMANTICS.md", "docs/EXPERIENCE_VALIDATION.md", "docs/NETWORK_CONTENT_V2.md"):
+        for name in ("docs/EXPERIENCE_SEMANTICS.md", "docs/EXPERIENCE_VALIDATION.md", "docs/NETWORK_CONTENT_V2.md", "docs/NETWORK_HINTS_V1.md"):
             self.assertIn(name, documents)
             self.assertIn(name, protocol)
         self.assertTrue({"tests/test_experience_origin_identity.py", "tests/test_experience_origin_typescript.py",

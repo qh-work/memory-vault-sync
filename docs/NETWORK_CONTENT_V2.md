@@ -2,16 +2,18 @@
 
 Status: **unreleased development after v0.26.0-alpha.4**. This document describes
 the developing source, not a published release or a ready upgrade path. The
-first change separates communication from long-term memory. Memory Hint,
-authorized experience discovery, group chat, open P2P and scale work remain
-later stages.
+first change separates communication from long-term memory. The subsequent
+[authorized Memory Hint extension](NETWORK_HINTS_V1.md) adds bounded queries
+and explicit selection between known peers. Group chat, open P2P and scale
+work remain later stages.
 
-## One carrier, two explicit payloads
+## Base payloads and the Hint extension
 
 The existing `network-v1` carrier, identity files, X25519/JWE encryption,
 Ed25519 outer signature, current membership checks, relay receipts and durable
 outbox/inbox remain. Inside the encrypted body, `memory-vault-network-content/v2`
-accepts exactly one of these closed shapes:
+uses the following base shapes. The [Hint extension](NETWORK_HINTS_V1.md) adds
+closed `hint_control` and `hint_transfer` variants without interpreting chat:
 
 ```json
 {"schema_version":"memory-vault-network-content/v2","kind":"message","text":"Synthetic chat, not a permanent observation."}

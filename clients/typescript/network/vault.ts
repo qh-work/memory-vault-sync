@@ -8,11 +8,12 @@ import type { DatabaseSync } from 'node:sqlite';
 import { canonicalBytes, document, sha256, validateSigningIdentity, validateSigningPublic } from './crypto.ts';
 import type { DocumentInput, SigningIdentityDocument, SigningPublicDescriptor } from './crypto.ts';
 import { NetworkError, openPrivateDatabase, transaction } from './io.ts';
-import { buildRecord, validateRecord, canonicalRecordBytes, signRecord, verifyRecord, parseShare, encodeShare, normalizeText, encodeExperience, canonicalExperienceBytes, parseExperienceJSON } from './records.ts';
+import { buildRecord, validateRecord, canonicalRecordBytes, signRecord, verifyRecord, parseShare, encodeShare, normalizeText, encodeExperience, decodeExperience, canonicalExperienceBytes, parseExperienceJSON } from './records.ts';
 import type { MemoryRecord, RecordAttestation, SignedMemory } from './records.ts';
 import { Retrieval, RETRIEVAL_INDEX_PROFILE } from './retrieval.ts';
 import type { RecallArguments } from './retrieval.ts';
 import { tokenize, timelineKey } from './retrieval_text.ts';
+import { assertPublishable } from './privacy.ts';
 
 type Admission = 'local_unsigned' | 'accepted_unsigned' | 'verified' | 'quarantined';
 type Row = Record<string, any>;
@@ -29,7 +30,9 @@ export interface RememberInput {
   relations?: { type: string; target: string }[]; provenance?: Record<string, string>; experience?: Record<string, unknown>;
 }
 export interface RecallOptions { limit?: number; after?: number; maximumScanned?: number; maximumBytes?: number; maximumSeconds?: number }
-export interface ShareOptions { maximumRecords?: number; maximumBytes?: number; maximumSeconds?: number }
+export interface ShareOptions { maximumRecords?: number; maximumBytes?: number; maximumSeconds?: number;
+  /** Internal explicit grant for every exported root and dependency. */
+  authorizedMemoryIds?: ReadonlySet<string> }
 
 const MAX_RECORD = 2 * 1024 * 1024, MAX_SHARE = 8 * 1024 * 1024, MAX_RECORDS = 256;
 const AUTHORITY = Object.freeze({ memory: 'untrusted_historical_evidence', instruction_eligible: false,
@@ -228,6 +231,23 @@ export class CanonicalVault {
     if (options.includeQuarantined !== undefined && typeof options.includeQuarantined !== 'boolean') fail('invalid_vault_option');
     return this.#run(false, () => this.#get(id, this.#trusted(), options.includeQuarantined === true));
   }
+  /** Indexed reads of explicitly allowed IDs only; no global recall/filter pass.
+   * The projection intentionally carries no relation or evidence identifiers. */
+  hintMatches(ids: readonly string[], query: string): {memory_id: string; excerpt: string; epistemic_type: string}[] {
+    if (!Array.isArray(ids) || ids.length > 128 || new Set(ids).size !== ids.length || typeof query !== 'string' || !query.length || Buffer.byteLength(query) > 256) fail('network_invalid_content');
+    ids.forEach(memoryId);
+    return this.#run(false, () => {
+      const trusted = this.#trusted(), hints: {memory_id: string; excerpt: string; epistemic_type: string}[] = [];
+      for (const id of [...ids].sort()) {
+        const value = this.#get(id,trusted); if (!value || !value.record.text.includes(query)) continue;
+        let excerpt = '', bytes = 0;
+        for (const character of value.record.text) { const size = Buffer.byteLength(character); if (bytes + size > 128) break; excerpt += character; bytes += size; }
+        hints.push({memory_id: id,excerpt,epistemic_type: decodeExperience(value.record).epistemic_type});
+        if (hints.length === 4) break;
+      }
+      return hints;
+    });
+  }
   /** Local inspection metadata, never an authorization grant or a network read. */
   verification(id: string): Row {
     memoryId(id);
@@ -397,6 +417,8 @@ export class CanonicalVault {
   exportShare(rootIds: string[], options: ShareOptions = {}): Uint8Array {
     if (!Array.isArray(rootIds) || rootIds.length < 1 || rootIds.length > 64 || new Set(rootIds).size !== rootIds.length) fail('invalid_share_roots');
     rootIds.forEach(memoryId);
+    if (options.authorizedMemoryIds !== undefined && (!(options.authorizedMemoryIds instanceof Set) || options.authorizedMemoryIds.size > 128)) fail('share_not_authorized');
+    const authorized = options.authorizedMemoryIds === undefined ? undefined : new Set(options.authorizedMemoryIds);
     const maximum = bounded(options.maximumRecords, MAX_RECORDS, 1, MAX_RECORDS), maximumBytes = bounded(options.maximumBytes, MAX_SHARE, 1, MAX_SHARE);
     const deadline = performance.now() + bounded(options.maximumSeconds, 5, 1, 30) * 1000;
     return this.#run(false, () => {
@@ -406,10 +428,16 @@ export class CanonicalVault {
         const id = pending.pop()!; if (selected.has(id)) continue;
         if (selected.size >= maximum) fail('share_record_limit');
         const value = this.#get(id, trusted); if (!value) fail('memory_not_found');
-        size += canonicalBytes(value, MAX_RECORD + 2048).length; if (size > maximumBytes) fail('share_too_large');
         selected.set(id, value);
         for (const relation of value.record.relations) pending.push(relation.target);
       }
+      // Resolve and authorize the entire dependency closure in this snapshot
+      // before serializing any export output. Manual exports remain unchanged.
+      if (authorized !== undefined && [...selected.keys()].some(id => !authorized.has(id))) fail('share_not_authorized');
+      // Only the new remotely requested, explicitly granted export uses the
+      // existing finite publication guard. Local/manual exports are unchanged.
+      if (authorized !== undefined) for (const value of selected.values()) assertPublishable([value.record]);
+      for (const value of selected.values()) { size += canonicalBytes(value, MAX_RECORD + 2048).length; if (size > maximumBytes) fail('share_too_large'); }
       // Recheck independent current policy immediately before data release.
       const fresh = this.#trusted();
       for (const value of selected.values()) if (value.attestation) verifyRecord(value.record, value.attestation, fresh);

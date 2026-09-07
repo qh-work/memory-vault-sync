@@ -41,7 +41,7 @@ process.stdout.write(JSON.stringify(results));
 class TypeScriptContentTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        prepare_runtime(cls, ("crypto.ts", "content.ts"), DRIVER)
+        prepare_runtime(cls, ("crypto.ts", "content.ts", "hints.ts", "io.ts"), DRIVER)
 
     def test_exact_message_and_explicit_memory_transfer_shapes(self):
         values = [
