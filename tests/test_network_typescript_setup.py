@@ -110,7 +110,7 @@ class TypeScriptSetupTests(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory(prefix='memory-vault-ts-setup-synthetic-')
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.fixture = Path(cls.temporary.name).resolve()
-        for name in ('crypto.ts','records.ts','setup.ts','io.ts','transport.ts','package.json'):
+        for name in ('crypto.ts','records.ts','setup.ts','io.ts','transport.ts','nodes.ts','control.ts','package.json'):
             shutil.copyfile(ROOT/'clients/typescript/network'/name,cls.fixture/name)
         (cls.fixture/'node_modules').mkdir()
         (cls.fixture/'node_modules/jose').symlink_to(package,target_is_directory=True)

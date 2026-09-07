@@ -335,7 +335,7 @@ def _validate_transport(connection: sqlite3.Connection, client: NetworkClient, m
             for key in recipients:
                 opaque(key)
         receipts = strict_json_loads(row["receipts"])
-        _require(isinstance(receipts, dict) and len(receipts) <= 2, "endpoint_backup_invalid_outbox")
+        _require(isinstance(receipts, dict) and len(receipts) <= 4, "endpoint_backup_invalid_outbox")
         if row["envelope"] is None:
             _require(row["roster"] is None and not receipts, "endpoint_backup_invalid_outbox")
             continue
@@ -405,7 +405,7 @@ def _validate_transport(connection: sqlite3.Connection, client: NetworkClient, m
             _require(type(decoded) is int and 0 <= decoded <= 2**53 - 1)
         elif key == "pump_node_cursor":
             # Scheduling position only; it cannot confer node authority.
-            _require(type(decoded) is int and 0 <= decoded < 2)
+            _require(type(decoded) is int and 0 <= decoded < 4)
         elif key == "hint_recovery_boundary":
             object_fields(decoded, {"inbox_rowid", "outbox_rowid"})
             for table in ("inbox", "outbox"):
@@ -568,7 +568,8 @@ def backup_endpoint(*, network_config: Path, output: Path, secret_file: Path,
 def restore_endpoint(*, package: Path, secret_file: Path, directory: Path,
                      confirm_network_id: str, issuer_public: Path, authority_url: str,
                      relays: Sequence[str], memory_trust: Path | None = None,
-                     accept_unsigned: bool = False, timeout: int = 60) -> Mapping[str, Any]:
+                     accept_unsigned: bool = False, timeout: int = 60,
+                     relay_pool: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
     """Restore the same identity and queues to a NEW, capture-off endpoint.
 
     Restored Vault admission is decided only by an independently selected
@@ -576,6 +577,9 @@ def restore_endpoint(*, package: Path, secret_file: Path, directory: Path,
     remain historical evidence. No network operation is performed here.
     """
     from memory_vault_trust import MAX_TRUST_STORE_BYTES, TrustStore
+    from memory_vault_network import validate_relay_pool
+    if relay_pool is not None:
+        relay_pool = validate_relay_pool(relay_pool)
     deadline = vault_backup._deadline(timeout)
     network_id = opaque(confirm_network_id)
     root, secret_path, destination = _path(package), _path(secret_file), _path(directory)
@@ -615,7 +619,7 @@ def restore_endpoint(*, package: Path, secret_file: Path, directory: Path,
                                                accept_unsigned=accept_unsigned, timeout=_timeout(deadline))
         restored = restore_keys(package=stage / "keys-package.json", secret_file=stage / "keys-secret.json",
             directory=destination / "endpoint", vault=vault_path, confirm_network_id=network_id,
-            issuer_public=independent_issuer, authority_url=authority_url, relays=destinations)
+            issuer_public=independent_issuer, authority_url=authority_url, relays=destinations, relay_pool=relay_pool)
         with NetworkClient(Path(restored["network_config"])) as client:
             if runtime_trust is None:
                 # The identity itself was explicitly restored, so local
@@ -663,11 +667,18 @@ def main(argv: Sequence[str] | None = None, *, client_config: Path | None = None
     restore.add_argument("--issuer-public", required=True, type=Path)
     restore.add_argument("--authority-url", required=True)
     restore.add_argument("--relay", required=True, action="append")
+    restore.add_argument("--relay-pool-maximum-nodes", type=int)
+    restore.add_argument("--replica-target", type=int)
     restore.add_argument("--memory-trust", type=Path, help="independently chosen current Vault trust registry")
     restore.add_argument("--accept-unsigned", action="store_true")
     restore.add_argument("--timeout", type=int, default=60)
     args = parser.parse_args(argv)
     try:
+        pool = None
+        if (getattr(args, "relay_pool_maximum_nodes", None) is not None
+                or getattr(args, "replica_target", None) is not None):
+            from memory_vault_network import validate_relay_pool
+            pool = validate_relay_pool({"maximum_nodes": args.relay_pool_maximum_nodes, "replica_target": args.replica_target})
         if args.action == "backup":
             result = backup_endpoint(network_config=args.network_config, output=args.output, secret_file=args.secret_file,
                                      timeout=args.timeout, client_config=client_config)
@@ -675,7 +686,7 @@ def main(argv: Sequence[str] | None = None, *, client_config: Path | None = None
             result = restore_endpoint(package=args.package, secret_file=args.secret_file, directory=args.directory,
                 confirm_network_id=args.confirm_network_id, issuer_public=args.issuer_public,
                 authority_url=args.authority_url, relays=args.relay, memory_trust=args.memory_trust,
-                accept_unsigned=args.accept_unsigned, timeout=args.timeout)
+                accept_unsigned=args.accept_unsigned, timeout=args.timeout, relay_pool=pool)
         write_response(success(result))
         return 0
     except (MemoryError, TrustError) as exc:

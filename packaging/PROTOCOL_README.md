@@ -1,4 +1,10 @@
-# Memory Vault v0.26.0-alpha.5 — independent protocol
+# Memory Vault v0.27.0-alpha.1 — independent protocol
+
+The 0.27.0-alpha.1 feature is an opt-in signed relay pool: different bootstrap
+entries can reach a common authorized set and sends can fall back between
+candidates. See [scope, setup and limits](docs/RELAY_POOL.md).
+The authority remains a single configured service; this is not open P2P or
+completion of the planned endurance and scale gates.
 
 This archive is an agreement and implementation material, not an installed
 program. No Python, database, plugin, account or network service is required
@@ -22,7 +28,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.26.0-alpha.5;
+artifacts described in `docs/RELEASE.md`. This package targets v0.27.0-alpha.1;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility
@@ -30,7 +36,7 @@ claim. Reading its specification does not install a client, provision keys or
 join a service. Verify exact source, bytes and validation scope in the artifact
 manifest; this document does not establish installation or publication.
 
-Alpha.5 documents source-preserving Experience views, message/memory
+Retained from alpha.5: source-preserving Experience views, message/memory
 separation, authorized frozen Hint pages, explicit complete one-to-four-root
 batches, query cancellation and local inspection of accepted batches. Current
 profiles are content/v2 and Hint v4; older preview forms are rejected by the

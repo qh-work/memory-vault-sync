@@ -42,7 +42,7 @@ integrations can carry these records without becoming their owner.
 The optional [network-v1 carrier](docs/NETWORK_V1.md), introduced in the 0.26
 alpha, adds private transport, invitations and endpoint adapters **outside**
 core-v1. Core operations remain local and its original record/hash/authority
-contract is unchanged. This unreleased candidate adds
+contract is unchanged. The carrier uses
 [network content/v2](docs/NETWORK_CONTENT_V2.md): text-only communication stays
 in transport storage; explicit memory transfers carry selected original records
 and a non-memory note. The `network-v1` encryption, identity and receipt domains
@@ -50,6 +50,13 @@ remain unchanged. Earlier content/v1 queue bodies and endpoint backups containin
 them are unsupported. Upgrade compatibility is deferred; this batch neither
 converts nor deletes old private state. Ordinary users can consume the
 [six-operation endpoint](AI_START_HERE.md) without implementing this protocol.
+
+The optional local [relay-pool configuration](docs/RELAY_POOL.md) selects a
+bounded common candidate set from the independently verified signed node
+directory. Pool discovery never grants admission or content access. The
+replica target is distinct from pool size; historical storage confirmations
+are not current-availability guarantees. This changes endpoint routing policy,
+not core-v1 record bytes, network-v1 encryption, identity or signature domains.
 
 `core-v1` is the baseline record, authority, append/retry, recall/handoff and
 bundle agreement in this document. Section 5 defines its standard JSON request

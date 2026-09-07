@@ -1,163 +1,89 @@
-# Memory Vault v0.26.0-alpha.5 — package/review notes
+# Memory Vault v0.27.0-alpha.1 — signed relay pools
 
-**Alpha candidate; not a stable-release or runtime-certification claim.** This
-document describes the current build target. It does not establish that a
-package has been installed or publicly published. Existing versioned reports
-and published artifacts remain separate historical evidence.
+This bounded private-network preview extends the published alpha.5 baseline,
+main `608d54578b9ce30f10fe450ad651f1cd8620a2e7`. A source declaration does not
+establish publication or installation; verify the actual release manifest
+and downloaded asset hashes.
 
-## Alpha.5: explicit experience exchange and local inspection
+## New network capability
 
-This release target packages reviewed main
-`1f74fb969d29da5a92f014bb34d9415b967ddc26`, including PRs #22–#28:
+- Opt into `relay_pool` in the existing endpoint configuration. A fresh,
+  independently verified issuer-signed directory supplies a common bounded
+  candidate set, even when endpoints start from different bootstrap URLs.
+- Admit each endpoint on candidate relays through the existing dual-key
+  invitation ceremony. A directory entry does not grant relay membership,
+  memory access, decryption rights or execution permissions.
+- Choose up to four candidates and request one or two storage confirmations.
+  Sending tries other permitted candidates when one fails; receiving polls
+  the common bounded pool. Results distinguish pool size, replica target and
+  actual storage acknowledgements.
+- Preserve frozen ciphertext, explicit per-node acknowledgements, cursors,
+  deduplication and recovery. Old receipts remain historical evidence and do
+  not prove live availability. Local memory and accepted-batch reads remain
+  independent of discovery or authority availability.
+- Without the explicit local opt-in, endpoints retain their fixed one or two
+  relay addresses. Recovery does not silently opt into new connectivity.
 
-- Experience origin deduplication stays tied to the first verified local
-  signer; re-attestation does not manufacture independent evidence. Python,
-  native TypeScript and the HTTP SDK preserve signed int64 Experience values.
-- Ordinary chat stays in durable transport storage. Sending or receiving text
-  does not create a long-term observation; saving it requires explicit
-  `remember`. Explicit transfers preserve original records and signatures.
-- Known, authorized peers can query without knowing memory IDs first. Separate
-  local grants control Hint visibility and complete-record access. One query
-  freezes at most sixteen hints in four explicitly requested pages of four.
-- A requester selects one to four distinct roots from received pages. The
-  owner authorizes the complete dependency union or refuses the whole batch;
-  shared dependencies appear once, and refusal reveals no hidden record IDs.
-- Established queries can be cancelled locally, including offline. Pending
-  query work stops without deleting accepted memories or rewriting frozen
-  transport bodies. Notification failure does not undo committed local
-  cancellation. Recovery does not revive live Hint sessions.
-- `recall(received_batch_message_id=...)` reads a previously verified batch
-  locally in its original selection order. Bounded pages preserve source,
-  environment and counterevidence, recheck current trust, and perform no
-  network access or persistent writes. Accepted history survives cancellation,
-  restart and same-version encrypted recovery; rejected late batches remain
-  unavailable through this selector.
+See [relay-pool semantics, setup and measured verification](../docs/RELAY_POOL.md)
+and the [operator quickstart](../docs/NETWORK_QUICKSTART.md).
 
-The six native operations, existing Vault, record IDs, canonical bytes and
-Ed25519 source signatures remain. Current payloads use content/v2 and Hint v4
-inside network-v1. Earlier preview content/Hint forms are deliberately rejected;
-this package supplies no automatic private-installation upgrade or migration.
-See [message semantics](../docs/NETWORK_CONTENT_V2.md),
-[Hint v4](../docs/NETWORK_HINTS_V4.md) and
-[local batch recall](../docs/RECEIVED_BATCH_RECALL.md).
+## Retained memory and experience capabilities
 
-## Two modes, one memory
+The six operations remain `connect`, `remember`, `recall`, `discover`, `send`
+and `receive`. Chat and transfer notes do not create long-term memory.
+Separately authorized Hint v4 queries, frozen pages, explicit one-to-four-root
+transfers, cancellation and local accepted-batch recall retain their semantics.
+Experience views distinguish original observation, independent experiments,
+hearsay and counterevidence; propagation is not independent verification.
 
-The independent agreement has no plugin, Python, database, Git or vendor
-dependency. The authorized full client supplies practical capture, retrieval,
-transport and recovery around the same immutable taskless record contract.
+No second memory database, identity system, content profile or encryption
+profile is introduced. Existing record IDs, canonical bytes and Ed25519
+source signatures are unchanged. X25519/JWE and outer signatures remain
+inside network-v1. The existing MCP memory interface is retained; no new
+MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility claim is added.
 
-The existing production host bridge, local retrieval/graph views, signed sync,
-large file packs, selected sharing, client recovery, managed updates and
-protected storage paths remain. Canonical record/v1 IDs and share-v1 are
-unchanged; network transport state is bookkeeping, not another memory store.
+## Artifacts and safe upgrades
 
-The alpha adds optional native `connect`, `remember`, `recall`, `discover`,
-`send` and `receive` over the same client. It supplies independently provisioned
-issuer/member identities, encrypted delivery, repeated-delivery recovery and
-bounded rejected-ciphertext storage. The explicit `network-pump` management
-command retries persisted work and receives a bounded page, then exits. It
-starts no scheduler or default background service. The native network has no
-MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility claim; the existing
-eleven-tool MCP memory interface remains unchanged.
+- `memory-vault-protocol-v0.27.0-alpha.1.zip`: specification, structural schemas
+  and synthetic vectors, with no executable code.
+- `memory-vault-client-v0.27.0-alpha.1.zip`: complete source-built runtime,
+  plugin and local marketplace catalog.
+- `memory-vault-review-v0.27.0-alpha.1.zip`: public source and synthetic tests;
+  no automatic execution.
+- `memory-vault-network-test-v0.27.0-alpha.1.zip`: isolated endpoint template,
+  without Docker or a plugin. Service trust is unconfigured; an operator must
+  provision reviewed service pins and a one-time code before use.
+- `memory_vault.py`, `PROTOCOL.md`, `release-manifest.json`, `SHA256SUMS`:
+  standalone core/agreement and exact artifact inventories. The full runtime
+  requires its companion modules. Checksums are not publisher signatures.
 
-Alpha.4 introduced optional Experience Semantics, bounded local provenance summaries,
-source-preserving structured recall and cross-author state protection.
-Observation, experiment, inference, hearsay, speculation, summary and external
-sources remain separate claims; transmission counts are not truth or independent
-evidence. Existing record IDs, canonical bytes and Ed25519 signatures are
-unchanged. No new database, global P2P or consensus system is introduced.
+Dependencies retain the separate existing client/server hash locks. Local
+unsigned memory still has a standard-library path. Nothing in this release
+replaces a private installation, reads private memory, activates hooks, starts
+an agent, operates a public service or procures resources.
 
-Alpha.3 already made current records an explicit deterministic ranking tier ahead
-of superseded/resolved history across Python and TypeScript recall and handoff.
-The separate synthetic trial retains its temporary endpoint implementation;
-alpha.5 ships with service trust unconfigured, so it fails before setup/network
-activity until an operator publishes reviewed pinned service bytes. It never
-reads the installed plugin or an existing Vault. Old alpha.3 service URLs are
-not reused as working infrastructure.
+Preserve the old runtime, configuration, queues and backups before explicit
+installation. Current content/v2 and Hint v4 controls reject older preview
+forms; no automatic content/v1 migration is supplied. An old client may reject
+expanded transport receipt maps. Keep the matching runtime or a pre-upgrade
+backup instead of rewriting evidence to force an older reader to accept it.
 
-Existing Ed25519 record attestations and the independent protocol remain.
-Task ownership, mandatory Git runtime and the old monolith do not return.
-Memory cannot install software, enroll trust, activate hooks or execute goals.
+## Verification and remaining limits
 
-## Build artifacts
+The final targeted developer run passed 74 distinct methods in 185.310 seconds,
+with unchanged source/test hashes and no failures, errors or skips. Exact
+commands and scope are in [RELAY_POOL.md](../docs/RELAY_POOL.md). Historical alpha.5, Experience and
+v0.25 reports retain their original source pins and do not certify this build.
+Source tests, independent 6 Pro review, required CI, final archive privacy,
+publication and private installation are separate checks.
 
-- `memory-vault-protocol-v0.26.0-alpha.5.zip`: documentation, structural schemas and
-  synthetic interchange vectors, with no executable.
-- `memory-vault-client-v0.26.0-alpha.5.zip`: source-built plugin, all required runtime
-  modules and a local marketplace catalog.
-- `memory-vault-review-v0.26.0-alpha.5.zip`: public source, synthetic cases and bounded
-  review handoff for independent reviewers; no automatic test execution.
-- `memory-vault-network-test-v0.26.0-alpha.5.zip`: isolated one-command synthetic
-  endpoint template; no Docker or plugin; unconfigured service trust requires
-  operator provisioning.
-- `PROTOCOL.md` and `memory_vault.py`: agreement and core source; use the full
-  client/review package for the Experience companion module.
-- `release-manifest.json` / `SHA256SUMS`: exact source reference, asset hashes
-  and actual verification scope. Checksums are not publisher signatures.
+The authority still has a single configured address. The pool is a common
+mailbox set, not a global router or relay-to-relay replication system. Member,
+queue, ciphertext and retry budgets remain finite. This preview does not
+complete the planned 24-hour endurance test, 1,000-active-agent/72-hour gate,
+real-model or cross-machine acceptance. Local HTTP process failures are not
+physical failure-domain tests. There is no open P2P, DHT, group gossip, global
+consensus, automatic shard expansion, unlimited capacity or production-security
+certification. Those require later bounded development and independent evidence.
 
-These are build target names, not assertions that the assets are published.
-Use the exact source commit carried by an actual artifact. Do not infer the
-development contents from an older release or an unqualified main checkout.
-
-Optional network dependencies use the separate client/server hash locks;
-ordinary local memory still has a standard-library path. See
-[dependency coverage](../docs/DEPENDENCIES_NETWORK.md) and
-[operator setup and one-pass pumping](../docs/NETWORK_QUICKSTART.md). Locked
-artifact hashes do not establish package security or platform runtime success.
-
-## Verification boundary
-
-The reviewed source `c473d23f894f7ba8cab05817788fdb9537359e77` previously
-passed **94 distinct targeted developer tests in 213.804 seconds**, with no
-failures, errors or skips. Main `1f74fb9` has the identical tree. Prior
-three-platform base CI also passed; these are existing source-pinned results,
-not a whole-suite pass, benchmark or Windows feature certification.
-
-The bounded 6 Pro review passed that SHA and scope. Its independent environment
-lacked real JOSE, so it did not rerun the complete encrypted/native TypeScript/
-recovery matrix. Developer test execution and independent review are separate
-evidence. During this release preparation, **18 release-packaging and base
-regressions passed in 3.519 seconds**, with no failures, errors or skips. Final
-archive checks, installation and publication require separate actual evidence.
-
-This is an owner-authorized prerelease with disclosed limits. Historical initial Experience
-validation recorded **37 new tests passed**, **132 selected regressions passed**
-and **five socket tests blocked by sandbox policy**. The A/B/C/D logical-Agent
-demo passed. A Unicode normalization difference was also reproduced on the
-unchanged alpha.3 baseline; the full suite is not claimed green. Exact commands
-and remaining bounds are in [Experience validation](../docs/EXPERIENCE_VALIDATION.md).
-Source/archive checks and publication evidence are recorded separately.
-
-The [validation index](../docs/VALIDATION.md) preserves earlier source-pinned
-evidence; results do not transfer between versions. The current
-[alpha report](../docs/RELEASE_NOTES_V0_26_ALPHA.md) separates synthetic native
-network journeys, independent cryptographic interchange and owned loopback
-process recovery from real-model, live-cloud and deployment acceptance.
-Full P01–P14, real-host/cross-device, native Windows, stable-runtime and
-performance acceptance require their own evidence.
-
-Static source, syntax/schema-document and archive/inventory inspection are
-separate evidence, not runtime or production-security certification. Limited
-smoke evidence and this document do not establish installation or publication.
-
-Two configured relays do not provide automatic replica repair or certified
-independent failure domains. Bounded pumping cannot forcibly interrupt an
-in-flight system call. Queues and quarantine can fill and then fail explicitly;
-the 256-member alpha does not satisfy the planned 1,000-active-agent/72-hour
-gate. No real-model communication or collective-intelligence success is claimed.
-
-See [the full parity ledger](../docs/V0_25_PARITY_PLAN.md) and
-[review handoff](../docs/REVIEW_HANDOFF.md). Remaining runtime evidence must be
-reported as pending, not converted into a passing claim. A production signing,
-encryption or recovery ceremony is not supplied; unconfigured providers fail
-closed. ChatGPT Work automatic lifecycle and universal host compatibility are
-not asserted. Extracting an artifact changes no existing private installation,
-real memory, host configuration or service.
-
-Independent implementations and reproducible synthetic-data reviews are welcome.
-Use [AI_START_HERE.md](../AI_START_HERE.md) and
-[the small contribution task](CONTRIBUTOR_TASK.md). Do not publish private data.
-Traffic, stars or downloads do not establish AI adoption or endorsement.
-
-Apache-2.0. Memory is evidence, not instruction, authorization or execution.
+Apache-2.0; existing releases and private backups remain separate.

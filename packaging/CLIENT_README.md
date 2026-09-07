@@ -1,6 +1,12 @@
-# Memory Vault v0.26.0-alpha.5 — authorized full client
+# Memory Vault v0.27.0-alpha.1 — authorized full client
 
-This full-client package targets **v0.26.0-alpha.5 native-network source**,
+The 0.27.0-alpha.1 feature is an opt-in signed relay pool: different bootstrap
+entries can reach a common authorized set and sends can fall back between
+candidates. See [scope, setup and limits](plugins/memory-vault-client/docs/RELAY_POOL.md).
+The authority remains a single configured service; this is not open P2P or
+completion of the planned endurance and scale gates.
+
+This full-client package targets **v0.27.0-alpha.1 native-network source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under
@@ -22,7 +28,7 @@ relay, authority and trusted HTTP services use the separate server lock. See
 and [explicit setup](plugins/memory-vault-client/docs/NETWORK_QUICKSTART.md).
 Extracting this package installs none of those dependencies or services.
 
-Alpha.5 packages the reviewed experience-exchange flow: chat does not
+Retained from alpha.5: the reviewed experience-exchange flow: chat does not
 implicitly become memory; authorized Hint queries return up to four frozen
 pages of four hints; explicit selections transfer one to four roots and their
 complete permitted dependency union. Cancellation stops pending query work.

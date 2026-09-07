@@ -1,4 +1,10 @@
-# Memory Vault v0.26.0-alpha.5 independent review kit
+# Memory Vault v0.27.0-alpha.1 independent review kit
+
+The 0.27.0-alpha.1 feature is an opt-in signed relay pool: different bootstrap
+entries can reach a common authorized set and sends can fall back between
+candidates. See [scope, setup and limits](docs/RELAY_POOL.md).
+The authority remains a single configured service; this is not open P2P or
+completion of the planned endurance and scale gates.
 
 This separate archive contains public source and synthetic tests, not private
 memory or a preconfigured installation. The [validation index](docs/VALIDATION.md)
@@ -14,7 +20,7 @@ native Windows or thousand-agent acceptance. The earlier two-mode entry tests
 share one Python reference. Full P01–P14 acceptance remains open. This alpha
 kit is not a stable-release certification, installed client or publication claim.
 
-Alpha.5 includes reviewed PRs #22–#28: stable Experience origins and lossless
+Retained from alpha.5 are reviewed PRs #22–#28: stable Experience origins and lossless
 int64 views; chat/memory separation; authorized frozen Hint pages; complete
 one-to-four-root selection; cancellation; and read-only accepted-batch recall.
 Current controls use Hint v4 inside content/v2. Earlier Hint documents retain

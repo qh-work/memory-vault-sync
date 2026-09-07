@@ -1,4 +1,4 @@
-# Private network quickstart (unreleased candidate)
+# Private network quickstart
 
 This source uses [network content/v2](NETWORK_CONTENT_V2.md). It is not an
 upgrade guide for existing preview transport state: compatibility and upgrade
@@ -56,6 +56,18 @@ separately; endpoint key recovery does not include it. One-machine setup does
 not isolate processes running under the same OS account. Earlier explicitly
 shared-key setups remain readable and report `issuer_key_shared_with_endpoint`;
 do not treat their endpoint backups as containing only ordinary member rights.
+
+## Opt into a common relay pool
+
+The endpoint's existing network configuration can optionally include
+`"relay_pool": {"maximum_nodes": 4, "replica_target": 2}`. This permits selecting
+active nodes from the independently verified issuer-signed directory instead
+of limiting traffic to the one or two configured bootstrap URLs. All endpoint
+participants must actually join the selected relays using a valid invitation;
+a directory listing does not grant membership. Complete setup, failure and
+recovery boundaries are in [RELAY_POOL.md](RELAY_POOL.md). Without this local
+setting the fixed-address behavior is retained. This does not add an authority
+backup or provision any public service.
 
 ## Contribute an independent storage node
 

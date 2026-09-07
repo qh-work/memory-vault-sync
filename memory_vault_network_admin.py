@@ -89,8 +89,10 @@ def create_identity(directory: Path) -> Mapping[str, Any]:
 
 
 def configure_network(*, client_config: Path, encryption_key: Path, issuer_public: Path, network_id: str,
-                      authority_url: str, relays: Sequence[str], output: Path) -> Mapping[str, Any]:
-    from memory_vault_network import origin, CONFIG_SCHEMA
+                      authority_url: str, relays: Sequence[str], output: Path,
+                      relay_pool: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+    from memory_vault_network import origin, CONFIG_SCHEMA, validate_relay_pool
+    pool = {} if relay_pool is None else {"relay_pool": validate_relay_pool(relay_pool)}
     client_path, encryption_path, out = _path(client_config), _path(encryption_key), _path(output)
     if os.path.lexists(out):
         raise NetworkCryptoError("network_config_exists")
@@ -112,7 +114,7 @@ def configure_network(*, client_config: Path, encryption_key: Path, issuer_publi
         raise NetworkCryptoError("network_configuration_path_conflict")
     _new(out, {"schema_version": CONFIG_SCHEMA, "network_id": opaque(network_id), "client_config_path": str(client_path),
               "state_directory": str(state), "encryption_key_path": str(encryption_path), "issuer_public_key": issuer,
-              "relays": destinations, "authority_url": origin(authority_url)})
+              "relays": destinations, "authority_url": origin(authority_url), **pool})
     return {"state": "network_configured", "config": str(out), "member_key_id": signer.key_id,
             "issuer_key_shared_with_endpoint": signer.key_id == issuer["key_id"],
             "network_accessed": False, "keys_enrolled": False, "services_started": False}
@@ -423,9 +425,11 @@ def backup_keys(*, network_config: Path, output: Path, secret_file: Path) -> Map
 
 def restore_keys(*, package: Path, secret_file: Path, directory: Path, vault: Path,
                  confirm_network_id: str, issuer_public: Path, authority_url: str,
-                 relays: Sequence[str]) -> Mapping[str, Any]:
+                 relays: Sequence[str], relay_pool: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
     """Restore inert keys to a new directory; all paths/origins are local choices."""
-    from memory_vault_network import origin
+    from memory_vault_network import origin, validate_relay_pool
+    if relay_pool is not None:
+        relay_pool = validate_relay_pool(relay_pool)
     network_id = opaque(confirm_network_id)
     secret = object_fields(_read(secret_file, private=True, maximum=4096), {"schema_version", "network_id", "secret"})
     if secret["schema_version"] != KEY_SECRET_SCHEMA or secret["network_id"] != network_id:
@@ -493,7 +497,7 @@ def restore_keys(*, package: Path, secret_file: Path, directory: Path, vault: Pa
          "old_delivery_cursors_restored": False, "offline_outbox_restored": False, "vault_restored_by_this_command": False})
     configure_network(client_config=selected / "client.json", encryption_key=selected / "encryption.json",
                       issuer_public=selected / "issuer-public.json", network_id=network_id, authority_url=authority_url,
-                      relays=destinations, output=selected / "network.json")
+                      relays=destinations, output=selected / "network.json", relay_pool=relay_pool)
     return {"state": "identity_control_restored_inactive", "network_config": str(selected / "network.json"),
             "activation_disabled": True, "requires_fresh_issuer_status": True, "network_state_started_empty": True,
             "vault_changed": False, "offline_outbox_restored": False, "network_accessed": False,
@@ -542,6 +546,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure.add_argument("--network-id", required=True)
     configure.add_argument("--authority-url", required=True)
     configure.add_argument("--relay", action="append", required=True)
+    configure.add_argument("--relay-pool-maximum-nodes", type=int)
+    configure.add_argument("--replica-target", type=int)
     configure.add_argument("--output", type=Path, required=True)
     backup = commands.add_parser("keys-backup", aliases=["backup"], help="encrypt identity/control metadata only, not the Vault or offline outbox")
     backup.add_argument("--network-config", type=Path, required=True)
@@ -556,8 +562,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     restore.add_argument("--issuer-public", type=Path, required=True)
     restore.add_argument("--authority-url", required=True)
     restore.add_argument("--relay", action="append", required=True)
+    restore.add_argument("--relay-pool-maximum-nodes", type=int)
+    restore.add_argument("--replica-target", type=int)
     args = parser.parse_args(argv)
     try:
+        pool = None
+        if (getattr(args, "relay_pool_maximum_nodes", None) is not None
+                or getattr(args, "replica_target", None) is not None):
+            from memory_vault_network import validate_relay_pool
+            pool = validate_relay_pool({"maximum_nodes": args.relay_pool_maximum_nodes, "replica_target": args.replica_target})
         if args.action == "identity":
             result = create_identity(args.directory)
         elif args.action == "init":
@@ -577,12 +590,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                                        handoff_envelope=args.handoff_envelope, scope=args.scope or ["receive", "send"], lifetime_seconds=args.lifetime_seconds)
         elif args.action == "configure":
             result = configure_network(client_config=args.client_config, encryption_key=args.encryption_key, issuer_public=args.issuer_public,
-                                        network_id=args.network_id, authority_url=args.authority_url, relays=args.relay, output=args.output)
+                                        network_id=args.network_id, authority_url=args.authority_url, relays=args.relay, output=args.output, relay_pool=pool)
         elif args.action in {"keys-backup", "backup"}:
             result = backup_keys(network_config=args.network_config, output=args.output, secret_file=args.secret_file)
         else:
             result = restore_keys(package=args.package, secret_file=args.secret_file, directory=args.directory, vault=args.vault,
-                                   confirm_network_id=args.confirm_network_id, issuer_public=args.issuer_public, authority_url=args.authority_url, relays=args.relay)
+                                   confirm_network_id=args.confirm_network_id, issuer_public=args.issuer_public, authority_url=args.authority_url, relays=args.relay, relay_pool=pool)
         write_response(success(result))
         return 0
     except (MemoryError, TrustError) as exc:

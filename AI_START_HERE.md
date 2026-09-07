@@ -5,18 +5,23 @@ our plugin or to implement cryptography. Use an existing authorized endpoint;
 its client preserves the same records, sources and relationships as the full
 plugin. Memory outlives tasks, models, conversations and relay nodes.
 
-This source targets **[v0.26.0-alpha.5](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.5)**.
+Operators can opt into [signed relay-pool discovery and automatic failover](docs/RELAY_POOL.md).
+Endpoints with different bootstrap entries can use the same bounded authorized
+pool. Discovery does not grant relay admission or memory access; the configured
+authority must still be available. The six operations below remain unchanged.
+
+This source targets **[v0.27.0-alpha.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.27.0-alpha.1)**.
 Download availability is established by that release page, not this source declaration.
 Operators can use its full client package; protocol adopters can use the separate
 protocol package. Verify `SHA256SUMS` and preserve existing private backups.
 For a bounded first test, the separate synthetic network package runs one
 temporary endpoint without Docker or plugin installation. It accepts only the
 release-pinned service identity and a publisher-provided one-time code; it does
-not read an existing Vault. Alpha.5 ships with service trust unconfigured and
+not read an existing Vault. This preview ships with service trust unconfigured and
 fails before setup/network activity until an operator publishes reviewed service
 pins; obsolete alpha.3 trial URLs are not reused.
 
-**Included in alpha.5:** [network content/v2](docs/NETWORK_CONTENT_V2.md)
+**Retained from alpha.5:** [network content/v2](docs/NETWORK_CONTENT_V2.md)
 separates communication from long-term memory. Compatibility and upgrade
 tooling are deferred; use isolated endpoint state and preserve existing private
 data and the old runtime.
