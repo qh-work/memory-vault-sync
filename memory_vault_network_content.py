@@ -76,7 +76,8 @@ def validate_content(value: bytes | Mapping[str, Any]) -> dict[str, Any]:
         # with disallowed control numbers use the closed Hint schema error.
         try:
             candidate = strict_json_loads(value) if isinstance(value, bytes) and len(value) <= MAX_CONTENT_BYTES else value
-            if isinstance(candidate, Mapping) and candidate.get("kind") in {"hint_control", "hint_transfer"}:
+            kind = candidate.get("kind") if isinstance(candidate, Mapping) else None
+            if isinstance(kind, str) and kind in {"hint_control", "hint_transfer"}:
                 raise MemoryError("network_invalid_content")
         except MemoryError as exc:
             if exc.code == "network_invalid_content":

@@ -114,6 +114,79 @@ class HintContentTests(unittest.TestCase):
 
 
 class NetworkHintTests(unittest.TestCase):
+    def test_unhashable_kind_with_unsafe_integer_is_quarantined_without_blocking_same_page(self):
+        for malformed_kind in ([], {}):
+            for number in (2**53, 2**63 - 1):
+                with self.subTest(kind=malformed_kind, number=number), fixture() as (sender, recipient, transport):
+                    sender_id = remember(self, sender, transport, "invalid_kind_sender", "Synthetic existing sender Experience.")
+                    recipient_id = remember(self, recipient, transport, "invalid_kind_recipient", "Synthetic existing recipient Experience.")
+                    sender.set_hint_policy(policy(sender, recipient, [sender_id], [sender_id]))
+                    recipient.set_hint_policy(policy(recipient, sender, [recipient_id], [recipient_id]))
+                    before = [vault_snapshot(endpoint) for endpoint in (sender, recipient)]
+                    protected = [(endpoint.directory / "hint-policy.json", endpoint.client_config.trust_path)
+                                 for endpoint in (sender, recipient)]
+                    protected_bytes = {path: path.read_bytes() for paths in protected for path in paths}
+                    # Authenticated peers can send arbitrary encrypted bytes.
+                    # Do not normalize this malformed application body through
+                    # a validating encoder before sealing the real JWE.
+                    raw = json.dumps({"schema_version": CONTENT_SCHEMA, "kind": malformed_kind,
+                                      "x": number}, separators=(",", ":")).encode()
+                    malformed = inject_ciphertext(sender, recipient, raw, "msg_" + "6" * 64)
+                    if number == 2**53:
+                        following = sender.send("req_hint_after_unhashable_chat", [recipient.identity.key_id],
+                                                "Synthetic valid chat after malformed content.")
+                        expected_kind = "message"
+                    else:
+                        following = sender.send("req_hint_after_unhashable_query", [recipient.identity.key_id],
+                            control=control("query", query="Synthetic existing recipient"))
+                        expected_kind = "hint_control"
+                    self.assertEqual(following["stored_nodes"], 2, following)
+                    response = recipient.receive(limit=4)
+                    self.assertFalse(response["errors"], response)
+                    bad, good = response["messages"]
+                    self.assertEqual(bad["message_id"], malformed["message_id"])
+                    self.assertEqual(bad["state"], "rejected")
+                    self.assertEqual(bad["code"], "network_invalid_content_json")
+                    self.assertNotIn("text", bad)
+                    self.assertEqual(good["message_id"], following["message_id"])
+                    self.assertEqual(good["state"], "validated_saved")
+                    self.assertEqual(good["content_kind"], expected_kind)
+                    with recipient.db() as db:
+                        rejected = db.execute("SELECT envelope FROM quarantine WHERE message_id=?",
+                                              (malformed["message_id"],)).fetchone()
+                        self.assertEqual(bytes(rejected[0]), canonical_bytes(malformed))
+                        self.assertEqual(db.execute("SELECT COUNT(*) FROM quarantine").fetchone()[0], 1)
+                        self.assertEqual([row[0] for row in db.execute("SELECT message_id FROM inbox")],
+                                         [following["message_id"]])
+                        for relay in sender.relays:
+                            cursor = strict_json_loads(db.execute("SELECT value FROM state WHERE key=?",
+                                ("cursor:" + relay,)).fetchone()[0])
+                            self.assertEqual(cursor["cursor"], 2)
+                            self.assertIsNone(db.execute("SELECT 1 FROM state WHERE key=?",
+                                ("ack:" + relay + ":" + malformed["message_id"],)).fetchone())
+                    for relay in sender.relays:
+                        with transport.clients[relay].app.state.relay._transaction() as db:
+                            self.assertEqual(db.execute("SELECT COUNT(*) FROM receipts WHERE message_id=?",
+                                (malformed["message_id"],)).fetchone()[0], 0)
+                            self.assertEqual(db.execute("SELECT COUNT(*) FROM receipts WHERE message_id=?",
+                                (following["message_id"],)).fetchone()[0], 1)
+                    for _ in range(2):
+                        replay = recipient.receive(limit=4)
+                        self.assertFalse(replay["errors"], replay)
+                        self.assertEqual(replay["messages"], [])
+                    later = sender.send("req_hint_after_quarantine_repoll", [recipient.identity.key_id],
+                                        "Synthetic later message also makes progress.")
+                    advanced = recipient.receive(limit=4)
+                    self.assertFalse(advanced["errors"], advanced)
+                    self.assertEqual([item["message_id"] for item in advanced["messages"]], [later["message_id"]])
+                    with recipient.db() as db:
+                        self.assertEqual(db.execute("SELECT COUNT(*) FROM quarantine").fetchone()[0], 1)
+                        for relay in sender.relays:
+                            self.assertEqual(strict_json_loads(db.execute("SELECT value FROM state WHERE key=?",
+                                ("cursor:" + relay,)).fetchone()[0])["cursor"], 3)
+                    self.assertEqual([vault_snapshot(endpoint) for endpoint in (sender, recipient)], before)
+                    self.assertEqual({path: path.read_bytes() for path in protected_bytes}, protected_bytes)
+
     def test_unknown_id_query_is_bounded_readonly_and_explicit_selection_preserves_records(self):
         with fixture() as (owner, requester, transport):
             root = remember(self, owner, transport, "root", "Synthetic needle root with direct observation.")

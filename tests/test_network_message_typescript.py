@@ -19,7 +19,7 @@ from memory_vault_relay import Relay
 from memory_vault_storage import atomic_write
 from memory_vault_trust import TrustStore
 from tests import test_network_typescript_agent_network as agent_fixture
-from tests.test_network_message_semantics import vault_snapshot
+from tests.test_network_message_semantics import invalid_kind_vectors, vault_snapshot
 from tests.test_network_typescript_transport import prepare_runtime, invoke
 
 
@@ -114,6 +114,43 @@ class TypeScriptContentTests(unittest.TestCase):
             except MemoryError as error:
                 expected.append({"ok": False, "code": error.code})
         self.assertEqual(invoke(self, [{"raw": base64.b64encode(value).decode()} for value in raw]), expected)
+
+    def test_non_string_kind_integer_boundaries_match_from_identical_raw_bytes(self):
+        # The driver receives Base64 of the shared source bytes, never a JSON
+        # object whose unsafe integer could already have rounded in Node.
+        vectors = invalid_kind_vectors()
+        self.assertEqual(len(vectors), 6)
+        results = invoke(self, [{"raw": base64.b64encode(raw).decode()}
+                                for _, raw, _ in vectors])
+        self.assertEqual(len(results), len(vectors))
+        for (mapping, raw, code), result in zip(vectors, results):
+            with self.subTest(kind=type(mapping["kind"]).__name__, integer=mapping["x"]):
+                self.assertEqual(strict_json_loads(raw), mapping)
+                self.assertEqual(result, {"ok": False, "code": code})
+                # A leaked TypeError is deliberately not accepted as a normal
+                # content error: this assertion fails on the reviewed version.
+                with self.assertRaises(MemoryError) as caught:
+                    validate_content(raw)
+                self.assertEqual(caught.exception.code, code)
+
+    def test_hint_integer_error_classification_remains_distinct_from_invalid_kind(self):
+        valid = {"schema_version": SCHEMA, "kind": "hint_control", "control": {
+            "schema_version": "memory-vault-hint/v1", "kind": "hints",
+            "request_message_id": "msg_" + "0" * 64,
+            "expires_at": 2**53 - 1, "hints": []}}
+        values = [valid, *[{**valid, "control": {**valid["control"], "expires_at": value}}
+                          for value in (2**53, 2**63 - 1)]]
+        raw = [canonical_bytes(value) for value in values]
+        expected = [{"ok": True, "content": valid, "text": ""},
+                    {"ok": False, "code": "network_invalid_content"},
+                    {"ok": False, "code": "network_invalid_content"}]
+        self.assertEqual(invoke(self, [{"raw": base64.b64encode(value).decode()}
+                                     for value in raw]), expected)
+        self.assertEqual(validate_content(raw[0]), valid)
+        for value in raw[1:]:
+            with self.assertRaises(MemoryError) as caught:
+                validate_content(value)
+            self.assertEqual(caught.exception.code, "network_invalid_content")
 
 
 class TypeScriptMessageExchangeTests(unittest.TestCase):

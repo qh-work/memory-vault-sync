@@ -172,6 +172,10 @@ formats are unchanged.
 
 ## Validation
 
+The first three groups below describe initial candidate
+`0262409694b604f9a08c2276a06c565ce4d5a593`; the subsequent R1 section records the
+focused repair and its separately executed regression set.
+
 The focused synthetic tests are `test_network_hints`,
 `test_network_hints_typescript`, and `test_network_hints_recovery`. They exercise
 actual existing cryptographic libraries and temporary endpoints; those endpoints
@@ -263,3 +267,69 @@ are byte-identical to base `f5b09dc0ed89fcbe23e9720221413d7910950cb9`.
 This is not the whole repository suite. Prior disclosed Unicode normalization
 limits, physical fault domains, real-model exchanges, cross-host deployments
 and long-running scale targets were not revalidated or certified here.
+
+### R1: malformed content must not interrupt receiving
+
+Independent review found that the Python fallback error classifier used an
+untrusted `kind` in a set lookup. An array or object `kind`, combined with an
+integer outside the network safe-integer range, escaped as `TypeError` instead
+of the existing bounded content error. The fix checks that `kind` is a string
+before the Hint-specific lookup. It does not broadly swallow receive errors or
+relax JSON, integer, signature, encryption, authorization or admission checks.
+
+Before the fix, the new parser matrix on `0262409` produced eight error events
+across twelve subcases: `kind=[]/{}`, integers `2**53-1`, `2**53`, `2**63-1`,
+and bytes/mapping forms. The real-crypto receive regression independently
+produced four `TypeError` events: both non-string kinds and both unsafe integers.
+Those are two failed test methods, not twelve different failed methods.
+The same assertions pass after the fix; neither test was weakened to accept
+an unexpected exception.
+
+The shared Python/TypeScript vectors carry identical original bytes into the
+independent parsers, without first converting large integers through a
+JavaScript number. Safe-integer inputs with an invalid kind still produce
+`network_invalid_content`; the malformed unsafe-integer inputs produce
+`network_invalid_content_json`. Valid Hint payloads and the separate
+`network_invalid_content` classification for out-of-range Hint numbers retain
+their prior behavior. No TypeScript production code changed for this repair.
+
+With actual JWE and signed envelopes from an authorized synthetic sender, the
+receiver quarantines each malformed item without a successful receipt and
+continues to the normal chat or Hint on the same page. Both relay cursors
+advance; repeat polls do not replay or stall, and a later normal message also
+arrives. Existing Vault tables, indexes, origin pins, local Hint policies and
+trust files remain byte/row-identical. This is two local ASGI relays, not a
+cross-host or physical fault-domain experiment.
+
+Four new methods cover the parser matrix, the real receive sequence, shared
+raw-byte parsing and preserved Hint number classification. Their focused
+reruns are included in the final regression count, not added to it. Using the
+same real runtimes and dependencies documented above, the final selection was:
+
+```sh
+python -B -m unittest \
+  tests.test_network_hints \
+  tests.test_network_hints_typescript \
+  tests.test_network_hints_recovery \
+  tests.test_network_message_semantics \
+  tests.test_network_message_typescript \
+  tests.test_network_agent \
+  tests.test_network_typescript_agent \
+  tests.test_network_typescript_agent_network \
+  tests.test_network_recovery \
+  tests.test_network_packaging -v
+```
+
+Verbatim final summary, executed on 2026-09-07:
+
+```text
+Ran 90 tests in 92.997s
+
+OK
+```
+
+All 90 distinct methods passed with zero skips. This repair reran the direct
+Hint/content/message/Agent/recovery/packaging paths, not the whole repository
+or the earlier 53-method Experience/signature group. The only production
+change is the string guard in the Python content error classifier; record
+bytes, IDs, source signatures and cryptographic implementations are unchanged.
