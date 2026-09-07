@@ -84,7 +84,7 @@ const SHAPES: Obj = {
   remember: shape({request_id: identifier, kind: {type: 'string', enum: ['event','fact','observation','decision','artifact','entity','relation','provenance','summary','goal','continuity']},
     text, entities: {type: 'array', maxItems: 32, items: {type: 'string', maxLength: 512}},
     relations: {type: 'array', maxItems: 32, items: {type: 'object'}}, experience: {type: 'object'}}, ['request_id','kind','text']),
-  recall: shape({query: text, memory_id: {type: 'string', maxLength: 64}, cursor: {type: 'string', maxLength: 4096}, handoff: {type: 'boolean'},
+  recall: shape({query: text, memory_id: {type: 'string', maxLength: 64}, received_batch_message_id: {type:'string',maxLength:128}, cursor: {type: 'string', maxLength: 4096}, handoff: {type: 'boolean'},
     ranking_profile: {type: 'string', maxLength: 128}, include_experience: {type: 'boolean'}}),
   discover: shape({online: {type: 'boolean'}}),
   send: shape({request_id: identifier, recipients: {type: 'array', maxItems: 16, items: {type: 'string', maxLength: 128}},
@@ -202,10 +202,13 @@ function evidenceMetadata(record: Obj): Obj {
   return {recorded_at: record.created_at, provenance_refs: refs,
     provenance_refs_truncated: truncated, provenance_status: claimed ? 'claimed' : 'unknown'};
 }
-function recallResult(hits: Obj[], remaining: unknown[], offset: number, retrieval?: Obj, includeExperience = false): Obj {
+type BatchRecall = {received_batch_message_id:string; selected_memory_ids:string[]};
+function recallResult(hits: Obj[], remaining: unknown[], offset: number, retrieval?: Obj, includeExperience = false, batch?:BatchRecall): Obj {
   const metadata=retrieval===undefined?{}:{retrieval};
-  return success({hits, next_cursor: remaining.length ? Buffer.from(canonicalBytes({ids: remaining, offset, ...metadata, ...(includeExperience ? {include_experience: true} : {})})).toString('base64url') : null,
-    partial: remaining.length > 0, query_candidate_limit: 32, network_accessed: false, evidence_usage: {...EVIDENCE_USAGE}, ...metadata});
+  const cursor=batch?{received_batch_message_id:batch.received_batch_message_id,root_index:batch.selected_memory_ids.length-remaining.length,offset,include_experience:includeExperience}:
+    {ids:remaining,offset,...metadata,...(includeExperience?{include_experience:true}:{})};
+  return success({hits, next_cursor: remaining.length ? Buffer.from(canonicalBytes(cursor)).toString('base64url') : null,
+    partial: remaining.length > 0, query_candidate_limit: batch?4:32, network_accessed: false, evidence_usage: {...EVIDENCE_USAGE}, ...metadata,...(batch??{})});
 }
 
 export class Agent {
@@ -224,10 +227,17 @@ export class Agent {
   }
   private recall(args: Obj): Obj {
     const config = loadClient(this.clientConfigPath); let ids: unknown[], offset = 0, retrieval:Obj|undefined, includeExperience = args.include_experience === true;
+    let batchId:string|undefined,rootIndex=0,batch:BatchRecall|undefined;
     if (args.cursor) {
       if (Object.keys(args).length !== 1) fail('ambiguous_recall_cursor');
       try {
         const state = document(Buffer.from(args.cursor, 'base64url'), 4096);
+        if(Object.hasOwn(state,'received_batch_message_id')){
+          if(Object.keys(state).sort().join(',')!=='include_experience,offset,received_batch_message_id,root_index'||
+            typeof state.received_batch_message_id!=='string'||!/^msg_[0-9a-f]{64}$/.test(state.received_batch_message_id)||
+            !Number.isSafeInteger(state.root_index)||(state.root_index as number)<0||!Number.isSafeInteger(state.offset)||(state.offset as number)<0||typeof state.include_experience!=='boolean')fail('invalid_recall_cursor');
+          batchId=state.received_batch_message_id;rootIndex=state.root_index as number;offset=state.offset as number;includeExperience=state.include_experience;ids=[];
+        }else{
         if (!['ids,offset','ids,offset,retrieval','ids,include_experience,offset','ids,include_experience,offset,retrieval'].includes(Object.keys(state).sort().join(',')) || !Array.isArray(state.ids) || state.ids.length > 32 ||
             typeof state.offset !== 'number' || !Number.isSafeInteger(state.offset) || state.offset < 0) fail('invalid_recall_cursor');
         ids = state.ids; offset = state.offset;
@@ -239,7 +249,11 @@ export class Agent {
               !Number.isSafeInteger(metadata.ranking_time_ms)||metadata.ranking_time_ms < -62135596800000||metadata.ranking_time_ms > 253402300799999)fail('invalid_recall_cursor');
           retrieval=metadata;
         }
+        }
       } catch { fail('invalid_recall_cursor'); }
+    } else if(Object.hasOwn(args,'received_batch_message_id')){
+      if(Object.keys(args).some(key=>!['received_batch_message_id','include_experience'].includes(key)))fail('ambiguous_recall_selector');
+      batchId=args.received_batch_message_id;includeExperience=args.include_experience!==false;ids=[];
     } else if (Object.hasOwn(args, 'memory_id')) {
       if (Object.keys(args).some(key => !['memory_id', 'include_experience'].includes(key))) fail('ambiguous_recall_selector');
       ids = [args.memory_id];
@@ -253,6 +267,14 @@ export class Agent {
         const metadata=result.result.retrieval;
         retrieval={profile:metadata.profile,math_profile:metadata.math_profile,ranking_time_ms:metadata.ranking_time_ms};
       }
+    }
+    if(batchId!==undefined){
+      if(this.networkConfigPath===undefined)fail('network_not_configured');
+      const peer=new NetworkPeer(this.networkConfigPath,{transport:this.transport,clientConfigPath:this.clientConfigPath});
+      let selected:string[];
+      try{selected=peer.readReceivedBatch(batchId);}finally{peer.close();}
+      if(rootIndex>=selected.length)fail('invalid_recall_cursor');
+      batch={received_batch_message_id:batchId,selected_memory_ids:selected};ids=selected.slice(rootIndex);
     }
     const remaining = [...ids], hits: Obj[] = [];
     while (remaining.length && hits.length < 4) {
@@ -269,8 +291,8 @@ export class Agent {
           source_ids: record.relations.filter((edge: Obj) => ['derived_from','supports'].includes(edge.type)).slice(0,8).map((edge: Obj) => edge.target),
           ...evidenceMetadata(record), ...(includeExperience ? {experience: {...result.result.experience, content: text}} : {})};
         const afterIds = next < raw.length ? remaining : remaining.slice(1), afterOffset = next < raw.length ? next : 0;
-        if (encoded(recallResult([...hits,hit],afterIds,afterOffset,retrieval,includeExperience)).length <= MAX_RESULT) break;
-        if (hits.length) return recallResult(hits,remaining,offset,retrieval,includeExperience);
+        if (encoded(recallResult([...hits,hit],afterIds,afterOffset,retrieval,includeExperience,batch)).length <= MAX_RESULT) break;
+        if (hits.length) return recallResult(hits,remaining,offset,retrieval,includeExperience,batch);
         maximum = Math.floor(maximum / 2);
         if (maximum < 1) fail('agent_result_exceeds_budget');
       }
@@ -278,7 +300,7 @@ export class Agent {
       if (next < raw.length) { offset = next; break; }
       remaining.shift(); offset = 0;
     }
-    return recallResult(hits,remaining,offset,retrieval,includeExperience);
+    return recallResult(hits,remaining,offset,retrieval,includeExperience,batch);
   }
   async handle(request: unknown): Promise<Obj> {
     let requestId: unknown;

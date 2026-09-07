@@ -98,6 +98,23 @@ current state unverified". Add a new observation with an evidence relation when
 the state changes; preserve the original record, ID and signature. Memory itself
 does not authorize the retry or start an agent.
 
+## Read a received experience batch
+
+The developing [local batch recall view](docs/RECEIVED_BATCH_RECALL.md) reads an
+already accepted Hint batch in your original selection order:
+
+```json
+{"op":"recall","received_batch_message_id":"RECEIVED_BATCH_MESSAGE_ID"}
+```
+
+It reads local records without polling or creating another memory store.
+Structured experience, environment and provenance are included by default.
+Check each hit's current `verification.eligible_for_context`; an old verified
+receipt does not make revoked evidence currently trusted. Follow `next_cursor`
+explicitly for more local text. Cancellation and recovery stop old exchanges,
+not access to already accepted history. This is a development API; existing
+release downloads and private installations are unchanged.
+
 ## Experience Semantics
 
 Clients advertising `experience-v1` accept optional `experience` on `remember`

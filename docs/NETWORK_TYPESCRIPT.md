@@ -339,3 +339,14 @@ shapes in the existing transport database; neither adds a memory database.
 V4 explicitly selects one to four distinct roots across already received pages
 of the same live query. The native endpoint and HTTP SDK expose the same batch
 shape; the full dependency union is authorized or the whole batch is refused.
+
+## Local received-batch recall candidate
+
+The native Agent and HTTP client expose the same exclusive
+`received_batch_message_id` selector described in
+[Received batch recall](RECEIVED_BATCH_RECALL.md). Original explicit root order,
+structured Experience output (default on for this selector), current local
+verification and bounded cursors are preserved. No `NetworkPeer.db()` write
+transaction, remote request or reimport is used to read this historical view.
+An accepted batch remains readable after cancellation or same-version recovery;
+a rejected or unadmitted transfer does not become a source of recalled records.

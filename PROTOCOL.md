@@ -159,6 +159,14 @@ attribution. Reading saved communication locally grants no execution authority.
 language-independent implementation material. Schema validation alone cannot
 verify hashes, byte limits, key trust, relation closure or transactional behavior.
 
+The native Agent's developing [received-batch recall view](docs/RECEIVED_BATCH_RECALL.md)
+adds an exclusive `received_batch_message_id` selector. It reads one to four
+already accepted roots in their original explicit selection order, through the
+existing Vault and current local inspection semantics. It does not create
+memory ownership, fetch dependencies, revive sessions or promote historical
+receipts into current trust. This local selector does not change record bytes,
+IDs, signatures or the network wire profiles.
+
 ## 2. Non-negotiable invariants
 
 A conforming implementation MUST preserve all of these rules:

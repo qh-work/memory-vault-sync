@@ -82,10 +82,11 @@ class NetworkPackagingTests(unittest.TestCase):
                          "tests/test_network_hints_recovery.py", "tests/test_network_hints_pagination.py",
                          "tests/test_network_hints_pagination_typescript.py", "tests/test_network_hints_batch.py",
                          "tests/test_network_hints_batch_typescript.py", "tests/test_network_hints_cancellation.py",
-                         "tests/test_network_hints_cancellation_typescript.py"} <= set(review))
+                         "tests/test_network_hints_cancellation_typescript.py", "tests/test_network_received_batch_recall.py",
+                         "tests/test_network_received_batch_recall_typescript.py"} <= set(review))
         self.assertIn("docs/NETWORK_TYPESCRIPT.md", documents)
         self.assertIn("docs/NETWORK_TYPESCRIPT.md", protocol)
-        for name in ("docs/EXPERIENCE_SEMANTICS.md", "docs/EXPERIENCE_VALIDATION.md", "docs/NETWORK_CONTENT_V2.md", "docs/NETWORK_HINTS_V1.md", "docs/NETWORK_HINTS_V2.md", "docs/NETWORK_HINTS_V3.md", "docs/NETWORK_HINTS_V4.md"):
+        for name in ("docs/EXPERIENCE_SEMANTICS.md", "docs/EXPERIENCE_VALIDATION.md", "docs/NETWORK_CONTENT_V2.md", "docs/NETWORK_HINTS_V1.md", "docs/NETWORK_HINTS_V2.md", "docs/NETWORK_HINTS_V3.md", "docs/NETWORK_HINTS_V4.md", "docs/RECEIVED_BATCH_RECALL.md"):
             self.assertIn(name, documents)
             self.assertIn(name, protocol)
         self.assertTrue({"tests/test_experience_origin_identity.py", "tests/test_experience_origin_typescript.py",

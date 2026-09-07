@@ -79,7 +79,7 @@ const EPOCH: Record<string, string> = Object.fromEntries([
 const KNOWN = { ...TABLES, ...INDEXES, ...DERIVED, ...TRIGGERS, ...EPOCH };
 const REQUIRED = new Set([...Object.keys(TABLES), ...Object.keys(INDEXES), ...Object.keys(TRIGGERS)]);
 function fail(code: string, retryable = false): never { throw new NetworkError(code, retryable); }
-function storageFailure(error: unknown): never {
+export function storageFailure(error: unknown): never {
   if (error && typeof error === 'object' && (error as Row).code === 'ERR_SQLITE_ERROR') {
     const code = Number((error as Row).errcode) & 255;
     if (code === 5 || code === 6) fail('busy', true);

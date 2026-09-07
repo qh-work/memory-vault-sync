@@ -14,7 +14,7 @@ import { verifyCurrentRoster, verifyRoster, signRequest, verifyRequest, verifyIn
 import type { CurrentRoster, RequestAction, RecoveryAnchor } from './control.ts';
 import { verifyCurrentNodes, authorizedNode, verifyNodeChallenge, verifyStorageReceipt,
   MAX_OUTBOX_RECEIPT_ROW_BYTES, MAX_OUTBOX_RECEIPTS_BYTES } from './nodes.ts';
-import { CanonicalVault } from './vault.ts';
+import { CanonicalVault, storageFailure } from './vault.ts';
 import type { VaultOptions } from './vault.ts';
 import { parseShare, NetworkRecordsError } from './records.ts';
 import { CONTENT_SCHEMA, MAX_CONTENT_SHARE_BYTES, validateContent, contentText, contentChunk } from './content.ts';
@@ -787,6 +787,44 @@ export class NetworkPeer {
     if(!row)fail('network_message_not_found');
     const content=validateContent(row.body),result=this.existing(messageId,row.digest)!;
     return {...result,...contentChunk(contentText(content),offset),...(content.kind==='hint_control'?{control:content.control}:{}),network_accessed:false};
+  }
+  /** Historical transport indexing only. It neither refreshes a live grant
+   * nor initializes storage, and never returns record content from the share. */
+  readReceivedBatch(messageId:string):string[]{
+    try{hintMessageId(messageId);}catch{fail('received_batch_not_available');}
+    let db:DatabaseSync;
+    try{db=openPrivateDatabase(path.join(this.directory,'network.sqlite3'),true);}
+    catch(error){if((error as any)?.code==='not_initialized')fail('received_batch_not_available');storageFailure(error);}
+    try{
+      db.exec('BEGIN');
+      const bindingSize=db.prepare("SELECT length(CAST(value AS BLOB)) bytes FROM state WHERE key='configuration_binding'").get() as Obj|undefined;
+      if(!bindingSize)fail('network_state_binding_missing');
+      if(bindingSize.bytes<1||bindingSize.bytes>65536)fail('network_state_configuration_mismatch');
+      const binding=db.prepare("SELECT value FROM state WHERE key='configuration_binding'").get() as Obj;
+      if(!equal(parse(binding.value),this.binding))fail('network_state_configuration_mismatch');
+      const size=db.prepare('SELECT typeof(body) body_type,length(body) body_bytes,length(CAST(result AS BLOB)) result_bytes,length(CAST(sender AS BLOB)) sender_bytes,length(CAST(digest AS BLOB)) digest_bytes FROM inbox WHERE message_id=?').get(messageId) as Obj|undefined;
+      if(!size||size.body_type!=='blob'||size.body_bytes<1||size.body_bytes>4*1024*1024||size.result_bytes<1||size.result_bytes>8192||size.sender_bytes<1||size.sender_bytes>128||size.digest_bytes!==64)fail('received_batch_not_available');
+      const row=db.prepare('SELECT sender,digest,body,result FROM inbox WHERE message_id=?').get(messageId) as Obj;
+      let content:NetworkContent,result:Obj;
+      try{content=validateContent(row.body);result=parse(row.result);}
+      catch(error){if(error instanceof NetworkCryptoError)fail('received_batch_not_available');throw error;}
+      if(content.kind!=='hint_batch_transfer'||!result||result.message_id!==messageId||result.sender_key_id!==row.sender||result.content_kind!=='hint_batch_transfer'||
+        result.state!=='validated_saved'||result.understood!==false||result.text_memory_id!==null||!result.share||result.share.admission!=='verified'||result.share.state!=='share_imported'||
+        !/^ed25519_[0-9a-f]{64}$/.test(row.sender)||!/^[0-9a-f]{64}$/.test(row.digest))fail('received_batch_not_available');
+      const selectionSize=db.prepare('SELECT typeof(body) body_type,length(body) body_bytes,length(CAST(recipients AS BLOB)) recipient_bytes,length(CAST(request_id AS BLOB)) request_bytes,length(CAST(input_sha AS BLOB)) digest_bytes FROM outbox WHERE message_id=?').get(content.request_message_id) as Obj|undefined;
+      if(!selectionSize||selectionSize.body_type!=='blob'||selectionSize.body_bytes<1||selectionSize.body_bytes>8192||selectionSize.recipient_bytes===null||selectionSize.recipient_bytes<1||selectionSize.recipient_bytes>2048||selectionSize.request_bytes<1||selectionSize.request_bytes>128||selectionSize.digest_bytes!==64)fail('received_batch_not_available');
+      const selection=db.prepare('SELECT request_id,input_sha,body,recipients FROM outbox WHERE message_id=?').get(content.request_message_id) as Obj;
+      try{
+        const selected=validateContent(selection.body);
+        if(!equal(parse(selection.recipients),[row.sender])||selected.kind!=='hint_control'||selected.control.kind!=='select'||selected.control.query_message_id!==content.query_message_id)fail('received_batch_not_available');
+        if(content.request_message_id!=='msg_'+sha256(canonicalBytes([this.networkId,this.identity.key_id,selection.request_id]))||
+          selection.input_sha!==sha256(canonicalBytes({recipients:[row.sender],text:'',memory_ids:[],control:selected.control})))fail('received_batch_not_available');
+        const ids=selected.control.selections.map(item=>item.memory_id),share=parseShare(decodeBase64url(content.share,MAX_SHARE));
+        if(!equal([...share.roots].sort(),[...ids].sort()))fail('received_batch_not_available');
+        db.exec('COMMIT');return ids;
+      }catch(error){if(error instanceof NetworkCryptoError||error instanceof NetworkRecordsError)fail('received_batch_not_available');throw error;}
+    }catch(error){storageFailure(error);}
+    finally{try{if(db.isTransaction)db.exec('ROLLBACK');}catch(error){storageFailure(error);}finally{db.close();}}
   }
   receive(limit=4):Promise<Obj>{return this.serial(()=>this.receiveInternal(limit));}
   private async receiveInternal(limit=4,deadline?:number):Promise<Obj>{

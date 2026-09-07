@@ -4,6 +4,7 @@ from contextlib import closing
 from pathlib import Path
 import sqlite3
 import os
+import stat
 import hashlib
 import threading
 import time
@@ -114,13 +115,14 @@ class HintCancellationTests(unittest.TestCase):
             self.assertFalse(sidecar.is_symlink())
             sidecar.write_bytes(b"")
             sidecar.chmod(0o600)
-            original_open, disappeared = network.open_file, []
-            def remove_optional_before_real_open(path, flags, **kwargs):
+            open_target, open_attribute = (network.os, "open") if os.name == "posix" else (network, "open_file")
+            original_open, disappeared = getattr(open_target, open_attribute), []
+            def remove_optional_before_real_open(path, flags, *args, **kwargs):
                 if Path(path) == sidecar and not disappeared:
                     disappeared.append(True)
                     sidecar.unlink()
-                return original_open(path, flags, **kwargs)
-            with patch.object(network, "open_file", side_effect=remove_optional_before_real_open):
+                return original_open(path, flags, *args, **kwargs)
+            with patch.object(open_target, open_attribute, side_effect=remove_optional_before_real_open):
                 with requester.db() as db:
                     self.assertIsNotNone(db.execute("SELECT value FROM state WHERE key='configuration_binding'").fetchone())
             self.assertEqual(disappeared, [True])
@@ -143,23 +145,23 @@ class HintCancellationTests(unittest.TestCase):
                         sidecar.chmod(0o644 if fault == "permissions" else 0o600)
                     target_before = target.read_bytes() if target.exists() else None
                     replacements = []
-                    def replace_name_after_real_enoent(path, flags, **kwargs):
+                    def replace_name_after_real_enoent(path, flags, *args, **kwargs):
                         if Path(path) == sidecar and not replacements:
                             replacements.append(True)
                             sidecar.unlink()
                             try:
-                                return original_open(path, flags, **kwargs)
+                                return original_open(path, flags, *args, **kwargs)
                             except FileNotFoundError:
                                 # The failed open is real, but a new dangling
                                 # entry now occupies its name. Absence cannot be
                                 # inferred from the earlier ENOENT alone.
                                 sidecar.symlink_to(target)
                                 raise
-                        return original_open(path, flags, **kwargs)
+                        return original_open(path, flags, *args, **kwargs)
                     try:
                         with patch.object(network.sqlite3, "connect", side_effect=AssertionError("unsafe sidecar reached SQLite")):
                             if fault == "dangling_after_enoent":
-                                with patch.object(network, "open_file", side_effect=replace_name_after_real_enoent):
+                                with patch.object(open_target, open_attribute, side_effect=replace_name_after_real_enoent):
                                     with self.assertRaises(FileNotFoundError):
                                         with requester.db():
                                             self.fail("replaced optional name was ignored")
@@ -178,6 +180,93 @@ class HintCancellationTests(unittest.TestCase):
                         if target.exists():
                             target.unlink()
             self.assertEqual(sessions(requester), original_sessions)
+            self.assertEqual([vault_snapshot(endpoint) for endpoint in (owner, requester)], before)
+
+    def test_opened_optional_sidecar_unlink_is_safe_only_for_private_unreplaced_regular_files(self):
+        import memory_vault_network as network
+        if os.name != "posix":
+            self.skipTest("This regression exercises POSIX descriptor unlink semantics; native Windows gates are unchanged")
+        with fixture() as (owner, requester, transport):
+            _, query, _, _ = established(self, owner, requester, transport)
+            before = [vault_snapshot(endpoint) for endpoint in (owner, requester)]
+            original_sessions = sessions(requester)
+            sidecar = requester.directory / "network.sqlite3-wal"
+            target = requester.directory / "synthetic-retained-sidecar-target"
+            real_open = os.open
+            for entry in ("db", "_read_transport"):
+                for fault in ("safe_unlink", "unsafe_unlink", "hardlink", "symlink", "dangling", "replaced", "other_error"):
+                    with self.subTest(entry=entry, fault=fault):
+                        self.assertFalse(sidecar.exists() or sidecar.is_symlink())
+                        self.assertFalse(target.exists())
+                        if fault in {"hardlink", "symlink"}:
+                            target.write_bytes(b"Synthetic target must stay unchanged.")
+                            target.chmod(0o600)
+                        if fault == "hardlink":
+                            os.link(target, sidecar)
+                        elif fault in {"symlink", "dangling"}:
+                            sidecar.symlink_to(target)
+                        else:
+                            sidecar.write_bytes(b"")
+                            sidecar.chmod(0o644 if fault == "unsafe_unlink" else 0o600)
+                        target_before = target.read_bytes() if target.exists() else None
+                        opened, unlinked = [], []
+                        def unlink_after_actual_open(path, flags, *args, **kwargs):
+                            descriptor = real_open(path, flags, *args, **kwargs)
+                            if Path(path) == sidecar and not opened:
+                                opened.append(descriptor)
+                                actual = os.fstat(descriptor)
+                                self.assertTrue(stat.S_ISREG(actual.st_mode))
+                                self.assertEqual(actual.st_uid, os.getuid())
+                                if fault in {"safe_unlink", "unsafe_unlink", "replaced", "other_error"}:
+                                    self.assertEqual(actual.st_nlink, 1)
+                                    self.assertEqual(actual.st_mode & 0o777, 0o644 if fault == "unsafe_unlink" else 0o600)
+                                    sidecar.unlink()
+                                    self.assertEqual(os.fstat(descriptor).st_nlink, 0)
+                                    unlinked.append(True)
+                                    if fault == "replaced":
+                                        replacement = real_open(sidecar, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                                        try:
+                                            os.write(replacement, b"Synthetic replacement must not reach SQLite.")
+                                        finally:
+                                            os.close(replacement)
+                            return descriptor
+                        try:
+                            with patch.object(network.os, "open", side_effect=unlink_after_actual_open):
+                                if fault == "safe_unlink":
+                                    with getattr(requester, entry)() as database:
+                                        self.assertIsNotNone(database.execute("SELECT value FROM state WHERE key='configuration_binding'").fetchone())
+                                    self.assertEqual(unlinked, [True])
+                                else:
+                                    with patch.object(network.sqlite3, "connect", side_effect=AssertionError("unsafe opened sidecar reached SQLite")):
+                                        if fault == "other_error":
+                                            # A typed error outside the exact safe
+                                            # nlink-zero condition must propagate.
+                                            original_check = network.check_fd
+                                            def unrelated_storage_error(descriptor, **kwargs):
+                                                if descriptor in opened:
+                                                    raise StorageError("synthetic_storage_denied")
+                                                return original_check(descriptor, **kwargs)
+                                            with patch.object(network, "check_fd", side_effect=unrelated_storage_error):
+                                                with self.assertRaises(StorageError) as rejected:
+                                                    with getattr(requester, entry)():
+                                                        self.fail("unrelated storage error was swallowed")
+                                            self.assertEqual(rejected.exception.code, "synthetic_storage_denied")
+                                        else:
+                                            with self.assertRaises(OSError) as rejected:
+                                                with getattr(requester, entry)():
+                                                    self.fail("unsafe opened optional file was ignored")
+                                            if fault in {"unsafe_unlink", "hardlink", "replaced"}:
+                                                self.assertIsInstance(rejected.exception, StorageError)
+                                    if fault in {"unsafe_unlink", "replaced", "other_error"}:
+                                        self.assertEqual(unlinked, [True])
+                                self.assertEqual(target.read_bytes() if target.exists() else None, target_before)
+                                if fault == "replaced":
+                                    self.assertEqual(sidecar.read_bytes(), b"Synthetic replacement must not reach SQLite.")
+                        finally:
+                            sidecar.unlink(missing_ok=True)
+                            target.unlink(missing_ok=True)
+            self.assertEqual(sessions(requester), original_sessions)
+            self.assertEqual(session(requester, query["message_id"])["state"], "active")
             self.assertEqual([vault_snapshot(endpoint) for endpoint in (owner, requester)], before)
 
     def test_postcommit_storage_failure_preserves_cancellation_but_reports_notification_delivery_unknown(self):

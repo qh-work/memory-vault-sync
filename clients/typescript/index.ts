@@ -33,8 +33,10 @@ export interface RememberArguments {
   relations?: JsonObject[];
   experience?: JsonObject;
 }
-export type RecallArguments = { query: string; handoff?: boolean; ranking_profile?: string; include_experience?: boolean } |
-  { memory_id: string; include_experience?: boolean } | { cursor: string };
+export type RecallArguments = { query: string; handoff?: boolean; ranking_profile?: string; include_experience?: boolean; received_batch_message_id?: never } |
+  { memory_id: string; include_experience?: boolean; received_batch_message_id?: never } |
+  { cursor: string; received_batch_message_id?: never } |
+  { received_batch_message_id: string; include_experience?: boolean; query?: never; memory_id?: never; cursor?: never; handoff?: never; ranking_profile?: never };
 export interface DiscoverArguments { online?: boolean }
 export type HintSendControl = {schema_version:'memory-vault-hint/v4';kind:'query';query:string;expires_at:number} |
   {schema_version:'memory-vault-hint/v4';kind:'page';query_message_id:string;cursor:string} |
@@ -88,6 +90,8 @@ export interface RecallResult {
   query_candidate_limit: number;
   network_accessed: false;
   retrieval?: { profile: string; math_profile: string; ranking_time_ms: number };
+  received_batch_message_id?: string;
+  selected_memory_ids?: string[];
 }
 
 export interface ClientOptions {
