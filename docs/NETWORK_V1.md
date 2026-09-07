@@ -1,8 +1,9 @@
 # network-v1: optional private communication carrier
 
-Status: **unreleased content/v2 candidate**. The
-[new application payload](NETWORK_CONTENT_V2.md) differs from the published
-preview; network-v1, core canonical records and share-v1 remain unchanged.
+Status: **included in the alpha.5 release target**. The
+[content/v2 application payload](NETWORK_CONTENT_V2.md) differs from earlier
+previews; network-v1, core canonical records and share-v1 remain unchanged.
+See [release scope](RELEASE.md) for publication and private-upgrade limits.
 This independently defined network has no MCP, A2A,
 Matrix, Nostr or Graphiti adapter or compatibility claim. These projects are
 design references only, with no imported task/room/relay/database model.

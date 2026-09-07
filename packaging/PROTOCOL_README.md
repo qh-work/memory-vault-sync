@@ -1,4 +1,4 @@
-# Memory Vault v0.26.0-alpha.4 — independent protocol
+# Memory Vault v0.26.0-alpha.5 — independent protocol
 
 This archive is an agreement and implementation material, not an installed
 program. No Python, database, plugin, account or network service is required
@@ -22,13 +22,23 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.26.0-alpha.4;
+artifacts described in `docs/RELEASE.md`. This package targets v0.26.0-alpha.5;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility
 claim. Reading its specification does not install a client, provision keys or
 join a service. Verify exact source, bytes and validation scope in the artifact
 manifest; this document does not establish installation or publication.
+
+Alpha.5 documents source-preserving Experience views, message/memory
+separation, authorized frozen Hint pages, explicit complete one-to-four-root
+batches, query cancellation and local inspection of accepted batches. Current
+profiles are content/v2 and Hint v4; older preview forms are rejected by the
+current implementation. This archive is not a private-state migration tool.
+See [Hint v4](docs/NETWORK_HINTS_V4.md) and
+[accepted-batch inspection](docs/RECEIVED_BATCH_RECALL.md). A message or hint
+cannot grant permission, prove truth, or turn a predecessor's observation into
+the reader's own experience. No global P2P or scale certification is included.
 
 The [capacity report](docs/V0_25_PACK_CAPACITY_SMOKE.md) records one 516 MiB
 synthetic client pack round trip and separate 2 GiB boundary checks, not a full

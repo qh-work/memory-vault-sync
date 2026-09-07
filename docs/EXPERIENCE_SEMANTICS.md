@@ -1,9 +1,10 @@
 # Experience Semantics
 
-Development note: the post-alpha.4 review repair below has not yet received a
-new independent approval. The review of alpha.4 returned `CHANGES_REQUESTED`;
-its two blockers and separate repair evidence are recorded in
-[Experience validation](EXPERIENCE_VALIDATION.md#post-alpha4-repair-local-validation-complete-independent-re-review-pending).
+Release status: the **alpha.5 target** includes the reviewed origin/int64
+repairs merged in PR #22. The earlier alpha.4 review's `CHANGES_REQUESTED`
+result and its source-pinned repair evidence remain historical records in
+[Experience validation](EXPERIENCE_VALIDATION.md). See [release scope](RELEASE.md)
+for current packaging, review limits and publication evidence.
 
 `experience-v1` is an optional interpretation of an existing Memory Record.
 It introduces neither a second database nor a parent container. Local memory,

@@ -1,8 +1,9 @@
 # Network content/v2: messages and explicit memory transfer
 
-Status: **unreleased development after v0.26.0-alpha.4**. This document describes
-the developing source, not a published release or a ready upgrade path. The
-first change separates communication from long-term memory. The subsequent
+Status: **included in the alpha.5 release target** after review and merge.
+See [release scope](RELEASE.md) for publication evidence; no automatic private
+upgrade or migration is provided. The first change separates communication
+from long-term memory. The subsequent
 [authorized Memory Hint extension](NETWORK_HINTS_V4.md) adds bounded queries
 and explicit selection between known peers. Group chat, open P2P and scale
 work remain later stages.

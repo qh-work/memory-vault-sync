@@ -1,13 +1,14 @@
 # Authorized Memory Hint v2: frozen, explicit pages
 
 Historical specification and test evidence for the merged v2 batch. The
-current candidate uses [Hint v4 cancellation](NETWORK_HINTS_V4.md) and no
-longer accepts v2 controls. The design below describes v2, not the current API.
+**alpha.5 release target** uses [Hint v4 cancellation](NETWORK_HINTS_V4.md) and
+rejects v2 controls. The design below describes v2, not the current API.
 
 This was an unreleased candidate for already known, authorized endpoints. It is
 not global discovery, Gossip, a public search index or a capacity certification.
-The downloadable alpha.4 release has not been replaced. Preview v1 Hint controls
-are deliberately unsupported; private upgrades and migration are deferred.
+Alpha.4 artifacts remain historical. Preview v1 Hint controls are deliberately
+unsupported; private upgrades and migration are separate work. See the
+[alpha.5 release target](RELEASE.md) for packaging and publication status.
 
 A requester B can ask provider A for a small permitted view, explicitly request
 another page and select one original experience from a page it has received.

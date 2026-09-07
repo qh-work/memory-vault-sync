@@ -1,10 +1,12 @@
 # Authorized Memory Hint v4: cancel an established query
 
-Status: **unreleased development after v0.26.0-alpha.4**. This candidate adds
-explicit cancellation between two already known, authorized endpoints. It
+Status: **included in the alpha.5 release target** after review and merge in
+PR #27. This profile adds explicit cancellation between two already known,
+authorized endpoints. It
 retains the reviewed pagination and complete batch-dependency authorization
 semantics. It is not open discovery, Gossip, task orchestration or a capacity
-certification. The downloadable release and private installations are unchanged.
+certification. See [release scope](RELEASE.md) for publication evidence;
+packaging does not upgrade private installations.
 
 ## One bounded conversation, explicit actions
 
