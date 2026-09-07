@@ -6,24 +6,27 @@ The protocol is independent of language, storage, model, session, device and
 task. The authorized full client automates the same canonical record contract;
 an independent implementation is not required to install it or import Python.
 
-The current prerelease build target is **0.26.0-alpha.4**, adding optional
-Experience Semantics and local provenance views on the existing 0.26 runtime.
-See [Experience validation](EXPERIENCE_VALIDATION.md) for actual test results and
-remaining socket/runtime limits. Publication is independently verified at the
-[release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.4);
+The current prerelease build target is **0.26.0-alpha.5**, packaging reviewed
+main `1f74fb969d29da5a92f014bb34d9415b967ddc26` and PRs #22–#28. It includes
+Experience origin/int64 repairs, chat/memory separation, authorized frozen Hint
+pages, complete one-to-four-root batches, cancellation and local received-batch
+recall. See [alpha.5 scope](RELEASE_NOTES_V0_26_ALPHA.md#alpha5-reviewed-experience-exchange-and-local-batch-recall),
+[Hint v4](NETWORK_HINTS_V4.md) and [local batch recall](RECEIVED_BATCH_RECALL.md).
+Publication must be independently verified at the
+[target release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.5);
 this source document is not proof of upload, installation or certification.
 The older v0.25 reports below are historical evidence, not current download
 instructions or acceptance of this prerelease.
 
 The release builder produces:
 
-- `memory-vault-protocol-v0.26.0-alpha.4.zip`: specification, schemas, synthetic
+- `memory-vault-protocol-v0.26.0-alpha.5.zip`: specification, schemas, synthetic
   interchange examples and implementer guides, **no executable files**.
-- `memory-vault-client-v0.26.0-alpha.4.zip`: complete source-built runtime, plugin,
+- `memory-vault-client-v0.26.0-alpha.5.zip`: complete source-built runtime, plugin,
   local marketplace catalog and explicit setup instructions.
-- `memory-vault-review-v0.26.0-alpha.4.zip`: public synthetic tests and source/build
+- `memory-vault-review-v0.26.0-alpha.5.zip`: public synthetic tests and source/build
   material for reviewers to run only with their user's authorization.
-- `memory-vault-network-test-v0.26.0-alpha.4.zip`: synthetic endpoint template;
+- `memory-vault-network-test-v0.26.0-alpha.5.zip`: synthetic endpoint template;
   this release has unconfigured service trust and requires operator provisioning.
 - `memory_vault.py`: core source; Experience use also needs the companion module
   included in the client/review packages.
@@ -46,9 +49,29 @@ services; the source exposes explicit fail-closed boundaries.
 
 ## Publication is not certification
 
-Alpha.4 is an explicitly authorized preview with disclosed validation limits,
+Alpha.5 is an explicitly authorized preview with disclosed validation limits,
 not global P2P, real-model adoption, scale or production-security certification.
 The normal source/archive privacy and dependency gates remain required.
+
+The reviewed source `c473d23f894f7ba8cab05817788fdb9537359e77` previously
+passed **94 distinct targeted developer tests in 213.804 seconds**, with no
+failures, errors or skips. Main `1f74fb9` has the identical tree. Prior
+three-platform base CI also passed; these are existing source-pinned results,
+not a whole-suite pass, benchmark or Windows feature certification.
+
+The bounded 6 Pro review passed that SHA and scope. Its independent environment
+lacked real JOSE, so it did not rerun the complete encrypted/native TypeScript/
+recovery matrix. Developer test execution and independent review are separate
+evidence. During this release preparation, **18 release-packaging and base
+regressions passed in 3.519 seconds**, with no failures, errors or skips. Final
+archive checks, installation and publication require separate actual evidence.
+
+Current controls use content/v2 and Hint v4 within network-v1; old preview
+forms are rejected. No automatic private upgrade, migration or plugin
+replacement is supplied. Existing installations and backups remain separate;
+extracting an artifact changes neither private state nor Git binding. The
+synthetic trial's unconfigured service trust is not a hosted service: an
+operator must provision reviewed pinned service material before use.
 
 ### Historical v0.25 capacity evidence
 

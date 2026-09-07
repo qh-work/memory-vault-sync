@@ -10,9 +10,18 @@ discover, send and receive. You do not need to implement the protocol or install
 a plugin to use it. Independent implementers can use the same record, relation,
 provenance and exchange contract in their preferred language and storage.
 
-## 0.26.0-alpha.4: Experience Semantics and provenance
+## 0.26.0-alpha.5: authorized experience exchange and local batch recall
 
-Experience metadata now distinguishes direct observation, independent experiments,
+Chat and transfer notes no longer create long-term memories automatically.
+Known authorized peers can query separately granted Memory Hints, page through
+up to 16 frozen results, and explicitly select up to four original record
+closures. Queries can be cancelled; accepted batches remain locally readable
+in the original selection order with current trust information.
+See [Hint exchange](docs/NETWORK_HINTS_V4.md),
+[received-batch recall](docs/RECEIVED_BATCH_RECALL.md) and
+[release scope and upgrade limits](docs/RELEASE.md).
+
+Experience metadata distinguishes direct observation, independent experiments,
 hearsay, inference, speculation, summaries and external sources. Structured recall
 preserves source/context and counterevidence; 100 retellings do not become 100
 independent confirmations. Existing record bytes, IDs and signatures stay intact.
@@ -42,12 +51,13 @@ The pre-existing MCP memory interface remains for existing users.
 
 ## Download the current preview
 
-Use the matching **[v0.26.0-alpha.4 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.4)** and its `SHA256SUMS`:
+This source targets **[v0.26.0-alpha.5](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.5)**.
+Once published, use the matching release assets and its `SHA256SUMS`:
 
-- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.4/memory-vault-protocol-v0.26.0-alpha.4.zip):** specification, schemas and synthetic examples; no executable.
-- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.4/memory-vault-client-v0.26.0-alpha.4.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
-- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.4/memory-vault-review-v0.26.0-alpha.4.zip):** public source and synthetic tests; nothing runs automatically.
-- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.4/memory-vault-network-test-v0.26.0-alpha.4.zip):** no Docker or plugin; operator-provisioned endpoint template, with service trust unconfigured in this release.
+- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.5/memory-vault-protocol-v0.26.0-alpha.5.zip):** specification, schemas and synthetic examples; no executable.
+- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.5/memory-vault-client-v0.26.0-alpha.5.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
+- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.5/memory-vault-review-v0.26.0-alpha.5.zip):** public source and synthetic tests; nothing runs automatically.
+- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.5/memory-vault-network-test-v0.26.0-alpha.5.zip):** no Docker or plugin; operator-provisioned endpoint template, with service trust unconfigured in this release.
 - **Core source:** [`memory_vault.py`](memory_vault.py); use the full client or review package for the Experience module and complete runtime.
 
 Alpha.3 makes current records deterministically rank before superseded/resolved
@@ -57,6 +67,9 @@ authenticated replacement-node repair, deterministic retrieval v2, validated
 storage proofs and signed topic/subscription authority.
 Topic authorization is available; encrypted topic fan-out is still pending.
 Back up existing memory and configuration before explicitly installing this preview.
+Old content/v1 transport state is not migrated; preserve the old runtime and
+private backups and use isolated endpoint state. No private installation is
+changed by this release.
 The plugin package README provides installation and verification steps.
 
 ## Previous stable line: v0.25.1 capacity patch

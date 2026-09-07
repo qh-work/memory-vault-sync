@@ -1,6 +1,6 @@
-# Memory Vault v0.26.0-alpha.4 — authorized full client
+# Memory Vault v0.26.0-alpha.5 — authorized full client
 
-This full-client package targets **v0.26.0-alpha.4 native-network source**,
+This full-client package targets **v0.26.0-alpha.5 native-network source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under
@@ -21,6 +21,22 @@ relay, authority and trusted HTTP services use the separate server lock. See
 [dependency and platform limits](plugins/memory-vault-client/docs/DEPENDENCIES_NETWORK.md)
 and [explicit setup](plugins/memory-vault-client/docs/NETWORK_QUICKSTART.md).
 Extracting this package installs none of those dependencies or services.
+
+Alpha.5 packages the reviewed experience-exchange flow: chat does not
+implicitly become memory; authorized Hint queries return up to four frozen
+pages of four hints; explicit selections transfer one to four roots and their
+complete permitted dependency union. Cancellation stops pending query work.
+Already accepted batches remain available through local
+`recall(received_batch_message_id=...)` with current trust annotations, original
+sources, environment and counterevidence. See
+[Hint v4](plugins/memory-vault-client/docs/NETWORK_HINTS_V4.md) and
+[local batch reads](plugins/memory-vault-client/docs/RECEIVED_BATCH_RECALL.md).
+
+This is a bounded private-network preview, not global P2P or unlimited capacity.
+Current controls use Hint v4 and content/v2; old preview forms are not replayed
+or silently migrated. Extraction does not replace an installed plugin or
+private state. The separate no-Docker synthetic trial has unconfigured service
+trust; it needs operator provisioning, not an assumed available relay/authority.
 
 ## Explicit setup
 
@@ -91,6 +107,11 @@ local saves do not wait for network. No host setting, private installation,
 startup service or real Vault is changed by extracting this package.
 
 ## Evidence and independent review
+
+Prior results and this release preparation are distinguished in the
+[release scope](plugins/memory-vault-client/docs/RELEASE.md). The 94-test
+developer result belongs to reviewed source `c473d23`, not a new test run
+triggered by extracting this archive.
 
 The [capacity report](plugins/memory-vault-client/docs/V0_25_PACK_CAPACITY_SMOKE.md)
 records one opted-in actual 516 MiB synthetic create/copy/resume/repeat/unpack/hash

@@ -1,5 +1,12 @@
 # Experience Core: implementation and validation evidence
 
+Current release status: the **alpha.5 target** includes the subsequently
+reviewed and merged PR #22 origin/int64 repairs. The pending-review wording
+and test results below record earlier fixed development phases; they are not
+the current approval status and are not relabeled as alpha.5 test runs. See
+[release scope](RELEASE.md) for the reviewed main source, current packaging
+checks and separate publication evidence.
+
 This implements the first Experience Semantics / Provenance phase on the
 existing `v0.26.0-alpha.3` source (`3592b96`), on local branch
 `feat/experience-epistemic-core`. It does not implement or claim global P2P,

@@ -1,5 +1,39 @@
 # 0.26 alpha development and package evidence
 
+## Alpha.5 reviewed experience exchange and local batch recall
+
+The `0.26.0-alpha.5` release target packages reviewed main
+`1f74fb969d29da5a92f014bb34d9415b967ddc26` and PRs #22–#28. It repairs
+Experience origin/int64 handling and keeps ordinary chat out of long-term
+memory. Known authorized peers can request four frozen pages of four hints,
+select one to four roots with their complete authorized dependency union,
+cancel pending query work, and locally inspect previously verified batches in
+original selection order. Sources, environments, contradictions and current
+trust remain visible. Existing Vault records, IDs, canonical bytes and source
+signatures are preserved.
+
+The reviewed source `c473d23f894f7ba8cab05817788fdb9537359e77` previously
+passed **94 distinct targeted developer tests in 213.804 seconds**, with no
+failures, errors or skips. Main `1f74fb9` has the identical tree. Prior
+three-platform base CI also passed; these are existing source-pinned results,
+not a whole-suite pass, benchmark or Windows feature certification.
+
+The bounded 6 Pro review passed that SHA and scope. Its independent environment
+lacked real JOSE, so it did not rerun the complete encrypted/native TypeScript/
+recovery matrix. Developer test execution and independent review are separate
+evidence. During this release preparation, **18 release-packaging and base
+regressions passed in 3.519 seconds**, with no failures, errors or skips. Final
+archive checks, installation and publication require separate actual evidence.
+
+This preview uses content/v2 and Hint v4; old preview forms are not accepted.
+Private upgrades and migration remain separate explicit work. The optional
+no-Docker synthetic trial still has unconfigured service trust and provides
+no standing relay or authority. Global P2P, public discovery, group chat,
+unlimited capacity and real-model/scale acceptance are not claimed. See
+[release scope](RELEASE.md), [Hint v4](NETWORK_HINTS_V4.md), and
+[local batch recall](RECEIVED_BATCH_RECALL.md). The reports below retain their
+original version-specific meaning; this source note does not assert upload.
+
 ## Alpha.4 Experience Semantics and provenance
 
 Version `0.26.0-alpha.4` adds optional experience-v1 metadata, source-preserving

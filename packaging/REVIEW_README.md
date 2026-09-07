@@ -1,4 +1,4 @@
-# Memory Vault v0.26.0-alpha.4 independent review kit
+# Memory Vault v0.26.0-alpha.5 independent review kit
 
 This separate archive contains public source and synthetic tests, not private
 memory or a preconfigured installation. The [validation index](docs/VALIDATION.md)
@@ -14,7 +14,22 @@ native Windows or thousand-agent acceptance. The earlier two-mode entry tests
 share one Python reference. Full P01–P14 acceptance remains open. This alpha
 kit is not a stable-release certification, installed client or publication claim.
 
-Alpha.4 includes `docs/EXPERIENCE_SEMANTICS.md`, its
+Alpha.5 includes reviewed PRs #22–#28: stable Experience origins and lossless
+int64 views; chat/memory separation; authorized frozen Hint pages; complete
+one-to-four-root selection; cancellation; and read-only accepted-batch recall.
+Current controls use Hint v4 inside content/v2. Earlier Hint documents retain
+historical evidence, not current wire examples. See `docs/NETWORK_HINTS_V4.md`
+and `docs/RECEIVED_BATCH_RECALL.md`.
+
+The prior 94 targeted developer tests passed in 213.804 seconds on `c473d23`;
+reviewed main `1f74fb9` has the same tree, and prior three-platform base CI
+passed. The bounded 6 Pro review passed that SHA and scope but lacked real
+JOSE for an independent complete integration rerun. Do not count developer
+execution as independent review execution. The separate 18-test release/base
+check passed in 3.519 seconds during alpha.5 preparation. None is a whole-suite
+or production certification; final archive/publication checks remain separate.
+
+The kit retains `docs/EXPERIENCE_SEMANTICS.md`, its historical
 [measured validation report](docs/EXPERIENCE_VALIDATION.md), the new synthetic
 Experience tests and `scripts/demo_experience.py`. The legacy-reader regression
 uses the alpha.3 commit from a full Git checkout; this source archive alone does

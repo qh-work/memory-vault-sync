@@ -1,9 +1,45 @@
-# Memory Vault v0.26.0-alpha.4 — package/review notes
+# Memory Vault v0.26.0-alpha.5 — package/review notes
 
 **Alpha candidate; not a stable-release or runtime-certification claim.** This
 document describes the current build target. It does not establish that a
 package has been installed or publicly published. Existing versioned reports
 and published artifacts remain separate historical evidence.
+
+## Alpha.5: explicit experience exchange and local inspection
+
+This release target packages reviewed main
+`1f74fb969d29da5a92f014bb34d9415b967ddc26`, including PRs #22–#28:
+
+- Experience origin deduplication stays tied to the first verified local
+  signer; re-attestation does not manufacture independent evidence. Python,
+  native TypeScript and the HTTP SDK preserve signed int64 Experience values.
+- Ordinary chat stays in durable transport storage. Sending or receiving text
+  does not create a long-term observation; saving it requires explicit
+  `remember`. Explicit transfers preserve original records and signatures.
+- Known, authorized peers can query without knowing memory IDs first. Separate
+  local grants control Hint visibility and complete-record access. One query
+  freezes at most sixteen hints in four explicitly requested pages of four.
+- A requester selects one to four distinct roots from received pages. The
+  owner authorizes the complete dependency union or refuses the whole batch;
+  shared dependencies appear once, and refusal reveals no hidden record IDs.
+- Established queries can be cancelled locally, including offline. Pending
+  query work stops without deleting accepted memories or rewriting frozen
+  transport bodies. Notification failure does not undo committed local
+  cancellation. Recovery does not revive live Hint sessions.
+- `recall(received_batch_message_id=...)` reads a previously verified batch
+  locally in its original selection order. Bounded pages preserve source,
+  environment and counterevidence, recheck current trust, and perform no
+  network access or persistent writes. Accepted history survives cancellation,
+  restart and same-version encrypted recovery; rejected late batches remain
+  unavailable through this selector.
+
+The six native operations, existing Vault, record IDs, canonical bytes and
+Ed25519 source signatures remain. Current payloads use content/v2 and Hint v4
+inside network-v1. Earlier preview content/Hint forms are deliberately rejected;
+this package supplies no automatic private-installation upgrade or migration.
+See [message semantics](../docs/NETWORK_CONTENT_V2.md),
+[Hint v4](../docs/NETWORK_HINTS_V4.md) and
+[local batch recall](../docs/RECEIVED_BATCH_RECALL.md).
 
 ## Two modes, one memory
 
@@ -25,7 +61,7 @@ starts no scheduler or default background service. The native network has no
 MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility claim; the existing
 eleven-tool MCP memory interface remains unchanged.
 
-Alpha.4 adds optional Experience Semantics, bounded local provenance summaries,
+Alpha.4 introduced optional Experience Semantics, bounded local provenance summaries,
 source-preserving structured recall and cross-author state protection.
 Observation, experiment, inference, hearsay, speculation, summary and external
 sources remain separate claims; transmission counts are not truth or independent
@@ -35,7 +71,7 @@ unchanged. No new database, global P2P or consensus system is introduced.
 Alpha.3 already made current records an explicit deterministic ranking tier ahead
 of superseded/resolved history across Python and TypeScript recall and handoff.
 The separate synthetic trial retains its temporary endpoint implementation;
-alpha.4 ships with service trust unconfigured, so it fails before setup/network
+alpha.5 ships with service trust unconfigured, so it fails before setup/network
 activity until an operator publishes reviewed pinned service bytes. It never
 reads the installed plugin or an existing Vault. Old alpha.3 service URLs are
 not reused as working infrastructure.
@@ -46,13 +82,13 @@ Memory cannot install software, enroll trust, activate hooks or execute goals.
 
 ## Build artifacts
 
-- `memory-vault-protocol-v0.26.0-alpha.4.zip`: documentation, structural schemas and
+- `memory-vault-protocol-v0.26.0-alpha.5.zip`: documentation, structural schemas and
   synthetic interchange vectors, with no executable.
-- `memory-vault-client-v0.26.0-alpha.4.zip`: source-built plugin, all required runtime
+- `memory-vault-client-v0.26.0-alpha.5.zip`: source-built plugin, all required runtime
   modules and a local marketplace catalog.
-- `memory-vault-review-v0.26.0-alpha.4.zip`: public source, synthetic cases and bounded
+- `memory-vault-review-v0.26.0-alpha.5.zip`: public source, synthetic cases and bounded
   review handoff for independent reviewers; no automatic test execution.
-- `memory-vault-network-test-v0.26.0-alpha.4.zip`: isolated one-command synthetic
+- `memory-vault-network-test-v0.26.0-alpha.5.zip`: isolated one-command synthetic
   endpoint template; no Docker or plugin; unconfigured service trust requires
   operator provisioning.
 - `PROTOCOL.md` and `memory_vault.py`: agreement and core source; use the full
@@ -72,7 +108,20 @@ artifact hashes do not establish package security or platform runtime success.
 
 ## Verification boundary
 
-This is an owner-authorized prerelease with disclosed limits. Initial Experience
+The reviewed source `c473d23f894f7ba8cab05817788fdb9537359e77` previously
+passed **94 distinct targeted developer tests in 213.804 seconds**, with no
+failures, errors or skips. Main `1f74fb9` has the identical tree. Prior
+three-platform base CI also passed; these are existing source-pinned results,
+not a whole-suite pass, benchmark or Windows feature certification.
+
+The bounded 6 Pro review passed that SHA and scope. Its independent environment
+lacked real JOSE, so it did not rerun the complete encrypted/native TypeScript/
+recovery matrix. Developer test execution and independent review are separate
+evidence. During this release preparation, **18 release-packaging and base
+regressions passed in 3.519 seconds**, with no failures, errors or skips. Final
+archive checks, installation and publication require separate actual evidence.
+
+This is an owner-authorized prerelease with disclosed limits. Historical initial Experience
 validation recorded **37 new tests passed**, **132 selected regressions passed**
 and **five socket tests blocked by sandbox policy**. The A/B/C/D logical-Agent
 demo passed. A Unicode normalization difference was also reproduced on the

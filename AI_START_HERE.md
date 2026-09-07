@@ -5,21 +5,22 @@ our plugin or to implement cryptography. Use an existing authorized endpoint;
 its client preserves the same records, sources and relationships as the full
 plugin. Memory outlives tasks, models, conversations and relay nodes.
 
-The current downloadable preview is **[v0.26.0-alpha.4](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.4)**.
+This source targets **[v0.26.0-alpha.5](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.5)**.
+Download availability is established by that release page, not this source declaration.
 Operators can use its full client package; protocol adopters can use the separate
 protocol package. Verify `SHA256SUMS` and preserve existing private backups.
 For a bounded first test, the separate synthetic network package runs one
 temporary endpoint without Docker or plugin installation. It accepts only the
 release-pinned service identity and a publisher-provided one-time code; it does
-not read an existing Vault. Alpha.4 ships with service trust unconfigured and
+not read an existing Vault. Alpha.5 ships with service trust unconfigured and
 fails before setup/network activity until an operator publishes reviewed service
 pins; obsolete alpha.3 trial URLs are not reused.
 
-**Unreleased candidate:** [network content/v2](docs/NETWORK_CONTENT_V2.md)
-separates communication from long-term memory. The downloaded preview has the
-earlier behavior. Compatibility and upgrade tooling are deferred; test this
-candidate with isolated synthetic state and preserve existing private data.
-The next [authorized Memory Hint candidate](docs/NETWORK_HINTS_V4.md) lets a
+**Included in alpha.5:** [network content/v2](docs/NETWORK_CONTENT_V2.md)
+separates communication from long-term memory. Compatibility and upgrade
+tooling are deferred; use isolated endpoint state and preserve existing private
+data and the old runtime.
+The [authorized Memory Hint profile](docs/NETWORK_HINTS_V4.md) lets a
 known peer query an explicitly permitted set, request up to four frozen pages
 of four hints, then explicitly select one to four original record closures across seen pages.
 The complete dependency union is authorized or the whole batch is refused. Pages are explicit;
@@ -59,7 +60,7 @@ use the [quickstart](docs/NETWORK_QUICKSTART.md), not a new protocol implementat
 - Default agent results are capped at 8 KiB. Follow `next_cursor` with
   `{"op":"recall","cursor":"RETURNED_CURSOR"}`; never treat a fragment as the
   complete canonical record. Select narrower queries if the 32-hit limit matters.
-- In the content/v2 candidate, text-only `send` queues chat without creating
+- In content/v2, text-only `send` queues chat without creating
   memory. Explicit nonempty `memory_ids` transfer selected original records and
   their dependency closure; accompanying text is only a note. Saving new
   knowledge requires a separate `remember`. This selection is not a new remote
@@ -100,7 +101,7 @@ does not authorize the retry or start an agent.
 
 ## Read a received experience batch
 
-The developing [local batch recall view](docs/RECEIVED_BATCH_RECALL.md) reads an
+The [local batch recall view](docs/RECEIVED_BATCH_RECALL.md) reads an
 already accepted Hint batch in your original selection order:
 
 ```json
@@ -112,8 +113,8 @@ Structured experience, environment and provenance are included by default.
 Check each hit's current `verification.eligible_for_context`; an old verified
 receipt does not make revoked evidence currently trusted. Follow `next_cursor`
 explicitly for more local text. Cancellation and recovery stop old exchanges,
-not access to already accepted history. This is a development API; existing
-release downloads and private installations are unchanged.
+not access to already accepted history. This is an alpha API; publication does
+not update private installations.
 
 ## Experience Semantics
 
@@ -150,8 +151,8 @@ No A2A adapter or new global discovery/consensus system is introduced.
 
 Local capture, backup/restore, the dynamic `handoff` view, selective `share-v1`
 packages, resumable packs, directory/rclone sync and old host adapters remain.
-The network adds delivery; it does not replace or reparent memory. The content/v2
-candidate explicitly rejects old content/v1 queue bodies and endpoint recovery
+The network adds delivery; it does not replace or reparent memory. Content/v2
+explicitly rejects old content/v1 queue bodies and endpoint recovery
 data containing them. It does not delete, convert or reseal them; keep the old
 runtime, configuration and private backups. This is not a ready upgrade path. See
 [backup](docs/BACKUP.md), [sharing](docs/SHARING.md) and

@@ -28,9 +28,13 @@ Implement, review, contribute:
 - CONTRIBUTING.md — useful contributions with synthetic data, never private logs or keys
 - SECURITY.md — limits of trust, ciphertext relays and local process isolation
 
-0.26.0-alpha.4 adds optional Experience Semantics and bounded local provenance
-views while preserving canonical records. See docs/EXPERIENCE_SEMANTICS.md and
-docs/EXPERIENCE_VALIDATION.md for source attribution and actual test results.
+0.26.0-alpha.5 separates chat from memory and adds authorized, frozen Memory Hint
+pages, explicit batch selection, query cancellation and local received-batch recall.
+See docs/NETWORK_HINTS_V4.md, docs/RECEIVED_BATCH_RECALL.md and docs/RELEASE.md.
+Experience Semantics and local provenance views preserve canonical records;
+docs/EXPERIENCE_VALIDATION.md retains the exact scope of earlier test campaigns.
+Old transport-state migration is not provided; preserve private backups and the
+old runtime and use isolated endpoint state.
 It does not prove real-model adoption, a production
 public cloud, 1000-agent scale, traffic anonymity or hidden execution. A trial
 ships unconfigured and requires operator-pinned service trust and a one-time

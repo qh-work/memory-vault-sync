@@ -1,8 +1,9 @@
 # Read an already received experience batch
 
-Status: unreleased development after v0.26.0-alpha.4. This extends the native
-Agent `recall` operation with a local historical view. The downloadable release
-and private installations are unchanged. It does not add a new remote query,
+Status: included in the **alpha.5 release target** after review and merge in
+PR #28. This extends native Agent `recall` with a local historical view. See
+[release scope](RELEASE.md) for publication evidence; private installations
+are not automatically changed. It does not add a new remote query,
 memory store, ranking profile or protocol adapter.
 
 ## Read the experiences you explicitly selected
