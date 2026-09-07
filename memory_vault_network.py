@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 
 from memory_vault import MemoryError, canonical_bytes, strict_json_loads
 from memory_vault_client import ClientConfig
-from memory_vault_storage import private_directory, open_file, atomic_write
+from memory_vault_storage import private_directory, open_file, atomic_write, StorageError
 from memory_vault_trust import Identity, TrustError, _read_private
 from memory_vault_network_crypto import (EncryptionIdentity, PublicKeyTrust, document_sha256,
     seal, open_envelope, verify_envelope, b64url, unb64url, opaque, object_fields, integer, digest)
@@ -213,7 +213,17 @@ class NetworkClient:
         for suffix in ("-wal", "-shm", "-journal"):
             sibling = Path(str(database) + suffix)
             if sibling.exists() or sibling.is_symlink():
-                descriptor = open_file(sibling, os.O_RDONLY, private=True)
+                try:
+                    descriptor = open_file(sibling, os.O_RDONLY, private=True)
+                except FileNotFoundError:
+                    # Another SQLite connection can remove an optional sidecar
+                    # after the existence check. Skip only a now-absent name;
+                    # a remaining entry (including a dangling link) still fails.
+                    try:
+                        sibling.lstat()
+                    except FileNotFoundError:
+                        continue
+                    raise
                 os.close(descriptor)
         connection = sqlite3.connect(database, timeout=2)
         connection.row_factory = sqlite3.Row
@@ -634,7 +644,7 @@ class NetworkClient:
         from memory_vault_network_hints import respond_to
         return respond_to(self, message_id)
 
-    def _queue_body(self, request_id: str, recipients: list[str], input_sha: str, body: bytes) -> sqlite3.Row:
+    def _queue_body(self, request_id: str, recipients: list[str], input_sha: str, body: bytes) -> Mapping[str, Any]:
         message_id = "msg_" + hashlib.sha256(canonical_bytes([self.network_id, self.identity.key_id, request_id])).hexdigest()
         with self.db() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -645,11 +655,21 @@ class NetworkClient:
                     raise MemoryError("network_outbox_capacity")
                 connection.execute("INSERT INTO outbox(request_id,message_id,input_sha,body,recipients) VALUES(?,?,?,?,?)",
                                    (request_id, message_id, input_sha, body, canonical_bytes(recipients)))
-                from memory_vault_network_hints import register_requester
-                register_requester(self, connection, message_id, recipients, validate_content(body))
+                from memory_vault_network_hints import register_requester, register_cancellation
+                content = validate_content(body)
+                register_requester(self, connection, message_id, recipients, content)
+                if len(recipients) == 1:
+                    register_cancellation(self, connection, message_id, recipients[0], content)
                 prior = self._outbox_rows(connection, request_id, full=True)[0]
             if prior["input_sha"] != input_sha:
                 raise MemoryError("network_request_id_conflict")
+            from memory_vault_network_hints import cancellation_result
+            local_cancellation = cancellation_result(self, validate_content(bytes(prior["body"])), message_id, connection=connection)
+            if local_cancellation:
+                # This snapshot only leaves the context after its transaction
+                # commits. It is not persisted or reconstructed from old body
+                # bytes when recovery has removed the query session.
+                return {**dict(prior), "_local_cancellation": local_cancellation}
             return prior
 
     def _send_hint_response(self, request_id: str, recipient: str, content: Mapping[str, Any], source_id: str) -> Mapping[str, Any]:
@@ -670,11 +690,12 @@ class NetworkClient:
             if text or memory_ids is not None or len(recipients) != 1:
                 raise MemoryError("network_invalid_send")
             control = validate_control(control)
-            if control["kind"] not in {"query", "page", "select"}:
+            if control["kind"] not in {"query", "page", "select", "cancel"}:
                 raise MemoryError("network_invalid_send")
             from memory_vault_network_hints import guard
             body = validate_content({"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": control})
-            guard(self, body, recipients)
+            if control["kind"] != "cancel":
+                guard(self, body, recipients)
             input_sha = hashlib.sha256(canonical_bytes({"recipients": recipients, "text": "", "memory_ids": [], "control": control})).hexdigest()
             prior = self._queue_body(request_id, recipients, input_sha, canonical_bytes(body))
             return self._deliver(prior, recipients)
@@ -707,7 +728,22 @@ class NetworkClient:
                     raise MemoryError("network_request_id_conflict")
         return self._deliver(prior, recipients)
 
-    def _deliver(self, prior: sqlite3.Row, recipients: list[str], *, deadline: float | None = None,
+    def _deliver(self, prior: Mapping[str, Any], recipients: list[str], *, deadline: float | None = None,
+                 pending_only: bool = False, first_node: int = 0) -> Mapping[str, Any]:
+        local_cancellation = prior.get("_local_cancellation") if isinstance(prior, dict) else None
+        try:
+            return self._deliver_impl(prior, recipients, deadline=deadline, pending_only=pending_only, first_node=first_node)
+        except StorageError as exc:
+            if not local_cancellation:
+                raise
+            # A typed local resource failure cannot undo a committed cancel.
+            # Delivery may have started, so do not invent receipt counts.
+            return {"state": "delivery_unknown", "message_id": prior["message_id"],
+                    "content_kind": "hint_control", "text_memory_id": None,
+                    "errors": [{"code": exc.code, "retryable": exc.retryable}],
+                    "retry_same_request_id": True, "understood": False, **local_cancellation}
+
+    def _deliver_impl(self, prior: Mapping[str, Any], recipients: list[str], *, deadline: float | None = None,
                  pending_only: bool = False, first_node: int = 0) -> Mapping[str, Any]:
         """Reuse durable content; never export memory or reseal a frozen row."""
         content = validate_content(bytes(prior["body"]))
@@ -718,7 +754,13 @@ class NetworkClient:
         frozen_roster = strict_json_loads(prior["roster"]) if prior["roster"] else None
         if envelope is not None and set(envelope["recipient_key_ids"]) != set(recipients):
             raise MemoryError("network_outbox_routing_mismatch")
+        from memory_vault_network_hints import stopped, cancellation_result
+        is_stopped = stopped(self, content, message_id)
         for offset in range(len(self.relays)):
+            if is_stopped or stopped(self, content, message_id):
+                is_stopped = True
+                errors = [{"code": "network_hint_not_available", "retryable": False}]
+                break
             relay = self.relays[(first_node + offset) % len(self.relays)]
             if pending_only and relay in receipts:
                 continue
@@ -773,6 +815,10 @@ class NetworkClient:
                     receipts[relay] = response
                     connection.execute("UPDATE outbox SET receipts=? WHERE request_id=?", (canonical_bytes(receipts).decode(), request_id))
             except (MemoryError, TrustError) as exc:
+                if stopped(self, content, message_id):
+                    is_stopped = True
+                    errors = [{"code": "network_hint_not_available", "retryable": False}]
+                    break
                 code = exc.code
                 if (pending_only and code == "network_budget_exhausted" and deadline is not None
                         and node_deadline is not None and node_deadline < deadline and time.monotonic() < deadline):
@@ -784,16 +830,37 @@ class NetworkClient:
             latest = self._outbox_rows(connection, request_id)[0]
             receipts = {node: receipt for node, receipt in strict_json_loads(latest["receipts"]).items() if node in self.relays}
             validated = [row[0] for row in connection.execute("SELECT recipient FROM acknowledgements WHERE message_id=?", (message_id,))]
-        return {"state": "stored" if len(receipts) == len(self.relays) else "queued_local", "message_id": message_id,
+        return {"state": "stopped_query" if is_stopped else "stored" if len(receipts) == len(self.relays) else "queued_local", "message_id": message_id,
                 "stored_nodes": len(receipts), "configured_nodes": len(self.relays), "degraded": len(receipts) < len(self.relays),
                 "validated_recipients": validated, "endpoint_validated": set(recipients).issubset(validated),
                 "understood": False, "errors": errors, "retry_same_request_id": True,
-                "content_kind": content["kind"], "text_memory_id": None}
+                "content_kind": content["kind"], "text_memory_id": None,
+                **(prior["_local_cancellation"] if isinstance(prior, dict) and "_local_cancellation" in prior
+                   else cancellation_result(self, content, message_id))}
+
+    def _stopped_outbox(self, connection: sqlite3.Connection) -> set[str]:
+        from memory_vault_network_hints import stopped_query_ids
+        cancelled = stopped_query_ids(self, connection)
+        if not cancelled:
+            return set()
+        # Only compact metadata leaves SQLite; never load all share bodies.
+        rows = connection.execute("""SELECT request_id,
+            CASE WHEN json_extract(CAST(body AS TEXT),'$.kind')='hint_batch_transfer'
+                THEN json_extract(CAST(body AS TEXT),'$.query_message_id')
+            WHEN json_extract(CAST(body AS TEXT),'$.kind')='hint_control' THEN
+                CASE WHEN json_extract(CAST(body AS TEXT),'$.control.kind')='query' THEN message_id
+                     WHEN json_extract(CAST(body AS TEXT),'$.control.kind') IN ('page','select','hints')
+                     THEN json_extract(CAST(body AS TEXT),'$.control.query_message_id') END END AS query_id
+            FROM outbox WHERE json_valid(CAST(body AS TEXT)) LIMIT 1025""").fetchall()
+        if len(rows) > 1024:
+            raise MemoryError("network_outbox_capacity")
+        return {row["request_id"] for row in rows if row["query_id"] in cancelled}
 
     def _pending_outbox(self) -> tuple[list[tuple[int, str]], int]:
         with self.db() as connection:
             rows = self._outbox_rows(connection)
             cursor = connection.execute("SELECT value FROM state WHERE key='pump_cursor'").fetchone()
+            stopped = self._stopped_outbox(connection)
         if len(rows) > 1024:
             raise MemoryError("network_outbox_capacity")
         pending = []
@@ -801,7 +868,7 @@ class NetworkClient:
             receipts = strict_json_loads(row["receipts"])
             if not isinstance(receipts, dict):
                 raise MemoryError("network_invalid_storage_receipt")
-            if not set(self.relays).issubset(receipts):
+            if not set(self.relays).issubset(receipts) and row["request_id"] not in stopped:
                 pending.append((row["position"], row["request_id"]))
         return pending, integer(strict_json_loads(cursor["value"])) if cursor else 0
 
@@ -914,6 +981,10 @@ class NetworkClient:
         if exhausted:
             errors.append({"code": "network_budget_exhausted", "retryable": True})
         remaining, _ = self._pending_outbox()
+        with self.db() as connection:
+            stopped_ids = self._stopped_outbox(connection)
+            stopped_count = sum(row["request_id"] in stopped_ids and not set(self.relays).issubset(strict_json_loads(row["receipts"]))
+                                for row in self._outbox_rows(connection))
         item_errors = [error for item in outgoing for error in item["errors"]]
         receive_errors = [] if incoming is None else incoming["errors"]
         all_errors = errors + item_errors + receive_errors
@@ -926,6 +997,7 @@ class NetworkClient:
         retryable = exhausted or unattempted or retry_pending or any(error.get("retryable", False) for error in all_errors)
         return {"state": "budget_exhausted" if exhausted else "needs_retry" if retryable else "needs_attention" if all_errors else "completed",
                 "outbound_attempted": len(attempted), "outbound": outgoing, "remaining_outbox": len(remaining),
+                "stopped_query_messages": stopped_count,
                 "receive": incoming, "replica_checks": replica_checks,
                 "errors": errors, "retryable": retryable, "retry_after_ms": 1000 if retryable else 0,
                 "elapsed_ms": max(0, int((time.monotonic() - started) * 1000)), "budget_exhausted": exhausted,
@@ -1010,6 +1082,9 @@ class NetworkClient:
             elif content["kind"] == "hint_control" and content["control"]["kind"] == "hints":
                 from memory_vault_network_hints import validate_incoming_hints
                 validate_incoming_hints(self, content["control"], payload["sender_key_id"])
+            elif content["kind"] == "hint_control" and content["control"]["kind"] == "cancel_ack":
+                from memory_vault_network_hints import validate_incoming_cancel_ack
+                validate_incoming_cancel_ack(self, content["control"], payload["sender_key_id"])
         except MemoryError as exc:
             if exc.retryable:
                 raise
@@ -1031,20 +1106,38 @@ class NetworkClient:
                         raise
                     return self._reject_content(envelope, "network_invalid_content_share")
                 if content["kind"] == "hint_batch_transfer":
-                    # Parsing may consume the remaining query lifetime. This
-                    # final binding-only check does not rescan share bytes.
+                    # Parsing is outside the writer reservation. Cancellation
+                    # and final local admission share transport -> Vault order.
                     try:
-                        validate_incoming_transfer(self, content, payload["sender_key_id"], check_share=False)
+                        with self.db() as connection:
+                            connection.execute("BEGIN IMMEDIATE")
+                            existing = self._existing_delivery(connection, message_id, digest)
+                            if existing is not None:
+                                return existing
+                            validate_incoming_transfer(self, content, payload["sender_key_id"], check_share=False, connection=connection)
+                            imported = self._import_received_share(source)
+                            return self._save_inbox(connection, payload, digest, body, content, imported)
                     except MemoryError as exc:
-                        if exc.retryable:
-                            raise
-                        return self._reject_content(envelope, exc.code)
-                try:
-                    imported = import_share(self.client_config.path, source, verify_signatures=True, maximum_seconds=10)
-                except (TrustError, MemoryError) as exc:
-                    if exc.code not in {"unknown_key", "revoked_key", "share_record_signature_required", "share_independent_trust_required"}:
+                        if exc.code == "network_invalid_content" and not exc.retryable:
+                            return self._reject_content(envelope, exc.code)
                         raise
-                    imported = import_share(self.client_config.path, source, maximum_seconds=10)
+                imported = self._import_received_share(source)
+        with self.db() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            return self._save_inbox(connection, payload, digest, body, content, imported)
+
+    def _import_received_share(self, source: Path) -> Mapping[str, Any]:
+        from memory_vault_sharing import import_share
+        try:
+            return import_share(self.client_config.path, source, verify_signatures=True, maximum_seconds=10)
+        except (TrustError, MemoryError) as exc:
+            if exc.code not in {"unknown_key", "revoked_key", "share_record_signature_required", "share_independent_trust_required"}:
+                raise
+            return import_share(self.client_config.path, source, maximum_seconds=10)
+
+    def _save_inbox(self, connection: sqlite3.Connection, payload: Mapping[str, Any], digest: str, body: bytes,
+                    content: Mapping[str, Any], imported: Mapping[str, Any] | None) -> Mapping[str, Any]:
+        message_id = payload["message_id"]
         # The native result budget counts serialized UTF-8, including JSON
         # escaping. Four 512-character emoji previews would already exceed it.
         text = content_text(content)
@@ -1056,18 +1149,16 @@ class NetworkClient:
                   "state": "validated_saved", "understood": False}
         # Store complete plaintext locally, not in a relay. Memory text itself
         # never gets an execution or trust-enrollment path.
-        with self.db() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            existing = self._existing_delivery(connection, message_id, digest)
-            if existing is not None:
-                return existing
-            count, size = connection.execute("SELECT COUNT(*),COALESCE(SUM(length(body)),0) FROM inbox").fetchone()
-            if count >= 4096 or size + len(body) > MAX_QUEUE_BYTES:
-                raise MemoryError("network_inbox_capacity")
-            connection.execute("INSERT OR IGNORE INTO inbox VALUES(?,?,?,?,?)", (message_id, digest, payload["sender_key_id"], body, canonical_bytes(result).decode()))
-            actual = connection.execute("SELECT digest,result FROM inbox WHERE message_id=?", (message_id,)).fetchone()
-            if actual["digest"] != digest:
-                raise MemoryError("network_inbox_identity_conflict")
+        existing = self._existing_delivery(connection, message_id, digest)
+        if existing is not None:
+            return existing
+        count, size = connection.execute("SELECT COUNT(*),COALESCE(SUM(length(body)),0) FROM inbox").fetchone()
+        if count >= 4096 or size + len(body) > MAX_QUEUE_BYTES:
+            raise MemoryError("network_inbox_capacity")
+        connection.execute("INSERT OR IGNORE INTO inbox VALUES(?,?,?,?,?)", (message_id, digest, payload["sender_key_id"], body, canonical_bytes(result).decode()))
+        actual = connection.execute("SELECT digest,result FROM inbox WHERE message_id=?", (message_id,)).fetchone()
+        if actual["digest"] != digest:
+            raise MemoryError("network_inbox_identity_conflict")
         return result
 
     def read_message(self, message_id: str, offset: int = 0) -> Mapping[str, Any]:

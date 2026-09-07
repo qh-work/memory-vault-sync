@@ -30,7 +30,7 @@ class TypeScriptHintCodecTests(unittest.TestCase):
         import base64
         valid, invalid = parser_vectors()
         values = [json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode() for value in valid + invalid]
-        values += [b'{"schema_version":"memory-vault-network-content/v2","kind":"hint_control","control":{"schema_version":"memory-vault-hint/v3","kind":"query","query":"one","query":"two"}}']
+        values += [b'{"schema_version":"memory-vault-network-content/v2","kind":"hint_control","control":{"schema_version":"memory-vault-hint/v4","kind":"query","query":"one","query":"two"}}']
         expected = []
         for raw in values:
             try:

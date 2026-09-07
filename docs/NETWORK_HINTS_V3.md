@@ -1,6 +1,9 @@
 # Authorized Memory Hint v3: explicit batch selection
 
-Status: **unreleased development after v0.26.0-alpha.4**. This extends the
+Status: **historical batch-selection contract**, reviewed and merged in PR #26.
+The current candidate uses [Hint v4 cancellation](NETWORK_HINTS_V4.md); v3 wire
+controls are not accepted by that candidate. This document records the batch
+semantics and the tests executed for that earlier source. It extends the
 reviewed frozen pagination design between already known, authorized endpoints.
 It is not open discovery, a global index, Gossip or a scale certification.
 The downloadable release and private installations are not replaced.
@@ -191,5 +194,7 @@ core files were also compared byte-for-byte with the merged base and remained
 unchanged. Recovery production code already covered transfer records and
 session exclusion, so this batch reused it and added the batch regression.
 The known earlier U+1E030 normalization difference remains outside this batch;
-this is not a claim that every repository test passes. Independent review is
-pending and cannot be inferred from these development-side results.
+this is not a claim that every repository test passes. The subsequent actual
+6 Pro review passed for source 18bd006, followed by normal PR #26 merge. Its
+independent runtime was unable to execute the full JOSE/TypeScript integration
+set; that review did not independently reproduce all 108 development passes.

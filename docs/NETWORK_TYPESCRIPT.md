@@ -322,16 +322,20 @@ large-cluster capacity. Those gates remain separate from this preview.
 
 ## Authorized Hint candidate
 
-The independent native endpoint also implements the [bounded Hint contract](NETWORK_HINTS_V3.md).
+The independent native endpoint also implements the [bounded Hint contract](NETWORK_HINTS_V4.md).
+Hint v4 adds explicit cancellation and typed cancel_ack. Local cancellation
+commits with its notification before any network wait; final batch admission
+serializes with cancellation using the same transport writer reservation.
+These are transport states and do not alter long-term record bytes or trust.
 `NetworkPeer.setHintPolicy` is a trusted local configuration method. The six
 operations accept the same typed `send(control=...)`, `receive(respond_to=...)`
 and local control-read semantics as Python. This does not make the HTTP SDK a
 key holder or permit an untrusted relay to decrypt content. Local policy is
-excluded from endpoint recovery and must be explicitly granted again. Hint v3
+excluded from endpoint recovery and must be explicitly granted again. Hint v4
 requires a fixed query expiry, explicit next-page requests, and a new query
 after restore. Python and TypeScript persist the same short-lived session
 shapes in the existing transport database; neither adds a memory database.
 
-V3 explicitly selects one to four distinct roots across already received pages
+V4 explicitly selects one to four distinct roots across already received pages
 of the same live query. The native endpoint and HTTP SDK expose the same batch
 shape; the full dependency union is authorized or the whole batch is refused.

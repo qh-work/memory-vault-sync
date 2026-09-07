@@ -305,10 +305,10 @@ export class NetworkPeer {
     for(const [key,value] of sessions)if(value.expires_at<=now()){db.prepare('DELETE FROM state WHERE key=?').run(key);sessions.delete(key);}
     if(sessions.size>=64)fail('network_hint_not_available');this.put(key,checked);
   }
-  private hintSession(queryId:string,role:'owner'|'requester',peer:string):HintSession {
+  private hintSession(queryId:string,role:'owner'|'requester',peer:string,allowCancelled=false):HintSession {
     hintMessageId(queryId);
     const session=this.hintSessions().get(SESSION_PREFIX+queryId);
-    if(!session||session.role!==role||session.peer_key_id!==peer||session.expires_at<=now())fail('network_hint_not_available');return session;
+    if(!session||session.role!==role||session.peer_key_id!==peer||session.expires_at<=now()||!allowCancelled&&session.state!=='active')fail('network_hint_not_available');return session;
   }
   private queryExpiry(expiry:number):void {
     const at=now();if(expiry<=at||expiry>at+300)fail('network_hint_not_available');
@@ -347,7 +347,7 @@ export class NetworkPeer {
       try{
         try{reader=new CanonicalVault({...this.vaultOptions,readOnly:true});}catch(error){if((error as any)?.code!=='not_initialized')throw error;}
         const hints=reader?reader.hintMatches(grant.hint_memory_ids,query.query,16):[];
-        const session:OwnerSession={schema_version:SESSION_SCHEMA,role:'owner',network_id:this.networkId,owner_key_id:this.identity.key_id,peer_key_id:peer,query_message_id:queryId,query:query.query,expires_at:Math.min(query.expires_at,policy.expires_at),policy_revision:policy.revision,policy_sha256:sha256(canonicalBytes(policy)),hints,cursors:Array.from({length:Math.max(0,Math.ceil(hints.length/4)-1)},()=> 'hintcur_'+randomBytes(32).toString('hex'))};
+        const session:OwnerSession={schema_version:SESSION_SCHEMA,role:'owner',network_id:this.networkId,owner_key_id:this.identity.key_id,peer_key_id:peer,query_message_id:queryId,query:query.query,expires_at:Math.min(query.expires_at,policy.expires_at),state:'active',cancellation:null,policy_revision:policy.revision,policy_sha256:sha256(canonicalBytes(policy)),hints,cursors:Array.from({length:Math.max(0,Math.ceil(hints.length/4)-1)},()=> 'hintcur_'+randomBytes(32).toString('hex'))};
         if(!equal(policy,this.hintPolicy()))fail('network_hint_not_available');
         this.insertHintSession(session);return session;
       }finally{reader?.close();}
@@ -430,6 +430,75 @@ export class NetworkPeer {
     if(this.selectOffers(selected.control,sender,true)!==content.expires_at)fail('network_invalid_content');
     return selected.control.selections.map(item=>item.memory_id);
   }
+  /** Cancellation reduces work under an established binding. It intentionally
+   * does not require a still-current memory grant or recreate a missing session. */
+  private cancellationBinding(control:Extract<HintControl,{kind:'cancel'}>,peer:string,role:'owner'|'requester',noticeId:string):HintSession {
+    const session=this.hintSession(control.query_message_id,role,peer,true);
+    const query=role==='requester'?this.ownControl(control.query_message_id,peer):this.originalQuery(control.query_message_id,peer);
+    if(query.kind!=='query'||query.query!==session.query||query.expires_at<session.expires_at||role==='requester'&&query.expires_at!==session.expires_at)fail('network_hint_not_available');
+    const offer=role==='requester'?this.inboxControl(control.offer_message_id,peer):this.ownControl(control.offer_message_id,peer);
+    if(offer.kind!=='hints'||offer.query_message_id!==control.query_message_id||offer.expires_at!==control.expires_at||control.expires_at>session.expires_at||control.expires_at<=now())fail('network_hint_not_available');
+    if(role==='owner'){
+      const request=this.inboxControl(offer.request_message_id,peer),owner=session as OwnerSession;
+      if(!equal(offer,this.pageControl(owner,offer.request_message_id,this.pageIndex(owner,request,offer.request_message_id))))fail('network_hint_not_available');
+    }
+    const cancellation={message_id:noticeId,offer_message_id:control.offer_message_id,expires_at:control.expires_at};
+    if(session.state==='cancelled'&&!equal(session.cancellation,cancellation))fail('network_hint_not_available');
+    return session;
+  }
+  private cancellationAck(control:Extract<HintControl,{kind:'cancel_ack'}>,peer:string,role:'owner'|'requester'):void {
+    const notice=role==='owner'?this.inboxControl(control.request_message_id,peer):this.ownControl(control.request_message_id,peer);
+    if(notice.kind!=='cancel'||notice.query_message_id!==control.query_message_id||notice.expires_at!==control.expires_at)fail('network_hint_not_available');
+    if(this.cancellationBinding(notice,peer,role,control.request_message_id).state!=='cancelled')fail('network_hint_not_available');
+  }
+  private queueCancellation(requestId:string,peer:string,inputSha:string,notice:Extract<HintControl,{kind:'cancel'}>,noticeId:string,role:'owner'|'requester'):Obj {
+    const messageId='msg_'+sha256(canonicalBytes([this.networkId,this.identity.key_id,requestId]));
+    const control:HintControl=role==='requester'?notice:{schema_version:HINT_SCHEMA,kind:'cancel_ack',request_message_id:noticeId,query_message_id:notice.query_message_id,expires_at:notice.expires_at};
+    const body=canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control}));
+    return transaction(this.db(),()=>{
+      const prior=this.outboxRows(requestId,true)[0];
+      if(prior){if(prior.input_sha!==inputSha)fail('network_request_id_conflict');return this.captureCancellation(prior);}
+      const session=this.cancellationBinding(notice,peer,role,noticeId);
+      if(!prior){
+        const totals=this.db().prepare('SELECT COUNT(*) count,COALESCE(SUM(length(body)+COALESCE(length(envelope),0)),0) bytes FROM outbox').get() as Obj;
+        if(totals.count>=1024||totals.bytes+body.length*3>MAX_QUEUE)fail('network_outbox_capacity');
+      }
+      if(session.state==='active')this.put(SESSION_PREFIX+notice.query_message_id,{...session,state:'cancelled',cancellation:{message_id:noticeId,offer_message_id:notice.offer_message_id,expires_at:notice.expires_at}});
+      if(!prior)this.db().prepare('INSERT INTO outbox(request_id,message_id,input_sha,body,recipients) VALUES(?,?,?,?,?)').run(requestId,messageId,inputSha,body,canonicalBytes([peer]));
+      return this.captureCancellation(this.outboxRows(requestId,true)[0]);
+    });
+  }
+  private contentQuery(content:NetworkContent,messageId:string):string|undefined {
+    if(content.kind==='hint_batch_transfer')return content.query_message_id;
+    if(content.kind!=='hint_control')return;
+    if(content.control.kind==='query')return messageId;
+    if(['page','select','hints'].includes(content.control.kind))return (content.control as Extract<HintControl,{query_message_id:string}>).query_message_id;
+  }
+  private queryStopped(content:NetworkContent,messageId:string):boolean {
+    const query=this.contentQuery(content,messageId);
+    return query!==undefined&&this.hintSessions().get(SESSION_PREFIX+query)?.state==='cancelled';
+  }
+  private cancellationResult(content:NetworkContent,messageId:string):Obj {
+    if(content.kind!=='hint_control'||content.control.kind!=='cancel'&&content.control.kind!=='cancel_ack')return {};
+    const control=content.control,session=this.hintSessions().get(SESSION_PREFIX+control.query_message_id);
+    const noticeId=control.kind==='cancel'?messageId:control.request_message_id;
+    return session?.state==='cancelled'&&session.cancellation?.message_id===noticeId?{cancellation:{query_message_id:control.query_message_id,local_cancelled:true}}:{};
+  }
+  private captureCancellation(row:Obj):Obj {
+    // This snapshot is returned only in memory from the successful local
+    // transaction. It is not an extra state key and cannot survive recovery.
+    return {...row,localCancellationSnapshot:this.cancellationResult(validateContent(row.body),row.message_id).cancellation};
+  }
+  private async cancellationDelivery(row:Obj,recipients:string[]):Promise<Obj> {
+    try{return await this.serial(()=>this.deliver(row,recipients));}
+    catch(error){
+      const native=error instanceof Error&&['ERR_SQLITE_ERROR','EACCES','EPERM','ENOENT','EIO','ENOSPC','EROFS','EMFILE','ENFILE','EBUSY'].includes((error as any).code);
+      if(!row.localCancellationSnapshot||!(error instanceof NetworkError||native))throw error;
+      return {state:'delivery_unknown',message_id:row.message_id,content_kind:'hint_control',text_memory_id:null,
+        errors:[error instanceof NetworkError?errorData(error):{code:'network_local_delivery_error',retryable:false}],
+        retry_same_request_id:true,understood:false,cancellation:row.localCancellationSnapshot};
+    }
+  }
   /** Typed payloads carry their guard: restored/retried outbox rows cannot
    * become an unguarded manual export by losing auxiliary local state. */
   private guardHint(content:NetworkContent,recipients:string[],current?:CurrentRoster,ownMessageId?:string):void {
@@ -445,9 +514,13 @@ export class NetworkPeer {
       }
       if(control.kind==='page'){this.precedingOffer(control.query_message_id,control.cursor,recipient);return;}
       if(control.kind==='select'){this.selectOffers(control,recipient,true);if(current)this.hintMembers(current,recipient);return;}
+      if(control.kind==='cancel'){
+        if(ownMessageId===undefined||this.cancellationBinding(control,recipient,'requester',ownMessageId).state!=='cancelled')fail('network_hint_not_available');return;
+      }
+      if(control.kind==='cancel_ack'){this.cancellationAck(control,recipient,'owner');return;}
       const request=this.inboxControl(control.request_message_id,recipient);
       if(control.kind==='refusal'){
-        if(!['query','page','select'].includes(request.kind))fail('network_hint_not_available');return;
+        if(!['query','page','select','cancel'].includes(request.kind))fail('network_hint_not_available');return;
       }
       const session=this.ownerSession(control.query_message_id,recipient),index=this.pageIndex(session,request,control.request_message_id);
       if(!equal(control,this.pageControl(session,control.request_message_id,index)))fail('network_hint_not_available');
@@ -475,7 +548,7 @@ export class NetworkPeer {
     if(raw.length>MAX_SHARE)fail('network_share_too_large_use_existing_pack');
     return canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'memory_transfer',note:text,share:encodeBase64url(raw)}));
   }
-  send(requestId:string,recipients:string[],text='',memoryIds:string[]=[],control?:DocumentInput):Promise<Obj>{return this.serial(async()=>{
+  async send(requestId:string,recipients:string[],text='',memoryIds:string[]=[],control?:DocumentInput):Promise<Obj>{
     opaqueId(requestId);
     if(!Array.isArray(recipients)||recipients.length<1||recipients.length>16||new Set(recipients).size!==recipients.length||recipients.some(key=>typeof key!=='string')||typeof text!=='string'||Buffer.byteLength(text)>16384)fail('network_invalid_send');
     if(!Array.isArray(memoryIds)||memoryIds.length>32)fail('network_invalid_memory_selection');
@@ -483,11 +556,18 @@ export class NetworkPeer {
     if(control!==undefined){
       if(text||memoryIds.length||recipients.length!==1)fail('network_invalid_send');
       checked=validateHintControl(control);
-      if(checked.kind!=='query'&&checked.kind!=='page'&&checked.kind!=='select')fail('network_invalid_send');
+      if(checked.kind!=='query'&&checked.kind!=='page'&&checked.kind!=='select'&&checked.kind!=='cancel')fail('network_invalid_send');
     }else if(!text&&!memoryIds.length)fail('network_empty_message');
     const inputSha=sha256(canonicalBytes({recipients,text,memory_ids:memoryIds,...(checked===undefined?{}:{control:checked})}));
-    return this.queue(requestId,recipients,inputSha,()=>checked===undefined?this.prepareBody(text,memoryIds):canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control:checked})));
-  });}
+    if(checked?.kind==='cancel'){
+      // Commit before joining the async network queue. An already waiting
+      // refresh/seal must see this cancellation at its final send guard.
+      const noticeId='msg_'+sha256(canonicalBytes([this.networkId,this.identity.key_id,requestId]));
+      const row=this.queueCancellation(requestId,recipients[0],inputSha,checked,noticeId,'requester');
+      return this.cancellationDelivery(row,recipients);
+    }
+    return this.serial(()=>this.queue(requestId,recipients,inputSha,()=>checked===undefined?this.prepareBody(text,memoryIds):canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control:checked}))));
+  }
   private async queue(requestId:string,recipients:string[],inputSha:string,prepare:()=>Uint8Array):Promise<Obj>{
     opaqueId(requestId);
     const messageId='msg_'+sha256(canonicalBytes([this.networkId,this.identity.key_id,requestId]));
@@ -505,7 +585,7 @@ export class NetworkPeer {
         const content=validateContent(body);
         if(content.kind==='hint_control'&&content.control.kind==='query'){
           this.queryExpiry(content.control.expires_at);
-          this.insertHintSession({schema_version:SESSION_SCHEMA,role:'requester',network_id:this.networkId,owner_key_id:this.identity.key_id,peer_key_id:recipients[0],query_message_id:messageId,query:content.control.query,expires_at:content.control.expires_at});
+          this.insertHintSession({schema_version:SESSION_SCHEMA,role:'requester',network_id:this.networkId,owner_key_id:this.identity.key_id,peer_key_id:recipients[0],query_message_id:messageId,query:content.control.query,expires_at:content.control.expires_at,state:'active',cancellation:null});
         }
         this.db().prepare('INSERT OR IGNORE INTO outbox(request_id,message_id,input_sha,body,recipients) VALUES(?,?,?,?,?)').run(requestId,messageId,inputSha,body,canonicalBytes(recipients));
         row=this.outboxRows(requestId,true)[0];
@@ -514,15 +594,35 @@ export class NetworkPeer {
     }
     return this.deliver(row!,recipients);
   }
-  respondTo(messageId:string):Promise<Obj>{return this.serial(async()=>{
+  async respondTo(messageId:string):Promise<Obj>{
     hintMessageId(messageId);
     const incoming=this.db().prepare('SELECT sender FROM inbox WHERE message_id=?').get(messageId) as Obj|undefined;
     if(!incoming)fail('network_hint_not_available');
     const recipient=incoming.sender,request=this.inboxControl(messageId,recipient);
-    if(request.kind!=='query'&&request.kind!=='page'&&request.kind!=='select')fail('network_hint_not_available');
+    if(request.kind!=='query'&&request.kind!=='page'&&request.kind!=='select'&&request.kind!=='cancel')fail('network_hint_not_available');
+    const requestId='req_hint_response_'+sha256(Buffer.from(messageId,'ascii')).slice(0,32);
+    if(request.kind==='cancel'){
+      const prior=transaction(this.db(),()=>{
+        const row=this.outboxRows(requestId,true)[0];
+        if(row&&row.input_sha!==sha256(canonicalBytes({respond_to:messageId})))fail('network_request_id_conflict');
+        return row?this.captureCancellation(row):undefined;
+      });
+      if(prior){
+        return this.cancellationDelivery(prior,[recipient]);
+      }
+      try{
+        const row=this.queueCancellation(requestId,recipient,sha256(canonicalBytes({respond_to:messageId})),request,messageId,'owner');
+        return this.cancellationDelivery(row,[recipient]);
+      }catch(error){
+        if((error as any)?.code!=='network_hint_not_available')throw error;
+        return this.serial(()=>this.queue(requestId,[recipient],sha256(canonicalBytes({respond_to:messageId})),()=>canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control:{schema_version:HINT_SCHEMA,kind:'refusal',request_message_id:messageId,reason:'not_available'}}))));
+      }
+    }
+    return this.serial(async()=>{
+    const prior=this.outboxRows(requestId,true)[0];
+    if(prior&&this.queryStopped(validateContent(prior.body),prior.message_id))return this.deliver(prior,[recipient]);
     const {current}=await this.status(randomBytes(24).toString('hex'));
     this.hintMembers(current,recipient);
-    const requestId='req_hint_response_'+sha256(Buffer.from(messageId,'ascii')).slice(0,32);
     return this.queue(requestId,[recipient],sha256(canonicalBytes({respond_to:messageId})),()=>{
       const refusal=()=>canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'hint_control',control:{schema_version:HINT_SCHEMA,kind:'refusal',request_message_id:messageId,reason:'not_available'}}));
       let reader:CanonicalVault|undefined;
@@ -554,6 +654,7 @@ export class NetworkPeer {
     if(envelope&&!equal([...envelope.recipient_key_ids].sort(),[...recipients].sort()))fail('network_outbox_routing_mismatch');
     for(let offset=0;offset<this.relays.length;offset++){
       const relay=this.relays[(firstNode+offset)%this.relays.length];
+      if(this.queryStopped(content,prior.message_id))break;
       if(pendingOnly&&relay in receipts)continue;
       let nodeDeadline=deadline;
       if(pendingOnly&&deadline!==undefined){
@@ -597,7 +698,10 @@ export class NetworkPeer {
     }
     receipts=this.receipts(this.outboxRows(prior.request_id)[0]);
     const validated=(this.db().prepare('SELECT recipient FROM acknowledgements WHERE message_id=?').all(prior.message_id) as Obj[]).map(row=>row.recipient);
-    return {state:Object.keys(receipts).length===this.relays.length?'stored':'queued_local',message_id:prior.message_id,content_kind:content.kind,text_memory_id:null,stored_nodes:Object.keys(receipts).length,configured_nodes:this.relays.length,degraded:Object.keys(receipts).length<this.relays.length,validated_recipients:validated,endpoint_validated:recipients.every(key=>validated.includes(key)),understood:false,errors,retry_same_request_id:true};
+    const stopped=this.queryStopped(content,prior.message_id);
+    if(stopped){errors.length=0;errors.push({code:'network_hint_not_available',retryable:false});}
+    const cancellation=this.cancellationResult(content,prior.message_id);
+    return {state:stopped?'stopped_query':Object.keys(receipts).length===this.relays.length?'stored':'queued_local',message_id:prior.message_id,content_kind:content.kind,text_memory_id:null,stored_nodes:Object.keys(receipts).length,configured_nodes:this.relays.length,degraded:Object.keys(receipts).length<this.relays.length,validated_recipients:validated,endpoint_validated:recipients.every(key=>validated.includes(key)),understood:false,errors,retry_same_request_id:true,...cancellation};
   }
   private existing(messageId:string,digest:string):Obj|undefined{
     const row=this.db().prepare('SELECT * FROM inbox WHERE message_id=?').get(messageId) as Obj|undefined;
@@ -607,13 +711,28 @@ export class NetworkPeer {
     if(rejected){if(rejected.digest!==digest)fail('network_inbox_identity_conflict');return {message_id:messageId,sender_key_id:rejected.sender,state:'rejected',code:rejected.code,understood:false};}
     return undefined;
   }
-  private reject(envelope:Obj,code:string):Obj{return transaction(this.db(),()=>{
+  private reject(envelope:Obj,code:string):Obj{const save=()=>{
     const digest=documentSha256(envelope),old=this.existing(envelope.message_id,digest);if(old)return old;
     const raw=canonicalBytes(envelope),totals=this.db().prepare('SELECT COUNT(*) count,COALESCE(SUM(length(envelope)),0) bytes FROM quarantine').get() as Obj;
     if(totals.count>=128||totals.bytes+raw.length>16*1024*1024)fail('network_quarantine_capacity');
     this.db().prepare('INSERT INTO quarantine VALUES(?,?,?,?,?)').run(envelope.message_id,digest,envelope.sender_key_id,raw,code);
     return {message_id:envelope.message_id,sender_key_id:envelope.sender_key_id,state:'rejected',code,understood:false};
-  });}
+  };return this.db().isTransaction?save():transaction(this.db(),save);}
+  private importContentShare(share:Uint8Array):Obj {
+    try{return this.vault.importShare(share,{admission:'verified'});}
+    catch(error){if(!['unknown_key','revoked_key','share_record_signature_required','share_independent_trust_required'].includes((error as any)?.code))throw error;return this.vault.importShare(share,{admission:'quarantined'});}
+  }
+  private saveReceived(payload:Obj,digest:string,body:Uint8Array,content:NetworkContent,imported:Obj|null):Obj {
+    const text=contentText(content),part=preview(text),result={message_id:payload.message_id,sender_key_id:payload.sender_key_id,content_kind:content.kind,text:part,text_partial:part!==text,text_memory_id:null,
+      share:imported===null?null:{state:imported.state,records_added:imported.records_added,admission:imported.admission},state:'validated_saved',understood:false};
+    const save=()=>{
+      const old=this.existing(payload.message_id,digest);if(old)return old;
+      const totals=this.db().prepare('SELECT COUNT(*) count,COALESCE(SUM(length(body)),0) bytes FROM inbox').get() as Obj;
+      if(totals.count>=4096||totals.bytes+body.length>MAX_QUEUE)fail('network_inbox_capacity');
+      this.db().prepare('INSERT INTO inbox VALUES(?,?,?,?,?)').run(payload.message_id,digest,payload.sender_key_id,body,json(result));return result;
+    };
+    return this.db().isTransaction?save():transaction(this.db(),save);
+  }
   private async accept(envelope:Obj,current:CurrentRoster):Promise<Obj>{
     const peers=current.roster.payload.members.filter(member=>member.status==='active'),trusted=peers.map(member=>member.signing_key);
     const payload=verify(envelope,{network_id:this.networkId,trusted_signers:trusted});
@@ -630,6 +749,10 @@ export class NetworkPeer {
       try{this.incomingHints(content.control,payload.sender_key_id);}
       catch(error){if(error instanceof NetworkCryptoError)return this.reject(envelope,'network_invalid_content');throw error;}
     }
+    if(content.kind==='hint_control'&&content.control.kind==='cancel_ack'){
+      try{this.cancellationAck(content.control,payload.sender_key_id,'requester');}
+      catch(error){if(error instanceof NetworkCryptoError)return this.reject(envelope,'network_invalid_content');throw error;}
+    }
     let expectedRoots:string[]|undefined;
     if(content.kind==='hint_batch_transfer'){
       try{expectedRoots=this.selectedTransfer(content,payload.sender_key_id);}
@@ -643,22 +766,19 @@ export class NetworkPeer {
       try{const parsed=parseShare(share);if(expectedRoots!==undefined&&!equal([...parsed.roots].sort(),[...expectedRoots].sort()))return this.reject(envelope,'network_invalid_content');}
       catch(error){if(error instanceof NetworkRecordsError)return this.reject(envelope,'network_invalid_content_share');throw error;}
       if(content.kind==='hint_batch_transfer'){
-        // Recheck the live query/offer expiry after bounded share parsing and
-        // before opening the Vault; accepted historical inbox reads are exempt.
-        try{this.selectedTransfer(content,payload.sender_key_id);}
-        catch(error){if(error instanceof NetworkCryptoError)return this.reject(envelope,'network_invalid_content');throw error;}
+        // Parse outside the writer reservation. Cancellation and final batch
+        // admission now have one transport -> Vault lock order, without awaits.
+        return transaction(this.db(),()=>{
+          const old=this.existing(payload.message_id,digest);if(old)return old;
+          try{this.selectedTransfer(content,payload.sender_key_id);}
+          catch(error){if(error instanceof NetworkCryptoError)return this.reject(envelope,'network_invalid_content');throw error;}
+          imported=this.importContentShare(share);
+          return this.saveReceived(payload,digest,body,content,imported);
+        });
       }
-      try{imported=this.vault.importShare(share,{admission:'verified'});}
-      catch(error){if(!['unknown_key','revoked_key','share_record_signature_required','share_independent_trust_required'].includes((error as any)?.code))throw error;imported=this.vault.importShare(share,{admission:'quarantined'});}
+      imported=this.importContentShare(share);
     }
-    const text=contentText(content),part=preview(text),result={message_id:payload.message_id,sender_key_id:payload.sender_key_id,content_kind:content.kind,text:part,text_partial:part!==text,text_memory_id:null,
-      share:imported===null?null:{state:imported.state,records_added:imported.records_added,admission:imported.admission},state:'validated_saved',understood:false};
-    return transaction(this.db(),()=>{
-      const old=this.existing(payload.message_id,digest);if(old)return old;
-      const totals=this.db().prepare('SELECT COUNT(*) count,COALESCE(SUM(length(body)),0) bytes FROM inbox').get() as Obj;
-      if(totals.count>=4096||totals.bytes+body.length>MAX_QUEUE)fail('network_inbox_capacity');
-      this.db().prepare('INSERT INTO inbox VALUES(?,?,?,?,?)').run(payload.message_id,digest,payload.sender_key_id,body,json(result));return result;
-    });
+    return this.saveReceived(payload,digest,body,content,imported);
   }
   readMessage(messageId:string,offset=0):Obj{
     opaqueId(messageId);
@@ -718,10 +838,21 @@ export class NetworkPeer {
     }
     return {messages,partial:messages.length>=limit,errors,unmatched_receipts:unmatched,network_accessed:true,receipts_mean:'endpoint_validated_saved_not_understood'};
   }
+  private stoppedQueryMessages():Set<string>{
+    const cancelled=new Set([...this.hintSessions().values()].filter(session=>session.state==='cancelled').map(session=>session.query_message_id));
+    if(!cancelled.size)return new Set();
+    const pending=new Set(this.outboxRows().filter(row=>!this.relays.every(relay=>relay in this.receipts(row))).map(row=>row.request_id));
+    // Project only bounded routing scalars; do not load or parse share bodies
+    // merely to omit cancelled work from the existing bounded queue.
+    const rows=this.db().prepare("SELECT request_id,message_id,json_extract(CAST(body AS TEXT),'$.kind') kind,json_extract(CAST(body AS TEXT),'$.control.kind') control_kind,json_extract(CAST(body AS TEXT),'$.query_message_id') query_id,json_extract(CAST(body AS TEXT),'$.control.query_message_id') control_query_id FROM outbox").all() as Obj[];
+    if(rows.length>1024)fail('network_outbox_capacity');
+    return new Set(rows.filter(row=>pending.has(row.request_id)&&cancelled.has(row.kind==='hint_batch_transfer'?row.query_id:row.kind==='hint_control'?(row.control_kind==='query'?row.message_id:['page','select','hints'].includes(row.control_kind)?row.control_query_id:undefined):undefined)).map(row=>row.request_id));
+  }
   private pending():Obj[]{
     const rows=this.outboxRows();
     if(rows.length>1024)fail('network_outbox_capacity');
-    return rows.filter(row=>!this.relays.every(relay=>relay in this.receipts(row)));
+    const stopped=this.stoppedQueryMessages();
+    return rows.filter(row=>!stopped.has(row.request_id)&&!this.relays.every(relay=>relay in this.receipts(row)));
   }
   private pumpStartNode():number{
     return transaction(this.db(),()=>{
@@ -775,7 +906,7 @@ export class NetworkPeer {
     const pendingIds=new Set(remaining.map(row=>row.request_id));
     const retryPending=outbound.some(item=>pendingIds.has(item.request_id)&&item.errors.length===0);
     const retryable=exhausted||remaining.some(row=>!attempted.has(row.request_id))||retryPending||all.some(error=>error.retryable);
-    return {state:exhausted?'budget_exhausted':retryable?'needs_retry':all.length?'needs_attention':'completed',outbound_attempted:attempted.size,outbound,remaining_outbox:remaining.length,receive:incoming,replica_checks:replicaChecks,errors,retryable,retry_after_ms:retryable?1000:0,elapsed_ms:Math.max(0,Math.floor(performance.now()-start)),budget_exhausted:exhausted,
+    return {state:exhausted?'budget_exhausted':retryable?'needs_retry':all.length?'needs_attention':'completed',outbound_attempted:attempted.size,outbound,remaining_outbox:remaining.length,stopped_query_messages:this.stoppedQueryMessages().size,receive:incoming,replica_checks:replicaChecks,errors,retryable,retry_after_ms:retryable?1000:0,elapsed_ms:Math.max(0,Math.floor(performance.now()-start)),budget_exhausted:exhausted,
       limits:{maximum_messages:maximumMessages,maximum_seconds:maximumSeconds,receive_limit:receiveLimit},deadline_semantics:'cooperative_no_new_requests_after_deadline',worker_started:false};
   });}
 }

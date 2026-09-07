@@ -11,7 +11,7 @@ from tests.test_network_message_semantics import agent, records, proofs, saved_b
 from tests.test_network_recovery import archive, fixture
 
 
-HINT = "memory-vault-hint/v3"
+HINT = "memory-vault-hint/v4"
 
 
 def policy(endpoint, peer, ids=(), revision=1):
