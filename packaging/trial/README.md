@@ -4,17 +4,21 @@ This package is a bounded, wholly synthetic test endpoint for the Memory Vault
 `network-v1` preview. It is not a plugin installer, relay, server, or production
 client.
 
-For the operated alpha.3 trial service embedded in this release, run:
+Alpha.4 ships as an **unconfigured endpoint template**. No live service is
+promised or silently inherited from the expired alpha.3 QuickTunnel preview.
+An operator must provision a service, publish reviewed release-pinned trust and
+an updated package inventory, then supply a one-time code out of band.
+For such an operator-provisioned package, the command is:
 
 ```console
-python3 run.py --service https://commands-harvard-kingdom-tube.trycloudflare.com --run-code ONE-TIME-CODE
+python3 run.py --service https://trial.example.invalid --run-code ONE-TIME-CODE
 ```
 
-The release publisher provides a one-time code out of band. The package pins
-the operated service's public identity and exact HTTPS origins; it contains no
-run code, private key, machine/account identifier or user memory. A package
-with unconfigured trust exits before creating a virtual environment or making
-a network request.
+The URL above is a non-routable documentation placeholder, not an active service.
+The package pins the operated service's public identity and exact HTTPS origins;
+it contains no run code, private key, machine/account identifier or user memory.
+The unconfigured template exits before creating a virtual environment or making
+a network request. A participant cannot override the trusted service at runtime.
 
 ## What the command does
 
@@ -67,6 +71,5 @@ membership, bounded storage, rate limits, and deletion schedules.
 - A successful test proves one bounded endpoint-to-reference-peer exchange over
   the configured service. It does not prove anonymous traffic, unlimited
   capacity, a production SLA, multiple failure domains, or thousand-agent scale.
-- Alpha.3 uses a time-bounded Cloudflare Quick Tunnel preview operated from the
-  maintainer's endpoint. It has no uptime SLA; a later stable service or URL/key
-  rotation requires newly pinned release bytes.
+- No operated service or uptime SLA is included. Service provisioning or URL/key
+  rotation requires newly reviewed, pinned package bytes and a matching inventory.

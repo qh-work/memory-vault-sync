@@ -36,7 +36,13 @@ EVIDENCE_USAGE = {
 
 def _evidence_metadata(record: Mapping[str, Any]) -> dict[str, Any]:
     """Bounded source claims, never a new assertion about who experienced text."""
-    provenance = record.get("provenance", {})
+    provenance = dict(record.get("provenance", {}))
+    from memory_vault_experience import PREFIX, decode
+    if str(provenance.get("source_ref", "")).startswith(PREFIX):
+        original = decode(record).get("original_source_ref")
+        provenance.pop("source_ref", None)
+        if isinstance(original, str):
+            provenance["source_ref"] = original
     refs: dict[str, str] = {}
     truncated = False
     claimed = False
@@ -57,9 +63,9 @@ def _evidence_metadata(record: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _recall_result(hits: list[dict[str, Any]], remaining: list[Any], offset: int,
-                   retrieval: Mapping[str, Any] | None = None) -> Mapping[str, Any]:
+                   retrieval: Mapping[str, Any] | None = None, include_experience: bool = False) -> Mapping[str, Any]:
     metadata = {"retrieval": dict(retrieval)} if retrieval is not None else {}
-    cursor = base64.urlsafe_b64encode(canonical_bytes({"ids": remaining, "offset": offset, **metadata})).decode().rstrip("=") if remaining else None
+    cursor = base64.urlsafe_b64encode(canonical_bytes({"ids": remaining, "offset": offset, **metadata, **({"include_experience": True} if include_experience else {})})).decode().rstrip("=") if remaining else None
     return success({"hits": hits, "next_cursor": cursor, "partial": bool(remaining),
                     "query_candidate_limit": 32, "network_accessed": False,
                     "evidence_usage": dict(EVIDENCE_USAGE), **metadata})
@@ -72,10 +78,11 @@ def definitions() -> list[dict[str, Any]]:
         "connect": _schema({"invitation": {"type": "object"}, "request_id": identifier}),
         "remember": _schema({"request_id": identifier, "kind": {"enum": sorted(KINDS - {"episode"}), "type": "string"}, "text": text,
                              "entities": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 512}},
-                             "relations": {"type": "array", "maxItems": 32, "items": {"type": "object"}}}, ["request_id", "kind", "text"]),
+                             "relations": {"type": "array", "maxItems": 32, "items": {"type": "object"}},
+                             "experience": {"type": "object"}}, ["request_id", "kind", "text"]),
         "recall": _schema({"query": text, "memory_id": {"type": "string", "maxLength": 64},
                            "cursor": {"type": "string", "maxLength": 4096}, "handoff": {"type": "boolean"},
-                           "ranking_profile": {"type": "string", "maxLength": 128}}),
+                           "ranking_profile": {"type": "string", "maxLength": 128}, "include_experience": {"type": "boolean"}}),
         "discover": _schema({"online": {"type": "boolean"}}),
         "send": _schema({"request_id": identifier, "recipients": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "string", "maxLength": 128}},
                          "text": text, "memory_ids": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 64}}}, ["request_id", "recipients"]),
@@ -116,6 +123,7 @@ class Agent:
                 "memory_owned_by_task": False, "memory_grants_authority": False,
                 "automatic_execution": False, "network_accessed": False,
                 "retrieval_profile": RETRIEVAL_PROFILE, "retrieval_profiles": list(RETRIEVAL_PROFILES),
+                "experience_profile": "experience-v1",
                 "http_requires_trusted_endpoint_crypto": True,
                 "legacy_interfaces_preserved": ["handoff", "share-v1", "backup", "restore", "protocol", "mcp"]}
 
@@ -123,16 +131,21 @@ class Agent:
         config = ClientConfig.load(self.client_config)
         cursor = args.get("cursor")
         retrieval = None
+        include_experience = args.get("include_experience", False)
         if cursor:
             if set(args) != {"cursor"}:
                 raise MemoryError("ambiguous_recall_cursor")
             try:
                 decoded = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
                 state = strict_json_loads(decoded)
-                if (set(state) not in ({"ids", "offset"}, {"ids", "offset", "retrieval"}) or not isinstance(state["ids"], list)
+                if (not isinstance(state, dict) or not {"ids", "offset"} <= set(state)
+                        or set(state) - {"ids", "offset", "retrieval", "include_experience"}
+                        or ("include_experience" in state and state["include_experience"] is not True)
+                        or not isinstance(state["ids"], list)
                         or len(state["ids"]) > 32 or type(state["offset"]) is not int or state["offset"] < 0):
                     raise ValueError()
                 ids, offset = state["ids"], state["offset"]
+                include_experience = state.get("include_experience", False)
                 if "retrieval" in state:
                     retrieval = state["retrieval"]
                     if (not isinstance(retrieval, dict) or set(retrieval) != {"profile", "math_profile", "ranking_time_ms"}
@@ -143,7 +156,7 @@ class Agent:
             except (ValueError, TypeError, KeyError, MemoryError):
                 raise MemoryError("invalid_recall_cursor") from None
         elif "memory_id" in args:
-            if set(args) != {"memory_id"}:
+            if set(args) - {"memory_id", "include_experience"}:
                 raise MemoryError("ambiguous_recall_selector")
             ids, offset = [args["memory_id"]], 0
         else:
@@ -162,7 +175,7 @@ class Agent:
         # A cursor freezes the chosen immutable IDs; no re-running a shifting
         # query on the next page. Local trust is rechecked on every get.
         while remaining and len(hits) < 4:
-            response = config.vault().handle({"op": "get", "memory_id": remaining[0]})
+            response = config.vault().handle({"op": "get", "memory_id": remaining[0], **({"include_experience": True} if include_experience else {})})
             if not response.get("ok"):
                 return response
             result = response["result"]
@@ -181,16 +194,17 @@ class Agent:
                        "text": fragment, "text_offset_bytes": offset,
                        "partial": next_offset < len(raw), "verification": result.get("verification"),
                        "source_ids": [r["target"] for r in record["relations"] if r["type"] in {"derived_from", "supports"}][:8],
-                       **_evidence_metadata(record)}
+                       **_evidence_metadata(record),
+                       **({"experience": {**result["experience"], "content": fragment}} if include_experience else {})}
                 after_ids = remaining if next_offset < len(raw) else remaining[1:]
                 after_offset = next_offset if next_offset < len(raw) else 0
-                candidate = _recall_result([*hits, hit], after_ids, after_offset, retrieval)
+                candidate = _recall_result([*hits, hit], after_ids, after_offset, retrieval, include_experience)
                 if len(canonical_bytes(candidate)) <= MAX_RESULT:
                     break
                 if hits:
                     # The current record was inspected, but no bytes from it
                     # were consumed. Carry its original ID and offset forward.
-                    return _recall_result(hits, remaining, offset, retrieval)
+                    return _recall_result(hits, remaining, offset, retrieval, include_experience)
                 fragment_bytes //= 2
                 if fragment_bytes < 1:
                     raise MemoryError("agent_result_exceeds_budget")
@@ -200,7 +214,7 @@ class Agent:
                 break
             remaining.pop(0)
             offset = 0
-        return _recall_result(hits, remaining, offset, retrieval)
+        return _recall_result(hits, remaining, offset, retrieval, include_experience)
 
     def handle(self, request: Any) -> Mapping[str, Any]:
         request_id = request.get("request_id") if isinstance(request, dict) else None

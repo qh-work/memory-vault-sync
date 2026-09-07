@@ -39,7 +39,7 @@ PROTOCOL_DOCUMENTS = (
     "docs/LEGACY_PACKS.md", "docs/SHARING.md", "docs/ENCRYPTION.md", "docs/PLATFORMS.md",
     "docs/V0_25_PARITY_PLAN.md", "docs/V0_25_SCOPED_SMOKE.md", "docs/V0_25_FOLLOWUP_SMOKE.md", "docs/V0_25_RECOVERY_SMOKE.md", "docs/V0_25_CAPTURE_SMOKE.md", "docs/V0_25_PARITY_REPAIR_SMOKE.md", "docs/V0_25_WORKFLOW_SMOKE.md", "docs/VALIDATION.md",
     "docs/V0_25_TRANSPORT_RECOVERY_SMOKE.md",
-    "docs/VISIBLE_FRAGMENTS.md",
+    "docs/VISIBLE_FRAGMENTS.md", "docs/EXPERIENCE_SEMANTICS.md", "docs/EXPERIENCE_VALIDATION.md",
     "docs/V0_25_RELEASE_MINIMAL.md", "docs/RELEASE_NOTES_V0_25.md",
     "docs/V0_25_PACK_CAPACITY_SMOKE.md", "docs/RELEASE_NOTES_V0_25_1.md",
     "docs/ARTIFACTS.md", "docs/V0_25_RAW_COPY_SMOKE.md",
@@ -52,6 +52,7 @@ PROTOCOL_DOCUMENTS = (
 # Each executable network review fixture is selected deliberately. A matching
 # filename alone never enrolls a new local test into the public review kit.
 NETWORK_REVIEW_TESTS = (
+    "tests/test_experience.py", "tests/test_experience_edges.py", "tests/test_experience_typescript.py", "tests/test_cross_author_state.py",
     "tests/test_network_agent.py", "tests/test_network_admin.py", "tests/test_network_client.py",
     "tests/test_network_client_race.py",
     "tests/test_network_cloud_compat.py", "tests/test_network_crypto.py", "tests/test_network_http.py",

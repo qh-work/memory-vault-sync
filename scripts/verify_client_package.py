@@ -50,7 +50,9 @@ def verify(plugin: Path, python: str) -> dict:
         if vault.exists() or discovery["result"]["network_accessed"]:
             raise ValueError("discovery_created_state_or_used_network")
         sample = {"op": "remember", "request_id": "req_package_synthetic_01", "kind": "fact",
-                  "text": "Synthetic package evidence: independent memory persists across runtimes."}
+                  "text": "Synthetic package evidence: independent memory persists across runtimes.",
+                  "experience": {"epistemic_type": "speculation", "observed_under": "synthetic-V1",
+                                 "retry_predicate": "Recheck when the synthetic environment changes."}}
         saved = call("agent", "request", body=sample)
         if call("agent", "request", body=sample) != saved:
             raise ValueError("packaged_retry_changed_result")
@@ -58,6 +60,15 @@ def verify(plugin: Path, python: str) -> dict:
         recalled = call("agent", "request", body={"op": "recall", "memory_id": memory_id})
         if recalled["result"]["hits"][0]["text"] != sample["text"]:
             raise ValueError("packaged_recall_changed_text")
+
+        typed = call("agent", "request", body={"op": "recall", "memory_id": memory_id, "include_experience": True})
+        experience = typed["result"]["hits"][0]["experience"]
+        if (discovery["result"].get("experience_profile") != "experience-v1"
+                or experience["epistemic_type"] != "speculation"
+                or experience["observed_under"] != "synthetic-V1"
+                or experience["content"] != sample["text"]
+                or typed["authority"]["authorization_eligible"]):
+            raise ValueError("packaged_experience_semantics_changed")
 
         event = {"session_id": "synthetic-package-session", "turn_id": "synthetic-package-turn"}
         call("hook", "user-prompt-submit", body={**event, "hook_event_name": "UserPromptSubmit",
@@ -86,7 +97,7 @@ def verify(plugin: Path, python: str) -> dict:
         manifest = json.loads((plugin / "runtime/MANIFEST.json").read_text())
         return {"version": version, "launcher_sha256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
                 "runtime_modules": len(manifest["modules"]), "canonical_records_preserved": len(before),
-                "local_save_recall": True, "exact_retries": True, "hook_capture": True,
+                "local_save_recall": True, "experience_profile": True, "exact_retries": True, "hook_capture": True,
                 "backup_restore_same_bytes": True, "restored_capture_disabled": True,
                 "private_data_used": False, "network_used": False, "host_installed": False}
 

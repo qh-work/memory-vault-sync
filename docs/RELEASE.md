@@ -6,23 +6,27 @@ The protocol is independent of language, storage, model, session, device and
 task. The authorized full client automates the same canonical record contract;
 an independent implementation is not required to install it or import Python.
 
-The last published patch is **0.25.1**, a bounded file-pack capacity patch.
-Unreleased cloud-migration and packaging repairs in this development branch
-must not be attributed to that immutable release or to an installed client.
-Previously published [v0.25.0](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.0)
-at `7f27953b27b9ecd453be19084808357c89731d20` remains immutable. Check the
-[v0.25.1 release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.25.1)
-for publication status and the [patch notes](RELEASE_NOTES_V0_25_1.md) for scope.
+The current prerelease build target is **0.26.0-alpha.4**, adding optional
+Experience Semantics and local provenance views on the existing 0.26 runtime.
+See [Experience validation](EXPERIENCE_VALIDATION.md) for actual test results and
+remaining socket/runtime limits. Publication is independently verified at the
+[release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.4);
+this source document is not proof of upload, installation or certification.
+The older v0.25 reports below are historical evidence, not current download
+instructions or acceptance of this prerelease.
 
 The release builder produces:
 
-- `memory-vault-protocol-v0.25.1.zip`: specification, schemas, synthetic
+- `memory-vault-protocol-v0.26.0-alpha.4.zip`: specification, schemas, synthetic
   interchange examples and implementer guides, **no executable files**.
-- `memory-vault-client-v0.25.1.zip`: complete source-built runtime, plugin,
+- `memory-vault-client-v0.26.0-alpha.4.zip`: complete source-built runtime, plugin,
   local marketplace catalog and explicit setup instructions.
-- `memory-vault-review-v0.25.1.zip`: public synthetic tests and source/build
+- `memory-vault-review-v0.26.0-alpha.4.zip`: public synthetic tests and source/build
   material for reviewers to run only with their user's authorization.
-- `memory_vault.py`: optional standard-library single-file reference.
+- `memory-vault-network-test-v0.26.0-alpha.4.zip`: synthetic endpoint template;
+  this release has unconfigured service trust and requires operator provisioning.
+- `memory_vault.py`: core source; Experience use also needs the companion module
+  included in the client/review packages.
 - `PROTOCOL.md`: standalone readable agreement.
 - `release-manifest.json` and `SHA256SUMS`: source commit, exact byte
   inventories and the checks actually performed. Checksums are not publisher
@@ -41,6 +45,12 @@ Default encryption/device/update providers are not provisioned production
 services; the source exposes explicit fail-closed boundaries.
 
 ## Publication is not certification
+
+Alpha.4 is an explicitly authorized preview with disclosed validation limits,
+not global P2P, real-model adoption, scale or production-security certification.
+The normal source/archive privacy and dependency gates remain required.
+
+### Historical v0.25 capacity evidence
 
 The patch raises only the optional file-pack source limit from 512 MiB to 2 GiB,
 with unchanged 4 MiB chunks, at most 512 descriptors and the existing default

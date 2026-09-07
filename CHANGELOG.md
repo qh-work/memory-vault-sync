@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.26.0-alpha.4 — Experience Semantics and provenance
+
+- Add optional experience-v1 metadata and structured retrieval for observation,
+  experiment, inference, hearsay, speculation, summary and external sources.
+- Distinguish propagation, declared independent confirmation and contradiction
+  using bounded local provenance views. Retelling never manufactures evidence.
+- Preserve source attribution and context; cross-author supersedes/resolves
+  no longer adopt foreign state changes automatically.
+- Keep old record IDs, canonical bytes and signatures; old readers preserve
+  the compatible provenance encoding without a bulk migration.
+- Ship the A/B/C/D synthetic demonstration and Python/TypeScript regressions.
+  See [actual results and limits](docs/EXPERIENCE_VALIDATION.md).
+- Clear expired alpha.3 service pins. The optional trial is operator-provisioned
+  and fails closed until a reviewed package pins a current service.
+- Prerelease only: no global P2P, consensus, scale or security certification.
+
 ## 0.26.0-alpha.3 — Prefer current memory and add a synthetic network trial
 
 - Rank current records ahead of superseded/resolved history with an explicit,

@@ -87,6 +87,34 @@ Implementers MUST advertise only the operations/profiles they actually
 implement. These profile names describe capability sets; they do not add a
 `profile` field to existing strict request/record objects.
 
+### Experience Semantics
+
+The optional [experience-v1 profile](docs/EXPERIENCE_SEMANTICS.md) describes
+`observation`, `experiment`, `inference`, `hearsay`, `speculation`, `summary`,
+`external_source` and `unspecified` knowledge claims on ordinary Memory Records.
+It adds optional request metadata and local structured recall views, using the
+existing opaque `provenance.source_ref` and relation table. It does not extend
+the strict canonical record shape, create another database or change old IDs
+and signature vectors. Old readers retain it as an opaque source reference;
+old requests must omit extension fields they do not support.
+
+### Transmission is not truth
+
+One hundred retellings of one source are not one hundred independent pieces
+of evidence. Typed provenance tracks lineage, claimed independent experiments
+and counterclaims separately. Counts are bounded local derived views of
+publisher claims, not a global truth score or proof of experimental independence.
+Unknown metadata is retained without automatically acquiring evidence effects.
+
+### Agent memory transfer does not manufacture recollection
+
+A successor MUST attribute inherited experiences to their recorded sources,
+not claim those events as its own observations. A new retelling is `hearsay`;
+a new independent experiment appends a record linked to the original. Context,
+conditions and opposing evidence remain visible. Cross-author proposals do not
+authorize rewriting history or taking over another author's state decisions.
+Memory content remains non-authoritative regardless of epistemic type.
+
 [JSON Schemas](schemas/README.md) describe the public shapes, and
 [synthetic exchange and hash vectors](examples/protocol/README.md) provide
 language-independent implementation material. Schema validation alone cannot

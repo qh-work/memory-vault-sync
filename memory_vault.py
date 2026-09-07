@@ -60,7 +60,7 @@ import unicodedata
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 
-VERSION = "0.26.0-alpha.3"
+VERSION = "0.26.0-alpha.4"
 REQUEST_SCHEMA = "universal-agent-memory-request/v1"
 RESULT_SCHEMA = "universal-agent-memory-result/v1"
 RECORD_SCHEMA = "universal-memory-record/v1"
@@ -1000,6 +1000,7 @@ def capability_result() -> dict[str, Any]:
         "signature_is_authorization": False,
         "retrieval_profile": RETRIEVAL_PROFILE,
         "retrieval_profiles": list(RETRIEVAL_PROFILES),
+        "experience_profile": "experience-v1",
         "retrieval_index_profile": RETRIEVAL_INDEX_PROFILE,
         "semantic_adapter": "deterministic-concepts-v1",
         "lexical_fallback": True,
@@ -1402,6 +1403,14 @@ class Vault:
             "SELECT *,vault_admitted(state,signer_key_id) AS active_rank "
             "FROM record_admissions WHERE memory_id=?", (memory_id,)
         ).fetchone()
+        # Pin the first locally known signed identity separately from current
+        # admission. Re-attesting a revoked author's bytes can restore reading,
+        # but cannot acquire that author's supersedes/resolves rights. Legacy
+        # rows are pinned before their still-available old proof is replaced.
+        state_author = old["signer_key_id"] if old is not None and old["signer_key_id"] else key_id
+        if state_author is not None:
+            connection.execute("INSERT OR IGNORE INTO metadata(key,value) VALUES(?,?)",
+                               ("state_author:" + memory_id, state_author))
         if old is not None:
             # A duplicate unsigned import must never demote an admitted record;
             # a freshly verified copy may admit a quarantined or revoked record.
@@ -1668,6 +1677,20 @@ class Vault:
             raise MemoryError("stored_record_invalid")
         return record
 
+    # This is a local state-adoption policy, not proof of historical authorship.
+    # Lazy pins preserve the first signed identity this store has seen, even
+    # when another attester restores admission later. Unmodified legacy rows
+    # fall back to their available signer, requiring no record/DB migration.
+    # Imported unsigned records have no authenticated common author.
+    _STATE_AUTHOR_MATCH_SQL = (
+        "(({source}.signer_key_id IS NOT NULL "
+        "AND {source}.signer_key_id=COALESCE((SELECT value FROM metadata "
+        "WHERE key='state_author:'||{source}.memory_id),{source}.signer_key_id) "
+        "AND {source}.signer_key_id=COALESCE((SELECT value FROM metadata "
+        "WHERE key='state_author:'||{target}.memory_id),{target}.signer_key_id)) "
+        "OR ({source}.state='local_unsigned' AND {target}.state='local_unsigned'))"
+    )
+
     # The substitutions below are fixed SQL expressions supplied only by these
     # local readers, never request text. Reuse the same endpoint/rank predicate
     # for status and displayed edge evidence; a claim-level resolution flag
@@ -1675,10 +1698,12 @@ class Vault:
     _CONFLICT_RESOLUTION_FROM = (
         "FROM relations resolution JOIN record_admissions resolver "
         "ON resolver.memory_id=resolution.source_id "
+        "JOIN record_admissions endpoint ON endpoint.memory_id=resolution.target_id "
         "JOIN memories resolution_record ON resolution_record.memory_id=resolution.source_id "
         "WHERE resolution.relation='resolves' "
         "AND resolution.target_id IN ({source_id},{target_id}) "
         "AND vault_admitted(resolver.state,resolver.signer_key_id)>={minimum_rank} "
+        "AND " + _STATE_AUTHOR_MATCH_SQL.format(source="resolver", target="endpoint") + " "
     )
 
     @staticmethod
@@ -1691,12 +1716,22 @@ class Vault:
         """
         source, target, relation = str(row["source_id"]), str(row["target_id"]), str(row["relation"])
         source_rank, target_rank = int(row["source_rank"]), int(row["target_rank"])
+        shared_authority = row["shared_state_authority"] if "shared_state_authority" in row.keys() else None
+        if relation in {"supersedes", "resolves"} and shared_authority is None:
+            admission = connection.execute(
+                "SELECT " + Vault._STATE_AUTHOR_MATCH_SQL.format(source="a", target="b")
+                + " FROM record_admissions a JOIN record_admissions b "
+                "ON b.memory_id=? WHERE a.memory_id=?", (target, source),
+            ).fetchone()
+            shared_authority = bool(admission and admission[0])
         resolution = None
         source_effective = relation == "conflicts_with"
         if relation not in _CLAIM_RELATIONS:
             effective, reason = False, "non_state_relation"
         elif source_rank < target_rank:
             effective, reason = False, "weaker_than_target"
+        elif relation in {'supersedes', 'resolves'} and not shared_authority:
+            effective, reason = False, "cross_author_proposal"
         else:
             effective, reason = True, "admitted_relation"
         if relation == "conflicts_with":
@@ -1727,15 +1762,20 @@ class Vault:
         rank = int(own[0])
         resolved = connection.execute(
             "SELECT 1 FROM relations r JOIN record_admissions a ON a.memory_id=r.source_id "
+            "JOIN record_admissions b ON b.memory_id=r.target_id "
             "WHERE r.target_id=? AND r.relation='resolves' "
-            "AND vault_admitted(a.state,a.signer_key_id)>=? LIMIT 1", (memory_id, rank),
+            "AND vault_admitted(a.state,a.signer_key_id)>=? AND "
+            + Vault._STATE_AUTHOR_MATCH_SQL.format(source='a', target='b')
+            + " LIMIT 1", (memory_id, rank),
         ).fetchone()
         if resolved is not None:
             return "resolved"
         superseded = connection.execute(
             "SELECT 1 FROM relations r JOIN record_admissions a ON a.memory_id=r.source_id "
+            "JOIN record_admissions b ON b.memory_id=r.target_id "
             "WHERE r.target_id=? AND r.relation='supersedes' "
-            "AND vault_admitted(a.state,a.signer_key_id)>=? LIMIT 1",
+            "AND vault_admitted(a.state,a.signer_key_id)>=? AND "
+            + Vault._STATE_AUTHOR_MATCH_SQL.format(source='a', target='b') + " LIMIT 1",
             (memory_id, rank),
         ).fetchone()
         if superseded is not None:
@@ -1780,7 +1820,8 @@ class Vault:
                 f"WHERE r.target_id IN ({placeholders}) "
                 "AND r.relation IN ('supersedes','resolves') "
                 "AND vault_admitted(source.state,source.signer_key_id)>="
-                "vault_admitted(target.state,target.signer_key_id)", batch,
+                "vault_admitted(target.state,target.signer_key_id) AND "
+                + Vault._STATE_AUTHOR_MATCH_SQL.format(source='source', target='target'), batch,
             ))
         return historical
 
@@ -1806,6 +1847,7 @@ class Vault:
                 "WHERE r.target_id=? AND r.relation IN ('supersedes','resolves') "
                 "AND vault_admitted(source.state,source.signer_key_id)>="
                 "vault_admitted(target.state,target.signer_key_id) "
+                + "AND " + Vault._STATE_AUTHOR_MATCH_SQL.format(source='source', target='target') + " "
                 + ("AND source_memory.ingest_seq<=? AND target_memory.ingest_seq<=? " if through is not None else "")
                 + "ORDER BY CASE r.relation WHEN 'resolves' THEN 0 ELSE 1 END,r.source_id LIMIT ?",
                 (target, *((through, through) if through is not None else ()), remaining + 1),
@@ -2311,7 +2353,8 @@ class Vault:
             rows = connection.execute(
                 "SELECT r.source_id,r.target_id,r.relation,"
                 "vault_admitted(a.state,a.signer_key_id) AS source_rank,"
-                "vault_admitted(b.state,b.signer_key_id) AS target_rank "
+                "vault_admitted(b.state,b.signer_key_id) AS target_rank,"
+                + self._STATE_AUTHOR_MATCH_SQL.format(source='a', target='b') + " AS shared_state_authority "
                 "FROM relations r JOIN record_admissions a ON a.memory_id=r.source_id "
                 "JOIN record_admissions b ON b.memory_id=r.target_id "
                 "JOIN memories s ON s.memory_id=r.source_id JOIN memories t ON t.memory_id=r.target_id "
@@ -2326,7 +2369,8 @@ class Vault:
             for row in rows[:maximum_edges]:
                 source, target, relation = str(row["source_id"]), str(row["target_id"]), str(row["relation"])
                 strength_eligible = int(row["source_rank"]) >= int(row["target_rank"])
-                if claims_only and not strength_eligible:
+                if claims_only and (not strength_eligible or (
+                        relation in {'supersedes', 'resolves'} and not row['shared_state_authority'])):
                     continue
                 key = (source, relation, target)
                 if key in edges:
@@ -2433,7 +2477,8 @@ class Vault:
             effects = connection.execute(
                 "SELECT r.source_id,r.relation,r.target_id,"
                 "vault_admitted(a.state,a.signer_key_id) AS source_rank,"
-                "vault_admitted(b.state,b.signer_key_id) AS target_rank FROM relations r "
+                "vault_admitted(b.state,b.signer_key_id) AS target_rank,"
+                + self._STATE_AUTHOR_MATCH_SQL.format(source='a', target='b') + " AS shared_state_authority FROM relations r "
                 "JOIN record_admissions a ON a.memory_id=r.source_id "
                 "JOIN record_admissions b ON b.memory_id=r.target_id "
                 "WHERE (r.source_id=? OR r.target_id=?) "
@@ -2639,6 +2684,13 @@ class Vault:
                 f"\n{index}. [{memory_id}; {hit['kind']}; {hit['status']}; {hit['created_at']}; "
                 f"{hit.get('verification', {}).get('admission', 'unknown')}]\n"
             )
+            if "experience" in hit:
+                experience = hit["experience"]
+                condition = {key: experience[key] for key in ("epistemic_type", "observed_under") if key in experience}
+                encoded_condition = canonical_bytes(condition)
+                if len(encoded_condition) > 512:
+                    encoded_condition = canonical_bytes({"epistemic_type": experience["epistemic_type"], "context_in_structured_output": True})
+                label += "Experience claims: " + encoded_condition.decode("utf-8") + "\n"
             # Quote the complete displayed substring as JSON data. Never cut
             # already-encoded bytes: that could split UTF-8 or leave an escape
             # or a quote unfinished and turn recalled text into framing.
@@ -2682,6 +2734,27 @@ class Vault:
             "text": "\n".join(lines),
         }
 
+    def _experience_view(self, connection: sqlite3.Connection, record: Mapping[str, Any]) -> dict[str, Any]:
+        from memory_vault_experience import decode, summarize
+        memory_id = str(record["memory_id"])
+        proof = self._verification(connection, memory_id)
+        metadata = decode(record)
+        if proof["eligible_for_context"]:
+            through = int(connection.execute("SELECT COALESCE(MAX(ingest_seq),0) FROM memories").fetchone()[0])
+            graph = self._graph_rows(connection, root=memory_id, through=through,
+                maximum_nodes=128, maximum_edges=1024, maximum_depth=8)
+            proofs = {key: self._verification(connection, key) for key in graph["records"]}
+            summary = summarize(graph["records"], memory_id, proofs, truncated=graph["truncated"])
+        else:
+            summary = summarize({}, memory_id, truncated=True)
+        return {**metadata, "content": record["text"],
+                "source": {"recorded_at": record["created_at"], "signer_key_id": proof["signer_key_id"],
+                    "claimed_source_agent": metadata.get("source_agent"),
+                    "attribution": "recorded_source_not_reader", "claims_authenticated": False},
+                "provenance_summary": summary,
+                "independent_confirmation_count": summary["independent_confirmation_count"],
+                "contradiction_count": summary["contradiction_count"]}
+
     def _dispatch(self, connection: sqlite3.Connection, request: Mapping[str, Any]) -> Mapping[str, Any]:
         operation = request.get("op")
         if not isinstance(operation, str):
@@ -2698,22 +2771,25 @@ class Vault:
             _exact_object(
                 request,
                 required={"op", "kind", "text"},
-                optional=common_optional | {"entities", "relations", "provenance"},
+                optional=common_optional | {"entities", "relations", "provenance", "experience"},
             )
             kind = request.get("kind")
             if not isinstance(kind, str) or kind not in KINDS or kind == "episode":
                 raise MemoryError("invalid_kind")
+            provenance = _request_provenance(request.get("provenance"),
+                source_type="agent_supplied", confidence="assistant_inferred")
+            relations = _relations(request.get("relations"))
+            if "experience" in request:
+                from memory_vault_experience import encode
+                provenance, relations = encode(request["experience"], provenance, relations)
+                relations = _relations(relations)
             return self._remember(
                 connection,
                 kind=str(kind),
                 text=str(_visible_text(request.get("text"))),
                 entities=_entities(request.get("entities")),
-                relations=_relations(request.get("relations")),
-                provenance=_request_provenance(
-                    request.get("provenance"),
-                    source_type="agent_supplied",
-                    confidence="assistant_inferred",
-                ),
+                relations=relations,
+                provenance=provenance,
             )
 
         if operation == "observe":
@@ -2741,8 +2817,11 @@ class Vault:
             _exact_object(
                 request,
                 required={"op", "query"},
-                optional=common_optional | {"limit", "maximum_context_bytes", "semantic", "ranking_profile"},
+                optional=common_optional | {"limit", "maximum_context_bytes", "semantic", "ranking_profile", "include_experience"},
             )
+            include_experience = request.get("include_experience", False)
+            if not isinstance(include_experience, bool):
+                raise MemoryError("invalid_option")
             query = str(_visible_text(request.get("query")))
             limit = request.get("limit", 8 if operation == "recall" else 12)
             maximum = request.get("maximum_context_bytes", 8192)
@@ -2822,6 +2901,9 @@ class Vault:
                         seen_ids.add(memory_id)
                         unique.append(hit)
                 hits = unique
+            if include_experience:
+                for hit in hits[:limit]:
+                    hit["experience"] = self._experience_view(connection, hit)
             return {
                 "hits": hits[:limit],
                 "evidence_context": self._context(hits[:limit], maximum=maximum),
@@ -2868,8 +2950,11 @@ class Vault:
             _exact_object(
                 request,
                 required={"op", "memory_id"},
-                optional=common_optional,
+                optional=common_optional | {"include_experience"},
             )
+            include_experience = request.get("include_experience", False)
+            if not isinstance(include_experience, bool):
+                raise MemoryError("invalid_option")
             memory_id = request.get("memory_id")
             if not isinstance(memory_id, str) or _MEMORY_ID.fullmatch(memory_id) is None:
                 raise MemoryError("invalid_memory_id")
@@ -2881,6 +2966,7 @@ class Vault:
             record = self._record_from_row(row)
             return {
                 "record": record,
+                **({"experience": self._experience_view(connection, record)} if include_experience else {}),
                 "status": self._memory_status(connection, memory_id),
                 "verification": self._verification(connection, memory_id),
                 "network_accessed": False,

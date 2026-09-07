@@ -8,7 +8,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { canonicalBytes, document, sha256, validateSigningIdentity, validateSigningPublic } from './crypto.ts';
 import type { DocumentInput, SigningIdentityDocument, SigningPublicDescriptor } from './crypto.ts';
 import { NetworkError, openPrivateDatabase, transaction } from './io.ts';
-import { buildRecord, validateRecord, canonicalRecordBytes, signRecord, verifyRecord, parseShare, encodeShare, normalizeText } from './records.ts';
+import { buildRecord, validateRecord, canonicalRecordBytes, signRecord, verifyRecord, parseShare, encodeShare, normalizeText, encodeExperience } from './records.ts';
 import type { MemoryRecord, RecordAttestation, SignedMemory } from './records.ts';
 import { Retrieval, RETRIEVAL_INDEX_PROFILE } from './retrieval.ts';
 import type { RecallArguments } from './retrieval.ts';
@@ -26,7 +26,7 @@ export interface VaultOptions {
 }
 export interface RememberInput {
   requestId: string; kind: string; text: string; entities?: string[];
-  relations?: { type: string; target: string }[]; provenance?: Record<string, string>;
+  relations?: { type: string; target: string }[]; provenance?: Record<string, string>; experience?: Record<string, unknown>;
 }
 export interface RecallOptions { limit?: number; after?: number; maximumScanned?: number; maximumBytes?: number; maximumSeconds?: number }
 export interface ShareOptions { maximumRecords?: number; maximumBytes?: number; maximumSeconds?: number }
@@ -264,6 +264,9 @@ export class CanonicalVault {
   }
   #admit(value: SignedMemory, state: Admission, trusted: readonly SigningPublicDescriptor[]): boolean {
     const old = this.#db.prepare('SELECT state,signer_key_id FROM record_admissions WHERE memory_id=?').get(value.record.memory_id);
+    const originalAuthor = old?.signer_key_id || (state === 'verified' ? value.attestation?.key_id : null);
+    if (originalAuthor) this.#db.prepare('INSERT OR IGNORE INTO metadata(key,value) VALUES(?,?)')
+      .run('state_author:' + value.record.memory_id, String(originalAuthor));
     const rank = state === 'verified' ? 2 : state === 'quarantined' ? 0 : 1;
     if (old !== undefined && this.#rank(old.state, old.signer_key_id, trusted) >= rank) return false;
     const proof = state === 'verified' ? value.attestation : null;
@@ -291,11 +294,11 @@ export class CanonicalVault {
   remember(input: RememberInput): Row & SignedMemory {
     if (!this.#identity && !this.#allowUnsigned) fail('vault_signing_identity_required');
     const value = document(input as unknown as DocumentInput, MAX_RECORD) as Row;
-    if (Object.keys(value).some(key => !['requestId', 'kind', 'text', 'entities', 'relations', 'provenance'].includes(key)) ||
+    if (Object.keys(value).some(key => !['requestId', 'kind', 'text', 'entities', 'relations', 'provenance', 'experience'].includes(key)) ||
         typeof value.requestId !== 'string' || !/^req_[A-Za-z0-9_-]{8,96}$/.test(value.requestId)) fail('invalid_request_id');
     if (value.kind === 'episode') fail('invalid_kind');
     const request: Row = { op: 'remember', kind: value.kind, text: value.text, request_id: value.requestId };
-    for (const key of ['entities', 'relations', 'provenance']) if (Object.hasOwn(value, key)) request[key] = value[key];
+    for (const key of ['entities', 'relations', 'provenance', 'experience']) if (Object.hasOwn(value, key)) request[key] = value[key];
     const digest = sha256(canonicalBytes(request, MAX_RECORD)), deadline = performance.now() + 5000;
     return this.#run(true, () => {
       const trusted = this.#trusted();
@@ -317,8 +320,10 @@ export class CanonicalVault {
       const provenance = value.provenance ?? {};
       if (typeof provenance !== 'object' || Array.isArray(provenance) || provenance === null ||
           Object.keys(provenance).some(key => !['source_ref', 'task_ref', 'project_ref', 'conversation_ref', 'model_ref', 'agent_ref', 'device_ref', 'request_ref'].includes(key))) fail('forbidden_provenance_field');
-      const record = buildRecord({ kind: value.kind, text: value.text, entities: value.entities ?? [], relations: value.relations ?? [],
-        provenance: { ...provenance, source_type: 'agent_supplied', confidence: 'assistant_inferred' } });
+      const prepared = Object.hasOwn(value, 'experience') ? encodeExperience(value.experience, provenance, value.relations ?? []) :
+        {provenance, relations: value.relations ?? []};
+      const record = buildRecord({ kind: value.kind, text: value.text, entities: value.entities ?? [], relations: prepared.relations,
+        provenance: { ...prepared.provenance, source_type: 'agent_supplied', confidence: 'assistant_inferred' } });
       const attestation = this.#identity ? signRecord(record, this.#identity) : null, signed = { record, attestation };
       const inserted = this.#insert(record, false);
       if (this.#admit(signed, this.#identity ? 'verified' : 'local_unsigned', trusted)) this.#requeue([record.memory_id], trusted, deadline);
@@ -344,7 +349,7 @@ export class CanonicalVault {
   }
   /** Explicit local inspection matches core get: quarantined evidence remains
    * visible with eligible_for_context=false. It is never a sharing grant. */
-  inspect(id: string): Row {
+  inspect(id: string, includeExperience = false): Row {
     memoryId(id);
     return this.#run(false, () => {
       const trusted = this.#trusted(); this.#retrievalTrust = trusted;
@@ -354,7 +359,8 @@ export class CanonicalVault {
         verification: memoryId => this.#verification(memoryId, trusted),
       });
       return { record: this.#decode(row).record, status: retrieval.memoryStatus(id),
-        verification: this.#verification(id, trusted), network_accessed: false };
+        verification: this.#verification(id, trusted), network_accessed: false,
+        ...(includeExperience ? {experience: retrieval.experienceView(this.#decode(row).record)} : {}) };
     });
   }
   recall(query: string, options: RecallOptions = {}): Row {

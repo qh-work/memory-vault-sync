@@ -90,7 +90,7 @@ class RetrievalDiversityTests(unittest.TestCase):
             self.assertTrue(all(hit["verification"]["eligible_for_context"] for hit in result["hits"]))
         self.assertEqual(self.snapshot(), original)
 
-    def test_source_quotas_do_not_own_memory_or_erase_polarity_and_states(self) -> None:
+    def test_source_quotas_preserve_polarity_without_adopting_unsigned_retirements(self) -> None:
         source = "synthetic:visible-evidence-source"
         same_source = [self.record(f"QuotaNeedle independent-note-{index}", source=source) for index in range(6)]
         no_source = [self.record(f"AbsentNeedle independent-note-{index}") for index in range(6)]
@@ -114,16 +114,20 @@ class RetrievalDiversityTests(unittest.TestCase):
         self.assertEqual(len(self.recall("EpisodeNeedle")["hits"]), 2)
         self.assertEqual({hit["memory_id"] for hit in self.recall("AbsentNeedle")["hits"]},
                          {record["memory_id"] for record in no_source})
-        protected = {record["memory_id"] for record in (positive, negative, historical, resolved, conflicted)}
+        protected = {record["memory_id"] for record in (positive, negative, conflicted)}
         for semantic in (True, False):
             result = self.recall("PolarityNeedle", semantic=semantic, limit=16)
             hits = {hit["memory_id"]: hit for hit in result["hits"]}
             self.assertTrue(protected.issubset(hits), hits)
             self.assertEqual(hits[positive["memory_id"]]["status"], "current")
             self.assertEqual(hits[negative["memory_id"]]["status"], "current")
-            self.assertEqual(hits[historical["memory_id"]]["status"], "superseded")
-            self.assertEqual(hits[resolved["memory_id"]]["status"], "resolved")
             self.assertEqual(hits[conflicted["memory_id"]]["status"], "conflicted")
+        # These accepted_unsigned records have no authenticated common author.
+        # They remain current instead of acquiring special historical quota
+        # buckets merely because another unsigned import claims retirement.
+        for record in (historical, resolved):
+            result = self.vault.handle({"op": "get", "memory_id": record["memory_id"]})
+            self.assertEqual(result["result"]["status"], "current")
         # Quotas are ephemeral ranking choices, not deletion/admission/ownership.
         self.assertEqual(self.snapshot(), original)
         for record in all_records:

@@ -26,9 +26,10 @@ export interface RememberArguments {
   text: string;
   entities?: string[];
   relations?: JsonObject[];
+  experience?: JsonObject;
 }
-export type RecallArguments = { query: string; handoff?: boolean; ranking_profile?: string } |
-  { memory_id: string } | { cursor: string };
+export type RecallArguments = { query: string; handoff?: boolean; ranking_profile?: string; include_experience?: boolean } |
+  { memory_id: string; include_experience?: boolean } | { cursor: string };
 export interface DiscoverArguments { online?: boolean }
 export interface SendArguments {
   request_id: RequestId;
@@ -66,6 +67,7 @@ export interface RecallHit {
   partial: boolean;
   verification: JsonValue;
   source_ids: string[];
+  experience?: JsonObject;
 }
 export interface RecallResult {
   hits: RecallHit[];

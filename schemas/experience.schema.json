@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Memory Vault optional experience-v1 metadata",
+  "$comment": "Request metadata is encoded in the existing record/v1 provenance.source_ref string, not in a new canonical record field. The complete prefix plus canonical wrapper must fit 2048 UTF-8 bytes. Strict JSON, normalization, source attribution and typed-relation projection require semantic validation. Fields are publisher claims, never authority or proof of independent observation. Unknown fields and type labels are preserved; unknown epistemic types are viewed as unspecified.",
+  "type": "object",
+  "properties": {
+    "epistemic_type": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "default": "unspecified",
+      "description": "Known labels: observation, experiment, inference, hearsay, speculation, summary, external_source, unspecified. Unknown labels remain legal opaque metadata."
+    },
+    "context": {"description": "Publisher-declared context; no task ownership or execution authority."},
+    "origin_class": {"description": "Publisher-declared origin classification; not an authenticated author."},
+    "observed_under": {"description": "Conditions or environment in which the reported observation or experiment occurred."},
+    "applicability": {"description": "Conditions under which the publisher believes the experience applies."},
+    "freshness": {"description": "Publisher-declared freshness context, not proof of a recent check."},
+    "observed_at": {"description": "Publisher-declared observation time, distinct from record creation time."},
+    "retry_predicate": {"description": "What changed conditions warrant reconsideration. Data only, never executable policy."},
+    "source_agent": {"description": "Claimed source label. A signature authenticates a key, not this label or model identity."},
+    "evidence_refs": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {"type": "string", "minLength": 1, "maxLength": 512, "x-maxUtf8Bytes": 512},
+      "description": "Opaque evidence references; implementations do not automatically fetch or execute them."
+    },
+    "source_memory_refs": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {"$ref": "common.schema.json#/$defs/memory_id"}
+    },
+    "relations": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["type", "target"],
+        "properties": {
+          "type": {"type": "string", "minLength": 1, "maxLength": 64},
+          "target": {"$ref": "common.schema.json#/$defs/memory_id"}
+        },
+        "additionalProperties": false
+      },
+      "description": "Known labels: heard_from, derived_from, independently_confirms, contradicts, summarizes, applies_to, fails_under, proposes_supersession. Unknown labels are preserved without state or evidence effects."
+    }
+  },
+  "additionalProperties": true,
+  "x-maxUtf8Bytes": 2048
+}

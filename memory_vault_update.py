@@ -48,7 +48,7 @@ _REQUIRED_RUNTIME = {
 }
 _V025_RUNTIME = {
     "memory_vault_update_trust.py", "memory_vault_install.py", "memory_vault_managed_launcher.py",
-    "memory_vault_compat.py", "memory_vault_recovery.py", "memory_vault_legacy_pack.py",
+    "memory_vault_compat.py", "memory_vault_experience.py", "memory_vault_recovery.py", "memory_vault_legacy_pack.py",
     "memory_vault_metadata.py", "memory_vault_storage.py", "memory_vault_sharing.py",
     "memory_vault_crypto.py", "memory_vault_device_trust.py", "memory_vault_encrypted_replication.py",
     "memory_vault_migrate.py",

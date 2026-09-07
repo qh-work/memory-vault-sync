@@ -10,9 +10,16 @@ discover, send and receive. You do not need to implement the protocol or install
 a plugin to use it. Independent implementers can use the same record, relation,
 provenance and exchange contract in their preferred language and storage.
 
-## 0.26.0-alpha.3: current-state recall and synthetic network trial
+## 0.26.0-alpha.4: Experience Semantics and provenance
 
-The new optional network adds signed invitations, endpoint encryption, durable
+Experience metadata now distinguishes direct observation, independent experiments,
+hearsay, inference, speculation, summaries and external sources. Structured recall
+preserves source/context and counterevidence; 100 retellings do not become 100
+independent confirmations. Existing record bytes, IDs and signatures stay intact.
+See [Experience Semantics](docs/EXPERIENCE_SEMANTICS.md) and
+[actual validation and limits](docs/EXPERIENCE_VALIDATION.md).
+
+The optional network retains signed invitations, endpoint encryption, durable
 offline queues, two configurable ciphertext relays, recipient-signed save
 receipts, and one native Python/NDJSON/HTTP interface. Existing personal memory,
 backup/restore, handoff packages, large packs and plugin APIs remain. Native
@@ -23,8 +30,8 @@ Drive now connects to the existing sync queue with mandatory content encryption.
 
 This is a prerelease, not a production-security certification or proof that
 real models adopted the network. The optional trial package creates one isolated
-synthetic endpoint and requires a publisher-operated service URL plus one-time
-code; normal installation does not upload private data, replace a plugin, start
+synthetic endpoint. This release leaves service trust unconfigured: an operator
+must publish reviewed service pins and supply a one-time code before use; normal installation does not upload private data, replace a plugin, start
 an agent or procure resources.
 The current stable updater intentionally does not auto-activate alpha versions.
 
@@ -35,13 +42,13 @@ The pre-existing MCP memory interface remains for existing users.
 
 ## Download the current preview
 
-Use the matching **[v0.26.0-alpha.3 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.3)** and its `SHA256SUMS`:
+Use the matching **[v0.26.0-alpha.4 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.26.0-alpha.4)** and its `SHA256SUMS`:
 
-- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/memory-vault-protocol-v0.26.0-alpha.3.zip):** specification, schemas and synthetic examples; no executable.
-- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/memory-vault-client-v0.26.0-alpha.3.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
-- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/memory-vault-review-v0.26.0-alpha.3.zip):** public source and synthetic tests; nothing runs automatically.
-- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.3/memory-vault-network-test-v0.26.0-alpha.3.zip):** no Docker or plugin; runs one temporary endpoint with a publisher-provided HTTPS service URL and one-time code.
-- **Optional single-file core:** [`memory_vault.py`](memory_vault.py), Python 3.10+ standard library.
+- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.4/memory-vault-protocol-v0.26.0-alpha.4.zip):** specification, schemas and synthetic examples; no executable.
+- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.4/memory-vault-client-v0.26.0-alpha.4.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
+- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.4/memory-vault-review-v0.26.0-alpha.4.zip):** public source and synthetic tests; nothing runs automatically.
+- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.26.0-alpha.4/memory-vault-network-test-v0.26.0-alpha.4.zip):** no Docker or plugin; operator-provisioned endpoint template, with service trust unconfigured in this release.
+- **Core source:** [`memory_vault.py`](memory_vault.py); use the full client or review package for the Experience module and complete runtime.
 
 Alpha.3 makes current records deterministically rank before superseded/resolved
 history in Python and TypeScript recall/handoff, bounds anonymous relay status

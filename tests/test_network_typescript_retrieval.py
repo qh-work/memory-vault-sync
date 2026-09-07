@@ -236,8 +236,8 @@ class TypeScriptRetrievalTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         self.assertEqual(actual[strong["memory_id"]], "current")
         self.assertEqual(actual[weak["memory_id"]], "conflicted")
-        self.assertEqual(actual[prior["memory_id"]], "superseded")
-        self.assertEqual(actual[conflict["memory_id"]], "resolved")
+        self.assertEqual(actual[prior["memory_id"]], "current")
+        self.assertEqual(actual[conflict["memory_id"]], "conflicted")
         with contextlib.closing(self.vault._connect(writable=False)) as connection:
             rows = connection.execute("SELECT r.*,vault_admitted(a.state,a.signer_key_id) AS source_rank,"
                 "vault_admitted(b.state,b.signer_key_id) AS target_rank FROM relations r "

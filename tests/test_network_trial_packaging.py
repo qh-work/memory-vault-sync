@@ -38,6 +38,12 @@ def load_bootstrap():
 
 
 class NetworkTrialPackagingTests(unittest.TestCase):
+    def test_release_template_does_not_reuse_expired_operated_service(self) -> None:
+        self.assertEqual(json.loads(TRUST.read_text()), {
+            "schema_version": "memory-vault-trial-service-trust/v1",
+            "state": "unconfigured",
+        })
+
     def test_trial_package_uses_an_exact_endpoint_only_source_allowlist(self) -> None:
         required = literal(CLIENT_BUILDER, "REQUIRED_MODULES")
         extras = literal(RELEASE, "TRIAL_EXTRA_MODULES")

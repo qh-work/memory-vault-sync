@@ -49,7 +49,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 46)
+        self.assertEqual(len(allowed), 47)
         self.assertTrue(NEW_MODULES <= allowed)
         for name in allowed:
             path = ROOT / name
@@ -80,6 +80,11 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
         self.assertIn("docs/NETWORK_TYPESCRIPT.md", documents)
         self.assertIn("docs/NETWORK_TYPESCRIPT.md", protocol)
+        for name in ("docs/EXPERIENCE_SEMANTICS.md", "docs/EXPERIENCE_VALIDATION.md"):
+            self.assertIn(name, documents)
+            self.assertIn(name, protocol)
+        self.assertIn("scripts/demo_experience.py", documents)
+        self.assertNotIn("scripts/demo_experience.py", protocol)
         self.assertIn("docs/RETRIEVAL_V2.md", documents)
         self.assertIn("docs/RETRIEVAL_V2.md", protocol)
         self.assertIn("docs/NETWORK_TOPICS.md", documents)

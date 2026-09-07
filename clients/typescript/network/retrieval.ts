@@ -3,10 +3,11 @@
  * the verification callback. This reader creates no index, table or authority.
  */
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-import { document } from './crypto.ts';
+import { document, canonicalBytes } from './crypto.ts';
 import type { DocumentInput } from './crypto.ts';
 import { NetworkError } from './io.ts';
 import type { MemoryRecord, MemoryRelation } from './records.ts';
+import { decodeExperience, summarizeExperience } from './records.ts';
 import { normalizeText, tokenize, semanticFeatures, semanticSimilarity, semanticCardinality, expandedQueryTokens,
   entityQueryMatches, fragmentLocator, memoryFragments, boundedText, LATIN_PATTERN, NEGATION_MARKERS } from './retrieval_text.ts';
 import type { MemoryFragment } from './retrieval_text.ts';
@@ -22,7 +23,7 @@ export interface RetrievalHost {
 }
 export interface RecallArguments {
   query: string; limit?: number; maximum_context_bytes?: number; semantic?: boolean; handoff?: boolean;
-  ranking_profile?: string;
+  ranking_profile?: string; include_experience?: boolean;
 }
 export interface IndexState {
   profile: string; complete: boolean; first_unindexed_sequence: number | null;
@@ -58,14 +59,22 @@ function round(value: number): number {
   const lower = Math.floor(value), fraction = value - lower;
   return fraction === 0.5 ? (lower % 2 === 0 ? lower : lower + 1) : fraction < 0.5 ? lower : lower + 1;
 }
+function sameStateAuthor(source: string, target: string): string {
+  return `((${source}.signer_key_id IS NOT NULL ` +
+    `AND ${source}.signer_key_id=COALESCE((SELECT value FROM metadata WHERE key='state_author:'||${source}.memory_id),${source}.signer_key_id) ` +
+    `AND ${source}.signer_key_id=COALESCE((SELECT value FROM metadata WHERE key='state_author:'||${target}.memory_id),${target}.signer_key_id)) ` +
+    `OR (${source}.state='local_unsigned' AND ${target}.state='local_unsigned'))`;
+}
 function resolutionFrom(source: string, target: string, minimum: string): string {
   // Every substitution is a local fixed SQL expression, never request text.
   return 'FROM relations resolution JOIN record_admissions resolver ' +
     'ON resolver.memory_id=resolution.source_id ' +
+    'JOIN record_admissions endpoint ON endpoint.memory_id=resolution.target_id ' +
     'JOIN memories resolution_record ON resolution_record.memory_id=resolution.source_id ' +
     "WHERE resolution.relation='resolves' " +
     `AND resolution.target_id IN (${source},${target}) ` +
-    `AND vault_admitted(resolver.state,resolver.signer_key_id)>=${minimum} `;
+    `AND vault_admitted(resolver.state,resolver.signer_key_id)>=${minimum} ` +
+    `AND ${sameStateAuthor('resolver', 'endpoint')} `;
 }
 
 export class Retrieval {
@@ -91,7 +100,9 @@ export class Retrieval {
     if (!own || Number(own.rank) === 0) return 'quarantined';
     const rank = Number(own.rank);
     const incoming = (relation: string) => this.db.prepare('SELECT 1 FROM relations r JOIN record_admissions a ON a.memory_id=r.source_id ' +
-      'WHERE r.target_id=? AND r.relation=? AND vault_admitted(a.state,a.signer_key_id)>=? LIMIT 1').get(memoryId, relation, rank);
+      'JOIN record_admissions b ON b.memory_id=r.target_id ' +
+      'WHERE r.target_id=? AND r.relation=? AND vault_admitted(a.state,a.signer_key_id)>=? AND ' +
+      sameStateAuthor('a', 'b') + ' LIMIT 1').get(memoryId, relation, rank);
     if (incoming('resolves')) return 'resolved';
     if (incoming('supersedes')) return 'superseded';
     const unresolved = this.db.prepare('SELECT 1 FROM relations r JOIN record_admissions a ON a.memory_id=r.source_id ' +
@@ -112,7 +123,8 @@ export class Retrieval {
         'JOIN record_admissions source ON source.memory_id=r.source_id ' +
         'JOIN record_admissions target ON target.memory_id=r.target_id ' +
         'WHERE r.target_id IN (' + placeholders(batch) + ") AND r.relation IN ('supersedes','resolves') " +
-        'AND vault_admitted(source.state,source.signer_key_id)>=vault_admitted(target.state,target.signer_key_id)')
+        'AND vault_admitted(source.state,source.signer_key_id)>=vault_admitted(target.state,target.signer_key_id) AND ' +
+        sameStateAuthor('source', 'target'))
         .all(...batch)) historical.add(String(row.target_id));
     }
     return historical;
@@ -129,7 +141,8 @@ export class Retrieval {
         'JOIN memories source_memory ON source_memory.memory_id=r.source_id ' +
         'JOIN memories target_memory ON target_memory.memory_id=r.target_id ' +
         "WHERE r.target_id=? AND r.relation IN ('supersedes','resolves') " +
-        'AND vault_admitted(source.state,source.signer_key_id)>=vault_admitted(target.state,target.signer_key_id) ' +
+        'AND vault_admitted(source.state,source.signer_key_id)>=vault_admitted(target.state,target.signer_key_id) AND ' +
+        sameStateAuthor('source', 'target') + ' ' +
         (through === undefined ? '' : 'AND source_memory.ingest_seq<=? AND target_memory.ingest_seq<=? ') +
         "ORDER BY CASE r.relation WHEN 'resolves' THEN 0 ELSE 1 END,r.source_id LIMIT ?")
         .all(target, ...(through === undefined ? [] : [through, through]), remaining + 1);
@@ -152,6 +165,11 @@ export class Retrieval {
     let effective: boolean, reason: string, sourceEffective = relation === 'conflicts_with', resolution: Row | undefined;
     if (!STATE_RELATIONS.has(relation)) { effective = false; reason = 'non_state_relation'; }
     else if (sourceRank < targetRank) { effective = false; reason = 'weaker_than_target'; }
+    else if (['supersedes', 'resolves'].includes(relation) && !this.db.prepare(
+      'SELECT 1 FROM record_admissions source JOIN record_admissions target ON target.memory_id=? ' +
+      'WHERE source.memory_id=? AND ' + sameStateAuthor('source', 'target')).get(target, source)) {
+      effective = false; reason = 'cross_author_proposal';
+    }
     else { effective = true; reason = 'admitted_relation'; }
     if (relation === 'conflicts_with') {
       resolution = this.db.prepare('SELECT resolution.source_id,resolution.target_id ' + resolutionFrom('?', '?', '?') +
@@ -447,7 +465,13 @@ export class Retrieval {
     const included: string[] = [], clipped: string[] = [];
     for (let index = 0; index < hits.length; index++) {
       const hit = hits[index], id = String(hit.memory_id);
-      const label = `\n${index + 1}. [${id}; ${hit.kind}; ${hit.status}; ${hit.created_at}; ${hit.verification?.admission ?? 'unknown'}]\n`;
+      let label = `\n${index + 1}. [${id}; ${hit.kind}; ${hit.status}; ${hit.created_at}; ${hit.verification?.admission ?? 'unknown'}]\n`;
+      if (hit.experience) {
+        const condition = Object.fromEntries(['epistemic_type', 'observed_under'].filter(key => Object.hasOwn(hit.experience, key)).map(key => [key, hit.experience[key]]));
+        let encodedCondition = canonicalBytes(condition);
+        if (encodedCondition.length > 512) encodedCondition = canonicalBytes({epistemic_type: hit.experience.epistemic_type, context_in_structured_output: true});
+        label += 'Experience claims: ' + Buffer.from(encodedCondition).toString('utf8') + '\n';
+      }
       const text = String(hit.text); let quoted = JSON.stringify(text), suffix = '';
       const available = maximum - used - Buffer.byteLength(label) - 1;
       if (Buffer.byteLength(quoted) > available) {
@@ -468,9 +492,55 @@ export class Retrieval {
       truncated: omitted > 0 || clipped.length > 0, omitted_count: omitted, included_memory_ids: included, clipped_memory_ids: clipped, text: lines.join('\n') };
   }
 
+  experienceView(record: MemoryRecord): Row {
+    const id = record.memory_id, proof = this.host.verification(id), metadata = decodeExperience(record);
+    const records = new Map<string, MemoryRecord>(), proofs = new Map<string, Row>();
+    let truncated = !proof.eligible_for_context;
+    if (proof.eligible_for_context) {
+      const first = this.db.prepare('SELECT m.* FROM memories m JOIN record_admissions a USING(memory_id) WHERE m.memory_id=? AND vault_admitted(a.state,a.signer_key_id)>0').get(id);
+      if (!first) fail('record_not_admitted');
+      const initial = this.host.recordFromRow(first); records.set(id, initial);
+      let used = Buffer.byteLength(String(first.record_json));
+      const queue: {id: string; depth: number}[] = [{id, depth: 0}], edges = new Set<string>();
+      while (queue.length) {
+        if (edges.size >= 1024) { truncated = true; break; }
+        const current = queue.shift()!;
+        const rows = this.db.prepare('SELECT r.source_id,r.target_id,r.relation FROM relations r ' +
+          'JOIN record_admissions a ON a.memory_id=r.source_id JOIN record_admissions b ON b.memory_id=r.target_id ' +
+          'WHERE (r.source_id=? OR r.target_id=?) AND vault_admitted(a.state,a.signer_key_id)>0 AND vault_admitted(b.state,b.signer_key_id)>0 ' +
+          'ORDER BY r.source_id,r.relation,r.target_id LIMIT 1025').all(current.id, current.id);
+        if (rows.length > 1024) truncated = true;
+        for (const edge of rows.slice(0, 1024)) {
+          const key = JSON.stringify([edge.source_id, edge.relation, edge.target_id]);
+          if (edges.has(key)) continue;
+          if (edges.size >= 1024) { truncated = true; continue; }
+          const neighbor = String(edge.source_id === current.id ? edge.target_id : edge.source_id);
+          if (!records.has(neighbor)) {
+            if (current.depth >= 8 || records.size >= 128) { truncated = true; continue; }
+            const metadata = this.db.prepare('SELECT length(CAST(record_json AS BLOB)) AS size FROM memories WHERE memory_id=?').get(neighbor);
+            if (!metadata || used + Number(metadata.size) > MAX_RERANK_BYTES) { truncated = true; continue; }
+            const size = Number(metadata.size);
+            const row = this.db.prepare('SELECT m.* FROM memories m JOIN record_admissions a USING(memory_id) WHERE m.memory_id=? AND vault_admitted(a.state,a.signer_key_id)>0').get(neighbor);
+            if (!row) continue;
+            records.set(neighbor, this.host.recordFromRow(row)); used += size;
+            queue.push({id: neighbor, depth: current.depth + 1});
+          }
+          edges.add(key);
+        }
+      }
+      for (const key of records.keys()) proofs.set(key, this.host.verification(key));
+    }
+    const summary = summarizeExperience(records, id, proofs, truncated);
+    return {...metadata, content: record.text,
+      source: {recorded_at: record.created_at, signer_key_id: proof.signer_key_id,
+        claimed_source_agent: metadata.source_agent ?? null, attribution: 'recorded_source_not_reader', claims_authenticated: false},
+      provenance_summary: summary, independent_confirmation_count: summary.independent_confirmation_count,
+      contradiction_count: summary.contradiction_count};
+  }
+
   recall(options: RecallArguments): Row {
     const value = document(options as unknown as DocumentInput, 2 * 1024 * 1024) as Row;
-    if (!Object.hasOwn(value, 'query') || Object.keys(value).some(key => !['query', 'limit', 'maximum_context_bytes', 'semantic', 'handoff', 'ranking_profile'].includes(key))) fail('invalid_shape');
+    if (!Object.hasOwn(value, 'query') || Object.keys(value).some(key => !['query', 'limit', 'maximum_context_bytes', 'semantic', 'handoff', 'ranking_profile', 'include_experience'].includes(key))) fail('invalid_shape');
     const rankingProfile = Object.hasOwn(value, 'ranking_profile') ? value.ranking_profile : RETRIEVAL_PROFILE;
     if (rankingProfile !== RETRIEVAL_PROFILE && rankingProfile !== RETRIEVAL_PROFILE_V2) fail('unsupported_ranking_profile');
     const query = value.query;
@@ -482,7 +552,7 @@ export class Retrieval {
     const semantic = Object.hasOwn(value, 'semantic') ? value.semantic : true;
     if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > 32) fail('invalid_limit');
     if (typeof maximum !== 'number' || !Number.isSafeInteger(maximum) || maximum < 512 || maximum > 65536) fail('invalid_context_limit');
-    if (typeof semantic !== 'boolean' || typeof handoff !== 'boolean') fail('invalid_option');
+    if (typeof semantic !== 'boolean' || typeof handoff !== 'boolean' || (Object.hasOwn(value, 'include_experience') && typeof value.include_experience !== 'boolean')) fail('invalid_option');
     const ownsTransaction = !this.db.isTransaction;
     if (ownsTransaction) this.db.exec('BEGIN');
     try {
@@ -508,6 +578,7 @@ export class Retrieval {
         structural.sort((a, b) => priority[a.kind] - priority[b.kind]);
         const seen = new Set<string>(); hits = [...structural, ...hits].filter(hit => { if (seen.has(hit.memory_id)) return false; seen.add(hit.memory_id); return true; });
       }
+      if (value.include_experience) for (const hit of hits.slice(0, limit)) hit.experience = this.experienceView(hit as MemoryRecord);
       const result = { hits: hits.slice(0, limit), evidence_context: Retrieval.context(hits.slice(0, limit), maximum), retrieval, network_accessed: false };
       if (ownsTransaction) this.db.exec('COMMIT');
       return result;
