@@ -135,7 +135,7 @@ class TypeScriptContentTests(unittest.TestCase):
 
     def test_hint_integer_error_classification_remains_distinct_from_invalid_kind(self):
         valid = {"schema_version": SCHEMA, "kind": "hint_control", "control": {
-            "schema_version": "memory-vault-hint/v3", "kind": "hints",
+            "schema_version": "memory-vault-hint/v4", "kind": "hints",
             "request_message_id": "msg_" + "0" * 64,
             "query_message_id": "msg_" + "0" * 64, "page_index": 0,
             "policy_revision": 1, "next_cursor": None,

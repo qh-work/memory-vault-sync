@@ -36,9 +36,10 @@ export interface RememberArguments {
 export type RecallArguments = { query: string; handoff?: boolean; ranking_profile?: string; include_experience?: boolean } |
   { memory_id: string; include_experience?: boolean } | { cursor: string };
 export interface DiscoverArguments { online?: boolean }
-export type HintSendControl = {schema_version:'memory-vault-hint/v3';kind:'query';query:string;expires_at:number} |
-  {schema_version:'memory-vault-hint/v3';kind:'page';query_message_id:string;cursor:string} |
-  {schema_version:'memory-vault-hint/v3';kind:'select';query_message_id:string;selections:{offer_message_id:string;memory_id:string}[]};
+export type HintSendControl = {schema_version:'memory-vault-hint/v4';kind:'query';query:string;expires_at:number} |
+  {schema_version:'memory-vault-hint/v4';kind:'page';query_message_id:string;cursor:string} |
+  {schema_version:'memory-vault-hint/v4';kind:'select';query_message_id:string;selections:{offer_message_id:string;memory_id:string}[]} |
+  {schema_version:'memory-vault-hint/v4';kind:'cancel';query_message_id:string;offer_message_id:string;expires_at:number};
 export type SendArguments = {
   request_id: RequestId;
   recipients: string[];

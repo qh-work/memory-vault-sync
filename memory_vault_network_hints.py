@@ -5,7 +5,7 @@ Every response remains transport state until an explicit selected share arrives.
 """
 from __future__ import annotations
 
-from contextlib import closing
+from contextlib import closing, nullcontext
 import hashlib
 from pathlib import Path
 import re
@@ -24,13 +24,17 @@ from memory_vault_storage import atomic_write
 from memory_vault_trust import TrustError, _read_private
 
 POLICY_SCHEMA = "memory-vault-hint-policy/v1"
-SESSION_SCHEMA = "memory-vault-hint-session/v1"
+SESSION_SCHEMA = "memory-vault-hint-session/v2"
 SESSION_PREFIX = "hint-session:"
 _KEY = re.compile(r"ed25519_[0-9a-f]{64}")
 
 
 def _denied() -> MemoryError:
     return MemoryError("network_hint_not_available")
+
+
+def _connection(network: Any, connection: Any = None) -> Any:
+    return network.db() if connection is None else nullcontext(connection)
 
 
 def _policy_path(network: Any) -> Path:
@@ -105,8 +109,19 @@ def validate_session(network: Any, key: str, value: Any, *, allow_expired: bool 
             if len(value.encode("utf-8") if isinstance(value, str) else value) > 32768:
                 raise ValueError()
             value = strict_json_loads(value)
-        fields = {"schema_version", "role", "network_id", "owner_key_id", "peer_key_id", "query_message_id", "query", "expires_at"}
+        fields = {"schema_version", "role", "network_id", "owner_key_id", "peer_key_id", "query_message_id", "query", "expires_at", "state", "cancellation"}
         if not isinstance(value, dict) or value.get("role") not in ("requester", "owner"):
+            raise ValueError()
+        cancellation = value["cancellation"]
+        if value["state"] == "active":
+            if cancellation is not None:
+                raise ValueError()
+        elif value["state"] == "cancelled":
+            if (not isinstance(cancellation, dict) or set(cancellation) != {"message_id", "offer_message_id", "expires_at"}
+                    or not hint_identifier(cancellation["message_id"]) or not hint_identifier(cancellation["offer_message_id"])
+                    or not hint_expiry(cancellation["expires_at"]) or cancellation["expires_at"] > value["expires_at"]):
+                raise ValueError()
+        else:
             raise ValueError()
         if value["role"] == "owner":
             fields |= {"policy_revision", "policy_sha256", "hints", "cursors"}
@@ -130,7 +145,7 @@ def validate_session(network: Any, key: str, value: Any, *, allow_expired: bool 
             if ids != sorted(set(ids)):
                 raise ValueError()
         return strict_json_loads(canonical_bytes(value))
-    except (MemoryError, ValueError, TypeError, UnicodeError, RecursionError):
+    except (MemoryError, ValueError, TypeError, KeyError, UnicodeError, RecursionError):
         raise _denied() from None
 
 
@@ -161,7 +176,7 @@ def _insert_session(network: Any, db: Any, session: dict[str, Any], rows: Mappin
 def _common_session(network: Any, role: str, query_id: str, peer: str, control: Mapping[str, Any]) -> dict[str, Any]:
     return {"schema_version": SESSION_SCHEMA, "role": role, "network_id": network.network_id,
             "owner_key_id": network.identity.key_id, "peer_key_id": peer, "query_message_id": query_id,
-            "query": control["query"], "expires_at": control["expires_at"]}
+            "query": control["query"], "expires_at": control["expires_at"], "state": "active", "cancellation": None}
 
 
 def register_requester(network: Any, db: Any, message_id: str, recipients: list[str], content: Mapping[str, Any]) -> None:
@@ -175,16 +190,18 @@ def register_requester(network: Any, db: Any, message_id: str, recipients: list[
     _insert_session(network, db, _common_session(network, "requester", message_id, recipients[0], control), _sessions(network, db))
 
 
-def _session(network: Any, query_id: str, peer: str, role: str) -> dict[str, Any]:
-    with network.db() as db:
+def _session(network: Any, query_id: str, peer: str, role: str, *, connection: Any = None,
+             allow_cancelled: bool = False) -> dict[str, Any]:
+    with _connection(network, connection) as db:
         value = _sessions(network, db).get(SESSION_PREFIX + query_id)
-    if value is None or value["role"] != role or value["peer_key_id"] != peer or value["expires_at"] <= int(time.time()):
+    if (value is None or value["role"] != role or value["peer_key_id"] != peer or value["expires_at"] <= int(time.time())
+            or not allow_cancelled and value["state"] != "active"):
         raise _denied()
     return value
 
 
-def _outbox(network: Any, message_id: str, recipient: str) -> dict[str, Any]:
-    with network.db() as db:
+def _outbox(network: Any, message_id: str, recipient: str, *, connection: Any = None) -> dict[str, Any]:
+    with _connection(network, connection) as db:
         row = db.execute("SELECT request_id FROM outbox WHERE message_id=?", (message_id,)).fetchone()
         prior = network._outbox_rows(db, row["request_id"], full=True)[0] if row else None
     if prior is None or strict_json_loads(prior["recipients"]) != [recipient]:
@@ -192,21 +209,21 @@ def _outbox(network: Any, message_id: str, recipient: str) -> dict[str, Any]:
     return validate_content(bytes(prior["body"]))
 
 
-def _requester(network: Any, query_id: str, recipient: str) -> dict[str, Any]:
-    session = _session(network, query_id, recipient, "requester")
+def _requester(network: Any, query_id: str, recipient: str, *, connection: Any = None) -> dict[str, Any]:
+    session = _session(network, query_id, recipient, "requester", connection=connection)
     if session["expires_at"] > int(time.time()) + 300:
         raise _denied()
-    original = _outbox(network, query_id, recipient)
+    original = _outbox(network, query_id, recipient, connection=connection)
     if original != {"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": {
             "schema_version": HINT_SCHEMA, "kind": "query", "query": session["query"], "expires_at": session["expires_at"]}}:
         raise _denied()
     return session
 
 
-def _previous_page(network: Any, query_id: str, recipient: str, cursor: str) -> dict[str, Any]:
+def _previous_page(network: Any, query_id: str, recipient: str, cursor: str, *, connection: Any = None) -> dict[str, Any]:
     # Select only matching control projections, not every message or share.
     # Duplicate requests may produce the same logical page with different IDs.
-    with network.db() as db:
+    with _connection(network, connection) as db:
         rows = db.execute("""SELECT body,result FROM inbox WHERE sender=?
             AND json_valid(CAST(body AS TEXT))
             AND json_extract(CAST(body AS TEXT),'$.kind')='hint_control'
@@ -227,18 +244,18 @@ def _previous_page(network: Any, query_id: str, recipient: str, cursor: str) -> 
     return controls[0]
 
 
-def _requester_page(network: Any, control: Mapping[str, Any], recipient: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    session = _requester(network, control["query_message_id"], recipient)
-    previous = _previous_page(network, control["query_message_id"], recipient, control["cursor"])
+def _requester_page(network: Any, control: Mapping[str, Any], recipient: str, *, connection: Any = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    session = _requester(network, control["query_message_id"], recipient, connection=connection)
+    previous = _previous_page(network, control["query_message_id"], recipient, control["cursor"], connection=connection)
     if previous["expires_at"] > session["expires_at"] or previous["page_index"] >= 3:
         raise _denied()
     return session, previous
 
 
-def validate_incoming_hints(network: Any, control: Mapping[str, Any], sender: str) -> None:
+def validate_incoming_hints(network: Any, control: Mapping[str, Any], sender: str, *, connection: Any = None) -> None:
     try:
-        session = _requester(network, control["query_message_id"], sender)
-        request = _outbox(network, control["request_message_id"], sender)
+        session = _requester(network, control["query_message_id"], sender, connection=connection)
+        request = _outbox(network, control["request_message_id"], sender, connection=connection)
         if request["kind"] != "hint_control" or not int(time.time()) < control["expires_at"] <= session["expires_at"]:
             raise _denied()
         original = request["control"]
@@ -246,7 +263,7 @@ def validate_incoming_hints(network: Any, control: Mapping[str, Any], sender: st
             if control["page_index"] != 0 or control["request_message_id"] != control["query_message_id"]:
                 raise _denied()
         elif original["kind"] == "page" and original["query_message_id"] == control["query_message_id"]:
-            _, previous = _requester_page(network, original, sender)
+            _, previous = _requester_page(network, original, sender, connection=connection)
             if (control["page_index"] != previous["page_index"] + 1 or control["policy_revision"] != previous["policy_revision"]
                     or control["expires_at"] != previous["expires_at"]):
                 raise _denied()
@@ -258,10 +275,10 @@ def validate_incoming_hints(network: Any, control: Mapping[str, Any], sender: st
         raise MemoryError("network_invalid_content") from None
 
 
-def _inbox(network: Any, message_id: str, sender: str | None = None) -> tuple[str, dict[str, Any]]:
+def _inbox(network: Any, message_id: str, sender: str | None = None, *, connection: Any = None) -> tuple[str, dict[str, Any]]:
     if not hint_identifier(message_id):
         raise _denied()
-    with network.db() as db:
+    with _connection(network, connection) as db:
         row = db.execute("SELECT sender,body,result FROM inbox WHERE message_id=?", (message_id,)).fetchone()
     if (row is None or (sender is not None and row["sender"] != sender)
             or strict_json_loads(row["result"]).get("state") != "validated_saved"):
@@ -348,27 +365,27 @@ def _owner_offer(network: Any, control: Mapping[str, Any], recipient: str) -> tu
     return policy, peer
 
 
-def _offer(network: Any, offer_id: str, recipient: str, memory_id: str, *, incoming: bool) -> dict[str, Any]:
+def _offer(network: Any, offer_id: str, recipient: str, memory_id: str, *, incoming: bool, connection: Any = None) -> dict[str, Any]:
     if incoming:
-        _, body = _inbox(network, offer_id, recipient)
+        _, body = _inbox(network, offer_id, recipient, connection=connection)
     else:
-        body = _outbox(network, offer_id, recipient)
+        body = _outbox(network, offer_id, recipient, connection=connection)
     control = body.get("control", {})
     if (body["kind"] != "hint_control" or control.get("kind") != "hints"
             or control["expires_at"] <= int(time.time())
             or memory_id not in {item["memory_id"] for item in control["hints"]}):
         raise _denied()
     if incoming:
-        validate_incoming_hints(network, control, recipient)
+        validate_incoming_hints(network, control, recipient, connection=connection)
     else:
         _owner_offer(network, control, recipient)
     return control
 
 
-def _selection_offers(network: Any, control: Mapping[str, Any], recipient: str, *, incoming: bool) -> int:
+def _selection_offers(network: Any, control: Mapping[str, Any], recipient: str, *, incoming: bool, connection: Any = None) -> int:
     expires_at, revision = None, None
     for selected in control["selections"]:
-        offer = _offer(network, selected["offer_message_id"], recipient, selected["memory_id"], incoming=incoming)
+        offer = _offer(network, selected["offer_message_id"], recipient, selected["memory_id"], incoming=incoming, connection=connection)
         if (offer["query_message_id"] != control["query_message_id"]
                 or expires_at is not None and offer["expires_at"] != expires_at
                 or revision is not None and offer["policy_revision"] != revision):
@@ -383,15 +400,15 @@ def validate_select(network: Any, control: Mapping[str, Any], recipient: str) ->
     _selection_offers(network, control, recipient, incoming=True)
 
 
-def validate_incoming_transfer(network: Any, body: Mapping[str, Any], sender: str, *, check_share: bool = True) -> None:
+def validate_incoming_transfer(network: Any, body: Mapping[str, Any], sender: str, *, check_share: bool = True, connection: Any = None) -> None:
     """A signed peer cannot skip this endpoint's explicit selection step."""
     try:
-        selection = _outbox(network, body["request_message_id"], sender)
+        selection = _outbox(network, body["request_message_id"], sender, connection=connection)
         control = selection.get("control", {})
         if (selection["kind"] != "hint_control" or control.get("kind") != "select"
                 or control["query_message_id"] != body["query_message_id"]):
             raise _denied()
-        expires_at = _selection_offers(network, control, sender, incoming=True)
+        expires_at = _selection_offers(network, control, sender, incoming=True, connection=connection)
         if body["expires_at"] != expires_at or body["expires_at"] <= int(time.time()):
             raise _denied()
         if check_share:
@@ -417,6 +434,128 @@ def _share_ids(network: Any, body: Mapping[str, Any], expected_roots: set[str]) 
     return ids
 
 
+def _cancel_binding(network: Any, control: Mapping[str, Any], peer: str, notification_id: str,
+                    role: str, *, connection: Any = None) -> dict[str, Any]:
+    session = _session(network, control["query_message_id"], peer, role, connection=connection, allow_cancelled=True)
+    cancellation = {"message_id": notification_id, "offer_message_id": control["offer_message_id"], "expires_at": control["expires_at"]}
+    if (control["expires_at"] <= int(time.time()) or control["expires_at"] > session["expires_at"]
+            or session["state"] == "cancelled" and session["cancellation"] != cancellation):
+        raise _denied()
+    if role == "requester":
+        original = _outbox(network, control["query_message_id"], peer, connection=connection)
+        _, offered = _inbox(network, control["offer_message_id"], peer, connection=connection)
+    else:
+        _, original = _inbox(network, control["query_message_id"], peer, connection=connection)
+        offered = _outbox(network, control["offer_message_id"], peer, connection=connection)
+    query, offer = original.get("control", {}), offered.get("control", {})
+    if (original["kind"] != "hint_control" or query.get("kind") != "query" or query["query"] != session["query"]
+            or not int(time.time()) < query["expires_at"] <= int(time.time()) + 300
+            or session["expires_at"] > query["expires_at"]
+            or role == "requester" and session["expires_at"] != query["expires_at"]
+            or offered["kind"] != "hint_control" or offer.get("kind") != "hints"
+            or offer["query_message_id"] != control["query_message_id"] or offer["expires_at"] != control["expires_at"]):
+        raise _denied()
+    if role == "owner":
+        # Cancellation reduces authority. Validate the frozen issued page,
+        # without requiring the now possibly revoked memory sharing policy.
+        _, request = _inbox(network, offer["request_message_id"], peer, connection=connection)
+        if offer != _page_control(session, offer["request_message_id"], _request_page(session, offer["request_message_id"], request)):
+            raise _denied()
+    elif session["state"] == "active":
+        validate_incoming_hints(network, offer, peer, connection=connection)
+    return session
+
+
+def register_cancellation(network: Any, connection: Any, message_id: str, recipient: str, content: Mapping[str, Any]) -> None:
+    """Called only with a new notification/ack insertion in the writer txn."""
+    control = content.get("control", {})
+    if content["kind"] != "hint_control" or control.get("kind") not in {"cancel", "cancel_ack"}:
+        return
+    if not connection.in_transaction:
+        raise RuntimeError("cancellation requires the existing transport transaction")
+    if control["kind"] == "cancel":
+        notification, notification_id, role = control, message_id, "requester"
+    else:
+        _, request = _inbox(network, control["request_message_id"], recipient, connection=connection)
+        notification = request.get("control", {})
+        if (request["kind"] != "hint_control" or notification.get("kind") != "cancel"
+                or notification["query_message_id"] != control["query_message_id"] or notification["expires_at"] != control["expires_at"]):
+            raise _denied()
+        notification_id, role = control["request_message_id"], "owner"
+    session = _cancel_binding(network, notification, recipient, notification_id, role, connection=connection)
+    updated = {**session, "state": "cancelled", "cancellation": {"message_id": notification_id,
+               "offer_message_id": notification["offer_message_id"], "expires_at": notification["expires_at"]}}
+    key = SESSION_PREFIX + notification["query_message_id"]
+    validate_session(network, key, updated, allow_expired=False)
+    connection.execute("UPDATE state SET value=? WHERE key=?", (canonical_bytes(updated).decode(), key))
+
+
+def _cancelled_guard(network: Any, control: Mapping[str, Any], peer: str, message_id: str, role: str) -> None:
+    session = _cancel_binding(network, control, peer, message_id, role)
+    if session["state"] != "cancelled":
+        raise _denied()
+    original = (_outbox(network, message_id, peer) if role == "requester" else _inbox(network, message_id, peer)[1])
+    if original != {"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": control}:
+        raise _denied()
+
+
+def _ack_binding(network: Any, control: Mapping[str, Any], peer: str, *, incoming: bool) -> None:
+    role = "requester" if incoming else "owner"
+    session = _session(network, control["query_message_id"], peer, role, allow_cancelled=True)
+    saved = session["cancellation"]
+    if (session["state"] != "cancelled" or saved["message_id"] != control["request_message_id"]
+            or saved["expires_at"] != control["expires_at"]):
+        raise _denied()
+    notification = {"schema_version": HINT_SCHEMA, "kind": "cancel", "query_message_id": control["query_message_id"],
+                    "offer_message_id": saved["offer_message_id"], "expires_at": saved["expires_at"]}
+    _cancelled_guard(network, notification, peer, control["request_message_id"], role)
+
+
+def validate_incoming_cancel_ack(network: Any, control: Mapping[str, Any], sender: str) -> None:
+    try:
+        _ack_binding(network, control, sender, incoming=True)
+    except (MemoryError, TrustError) as exc:
+        if getattr(exc, "retryable", False):
+            raise
+        raise MemoryError("network_invalid_content") from None
+
+
+def query_id_for_content(content: Mapping[str, Any], message_id: str) -> str | None:
+    if content["kind"] == "hint_batch_transfer":
+        return content["query_message_id"]
+    if content["kind"] == "hint_control":
+        control = content["control"]
+        if control["kind"] == "query":
+            return message_id
+        if control["kind"] in {"page", "select", "hints"}:
+            return control["query_message_id"]
+    return None
+
+
+def stopped_query_ids(network: Any, connection: Any) -> set[str]:
+    return {value["query_message_id"] for value in _sessions(network, connection).values() if value["state"] == "cancelled"}
+
+
+def stopped(network: Any, content: Mapping[str, Any], message_id: str) -> bool:
+    query_id = query_id_for_content(content, message_id)
+    if query_id is None:
+        return False
+    with network.db() as connection:
+        return query_id in stopped_query_ids(network, connection)
+
+
+def cancellation_result(network: Any, content: Mapping[str, Any], message_id: str, *, connection: Any = None) -> dict[str, Any]:
+    control = content.get("control", {})
+    if content["kind"] != "hint_control" or control.get("kind") not in {"cancel", "cancel_ack"}:
+        return {}
+    with _connection(network, connection) as db:
+        session = _sessions(network, db).get(SESSION_PREFIX + control["query_message_id"])
+    notification_id = message_id if control["kind"] == "cancel" else control["request_message_id"]
+    if session is None or session["state"] != "cancelled" or session["cancellation"]["message_id"] != notification_id:
+        return {}
+    return {"cancellation": {"query_message_id": control["query_message_id"], "local_cancelled": True}}
+
+
 def guard(network: Any, body: Mapping[str, Any], recipients: list[str], own_message_id: str | None = None) -> None:
     """Recheck immediately before send-start, including frozen outbox retries."""
     kind, control = body["kind"], body.get("control", {})
@@ -425,6 +564,14 @@ def guard(network: Any, body: Mapping[str, Any], recipients: list[str], own_mess
     if len(recipients) != 1:
         raise _denied()
     recipient = recipients[0]
+    if kind == "hint_control" and control["kind"] == "cancel":
+        if own_message_id is None:
+            raise _denied()
+        _cancelled_guard(network, control, recipient, own_message_id, "requester")
+        return
+    if kind == "hint_control" and control["kind"] == "cancel_ack":
+        _ack_binding(network, control, recipient, incoming=False)
+        return
     if kind == "hint_control" and control["kind"] == "select":
         validate_select(network, control, recipient)
         return
@@ -492,8 +639,35 @@ def _hints(network: Any, query: str, authorized: list[str]) -> list[dict[str, An
 
 def respond_to(network: Any, message_id: str) -> Mapping[str, Any]:
     sender, request = _inbox(network, message_id)
-    if request["kind"] != "hint_control" or request["control"]["kind"] not in {"query", "page", "select"}:
+    if request["kind"] != "hint_control" or request["control"]["kind"] not in {"query", "page", "select", "cancel"}:
         raise _denied()
+    request_id = "req_hint_response_" + hashlib.sha256(message_id.encode("ascii")).hexdigest()[:32]
+    with network.db() as db:
+        prior = (network._outbox_rows(db, request_id, full=True) or [None])[0]
+    if prior is not None:
+        if request["control"]["kind"] == "cancel":
+            prior = network._queue_body(request_id, [sender], hashlib.sha256(canonical_bytes({"respond_to": message_id})).hexdigest(),
+                                        bytes(prior["body"]))
+        return network._deliver(prior, [sender])
+    if request["control"]["kind"] == "cancel":
+        control = request["control"]
+        content = {"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": {
+            "schema_version": HINT_SCHEMA, "kind": "cancel_ack", "request_message_id": message_id,
+            "query_message_id": control["query_message_id"], "expires_at": control["expires_at"]}}
+        try:
+            # The queue hook verifies the raw binding and marks the session
+            # in this same transaction, before any control/relay HTTP call.
+            prior = network._queue_body(request_id, [sender], hashlib.sha256(canonical_bytes({"respond_to": message_id})).hexdigest(),
+                                        canonical_bytes(validate_content(content)))
+        except MemoryError as exc:
+            if exc.code != "network_hint_not_available":
+                raise
+            refusal = {"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": {
+                "schema_version": HINT_SCHEMA, "kind": "refusal", "request_message_id": message_id, "reason": "not_available"}}
+            return network._send_hint_response(request_id, sender, refusal, message_id)
+        return network._deliver(prior, [sender])
+    # A cancelled existing response is returned as stopped without authority
+    # refresh above; new ordinary responses still require current membership.
     # A live authority can authorize local queue preparation while all relay
     # nodes are offline. Actual delivery still refreshes each relay binding.
     current = network._status("nonce_" + secrets.token_hex(16))["roster"]
@@ -501,11 +675,6 @@ def respond_to(network: Any, message_id: str) -> Mapping[str, Any]:
     if any(key not in members or not {"send", "receive"}.issubset(members[key]["scope"])
            for key in (sender, network.identity.key_id)):
         raise _denied()
-    request_id = "req_hint_response_" + hashlib.sha256(message_id.encode("ascii")).hexdigest()[:32]
-    with network.db() as db:
-        prior = (network._outbox_rows(db, request_id, full=True) or [None])[0]
-    if prior is not None:
-        return network._deliver(prior, [sender])
     control = request["control"]
     try:
         policy, peer = policy_for(network, sender)

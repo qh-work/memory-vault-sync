@@ -6,9 +6,9 @@ import { canonicalBytes, document, objectFields, opaqueId } from './crypto.ts';
 import type { DocumentInput } from './crypto.ts';
 import { readPrivate, privateDirectory, NetworkError } from './io.ts';
 
-export const HINT_SCHEMA = 'memory-vault-hint/v3';
+export const HINT_SCHEMA = 'memory-vault-hint/v4';
 export const POLICY_SCHEMA = 'memory-vault-hint-policy/v1';
-export const SESSION_SCHEMA = 'memory-vault-hint-session/v1';
+export const SESSION_SCHEMA = 'memory-vault-hint-session/v2';
 export const SESSION_PREFIX = 'hint-session:';
 export const MAX_SESSION_BYTES = 32768;
 export interface Hint { memory_id: string; excerpt: string; epistemic_type: string }
@@ -18,6 +18,8 @@ export type HintControl =
   {schema_version: typeof HINT_SCHEMA; kind: 'page'; query_message_id: string; cursor: string} |
   {schema_version: typeof HINT_SCHEMA; kind: 'hints'; request_message_id: string; query_message_id: string; page_index: number; policy_revision: number; expires_at: number; hints: Hint[]; next_cursor: string | null} |
   {schema_version: typeof HINT_SCHEMA; kind: 'select'; query_message_id: string; selections: HintSelection[]} |
+  {schema_version: typeof HINT_SCHEMA; kind: 'cancel'; query_message_id: string; offer_message_id: string; expires_at: number} |
+  {schema_version: typeof HINT_SCHEMA; kind: 'cancel_ack'; request_message_id: string; query_message_id: string; expires_at: number} |
   {schema_version: typeof HINT_SCHEMA; kind: 'refusal'; request_message_id: string; reason: 'not_available'};
 export interface HintGrant { key_id: string; hint_memory_ids: string[]; record_memory_ids: string[] }
 export interface HintPolicy {
@@ -27,6 +29,7 @@ export interface HintPolicy {
 interface SessionCommon {
   schema_version: typeof SESSION_SCHEMA; network_id: string; owner_key_id: string;
   peer_key_id: string; query_message_id: string; query: string; expires_at: number;
+  state: 'active' | 'cancelled'; cancellation: null | {message_id: string; offer_message_id: string; expires_at: number};
 }
 export type RequesterSession = SessionCommon & {role: 'requester'};
 export type OwnerSession = SessionCommon & {role: 'owner'; policy_revision: number; policy_sha256: string; hints: Hint[]; cursors: string[]};
@@ -88,6 +91,9 @@ export function validateHintControl(value: DocumentInput): HintControl {
         hintMessageId(item.offer_message_id);const id=hintMemoryId(item.memory_id);
         if(selected.has(id))fail();selected.add(id);
       }
+    } else if(control.kind==='cancel'||control.kind==='cancel_ack'){
+      objectFields(control,['schema_version','kind','query_message_id','expires_at',control.kind==='cancel'?'offer_message_id':'request_message_id'],'network_invalid_content');
+      hintMessageId(control.query_message_id);hintMessageId(control.kind==='cancel'?control.offer_message_id:control.request_message_id);integer(control.expires_at,1);
     } else if (control.kind === 'refusal') {
       objectFields(control, ['schema_version','kind','request_message_id','reason'], 'network_invalid_content');
       hintMessageId(control.request_message_id); if (control.reason !== 'not_available') fail();
@@ -99,13 +105,19 @@ export function validateHintControl(value: DocumentInput): HintControl {
 /** Shared local shape, used by both runtimes without conferring live authority. */
 export function validateHintSession(key:string,value:DocumentInput,networkId:string,ownerKeyId:string):HintSession {
   try{
-    const session=document(value,MAX_SESSION_BYTES),fields=['schema_version','role','network_id','owner_key_id','peer_key_id','query_message_id','query','expires_at'];
+    const session=document(value,MAX_SESSION_BYTES),fields=['schema_version','role','network_id','owner_key_id','peer_key_id','query_message_id','query','expires_at','state','cancellation'];
     if(session.role==='owner')fields.push('policy_revision','policy_sha256','hints','cursors');
     else if(session.role!=='requester')fail();
     objectFields(session,fields);
     if(session.schema_version!==SESSION_SCHEMA||session.network_id!==networkId||session.owner_key_id!==ownerKeyId||key!==SESSION_PREFIX+hintMessageId(session.query_message_id))fail();
     for(const value of [session.owner_key_id,session.peer_key_id])if(typeof value!=='string'||value.length!==72||!signer.test(value))fail();
     query(session.query);integer(session.expires_at,1);
+    if(session.state==='active'){if(session.cancellation!==null)fail();}
+    else if(session.state==='cancelled'){
+      const cancellation=objectFields(session.cancellation,['message_id','offer_message_id','expires_at']);
+      hintMessageId(cancellation.message_id);hintMessageId(cancellation.offer_message_id);
+      if(integer(cancellation.expires_at,1)>(session.expires_at as number))fail();
+    }else fail();
     if(session.role==='owner'){
       integer(session.policy_revision,1);
       if(typeof session.policy_sha256!=='string'||session.policy_sha256.length!==64||!/^[0-9a-f]{64}$/.test(session.policy_sha256))fail();

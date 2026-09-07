@@ -11,7 +11,7 @@ CONTENT_SCHEMA = "memory-vault-network-content/v2"
 MAX_CONTENT_TEXT_BYTES = 16384
 MAX_CONTENT_SHARE_BYTES = 2 * 1024 * 1024
 MAX_CONTENT_BYTES = 4 * 1024 * 1024
-HINT_SCHEMA = "memory-vault-hint/v3"
+HINT_SCHEMA = "memory-vault-hint/v4"
 HINT_TYPES = {"observation", "experiment", "inference", "hearsay", "speculation", "summary", "external_source", "unspecified"}
 
 
@@ -48,6 +48,14 @@ def validate_control(value: Any) -> dict[str, Any]:
         elif kind == "page":
             fields |= {"query_message_id", "cursor"}
             valid = hint_identifier(control.get("query_message_id")) and hint_cursor(control.get("cursor"))
+        elif kind == "cancel":
+            fields |= {"query_message_id", "offer_message_id", "expires_at"}
+            valid = (hint_identifier(control.get("query_message_id")) and hint_identifier(control.get("offer_message_id"))
+                     and hint_expiry(control.get("expires_at")))
+        elif kind == "cancel_ack":
+            fields |= {"request_message_id", "query_message_id", "expires_at"}
+            valid = (hint_identifier(control.get("request_message_id")) and hint_identifier(control.get("query_message_id"))
+                     and hint_expiry(control.get("expires_at")))
         elif kind == "select":
             fields |= {"query_message_id", "selections"}
             items = control.get("selections")

@@ -126,20 +126,30 @@ canonical Memory Record or classify it as an observation. A `memory_transfer`
 carries explicitly selected existing records and their existing dependency
 closure; accompanying text remains a note even if it equals a record's text.
 The closure rule is not a remote-discovery or per-recipient export grant.
-The developing [Memory Hint contract](docs/NETWORK_HINTS_V3.md) adds typed,
+The developing [Memory Hint contract](docs/NETWORK_HINTS_V4.md) adds typed,
 recipient-bound queries and explicit selection. Hint visibility and full-record
 grants MUST be separate. Every dependency MUST be authorized before export;
 current policy MUST be checked again at actual send start, including retries.
-Hint v3 freezes at most 16 permitted projections, returning at most four per
+Hint v4 freezes at most 16 permitted projections, returning at most four per
 explicitly requested page. Cursors MUST bind the network, participants, query,
 frozen projection, policy revision and expiry. Policy changes MUST invalidate
 old pages, and restoration MUST NOT resume historical discovery sessions.
-A v3 select MUST bind one to four distinct roots to their received offers in
+A v4 select MUST bind one to four distinct roots to their received offers in
 the same live query. All selected roots and dependencies MUST be authorized
 as one union; any missing, unauthorized or over-budget item MUST cause a whole
 generic refusal. The returned selected root set MUST exactly match the persisted
 request before memory admission. Shared dependencies retain their original IDs
 and MUST NOT become additional independent evidence.
+An established query MAY be cancelled explicitly by its original requester.
+Local cancellation and its notification queue MUST commit together before
+network refresh. The owner MUST explicitly process a valid bound notification
+before generating cancel_ack; relay delivery alone is not remote processing.
+Cancelled sessions MUST block new page/select and not-yet-admitted batch work,
+including retries, without rewriting original messages or historical records.
+Final batch admission MUST serialize with local cancellation through the same
+transport writer reservation. Cancellation MUST NOT create a session, extend
+its expiry, grant access or cancel another query. Cancelled sessions share the
+existing bounded session budget and MUST NOT revive on backup restoration.
 Controls MUST NOT become canonical memories or execution permissions.
 Saving new knowledge is a separate `remember` decision with appropriate source
 attribution. Reading saved communication locally grants no execution authority.

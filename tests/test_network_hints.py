@@ -16,7 +16,7 @@ from tests.test_network_message_semantics import agent, records, proofs, vault_s
 
 
 CONTENT_SCHEMA = "memory-vault-network-content/v2"
-HINT_SCHEMA = "memory-vault-hint/v3"
+HINT_SCHEMA = "memory-vault-hint/v4"
 POLICY_SCHEMA = "memory-vault-hint-policy/v1"
 MEMORY_ID = "mem_" + "a" * 40
 MESSAGE_ID = "msg_" + "a" * 64
@@ -87,7 +87,9 @@ def parser_vectors():
         control("hints", request_message_id=MESSAGE_ID, expires_at=expires, hints=[hint]),
         single_select(MESSAGE_ID, MESSAGE_ID, MEMORY_ID),
         control("refusal", request_message_id=MESSAGE_ID, reason="not_available"),
-        control("page", query_message_id=MESSAGE_ID, cursor="hintcur_" + "a" * 64)]
+        control("page", query_message_id=MESSAGE_ID, cursor="hintcur_" + "a" * 64),
+        control("cancel", query_message_id=MESSAGE_ID, offer_message_id=MESSAGE_ID, expires_at=expires),
+        control("cancel_ack", request_message_id=MESSAGE_ID, query_message_id=MESSAGE_ID, expires_at=expires)]
     good = [{"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": item} for item in controls]
     good.append({"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control":
         control("hints", request_message_id=MESSAGE_ID, expires_at=expires, hints=[
@@ -111,6 +113,8 @@ def parser_vectors():
         {**controls[2], "selections": [{"offer_message_id": MESSAGE_ID, "memory_id": "mem_" + str(i) * 40} for i in range(5)]},
         {**controls[2], "selections": [{"offer_message_id": MESSAGE_ID, "memory_id": MEMORY_ID, "permission": "all"}]},
         control("select", offer_message_id=MESSAGE_ID, memory_id=MEMORY_ID),
+        {**controls[0], "schema_version": "memory-vault-hint/v3"},
+        {**controls[2], "schema_version": "memory-vault-hint/v3"},
         {**controls[0], "schema_version": "memory-vault-hint/v2"},
         {"schema_version": "memory-vault-hint/v2", "kind": "select",
          "offer_message_id": MESSAGE_ID, "memory_id": MEMORY_ID},
@@ -126,6 +130,13 @@ def parser_vectors():
         {**controls[4], "query_message_id": "not-a-query"},
         {**controls[4], "offset": 4},
         control("set_policy", peers=[]), {**controls[0], "schema_version": "memory-vault-hint/v99"}]
+    for cancellation in controls[5:]:
+        bad_controls.extend([{**cancellation, "expires_at": value} for value in (0, True, 2**53)])
+        bad_controls.extend([{**cancellation, "query_message_id": "not-a-query"},
+                             {**cancellation, "grant": "all"},
+                             {key: value for key, value in cancellation.items() if key != "expires_at"}])
+    bad_controls.extend([{**controls[5], "offer_message_id": "bad-offer"},
+                         {**controls[6], "request_message_id": "bad-request"}])
     bad = [{"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": item} for item in bad_controls]
     bad += [{**good[0], "text": "mixed body"}, {**good[-1], "note": "mixed transfer"},
             {**good[-1], "expires_at": 1.5}, {**good[-1], "memory_id": "mem_bad"},

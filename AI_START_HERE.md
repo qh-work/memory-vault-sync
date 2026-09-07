@@ -19,13 +19,17 @@ pins; obsolete alpha.3 trial URLs are not reused.
 separates communication from long-term memory. The downloaded preview has the
 earlier behavior. Compatibility and upgrade tooling are deferred; test this
 candidate with isolated synthetic state and preserve existing private data.
-The next [authorized Memory Hint candidate](docs/NETWORK_HINTS_V3.md) lets a
+The next [authorized Memory Hint candidate](docs/NETWORK_HINTS_V4.md) lets a
 known peer query an explicitly permitted set, request up to four frozen pages
 of four hints, then explicitly select one to four original record closures across seen pages.
 The complete dependency union is authorized or the whole batch is refused. Pages are explicit;
 policy changes or expiry invalidate old cursors. Restoring a backup requires a
 new query as well as new local grants. Both hint and full-record grants require separate local configuration;
 network membership or chat cannot grant them. It is not global discovery.
+B can explicitly cancel an established query after receiving a page. Local
+cancellation takes effect even while offline; A must separately process the
+notification before its typed acknowledgment confirms remote cancellation.
+No cancellation removes already admitted memories or rewrites historical bytes.
 
 ## Use an endpoint
 

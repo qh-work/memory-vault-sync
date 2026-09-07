@@ -47,7 +47,7 @@ PACKAGE_DOCUMENTS = (
     "docs/V0_25_RELEASE_MINIMAL.md", "docs/RELEASE_NOTES_V0_25.md",
     "docs/V0_25_PACK_CAPACITY_SMOKE.md", "docs/RELEASE_NOTES_V0_25_1.md",
     "docs/ARTIFACTS.md", "docs/V0_25_RAW_COPY_SMOKE.md",
-    "requirements-network.txt", "requirements-network-server.txt", "docs/NETWORK_V1.md", "docs/NETWORK_CONTENT_V2.md", "docs/NETWORK_HINTS_V1.md", "docs/NETWORK_HINTS_V2.md", "docs/NETWORK_HINTS_V3.md", "docs/NETWORK_QUICKSTART.md",
+    "requirements-network.txt", "requirements-network-server.txt", "docs/NETWORK_V1.md", "docs/NETWORK_CONTENT_V2.md", "docs/NETWORK_HINTS_V1.md", "docs/NETWORK_HINTS_V2.md", "docs/NETWORK_HINTS_V3.md", "docs/NETWORK_HINTS_V4.md", "docs/NETWORK_QUICKSTART.md",
     "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
     "docs/V0_26_PLAN.md",
     "docs/NETWORK_TOPICS.md",

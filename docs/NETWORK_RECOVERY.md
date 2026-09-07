@@ -157,7 +157,7 @@ running background worker, real-model validation, or public deployment.
 
 ## Authorized Hint recovery
 
-The [Hint candidate](NETWORK_HINTS_V3.md) includes bounded control traffic and
+The [Hint candidate](NETWORK_HINTS_V4.md) includes bounded control traffic and
 original selected shares in transport snapshots. The local `hint-policy.json`
 and both provider and requester discovery sessions are deliberately excluded.
 Restore reports `hint_policy_restored:false`, `hint_sessions_restored:false`,
@@ -167,7 +167,9 @@ request ID, after current membership and sharing authorization have been checked
 Old messages and frozen outbox bytes remain historical evidence; their absence
 of a live session prevents retransmission or a new memory admission. A local
 restoration boundary also prevents answering a previously unanswered old query.
-The ordinary process restart path retains unexpired sessions; restoring a backup
-does not. No operation claims to retract bytes already delivered.
+The ordinary process restart path retains unexpired sessions, including their
+cancelled state; restoring a backup does not. Historical cancel notifications
+and acknowledgments do not recreate cancelled or active sessions. No operation
+claims to retract bytes already delivered.
 Control-only backup leaves an absent source Vault absent; a received transfer
 still requires the original records in the memory snapshot.
