@@ -24,7 +24,7 @@ LAUNCHER = ROOT / "plugins/memory-vault-client/scripts/launcher.py"
 NEW_MODULES = {"memory_vault_nodes.py", "memory_vault_node.py", "memory_vault_network_recovery.py", "memory_vault_node_transfer.py",
                "memory_vault_topics.py", "memory_vault_topic_store.py"}
 TS_NETWORK = {"clients/typescript/network/" + name for name in
-              ("README.md", "crypto.ts", "control.ts", "package.json", "package-lock.json",
+              ("README.md", "crypto.ts", "content.ts", "control.ts", "package.json", "package-lock.json",
                "io.ts", "nodes.ts", "peer.ts", "records.ts", "transport.ts", "vault.ts", "setup.ts",
                "agent.ts", "retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "topics.ts")}
 TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
@@ -49,7 +49,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 47)
+        self.assertEqual(len(allowed), 48)
         self.assertTrue(NEW_MODULES <= allowed)
         for name in allowed:
             path = ROOT / name
@@ -75,16 +75,17 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
         self.assertGreaterEqual(len(review), 39)
-        self.assertEqual(len(TS_NETWORK), 17)
+        self.assertEqual(len(TS_NETWORK), 18)
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
         self.assertIn("docs/NETWORK_TYPESCRIPT.md", documents)
         self.assertIn("docs/NETWORK_TYPESCRIPT.md", protocol)
-        for name in ("docs/EXPERIENCE_SEMANTICS.md", "docs/EXPERIENCE_VALIDATION.md"):
+        for name in ("docs/EXPERIENCE_SEMANTICS.md", "docs/EXPERIENCE_VALIDATION.md", "docs/NETWORK_CONTENT_V2.md"):
             self.assertIn(name, documents)
             self.assertIn(name, protocol)
         self.assertTrue({"tests/test_experience_origin_identity.py", "tests/test_experience_origin_typescript.py",
                          "tests/test_experience_int64.py", "tests/test_experience_http_int64.py"} <= set(review))
+        self.assertTrue({"tests/test_network_message_semantics.py", "tests/test_network_message_typescript.py"} <= set(review))
         self.assertIn("scripts/demo_experience.py", documents)
         self.assertNotIn("scripts/demo_experience.py", protocol)
         self.assertIn("docs/RETRIEVAL_V2.md", documents)

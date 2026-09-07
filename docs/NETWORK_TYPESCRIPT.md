@@ -1,5 +1,10 @@
 # Independent TypeScript endpoint preview
 
+Status: **unreleased content/v2 candidate**, starting from the reviewed
+Experience corrections. The [new payload contract](NETWORK_CONTENT_V2.md)
+separates communication from memory. Earlier preview transport state is not
+silently upgraded; compatibility and upgrade tooling are deferred.
+
 The `clients/typescript/network` implementation provides the native `Agent`,
 `NetworkPeer` and `CanonicalVault`. It uses the existing Memory Vault record bytes, Ed25519 and
 X25519 identities, SQLite schemas and persistent network queues directly. It
@@ -195,8 +200,9 @@ These network methods are separate explicit actions on an open `peer`:
 | --- | --- |
 | `await peer.connect(invitation, stableJoinRequestId)` | Verify the pinned issuer/candidate binding and consume the invitation at configured nodes. Without an invitation, check existing admission. |
 | `await peer.discover()` | Refresh signed control state and return a bounded view of active members. |
-| `await peer.send(stableRequestId, recipientKeyIds, text, memoryIds)` | Save selected local content, persist an outbox entry, and attempt encrypted delivery. |
+| `await peer.send(stableRequestId, recipientKeyIds, text, memoryIds)` | Queue chat without creating memory, or transfer selected original records when `memoryIds` is nonempty; accompanying text remains a note. |
 | `await peer.receive(4)` | Fetch, verify, decrypt and persist a bounded batch, then submit signed endpoint-storage acknowledgements. |
+| `peer.readMessage(messageId, offset)` | Read a saved chat or transfer note locally, at most 1,024 UTF-8 text bytes; no polling or memory creation. |
 | `await peer.pump(4, 10, 4)` | Perform one explicit retry/receive pass: at most four outbox attempts, a ten-second cooperative deadline and up to four incoming messages. |
 
 Reuse a request ID only for the exact same original input. A persisted envelope
@@ -218,10 +224,15 @@ low-level verifier requires an explicit flag for unsigned legacy responses;
 native peers retain their existing unbound legacy-node path. An established
 node binding never permits an unsigned downgrade. No new operator approval
 or legacy-mode configuration is introduced by this change.
-Received text previews can be truncated; inspect `text_partial` and
-`text_memory_id` instead of treating the preview as complete content. Starting
-an endpoint does not launch other
-agents, run received instructions, or subscribe to an unlimited background loop.
+Previews include `content_kind` and `text_partial`; `text_memory_id` stays null.
+For complete saved chat/note content use `peer.readMessage(messageId, offset)`
+or `Agent.handle({op: 'receive', message_id: id, offset: 0})`. Continue with
+`next_offset` until null. Offsets and `total_characters` count Unicode code
+points, not UTF-8 bytes or JavaScript UTF-16 units. The local selector cannot
+include polling `limit`; it does not refresh remote authorization or execute
+received text. Explicit transfers preserve the existing dependency closure,
+which is not a remote-discovery or per-recipient export grant. Starting an
+endpoint does not launch other agents or an unlimited background loop.
 
 ## Bounds and private state
 
@@ -235,15 +246,19 @@ agents, run received instructions, or subscribe to an unlimited background loop.
 | Stored responses | 16 KiB each; historical per-message receipt JSON at most 64 KiB and all outbox receipt JSON at most 16 MiB, checked before materializing those payloads |
 | HTTP | No redirects or decompression; verified HTTPS except explicit loopback HTTP; at most ten seconds per built-in request or the earlier caller deadline |
 | Pump | Zero to 16 outgoing attempts, one to 60 seconds, zero to four incoming messages per call |
+| Local saved-message read | At most 1,024 UTF-8 text bytes; Unicode code-point offsets, with `next_offset:null` at the end; no polling |
 | Native recall/handoff | At most 32 selected IDs, four hits per page, live `status`, and up to 768 UTF-8 text bytes per hit within the 8 KiB response; follow `next_cursor` |
 | Bounded substring utility | `CanonicalVault.recall`: one to 64 results, one to 1,024 scanned rows, one to 30 seconds, and an explicit result-byte limit; follow `nextAfter` when `partial` |
 | Local share | At most 256 records / 8 MiB, with bounded dependency closure and an explicit time limit; the peer's smaller network-share limit still applies |
 
 Filesystem-backed state uses explicit absolute paths, protected ownership and
 permissions, SQLite WAL and full synchronization. Memory and transport databases
-are separate. Existing compatible Python and TypeScript endpoints can reuse the
-same schemas, signing identity and frozen outbox rows; a configuration-binding
-mismatch fails rather than retargeting old state. Node key/URL/storage-epoch
+are separate; transport storage is not a second canonical memory system.
+Matching content/v2 Python and TypeScript endpoints share payload semantics
+and frozen queue format. Content/v1 outbox/inbox bodies and endpoint packages
+containing them are unsupported, not converted, deleted or resealed. Preserve
+the original runtime and private state. A configuration-binding mismatch fails
+rather than retargeting old state. Node key/URL/storage-epoch
 bindings and fresh signed directory checkpoints govern delivery cursors and
 receipts. A legitimate node replacement resets only that URL's delivery state;
 a lagging refresh cannot overwrite a later directory already stored locally.
@@ -257,7 +272,11 @@ of a node, inbox, model or task.
 
 ## Evidence and limits
 
-The current synthetic runtime evidence includes Python-to-TypeScript and
+This candidate's validation is separate from the historical results below.
+See [content/v2 validation scope](NETWORK_CONTENT_V2.md#validation-scope) for
+the current batch; no new test count, real-model or scale result is asserted here.
+
+Earlier preview synthetic runtime evidence includes Python-to-TypeScript and
 TypeScript-to-Python canonical record/share verification, private Vault and trust
 checks, and real loopback HTTP communication between independently running
 Python and TypeScript endpoints. The five peer cases cover invitation/join,

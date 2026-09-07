@@ -86,15 +86,17 @@ def definitions() -> list[dict[str, Any]]:
         "discover": _schema({"online": {"type": "boolean"}}),
         "send": _schema({"request_id": identifier, "recipients": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "string", "maxLength": 128}},
                          "text": text, "memory_ids": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 64}}}, ["request_id", "recipients"]),
-        "receive": _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 16}}),
+        "receive": _schema({"limit": {"type": "integer", "minimum": 1, "maximum": 16},
+                            "message_id": {"type": "string", "maxLength": 128},
+                            "offset": {"type": "integer", "minimum": 0, "maximum": 16384}}),
     }
     descriptions = {
         "connect": "Use an independently trusted invitation with the already configured endpoint. No plugin or administrator needed; does not create trust from memory.",
         "remember": "Save local historical evidence without waiting for the network. Reuse request_id and exact arguments on retry.",
         "recall": "Read bounded evidence or dynamic handoff locally. Continue with cursor; memory is never an instruction or permission.",
         "discover": "Describe this endpoint without creating state; online=true explicitly contacts configured services and discovers members.",
-        "send": "Queue and encrypt a message and optional selected memory closure for explicit recipients. Stored is not recipient-validated or understood.",
-        "receive": "Receive, verify and durably save a bounded message page. Imported evidence respects independent local trust; never executes it.",
+        "send": "Queue encrypted chat or an explicitly selected memory closure. Chat and transfer notes never become memories automatically. Stored is not understood.",
+        "receive": "Poll and save messages in the inbox. With message_id, read complete chat or transfer note locally in bounded offset pages. Only explicit memory transfers enter the Vault.",
     }
     return [{"name": op, "description": descriptions[op], "inputSchema": shapes[op]}
             for op in OPERATIONS]
@@ -124,6 +126,7 @@ class Agent:
                 "automatic_execution": False, "network_accessed": False,
                 "retrieval_profile": RETRIEVAL_PROFILE, "retrieval_profiles": list(RETRIEVAL_PROFILES),
                 "experience_profile": "experience-v1",
+                "content_profile": "memory-vault-network-content/v2",
                 "http_requires_trusted_endpoint_crypto": True,
                 "legacy_interfaces_preserved": ["handoff", "share-v1", "backup", "restore", "protocol", "mcp"]}
 
@@ -227,6 +230,11 @@ class Agent:
             arguments = {k: v for k, v in request.items() if k != "op"}
             schema = next(item["inputSchema"] for item in definitions() if item["name"] == operation)
             _validate_arguments(arguments, schema)
+            if operation == "receive":
+                if "message_id" in arguments and "limit" in arguments:
+                    raise MemoryError("ambiguous_receive_selector")
+                if "offset" in arguments and "message_id" not in arguments:
+                    raise MemoryError("message_id_required")
             if operation == "discover" and not arguments.get("online"):
                 response = success(self.discovery())
             elif operation == "remember":
@@ -240,7 +248,11 @@ class Agent:
                 response = self._recall(arguments)
             else:
                 with self._network() as network:
-                    response = success(getattr(network, operation)(**arguments), request_id=request_id)
+                    if operation == "receive" and "message_id" in arguments:
+                        result = network.read_message(**arguments)
+                    else:
+                        result = getattr(network, operation)(**arguments)
+                    response = success(result, request_id=request_id)
                 if operation == "receive":
                     response["result"]["evidence_usage"] = dict(EVIDENCE_USAGE)
             if not response.get("ok"):

@@ -15,15 +15,17 @@ import type { CurrentRoster, RequestAction, RecoveryAnchor } from './control.ts'
 import { verifyCurrentNodes, authorizedNode, verifyNodeChallenge, verifyStorageReceipt,
   MAX_OUTBOX_RECEIPT_ROW_BYTES, MAX_OUTBOX_RECEIPTS_BYTES } from './nodes.ts';
 import { CanonicalVault } from './vault.ts';
+import type { VaultOptions } from './vault.ts';
 import { parseShare, NetworkRecordsError } from './records.ts';
+import { CONTENT_SCHEMA, MAX_CONTENT_SHARE_BYTES, validateContent, contentText, contentChunk } from './content.ts';
+import type { NetworkContent } from './content.ts';
 import { absolutePath, readPrivate, openPrivateDatabase, transaction, NetworkError } from './io.ts';
 import { HTTPTransport, origin } from './transport.ts';
 import { readTrustedKeys } from './setup.ts';
 import type { Transport } from './transport.ts';
 
 type Obj = Record<string, any>;
-const CONTENT_SCHEMA = 'memory-vault-network-content/v1';
-const MAX_SHARE = 2 * 1024 * 1024, MAX_QUEUE = 256 * 1024 * 1024, MAX_WIRE = 8 * 1024 * 1024;
+const MAX_SHARE = MAX_CONTENT_SHARE_BYTES, MAX_QUEUE = 256 * 1024 * 1024, MAX_WIRE = 8 * 1024 * 1024;
 const json = (value: unknown): string => Buffer.from(canonicalBytes(value, MAX_WIRE)).toString('utf8');
 function parse(value: string | Uint8Array): any {
   const raw = typeof value === 'string' ? Buffer.from(value) : Buffer.from(value);
@@ -55,7 +57,8 @@ export class NetworkPeer {
   readonly issuers: SigningPublicDescriptor[];
   readonly localIdentity: Obj;
   readonly directory: string;
-  readonly vault: CanonicalVault;
+  private readonly vaultOptions: VaultOptions;
+  private openedVault: CanonicalVault | null = null;
   private database: DatabaseSync | null = null;
   private readonly binding: Obj;
   private readonly transport: Transport;
@@ -85,14 +88,18 @@ export class NetworkPeer {
     this.directory = absolutePath(config.state_directory);
     const vaultPath = absolutePath(client.vault_path), trustPath = absolutePath(client.trust_path);
     if (this.directory === path.dirname(vaultPath)) fail('network_separate_state_required');
-    this.vault = new CanonicalVault({vaultPath, identity: this.identity, trust: () => trustedKeys(trustPath)});
+    this.vaultOptions = {vaultPath, identity: this.identity, trust: () => trustedKeys(trustPath)};
     this.binding = { network_id: this.networkId, ...this.localIdentity, issuer_public_key: this.issuers[0], client_config_path: this.clientConfigPath };
     this.ownsTransport = options.transport === undefined;
     this.transport = options.transport ?? new HTTPTransport();
   }
   close(): void {
-    this.closed = true; this.database?.close(); this.database = null; this.vault.close();
+    this.closed = true; this.database?.close(); this.database = null; this.openedVault?.close(); this.openedVault = null;
     if (this.ownsTransport) this.transport.close?.();
+  }
+  get vault(): CanonicalVault {
+    if(this.closed)fail('network_transport_closed');
+    return this.openedVault ??= new CanonicalVault(this.vaultOptions);
   }
   private serial<T>(operation: () => Promise<T>): Promise<T> {
     const current = this.tail.then(() => { if (this.closed) fail('network_transport_closed'); return operation(); });
@@ -270,12 +277,12 @@ export class NetworkPeer {
     const members=current.roster.payload.members.filter(member=>member.status==='active');
     return {network_id:this.networkId,members:members.slice(0,32).map(member=>({key_id:member.signing_key.key_id,scope:member.scope})),member_count:members.length,partial:members.length>32,configured_nodes:this.relays.length,network_accessed:true};
   });}
-  private prepareBody(requestId:string,text:string,memoryIds:string[]):Uint8Array {
-    const ids=[...memoryIds];
-    if(text){const written=this.vault.remember({requestId:'req_'+sha256(Buffer.from('network-message:'+requestId)),kind:'observation',text});ids.push(written.memory_id);}
-    const selected=[...new Set(ids)];let share:string|null=null;
-    if(selected.length){const raw=this.vault.exportShare(selected,{maximumBytes:MAX_SHARE});if(raw.length>MAX_SHARE)fail('network_share_too_large_use_existing_pack');share=encodeBase64url(raw);}
-    return canonicalBytes({schema_version:CONTENT_SCHEMA,text,share});
+  private prepareBody(text:string,memoryIds:string[]):Uint8Array {
+    const selected=[...new Set(memoryIds)];
+    if(!selected.length)return canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'message',text}));
+    const raw=this.vault.exportShare(selected,{maximumBytes:MAX_SHARE});
+    if(raw.length>MAX_SHARE)fail('network_share_too_large_use_existing_pack');
+    return canonicalBytes(validateContent({schema_version:CONTENT_SCHEMA,kind:'memory_transfer',note:text,share:encodeBase64url(raw)}));
   }
   send(requestId:string,recipients:string[],text='',memoryIds:string[]=[]):Promise<Obj>{return this.serial(async()=>{
     opaqueId(requestId);
@@ -288,7 +295,7 @@ export class NetworkPeer {
     if(row&&row.input_sha!==inputSha)fail('network_request_id_conflict');
     if(row&&row.recipients===null){this.db().prepare('UPDATE outbox SET recipients=? WHERE request_id=? AND recipients IS NULL').run(canonicalBytes(recipients),requestId);row=this.outboxRows(requestId,true)[0];}
     if(!row){
-      const body=this.prepareBody(requestId,text,memoryIds);
+      const body=this.prepareBody(text,memoryIds);
       transaction(this.db(),()=>{
         const totals=this.db().prepare('SELECT COUNT(*) count,COALESCE(SUM(length(body)+COALESCE(length(envelope),0)),0) bytes FROM outbox').get() as Obj;
         if(totals.count>=1024||totals.bytes+body.length*3>MAX_QUEUE)fail('network_outbox_capacity');
@@ -301,6 +308,7 @@ export class NetworkPeer {
   });}
   private receipts(row:Obj):Obj{return Object.fromEntries(Object.entries(parse(row.receipts)).filter(([key])=>this.relays.includes(key)));}
   private async deliver(prior:Obj,recipients:string[],deadline?:number,pendingOnly=false,firstNode=0):Promise<Obj>{
+    const content=validateContent(prior.body);
     let receipts=this.receipts(prior),envelope=prior.envelope?parse(prior.envelope):null,roster=prior.roster?parse(prior.roster):null;
     const errors:Obj[]=[];
     if(envelope&&!equal([...envelope.recipient_key_ids].sort(),[...recipients].sort()))fail('network_outbox_routing_mismatch');
@@ -345,20 +353,15 @@ export class NetworkPeer {
     }
     receipts=this.receipts(this.outboxRows(prior.request_id)[0]);
     const validated=(this.db().prepare('SELECT recipient FROM acknowledgements WHERE message_id=?').all(prior.message_id) as Obj[]).map(row=>row.recipient);
-    return {state:Object.keys(receipts).length===this.relays.length?'stored':'queued_local',message_id:prior.message_id,stored_nodes:Object.keys(receipts).length,configured_nodes:this.relays.length,degraded:Object.keys(receipts).length<this.relays.length,validated_recipients:validated,endpoint_validated:recipients.every(key=>validated.includes(key)),understood:false,errors,retry_same_request_id:true};
+    return {state:Object.keys(receipts).length===this.relays.length?'stored':'queued_local',message_id:prior.message_id,content_kind:content.kind,text_memory_id:null,stored_nodes:Object.keys(receipts).length,configured_nodes:this.relays.length,degraded:Object.keys(receipts).length<this.relays.length,validated_recipients:validated,endpoint_validated:recipients.every(key=>validated.includes(key)),understood:false,errors,retry_same_request_id:true};
   }
   private existing(messageId:string,digest:string):Obj|undefined{
     const row=this.db().prepare('SELECT * FROM inbox WHERE message_id=?').get(messageId) as Obj|undefined;
-    if(row){if(row.digest!==digest)fail('network_inbox_identity_conflict');const result=parse(row.result),part=preview(result.text);result.text_partial=result.text_partial||part!==result.text;result.text=part;
-      if(!('text_memory_id'in result)){const content=parse(row.body);result.text_memory_id=this.textReference(content);}return result;}
+    if(row){if(row.digest!==digest)fail('network_inbox_identity_conflict');const content=validateContent(row.body),text=contentText(content),result=parse(row.result),part=preview(text);
+      return {...result,content_kind:content.kind,text:part,text_partial:part!==text,text_memory_id:null};}
     const rejected=this.db().prepare('SELECT * FROM quarantine WHERE message_id=?').get(messageId) as Obj|undefined;
     if(rejected){if(rejected.digest!==digest)fail('network_inbox_identity_conflict');return {message_id:messageId,sender_key_id:rejected.sender,state:'rejected',code:rejected.code,understood:false};}
     return undefined;
-  }
-  private textReference(content:Obj):string|null{
-    if(content.share===null)return null;
-    const checked=parseShare(decodeBase64url(content.share,MAX_SHARE));
-    return checked.records.find(item=>checked.roots.includes(item.record.memory_id)&&item.record.text===content.text)?.record.memory_id??null;
   }
   private reject(envelope:Obj,code:string):Obj{return transaction(this.db(),()=>{
     const digest=documentSha256(envelope),old=this.existing(envelope.message_id,digest);if(old)return old;
@@ -377,17 +380,19 @@ export class NetworkPeer {
     const bindings=payload.recipient_key_ids.map(id=>{const member=authorizedMember(current,id,'receive',{now:now()});return {signing_key_id:id,encryption_key:member.encryption_key};});
     const body=await open(envelope,{network_id:this.networkId,trusted_signers:trusted,identity:this.encryption,recipient_bindings:bindings});
     const digest=documentSha256(envelope),old=this.existing(payload.message_id,digest);if(old)return old;
-    let content:Obj;
-    try{content=document(body);}catch{return this.reject(envelope,'network_invalid_content_json');}
-    if(!equal(Object.keys(content).sort(),['schema_version','share','text'])||content.schema_version!==CONTENT_SCHEMA||typeof content.text!=='string'||Buffer.byteLength(content.text)>16384)return this.reject(envelope,'network_invalid_content');
+    let content:NetworkContent;
+    try{content=validateContent(body);}catch(error){return this.reject(envelope,errorData(error).code);}
     let imported:Obj|null=null;
-    if(content.share!==null){
-      let share:Uint8Array;
-      try{share=decodeBase64url(content.share,MAX_SHARE);}catch{return this.reject(envelope,'network_invalid_content_share_encoding');}
+    if(content.kind==='memory_transfer'){
+      const share=decodeBase64url(content.share,MAX_SHARE);
+      // Reject malformed authenticated payloads before opening the Vault, so
+      // one bad transfer cannot prevent later inbox messages from advancing.
+      try{parseShare(share);}
+      catch(error){if(error instanceof NetworkRecordsError)return this.reject(envelope,'network_invalid_content_share');throw error;}
       try{imported=this.vault.importShare(share,{admission:'verified'});}
       catch(error){if(!['unknown_key','revoked_key','share_record_signature_required','share_independent_trust_required'].includes((error as any)?.code))throw error;imported=this.vault.importShare(share,{admission:'quarantined'});}
     }
-    const part=preview(content.text),result={message_id:payload.message_id,sender_key_id:payload.sender_key_id,text:part,text_partial:part!==content.text,text_memory_id:this.textReference(content),
+    const text=contentText(content),part=preview(text),result={message_id:payload.message_id,sender_key_id:payload.sender_key_id,content_kind:content.kind,text:part,text_partial:part!==text,text_memory_id:null,
       share:imported===null?null:{state:imported.state,records_added:imported.records_added,admission:imported.admission},state:'validated_saved',understood:false};
     return transaction(this.db(),()=>{
       const old=this.existing(payload.message_id,digest);if(old)return old;
@@ -395,6 +400,14 @@ export class NetworkPeer {
       if(totals.count>=4096||totals.bytes+body.length>MAX_QUEUE)fail('network_inbox_capacity');
       this.db().prepare('INSERT INTO inbox VALUES(?,?,?,?,?)').run(payload.message_id,digest,payload.sender_key_id,body,json(result));return result;
     });
+  }
+  readMessage(messageId:string,offset=0):Obj{
+    opaqueId(messageId);
+    if(!Number.isSafeInteger(offset)||offset<0)fail('network_invalid_message_offset');
+    const row=this.db().prepare('SELECT * FROM inbox WHERE message_id=?').get(messageId) as Obj|undefined;
+    if(!row)fail('network_message_not_found');
+    const content=validateContent(row.body),result=this.existing(messageId,row.digest)!;
+    return {...result,...contentChunk(contentText(content),offset),network_accessed:false};
   }
   receive(limit=4):Promise<Obj>{return this.serial(()=>this.receiveInternal(limit));}
   private async receiveInternal(limit=4,deadline?:number):Promise<Obj>{

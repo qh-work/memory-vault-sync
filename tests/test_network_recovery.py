@@ -158,7 +158,7 @@ class NetworkRecoveryTests(unittest.TestCase):
                 # before a fresh member status can be returned.
                 self.assertEqual({error["code"] for item in denied["outbound"] for error in item["errors"]}, {"unknown_key"})
                 self.assertFalse(any(path == "/v1/messages" for _, _, path, _ in transport.calls[start:]))
-                self.assertEqual(len(records(recovered)), 1)
+                self.assertEqual(len(records(recovered)), 0)
                 recalled = recovered.client_config.vault().handle({"op": "recall", "query": "Synthetic pending revoked memory"})
                 self.assertTrue(recalled["ok"], recalled)
 
@@ -166,6 +166,9 @@ class NetworkRecoveryTests(unittest.TestCase):
         with fixture() as (sender, recipient, transport):
             transport.offline.update(sender.relays)
             sender.send("req_recovery_locks_001", [recipient.identity.key_id], "Synthetic lock check")
+            # This test explicitly exercises reservations on two existing DBs.
+            with closing(sender.client_config.vault()._connect()) as memory:
+                memory.commit()
             original = recovery.vault_backup.backup_database
             observed = []
 
@@ -263,6 +266,8 @@ for path in sys.argv[1:]:
     def test_shared_client_and_independent_cli_roundtrip_remain_inactive(self):
         with fixture() as (sender, recipient, transport):
             transport.offline.update(sender.relays)
+            self.assertTrue(sender.client_config.vault(writing=True).handle({"op": "remember", "kind": "observation",
+                "text": "Synthetic separately remembered CLI evidence", "request_id": "req_recovery_cli_evidence"})["ok"])
             sender.send("req_recovery_cli_001", [recipient.identity.key_id], "Synthetic independent CLI")
             root = sender.config_path.parent.parent
             issuer_public = root / "cli-issuer-public.json"
@@ -299,7 +304,11 @@ for path in sys.argv[1:]:
 
     def test_current_memory_trust_snapshot_controls_restored_and_future_admission(self):
         with fixture() as (sender, recipient, transport):
-            recipient.send("req_recovery_trust_old", [sender.identity.key_id], "Synthetic historical remote author")
+            old = recipient.client_config.vault(writing=True).handle({"op": "remember", "kind": "observation",
+                "text": "Synthetic historical remote author", "request_id": "req_recovery_old_memory"})
+            self.assertTrue(old["ok"], old)
+            recipient.send("req_recovery_trust_old", [sender.identity.key_id], "Synthetic historical remote author",
+                           [old["result"]["memory_id"]])
             sender.receive()
             _, args = archive(sender)
             root = sender.config_path.parent.parent
@@ -323,7 +332,11 @@ for path in sys.argv[1:]:
             with NetworkClient(Path(restored["network_config"]), transport=transport) as recovered:
                 self.assertEqual(recovered.client_config.trust_path.read_bytes(), selected_bytes)
                 self.assertEqual(TrustStore(recovered.client_config.trust_path)._read()["keys"][recipient.identity.key_id]["state"], "revoked")
-                recipient.send("req_recovery_trust_new", [sender.identity.key_id], "Synthetic later remote author")
+                new = recipient.client_config.vault(writing=True).handle({"op": "remember", "kind": "observation",
+                    "text": "Synthetic later remote author", "request_id": "req_recovery_new_memory"})
+                self.assertTrue(new["ok"], new)
+                recipient.send("req_recovery_trust_new", [sender.identity.key_id], "Synthetic later remote author",
+                               [new["result"]["memory_id"]])
                 received = recovered.receive()
                 self.assertEqual(received["messages"], [], received)
                 self.assertEqual({error["code"] for error in received["errors"]}, {"key_revoked"})

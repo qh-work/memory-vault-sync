@@ -18,10 +18,11 @@ import tempfile
 import time
 from typing import Any, Mapping, Sequence
 
-from memory_vault import MemoryError, canonical_bytes, strict_json_loads
+from memory_vault import MemoryError, Vault, canonical_bytes, strict_json_loads
 import memory_vault_backup as vault_backup
 import memory_vault_storage as storage
 from memory_vault_network import MAX_QUEUE_BYTES, MAX_QUARANTINE_BYTES, NetworkClient, origin
+from memory_vault_network_content import validate_content
 from memory_vault_network_admin import backup_keys, restore_keys
 from memory_vault_network_control import _aesgcm, generate_recovery_secret, verify_request, verify_roster
 from memory_vault_network_crypto import PublicKeyTrust, b64url, unb64url, document_sha256, object_fields, opaque, verify_envelope
@@ -323,11 +324,7 @@ def _validate_transport(connection: sqlite3.Connection, client: NetworkClient, m
         opaque(row["request_id"])
         expected_id = "msg_" + hashlib.sha256(canonical_bytes([client.network_id, client.identity.key_id, row["request_id"]])).hexdigest()
         _require(row["message_id"] == expected_id and re.fullmatch(r"[0-9a-f]{64}", row["input_sha"]) is not None, "endpoint_backup_invalid_outbox")
-        content = object_fields(strict_json_loads(row["body"]), {"schema_version", "text", "share"})
-        _require(content["schema_version"] == "memory-vault-network-content/v1" and isinstance(content["text"], str)
-                 and len(content["text"].encode()) <= 16384, "endpoint_backup_invalid_outbox")
-        if content["share"] is not None:
-            unb64url(content["share"], maximum=2 * CHUNK_BYTES)
+        validate_content(bytes(row["body"]))
         recipients = strict_json_loads(row["recipients"]) if row["recipients"] is not None else None
         if recipients is not None:
             _require(isinstance(recipients, list) and 1 <= len(recipients) <= 16
@@ -355,17 +352,29 @@ def _validate_transport(connection: sqlite3.Connection, client: NetworkClient, m
         opaque(row["message_id"])
         opaque(row["sender"])
         _require(re.fullmatch(r"[0-9a-f]{64}", row["digest"]) is not None, "endpoint_backup_invalid_inbox")
-        content = object_fields(strict_json_loads(row["body"]), {"schema_version", "text", "share"})
+        content = validate_content(bytes(row["body"]))
         result = strict_json_loads(row["result"])
-        _require(content["schema_version"] == "memory-vault-network-content/v1" and isinstance(content["text"], str)
-                 and len(content["text"].encode()) <= 16384 and isinstance(result, dict)
-                 and result.get("state") == "validated_saved" and result.get("understood") is False
+        _require(isinstance(result, dict) and result.get("state") == "validated_saved"
+                 and result.get("understood") is False and result.get("content_kind") == content["kind"]
+                 and result.get("text_memory_id") is None
                  and result.get("message_id") == row["message_id"] and result.get("sender_key_id") == row["sender"], "endpoint_backup_invalid_inbox")
-        if content["share"] is not None:
-            unb64url(content["share"], maximum=2 * CHUNK_BYTES)
-        if result.get("text_memory_id") is not None:
-            match = memory.execute("SELECT text FROM memories WHERE memory_id=?", (result["text_memory_id"],)).fetchone()
-            _require(match is not None and match[0] == content["text"], "endpoint_backup_memory_reference_missing")
+        if content["kind"] == "message":
+            _require(result.get("share") is None, "endpoint_backup_invalid_inbox")
+        else:
+            # validated_saved refers to both the inbox and the admitted
+            # canonical closure. An empty/missing/replaced Vault must not turn
+            # a transport snapshot into a false durable-memory success.
+            selected = unb64url(content["share"], maximum=2 * CHUNK_BYTES)
+            for line in selected.splitlines():
+                frame = strict_json_loads(line)
+                _require(isinstance(frame, dict), "endpoint_backup_invalid_inbox")
+                if frame.get("type") == "record":
+                    record = frame.get("record")
+                    _require(isinstance(record, dict) and isinstance(record.get("memory_id"), str),
+                             "endpoint_backup_invalid_inbox")
+                    saved = memory.execute("SELECT record_json FROM memories WHERE memory_id=?", (record["memory_id"],)).fetchone()
+                    _require(saved is not None and canonical_bytes(strict_json_loads(saved[0])) == canonical_bytes(record),
+                             "endpoint_backup_memory_reference_missing")
     for row in connection.execute("SELECT * FROM acknowledgements"):
         _check(deadline)
         outbound = connection.execute("SELECT envelope,roster FROM outbox WHERE message_id=?", (row["message_id"],)).fetchone()
@@ -381,7 +390,7 @@ def _validate_transport(connection: sqlite3.Connection, client: NetworkClient, m
         envelope = strict_json_loads(row["envelope"])
         _require(isinstance(envelope, dict) and envelope.get("message_id") == row["message_id"] and envelope.get("sender_key_id") == row["sender"]
                  and document_sha256(envelope) == row["digest"] and row["code"] in
-                 {"network_invalid_content_json", "network_invalid_content", "network_invalid_content_share_encoding"}, "endpoint_backup_invalid_quarantine")
+                 {"network_invalid_content_json", "network_unsupported_content_schema", "network_invalid_content", "network_invalid_content_share_encoding", "network_invalid_content_share"}, "endpoint_backup_invalid_quarantine")
     for key, value in connection.execute("SELECT key,value FROM state"):
         _check(deadline)
         decoded = strict_json_loads(value)
@@ -498,16 +507,30 @@ def backup_endpoint(*, network_config: Path, output: Path, secret_file: Path,
         before = {path: _read(path, bound) for path, bound in sources.items()}
         with tempfile.TemporaryDirectory(prefix="endpoint-snapshot-", dir=destination.parent) as temporary:
             stage = Path(temporary)
+            # A chat-only endpoint may never have opened a Vault. Snapshot an
+            # empty existing-format Vault in staging; do not create one at the
+            # source or manufacture a record merely to back up transport.
+            memory_absent = not os.path.lexists(memory_db)
+            snapshot_memory_db = stage / "empty-memory.sqlite3" if memory_absent else memory_db
+            if memory_absent:
+                with closing(Vault(snapshot_memory_db)._connect()) as empty_memory:
+                    empty_memory.commit()
             # Both reservations coexist before either snapshot is taken. A
             # concurrent writer can fail/retry; source transactions are never
             # forcefully stopped. Config files are checked separately below.
             with ExitStack() as locks:
                 transport = locks.enter_context(_writer_lock(source_db, deadline))
-                memory = locks.enter_context(_writer_lock(memory_db, deadline))
+                memory = locks.enter_context(_writer_lock(snapshot_memory_db, deadline))
                 _schema(transport)
                 _transport_bounds(transport, deadline)
+                if memory_absent:
+                    for row in transport.execute("SELECT body FROM outbox UNION ALL SELECT body FROM inbox"):
+                        _check(deadline)
+                        _require(validate_content(bytes(row["body"]))["kind"] == "message",
+                                 "endpoint_backup_memory_reference_missing")
                 _validate_transport(transport, client, memory, deadline)
-                vault_result = vault_backup.backup_database(memory_db, stage / "memory", timeout=_timeout(deadline))
+                vault_result = vault_backup.backup_database(snapshot_memory_db, stage / "memory", timeout=_timeout(deadline))
+                _require(not memory_absent or not os.path.lexists(memory_db), "endpoint_backup_source_changed")
                 counts = _export_transport(client, transport, stage / "transport.ndjson", deadline)
                 keys = backup_keys(network_config=config_path, output=stage / "keys-package.json", secret_file=stage / "keys-secret.json")
                 _require(all(_read(path, bound) == before[path] for path, bound in sources.items()), "endpoint_backup_source_changed")

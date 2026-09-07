@@ -1,8 +1,8 @@
 """Bounded synthetic reference peer for the hosted trial network.
 
 The peer never executes message content.  It only answers the exact generated
-trial nonce grammar after the received evidence has been saved and recalled by
-its own endpoint.
+trial nonce grammar after inspecting the exact explicitly shared record. This
+does not admit a network member as a trusted source of evidence.
 """
 from __future__ import annotations
 
@@ -14,9 +14,11 @@ import re
 import time
 from typing import Any, Mapping
 
+from memory_vault import MemoryError
 from memory_vault_agent import Agent
 from memory_vault_network import NetworkClient
-from memory_vault_trial import SYNTHETIC_PREFIX, SYNTHETIC_REPLY_PREFIX, _recall_text
+from memory_vault_trial import (SYNTHETIC_PREFIX, SYNTHETIC_REPLY_PREFIX,
+                               _recall_text, _selected_trial_memory)
 
 
 _MESSAGE = re.compile(re.escape(SYNTHETIC_PREFIX) + r"([0-9a-f]{64})")
@@ -41,18 +43,30 @@ class SyntheticReferencePeer:
         replied = rejected = 0
         for message in messages:
             match = _MESSAGE.fullmatch(message.get("text", "")) if isinstance(message, Mapping) else None
-            memory_id = message.get("text_memory_id") if isinstance(message, Mapping) else None
-            if (not isinstance(message, Mapping) or message.get("state") != "validated_saved" or match is None
-                    or not isinstance(memory_id, str)
-                    or _recall_text(self.agent, memory_id) != message["text"]):
+            if not isinstance(message, Mapping) or match is None:
+                rejected += 1
+                continue
+            try:
+                memory_id = _selected_trial_memory(self.agent, message)
+                if _recall_text(self.agent, memory_id) != message["text"]:
+                    raise MemoryError("trial_local_recall_mismatch")
+            except MemoryError:
                 rejected += 1
                 continue
             nonce = match.group(1)
             source = message["message_id"]
+            request_suffix = hashlib.sha256(source.encode("ascii")).hexdigest()[:32]
+            reply_text = SYNTHETIC_REPLY_PREFIX + nonce + " source=" + source
+            remembered = self.agent.handle({"op": "remember",
+                "request_id": "req_trial_reply_memory_" + request_suffix,
+                "kind": "fact", "text": reply_text})
+            if remembered.get("ok") is not True or not isinstance(remembered["result"].get("memory_id"), str):
+                rejected += 1
+                continue
             response = self.agent.handle({"op": "send",
-                "request_id": "req_trial_reply_" + hashlib.sha256(source.encode("ascii")).hexdigest()[:32],
+                "request_id": "req_trial_reply_" + request_suffix,
                 "recipients": [message["sender_key_id"]],
-                "text": SYNTHETIC_REPLY_PREFIX + nonce + " source=" + source})
+                "text": reply_text, "memory_ids": [remembered["result"]["memory_id"]]})
             if response.get("ok") is True and response["result"].get("state") in {"stored", "queued_local"}:
                 replied += 1
             else:

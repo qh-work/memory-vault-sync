@@ -26,7 +26,7 @@ from memory_vault_trust import Identity, TrustStore
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULES = ("crypto.ts", "control.ts", "nodes.ts", "records.ts", "vault.ts",
+MODULES = ("crypto.ts", "content.ts", "control.ts", "nodes.ts", "records.ts", "vault.ts",
            "io.ts", "transport.ts", "peer.ts", "setup.ts", "agent.ts",
            "retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "package.json")
 DRIVER = r"""
