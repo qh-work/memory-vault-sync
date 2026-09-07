@@ -270,7 +270,10 @@ def _writer_lock(path: Path, deadline: float):
 
 def _export_transport(client: NetworkClient, connection: sqlite3.Connection, output: Path, deadline: float) -> dict[str, int]:
     _schema(connection)
-    counts = {table: connection.execute("SELECT COUNT(*) FROM " + table).fetchone()[0] for table in SQL}
+    # Discovery sessions are temporary local authority to continue a query,
+    # not historical evidence. Preserve their messages, never their liveness.
+    filters = {table: " WHERE key NOT GLOB 'hint-session:*'" if table == "state" else "" for table in SQL}
+    counts = {table: connection.execute("SELECT COUNT(*) FROM " + table + filters[table]).fetchone()[0] for table in SQL}
     _require(all(0 <= count <= ROW_LIMITS[table] for table, count in counts.items()), "endpoint_backup_row_limit")
     total = 0
     with _new_file(output) as stream:
@@ -279,7 +282,7 @@ def _export_transport(client: NetworkClient, connection: sqlite3.Connection, out
         stream.write(line)
         total += len(line)
         for table, columns in COLUMNS.items():
-            for row in connection.execute("SELECT rowid," + ",".join(columns) + " FROM " + table + " ORDER BY rowid"):
+            for row in connection.execute("SELECT rowid," + ",".join(columns) + " FROM " + table + filters[table] + " ORDER BY rowid"):
                 _check(deadline)
                 values = []
                 for column, value in zip(columns, row[1:]):
@@ -403,6 +406,15 @@ def _validate_transport(connection: sqlite3.Connection, client: NetworkClient, m
         elif key == "pump_node_cursor":
             # Scheduling position only; it cannot confer node authority.
             _require(type(decoded) is int and 0 <= decoded < 2)
+        elif key == "hint_recovery_boundary":
+            object_fields(decoded, {"inbox_rowid", "outbox_rowid"})
+            for table in ("inbox", "outbox"):
+                maximum = connection.execute("SELECT COALESCE(MAX(rowid),0) FROM " + table).fetchone()[0]
+                _require(type(decoded[table + "_rowid"]) is int and 0 <= decoded[table + "_rowid"] <= maximum,
+                         "endpoint_backup_invalid_hint_boundary")
+        elif key.startswith("hint-session:"):
+            from memory_vault_network_hints import validate_session
+            validate_session(client, key, decoded, allow_expired=True)
         elif key == "node_directory":
             verify_directory(decoded, client.issuers, network_id=client.network_id, allow_expired=True)
         elif key == "node_status_issued_at":
@@ -470,6 +482,8 @@ def _restore_transport(source: Path, client: NetworkClient, deadline: float) -> 
                 _require(strict_json_loads(values[1]) == header["binding"], "endpoint_backup_binding_mismatch")
                 values[1] = canonical_bytes(client._binding).decode()
                 binding_seen = True
+            if table == "state":
+                _require(not values[0].startswith("hint-session:"), "endpoint_backup_discovery_session_forbidden")
             connection.execute("INSERT INTO " + table + "(rowid," + ",".join(COLUMNS[table]) + ") VALUES(" + ",".join("?" for _ in range(len(values) + 1)) + ")",
                                [row["rowid"], *values])
         _require(counts == header["counts"] and binding_seen, "endpoint_backup_transport_count_mismatch")
@@ -480,6 +494,10 @@ def _restore_transport(source: Path, client: NetworkClient, deadline: float) -> 
         _require((strict_json_loads(current[0]) if current else None) == marker["last_verified_roster"], "endpoint_backup_checkpoint_mismatch")
         nodes = connection.execute("SELECT value FROM state WHERE key='node_directory'").fetchone()
         _require((strict_json_loads(nodes[0]) if nodes else None) == marker.get("last_verified_node_directory"), "endpoint_backup_checkpoint_mismatch")
+        boundary = {table + "_rowid": connection.execute("SELECT COALESCE(MAX(rowid),0) FROM " + table).fetchone()[0]
+                    for table in ("inbox", "outbox")}
+        connection.execute("INSERT OR REPLACE INTO state(key,value) VALUES('hint_recovery_boundary',?)",
+                           (canonical_bytes(boundary).decode(),))
     return counts
 
 
@@ -541,7 +559,7 @@ def backup_endpoint(*, network_config: Path, output: Path, secret_file: Path,
                 "network_id": client.network_id, "member_key_id": client.identity.key_id, "transport_rows": counts,
                 "memory_records": vault_result["records"], **sealed, "keep_secret_separately": True,
                 "offline_outbox_included": True, "frozen_envelopes_preserved": True,
-                "hint_policy_included": False,
+                "hint_policy_included": False, "hint_sessions_included": False,
                 "issuer_key_shared_with_endpoint": keys["issuer_key_shared_with_endpoint"],
                 "consistency": "sqlite_write_locks_and_config_recheck", "all_host_files_globally_quiesced": False,
                 "network_accessed": False}
@@ -622,6 +640,7 @@ def restore_endpoint(*, package: Path, secret_file: Path, directory: Path,
                     "runtime_memory_trust": "operator_selected_snapshot" if selected_trust is not None else "restored_identity_only",
                     "offline_outbox_restored": True, "frozen_envelopes_preserved": True,
                     "hint_policy_restored": False, "hint_sharing_requires_local_policy": True,
+                    "hint_sessions_restored": False, "hint_discovery_requires_new_query": True,
                     "cached_results_are_historical": True, "network_accessed": False}
 
 

@@ -36,8 +36,9 @@ export interface RememberArguments {
 export type RecallArguments = { query: string; handoff?: boolean; ranking_profile?: string; include_experience?: boolean } |
   { memory_id: string; include_experience?: boolean } | { cursor: string };
 export interface DiscoverArguments { online?: boolean }
-export type HintSendControl = {schema_version:'memory-vault-hint/v1';kind:'query';query:string} |
-  {schema_version:'memory-vault-hint/v1';kind:'select';offer_message_id:string;memory_id:string};
+export type HintSendControl = {schema_version:'memory-vault-hint/v2';kind:'query';query:string;expires_at:number} |
+  {schema_version:'memory-vault-hint/v2';kind:'page';query_message_id:string;cursor:string} |
+  {schema_version:'memory-vault-hint/v2';kind:'select';offer_message_id:string;memory_id:string};
 export type SendArguments = {
   request_id: RequestId;
   recipients: string[];

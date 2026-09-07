@@ -16,13 +16,20 @@ from tests.test_network_message_semantics import agent, records, proofs, vault_s
 
 
 CONTENT_SCHEMA = "memory-vault-network-content/v2"
-HINT_SCHEMA = "memory-vault-hint/v1"
+HINT_SCHEMA = "memory-vault-hint/v2"
 POLICY_SCHEMA = "memory-vault-hint-policy/v1"
 MEMORY_ID = "mem_" + "a" * 40
 MESSAGE_ID = "msg_" + "a" * 64
 
 
 def control(kind, **values):
+    if kind == "query":
+        values.setdefault("expires_at", int(time.time()) + 300)
+    elif kind == "hints":
+        values.setdefault("query_message_id", values.get("request_message_id"))
+        values.setdefault("page_index", 0)
+        values.setdefault("policy_revision", 1)
+        values.setdefault("next_cursor", None)
     return {"schema_version": HINT_SCHEMA, "kind": kind, **values}
 
 
@@ -72,7 +79,8 @@ def parser_vectors():
     controls = [control("query", query="中" * 85 + "x"),
         control("hints", request_message_id=MESSAGE_ID, expires_at=expires, hints=[hint]),
         control("select", offer_message_id=MESSAGE_ID, memory_id=MEMORY_ID),
-        control("refusal", request_message_id=MESSAGE_ID, reason="not_available")]
+        control("refusal", request_message_id=MESSAGE_ID, reason="not_available"),
+        control("page", query_message_id=MESSAGE_ID, cursor="hintcur_" + "a" * 64)]
     good = [{"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": item} for item in controls]
     good.append({"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control":
         control("hints", request_message_id=MESSAGE_ID, expires_at=expires, hints=[
@@ -93,6 +101,15 @@ def parser_vectors():
         {**controls[2], "offer_message_id": "not-a-message"},
         {**controls[3], "reason": "secret dependency " + MEMORY_ID},
         {**controls[3], "missing_ids": [MEMORY_ID]},
+        {**controls[0], "expires_at": 0},
+        {key: value for key, value in controls[0].items() if key != "expires_at"},
+        {**controls[1], "page_index": 4}, {**controls[1], "policy_revision": 0},
+        {**controls[1], "page_index": 1, "hints": []},
+        {**controls[1], "next_cursor": "hintcur_" + "a" * 64},
+        {**controls[1], "total_count": 99},
+        {**controls[4], "cursor": "hintcur_" + "a" * 63},
+        {**controls[4], "query_message_id": "not-a-query"},
+        {**controls[4], "offset": 4},
         control("set_policy", peers=[]), {**controls[0], "schema_version": "memory-vault-hint/v99"}]
     bad = [{"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": item} for item in bad_controls]
     bad += [{**good[0], "text": "mixed body"}, {**good[-1], "note": "mixed transfer"},
@@ -242,6 +259,10 @@ class NetworkHintTests(unittest.TestCase):
             remember(self, requester, transport, "budget", "Synthetic existing requester Experience.")
             before = vault_snapshot(requester)
             body = parser_vectors()[0][-2]
+            request = requester.send("req_hint_budget_query", [owner.identity.key_id],
+                control=control("query", query="Synthetic budget"))
+            body["control"].update(request_message_id=request["message_id"], query_message_id=request["message_id"],
+                                   expires_at=int(time.time()) + 120)
             identifier = "msg_" + "4" * 64
             inject_ciphertext(owner, requester, canonical_bytes(body), identifier)
             self.assertFalse(requester.receive()["errors"])
@@ -266,8 +287,10 @@ class NetworkHintTests(unittest.TestCase):
             frozen = outbox_row(owner, offer["message_id"])
             later = remember(self, owner, transport, "later", "Synthetic needle later authorized record")
             owner.set_hint_policy(policy(owner, requester, [*ids, later], [], revision=2))
+            start = len(transport.calls)
             replay = owner.respond_to(request["message_id"])
             self.assertEqual(replay["message_id"], offer["message_id"])
+            self.assertFalse(any(call[2] == "/v1/messages" for call in transport.calls[start:]))
             for field in ("body", "envelope"):
                 self.assertEqual(outbox_row(owner, replay["message_id"])[field], frozen[field])
             _, _, empty = query_offer(self, owner, requester, transport, query="synthetic needle", suffix="case_sensitive")

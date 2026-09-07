@@ -103,7 +103,11 @@ class NetworkRecoveryTests(unittest.TestCase):
                 for table in recovery.SQL:
                     if table != "state":
                         self.assertEqual(after_rows[table], before_rows[table], table)
-                self.assertEqual([r for r in after_rows["state"] if r[1] != "configuration_binding"],
+                boundary, = [r for r in after_rows["state"] if r[1] == "hint_recovery_boundary"]
+                self.assertEqual(strict_json_loads(boundary[2]), {
+                    table + "_rowid": max((row[0] for row in before_rows[table]), default=0)
+                    for table in ("inbox", "outbox")})
+                self.assertEqual([r for r in after_rows["state"] if r[1] not in {"configuration_binding", "hint_recovery_boundary"}],
                                  [r for r in before_rows["state"] if r[1] != "configuration_binding"])
                 transport.offline.clear()
                 pumped = recovered.pump(maximum_messages=4, receive_limit=0)

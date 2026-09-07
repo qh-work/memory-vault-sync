@@ -645,6 +645,8 @@ class NetworkClient:
                     raise MemoryError("network_outbox_capacity")
                 connection.execute("INSERT INTO outbox(request_id,message_id,input_sha,body,recipients) VALUES(?,?,?,?,?)",
                                    (request_id, message_id, input_sha, body, canonical_bytes(recipients)))
+                from memory_vault_network_hints import register_requester
+                register_requester(self, connection, message_id, recipients, validate_content(body))
                 prior = self._outbox_rows(connection, request_id, full=True)[0]
             if prior["input_sha"] != input_sha:
                 raise MemoryError("network_request_id_conflict")
@@ -668,7 +670,7 @@ class NetworkClient:
             if text or memory_ids is not None or len(recipients) != 1:
                 raise MemoryError("network_invalid_send")
             control = validate_control(control)
-            if control["kind"] not in {"query", "select"}:
+            if control["kind"] not in {"query", "page", "select"}:
                 raise MemoryError("network_invalid_send")
             from memory_vault_network_hints import guard
             body = validate_content({"schema_version": CONTENT_SCHEMA, "kind": "hint_control", "control": control})
@@ -740,7 +742,7 @@ class NetworkClient:
                         for key in [self.identity.key_id, *recipients]):
                     raise MemoryError("network_send_scope_denied")
                 from memory_vault_network_hints import guard
-                guard(self, content, recipients)
+                guard(self, content, recipients, own_message_id=message_id)
                 if envelope is None:
                     candidate = seal(bytes(prior["body"]), signer=self.identity, network_id=self.network_id,
                                      message_id=message_id, recipients=[{"signing_key_id": k, "encryption_key": members[k]["encryption_key"]} for k in recipients],
@@ -753,7 +755,7 @@ class NetworkClient:
                 historical = self._members(frozen_roster)
                 if any(k not in historical or historical[k] != members[k] for k in [self.identity.key_id, *recipients]):
                     raise MemoryError("network_frozen_recipient_changed")
-                guard(self, content, recipients)
+                guard(self, content, recipients, own_message_id=message_id)
                 response = self._transport_request(relay, "POST", "/v1/messages", {"envelope": envelope, "roster": frozen_roster}, deadline=node_deadline)
                 if (response.get("state") != "stored" or response.get("message_id") != message_id
                         or response.get("envelope_sha256") != document_sha256(envelope)):
@@ -1005,6 +1007,9 @@ class NetworkClient:
             if content["kind"] == "hint_transfer":
                 from memory_vault_network_hints import validate_incoming_transfer
                 validate_incoming_transfer(self, content, payload["sender_key_id"])
+            elif content["kind"] == "hint_control" and content["control"]["kind"] == "hints":
+                from memory_vault_network_hints import validate_incoming_hints
+                validate_incoming_hints(self, content["control"], payload["sender_key_id"])
         except MemoryError as exc:
             if exc.retryable:
                 raise

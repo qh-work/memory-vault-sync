@@ -233,8 +233,8 @@ export class CanonicalVault {
   }
   /** Indexed reads of explicitly allowed IDs only; no global recall/filter pass.
    * The projection intentionally carries no relation or evidence identifiers. */
-  hintMatches(ids: readonly string[], query: string): {memory_id: string; excerpt: string; epistemic_type: string}[] {
-    if (!Array.isArray(ids) || ids.length > 128 || new Set(ids).size !== ids.length || typeof query !== 'string' || !query.length || Buffer.byteLength(query) > 256) fail('network_invalid_content');
+  hintMatches(ids: readonly string[], query: string, maximum=4): {memory_id: string; excerpt: string; epistemic_type: string}[] {
+    if (!Array.isArray(ids) || ids.length > 128 || new Set(ids).size !== ids.length || typeof query !== 'string' || !query.length || Buffer.byteLength(query) > 256||!Number.isSafeInteger(maximum)||maximum<1||maximum>16) fail('network_invalid_content');
     ids.forEach(memoryId);
     return this.#run(false, () => {
       const trusted = this.#trusted(), hints: {memory_id: string; excerpt: string; epistemic_type: string}[] = [];
@@ -243,7 +243,7 @@ export class CanonicalVault {
         let excerpt = '', bytes = 0;
         for (const character of value.record.text) { const size = Buffer.byteLength(character); if (bytes + size > 128) break; excerpt += character; bytes += size; }
         hints.push({memory_id: id,excerpt,epistemic_type: decodeExperience(value.record).epistemic_type});
-        if (hints.length === 4) break;
+        if (hints.length === maximum) break;
       }
       return hints;
     });
