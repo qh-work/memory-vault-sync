@@ -44,6 +44,10 @@ self-announcements to previously verified peers, then one bounded routing
 lookup, under a shared 16-RPC, 1 MiB response, five-second budget. A full
 32-entry introduction queue returns signed retryable backpressure without
 discarding earlier pending nodes; later self-announcements allow retry.
+A verified, correctly bound hello error still proves that seed's endpoint and
+can populate the caller's bounded routing table. The error remains an admission
+failure; it does not put the rejected advertisement in the receiver's queue.
+This lets a node start discovery even when its first announcement is refused.
 The HTTP node runs that work independently from agent sessions. Incoming
 connections, request rates, headers, bodies and total connection time are
 bounded. This is resource containment, not an Internet DDoS certification.
@@ -126,6 +130,8 @@ maintenance, not an omniscient nearest-node oracle. Raw failures belong in the
 denominator. The 17/29/43 runs must report their actual outcomes before any
 99%/97% reachability gate is called passed. An earlier stronger maintenance
 schedule was cancelled and is not acceptance evidence.
+The open-network CI jobs check out the exact PR head SHA and record the checked
+out commit plus source hashes before running tests.
 
 Still outstanding: complete native TypeScript open runtime; automatic signed
 descriptor renewal/address changes beyond the current descriptor lifetime;

@@ -80,6 +80,22 @@ class OpenJoinProgressTests(unittest.IsolatedAsyncioTestCase):
         self.network = NativeJoinNetwork(Path(self.temporary.name).resolve())
         self.addCleanup(self.network.close)
 
+    async def test_signed_queue_rejection_preserves_proven_seed_without_claiming_admission(self):
+        net = self.network
+        await net.fill_first_two_queues()
+        late, receiver = net.participants[34], net.participants[0]
+        before = list(receiver._pending)
+        self.assertEqual(late.table.stats()["general_active"], 0)
+        with self.assertRaises(MemoryError) as rejected:
+            await net.hello(34, 0)
+        self.assertEqual(rejected.exception.code, "open_pending_capacity")
+        self.assertTrue(rejected.exception.retryable)
+        self.assertEqual(list(receiver._pending), before)
+        self.assertEqual(late.table.closest(coordinate(net.identities[0].key_id)), [net.nodes[0]])
+        # Proving the receiver's endpoint does not admit our advertisement.
+        self.assertNotIn(net.identities[34].key_id, receiver._pending)
+        self.assertNotIn(net.nodes[34], receiver.table.reply_candidates(coordinate(net.identities[34].key_id)))
+
     async def test_full_pending_returns_signed_retryable_backpressure_without_discarding_existing(self):
         net = self.network
         await net.fill_first_two_queues()

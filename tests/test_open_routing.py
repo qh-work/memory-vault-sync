@@ -97,10 +97,12 @@ class SyntheticRouting:
         reply = await self.transport(caller)(peer, request, budget.deadline)
         budget.charge_bytes(reply.wire_bytes)
         payload = verify_response(reply.response, request=request, node=peer, now=self.now)
+        # Match OpenParticipant._call: an authenticated hello error proves
+        # endpoint reachability while retaining the failed admission outcome.
+        self.tables[caller].learn_verified(peer, reply.observed_address)
         if "error" in payload["body"]:
             error = payload["body"]["error"]
             raise MemoryError(error["code"], retryable=error["retryable"])
-        self.tables[caller].learn_verified(peer, reply.observed_address)
 
     async def search(self, caller, target, *, lanes=None, view="general", budget=None):
         return await lookup(self.tables[caller], target, view=view, initial_lanes=lanes,
@@ -154,6 +156,20 @@ class OpenRoutingTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(MemoryError) as caught:
             action()
         self.assertEqual(caught.exception.code, code)
+
+    async def test_rejected_join_can_start_table_only_lookup_through_verified_seed(self):
+        net = SyntheticRouting(35)
+        for sender in range(2, 34):
+            await net.hello(sender, net.nodes[0], LookupBudget())
+        before = list(net.pending[0])
+        with self.assertRaises(MemoryError) as rejected:
+            await net.hello(34, net.nodes[0], LookupBudget())
+        self.assertEqual(rejected.exception.code, "open_pending_capacity")
+        self.assertEqual(net.pending[0], before)
+        self.assertEqual(net.tables[34].stats()["general_active"], 1)
+        result = await net.search(34, coordinate(net.identities[0].key_id))
+        self.assertEqual(result["candidates"], [net.nodes[0]])
+        self.assertEqual(result["metrics"]["requests"], 1)
 
     def test_coordinate_source_groups_and_exact_distance(self):
         key = "ed25519_" + "1" * 64

@@ -51,6 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Record exact source and incomplete status before setup
         run: python3 scripts/run_open_network_ci.py --mode light --phase initialize --report-directory reports/open-light
@@ -111,6 +112,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Record immutable settings; old stronger-maintenance runs are not inputs
         run: python3 scripts/run_open_network_ci.py --mode scale --phase initialize --seed ${{ matrix.seed }} --report-directory reports/open-scale

@@ -153,11 +153,15 @@ class OpenParticipant:
         reply = await self._rpc(node, request, budget.deadline)
         budget.charge_bytes(reply.wire_bytes)
         payload = verify_response(reply.response, request=request, node=node)
+        # A signed hello rejection still proves the challenged seed's endpoint.
+        # Preserve that route so queue backpressure cannot strand a new node;
+        # the operation error below still reports that admission did not occur.
+        actual = payload["body"].get("node", node) if action == "hello" else node
+        if action == "hello" or "error" not in payload["body"]:
+            self.table.learn_verified(actual, reply.observed_address)
         if "error" in payload["body"]:
             error = payload["body"]["error"]
             raise MemoryError(error["code"], retryable=error["retryable"])
-        actual = payload["body"].get("node", node) if action == "hello" else node
-        self.table.learn_verified(actual, reply.observed_address)
         if endpoint_result is not None:
             endpoint_result["socket"] = (reply.observed_address, endpoint(node["payload"]["base_url"],
                                           allow_loopback=self.transport.allow_loopback)[2])
