@@ -1,14 +1,19 @@
-# Memory Vault v0.28.0-alpha.0.1 — authorized full client
+# Memory Vault v0.28.0-alpha.0.2 — authorized full client
 
-The 0.28.0-alpha.0.1 preview adds signed open contact discovery and bounded
-multi-hop routing without a common authority or global roster. Python supports
-open connect/discover; native TypeScript adds independent HTTP nodes and the
-same Agent contact path. Open messaging remains unsupported.
-See [setup, exact-source evidence and limits](plugins/memory-vault-client/docs/OPEN_ROUTING_RUNTIME.md).
-The full 0.28.0-alpha.1 consent, delivery and repair milestone remains ahead.
-The existing private network profile retains encrypted relay-pool exchange.
+The 0.28.0-alpha.0.2 candidate adds explicit first-contact requests, approval
+and rejection in Python and native TypeScript. B signs opt-in backed by a finite
+knock lease before going offline. A proves both keys, submits a fixed request,
+and later pulls a result bound to the original request, parties, resource,
+operation and expiry. Approval requires a real finite delivery reservation.
+Open encrypted messaging, receipts and sender-offline repair remain unsupported;
+a grant does not create Vault access, author trust or execution authority.
+See [first-contact controls](plugins/memory-vault-client/docs/OPEN_FIRST_CONTACT_V1.md) and [routing setup and historical evidence](plugins/memory-vault-client/docs/OPEN_ROUTING_RUNTIME.md).
+At candidate preparation, 6 Pro review, cloud CI and publication were pending.
+Their final status requires the release evidence for the exact source commit.
+The full 0.28.0-alpha.1 delivery/receipt/repair milestone remains ahead. The existing
+private network profile retains its separate encrypted relay-pool exchange.
 
-This full-client package targets **v0.28.0-alpha.0.1 native-network source**,
+This full-client package targets **v0.28.0-alpha.0.2 first-contact source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under
@@ -40,7 +45,7 @@ sources, environment and counterevidence. See
 [Hint v4](plugins/memory-vault-client/docs/NETWORK_HINTS_V4.md) and
 [local batch reads](plugins/memory-vault-client/docs/RECEIVED_BATCH_RECALL.md).
 
-This is a bounded routing preview with a separate retained private messaging profile.
+This is a bounded first-contact candidate with a separate retained private messaging profile.
 It is not a complete global communication network or unlimited-capacity claim.
 Current controls use Hint v4 and content/v2; old preview forms are not replayed
 or silently migrated. Extraction does not replace an installed plugin or
@@ -131,7 +136,7 @@ copy budget remain unchanged. This is earlier capacity evidence, not validation
 of the current network alpha. See the historical
 [capacity patch notes](plugins/memory-vault-client/docs/RELEASE_NOTES_V0_25_1.md).
 
-Current [alpha evidence](plugins/memory-vault-client/docs/RELEASE_NOTES_V0_26_ALPHA.md)
+Historical private-profile [alpha evidence](plugins/memory-vault-client/docs/RELEASE_NOTES_V0_26_ALPHA.md)
 separates temporary synthetic checks, independent crypto frames and loopback
 process recovery from real-model, real-cloud and deployment acceptance. The
 alpha's bounded queues and 256-member roster do not satisfy the planned

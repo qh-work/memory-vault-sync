@@ -19,7 +19,7 @@ discover, send and receive. You do not need to implement the protocol or install
 a plugin to use it. Independent implementers can use the same record, relation,
 provenance and exchange contract in their preferred language and storage.
 
-## 0.28.0-alpha.0.1: native cross-language open contact discovery
+## 0.28.0-alpha.0.2 candidate: explicit first contact
 
 An explicitly configured Python or native TypeScript open client can join from at most two signed
 introductions and discover an owner's signed contact through bounded multi-hop
@@ -28,11 +28,23 @@ pool. Independent endpoint challenges, finite contact leases and durable
 revision/revocation/conflict floors preserve the trust boundary. Late joins and
 periodic own-region refresh keep new contacts discoverable within fixed budgets.
 
-This is a **routing and contact-discovery preview**. Open `send` and `receive`
-remain unsupported. Native TypeScript now includes the HTTP transport, node,
-participant and Agent contact path over the existing state format. The full
-`0.28.0-alpha.1` delivery/consent/repair milestone remains ahead. See
-[setup, measured evidence and remaining gates](docs/OPEN_ROUTING_RUNTIME.md).
+The new candidate adds **first-contact requests and explicit approval or rejection**
+in Python and native TypeScript. B acquires a finite knock lease and signs opt-in
+before going offline. A created afterward can discover B, prove possession of
+its signing and encryption keys, and submit a fixed structured request. B must
+explicitly decide; approval reserves a real finite delivery resource. A pulls
+and verifies the result against the original request, both parties, concrete
+resource, operation and deadlines. See [the first-contact contract](docs/OPEN_FIRST_CONTACT_V1.md).
+
+Open `send`, `receive` and message reads remain unsupported. A finite grant
+does not create Vault access, author trust or execution authority. Both runtimes
+reuse the existing protected transport database and single Vault. Encrypted
+delivery, receipts and sender-offline repair remain part of the unfinished
+`0.28.0-alpha.1` milestone. At candidate preparation, 6 Pro review, cloud CI
+and publication were pending. Their final status requires the release evidence
+for the exact source commit; historical results do not certify this candidate.
+
+See [routing setup and historical evidence](docs/OPEN_ROUTING_RUNTIME.md).
 The source-pinned three-seed 100-node routing experiment passed both original
 thresholds, with 1,000/1,000 successful lookups in each phase of each seed.
 It uses logical signed transport, not 100 HTTP nodes, physical fault domains
@@ -88,13 +100,15 @@ The pre-existing MCP memory interface remains for existing users.
 
 ## Download the current preview
 
-This source targets **[v0.28.0-alpha.0.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.1)**.
-Once published, use the matching release assets and its `SHA256SUMS`:
+This source targets **[v0.28.0-alpha.0.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)**;
+publication was unverified at candidate preparation. The links below name the
+intended assets; use source-pinned release evidence for their final status.
+Once published and checked, use the matching release assets and its `SHA256SUMS`:
 
-- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.1/memory-vault-protocol-v0.28.0-alpha.0.1.zip):** specification, schemas and synthetic examples; no executable.
-- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.1/memory-vault-client-v0.28.0-alpha.0.1.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
-- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.1/memory-vault-review-v0.28.0-alpha.0.1.zip):** public source and synthetic tests; nothing runs automatically.
-- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.1/memory-vault-network-test-v0.28.0-alpha.0.1.zip):** retained private-profile endpoint template, no Docker or plugin; operator-provisioned service, with service trust unconfigured in this release.
+- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.2/memory-vault-protocol-v0.28.0-alpha.0.2.zip):** specification, schemas and synthetic examples; no executable.
+- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.2/memory-vault-client-v0.28.0-alpha.0.2.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
+- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.2/memory-vault-review-v0.28.0-alpha.0.2.zip):** public source and synthetic tests; nothing runs automatically.
+- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.2/memory-vault-network-test-v0.28.0-alpha.0.2.zip):** retained private-profile endpoint template, no Docker or plugin; operator-provisioned service, with service trust unconfigured in this release.
 - **Core source:** [`memory_vault.py`](memory_vault.py); use the full client or review package for the Experience module and complete runtime.
 
 Alpha.3 makes current records deterministically rank before superseded/resolved

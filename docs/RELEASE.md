@@ -6,29 +6,34 @@ The protocol is independent of language, storage, model, session, device and
 task. The authorized full client automates the same canonical record contract;
 an independent implementation is not required to install it or import Python.
 
-The current prerelease build target is **0.28.0-alpha.0.1**, an open routing and
-contact-discovery preview extending the retained 0.27.0-alpha.1 private profile.
-It adds signed, bounded multi-hop discovery without a common authority or
-roster, leased contact shards and persistent control floors. Python open
-connect/discover and native TypeScript HTTP/Agent contact endpoints are included.
-Open messaging, first-contact consent and ciphertext repair remain outside
-this preview. See [measured scope](OPEN_ROUTING_RUNTIME.md).
+The current prerelease build target is **0.28.0-alpha.0.2**, a first-contact
+candidate extending the native open routing/HTTP preview. Python and native
+TypeScript add owner-enabled finite knock leases, strictly structured requests
+with real dual-key possession, explicit approval/rejection, and result pulls
+bound to the original request, parties, concrete resource, operation and expiry.
+An approval requires an actual finite resource reservation; it does not grant
+Vault access or execution authority. See [the candidate contract](OPEN_FIRST_CONTACT_V1.md).
+Open encrypted messaging, receipts and sender-offline ciphertext repair remain
+outside this preview. The retained private profile is separate.
 The 0.28.0-alpha.1 full vertical milestone remains pending.
 Publication must be independently verified at the
-[target release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.1);
-this source document is not proof of upload, installation or certification.
+[target release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2);
+at candidate preparation, 6 Pro review, cloud CI, final archive checks and
+publication were pending. Use the release evidence for the exact source commit
+for their final status. This source document is not proof of upload,
+installation or certification.
 The older v0.25 reports below are historical evidence, not current download
 instructions or acceptance of this prerelease.
 
 The release builder produces:
 
-- `memory-vault-protocol-v0.28.0-alpha.0.1.zip`: specification, schemas, synthetic
+- `memory-vault-protocol-v0.28.0-alpha.0.2.zip`: specification, schemas, synthetic
   interchange examples and implementer guides, **no executable files**.
-- `memory-vault-client-v0.28.0-alpha.0.1.zip`: complete source-built runtime, plugin,
+- `memory-vault-client-v0.28.0-alpha.0.2.zip`: complete source-built runtime, plugin,
   local marketplace catalog and explicit setup instructions.
-- `memory-vault-review-v0.28.0-alpha.0.1.zip`: public synthetic tests and source/build
+- `memory-vault-review-v0.28.0-alpha.0.2.zip`: public synthetic tests and source/build
   material for reviewers to run only with their user's authorization.
-- `memory-vault-network-test-v0.28.0-alpha.0.1.zip`: synthetic endpoint template;
+- `memory-vault-network-test-v0.28.0-alpha.0.2.zip`: synthetic endpoint template;
   this release has unconfigured service trust and requires operator provisioning.
 - `memory_vault.py`: core source; Experience use also needs the companion module
   included in the client/review packages.
@@ -50,6 +55,11 @@ Default encryption/device/update providers are not provisioned production
 services; the source exposes explicit fail-closed boundaries.
 
 ## Publication is not certification
+
+The prior **0.28.0-alpha.0.1** native HTTP preview is pinned to
+`0ddf0c5ac6aa8d12562c1df2a26ee25aeb851ed3`. Its review, cloud checks and asset
+verification remain historical evidence for that source. They do not establish
+a pass, final test count or publication for the first-contact candidate.
 
 The source-pinned routing experiment on `dc485334f8ad8629db68ef25c7c618a732f15c6c`
 passed all three original 99% healthy / 97% bootstrap-exit gates: seeds17/29/43

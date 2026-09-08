@@ -5,6 +5,7 @@ import type {SigningIdentityDocument,EncryptionIdentityDocument} from './crypto.
 import {absolutePath,readPrivate,NetworkError} from './io.ts';
 import {loadClient} from './client-config.ts';
 import {OpenParticipant} from './open-participant.ts';
+import {OpenContactClient,CONNECT_SCHEMA} from './open-contact-client.ts';
 import type {SignedNode} from './open-control.ts';
 export const OPEN_CLIENT_CONFIG='memory-vault-open-client-config/v1';
 function fail(code:string):never{throw new NetworkError(code);}
@@ -27,8 +28,12 @@ export class OpenNetworkClient{
     this.participant=new OpenParticipant(this.identity,directory,{seeds:config.seeds as unknown as SignedNode[],allow_loopback:config.allow_loopback as boolean});
   }
   close():void{this.participant.close();}
-  async connect(invitation?:unknown,_requestId?:string):Promise<Record<string,any>>{
-    if(invitation!=null)fail('open_private_invitation_unsupported');
+  async connect(invitation?:unknown,requestId?:string):Promise<Record<string,any>>{
+    if(invitation!=null){
+      if(typeof invitation!=='object'||Array.isArray(invitation)||(invitation as any).schema_version!==CONNECT_SCHEMA)fail('open_private_invitation_unsupported');
+      const result=await new OpenContactClient(this.participant,this.encryption).dispatch(invitation,requestId);
+      return {...result,profile:'open-routing-v1',network_accessed:true};
+    }
     return {...await this.participant.join(),profile:'open-routing-v1',network_accessed:true,open_messaging_supported:false};
   }
   async discover(keyId?:string):Promise<Record<string,any>>{

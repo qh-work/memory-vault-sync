@@ -34,6 +34,7 @@ ALLOWED_MODULES = {
     "memory_vault_topics.py", "memory_vault_topic_store.py",
     "memory_vault_open_control.py", "memory_vault_open_routing.py", "memory_vault_open_index.py",
     "memory_vault_open_state.py", "memory_vault_open_transport.py", "memory_vault_open_node.py", "memory_vault_open_client.py",
+    "memory_vault_open_contact.py", "memory_vault_open_contact_state.py", "memory_vault_open_contact_client.py",
 }
 REQUIRED_MODULES = ALLOWED_MODULES
 MAX_MODULE_BYTES = 1024 * 1024

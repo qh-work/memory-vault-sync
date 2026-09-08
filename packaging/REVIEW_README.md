@@ -1,12 +1,17 @@
-# Memory Vault v0.28.0-alpha.0.1 independent review kit
+# Memory Vault v0.28.0-alpha.0.2 independent review kit
 
-The 0.28.0-alpha.0.1 preview adds signed open contact discovery and bounded
-multi-hop routing without a common authority or global roster. Python supports
-open connect/discover; native TypeScript adds independent HTTP nodes and the
-same Agent contact path. Open messaging remains unsupported.
-See [setup, exact-source evidence and limits](docs/OPEN_ROUTING_RUNTIME.md).
-The full 0.28.0-alpha.1 consent, delivery and repair milestone remains ahead.
-The existing private network profile retains encrypted relay-pool exchange.
+The 0.28.0-alpha.0.2 candidate adds explicit first-contact requests, approval
+and rejection in Python and native TypeScript. B signs opt-in backed by a finite
+knock lease before going offline. A proves both keys, submits a fixed request,
+and later pulls a result bound to the original request, parties, resource,
+operation and expiry. Approval requires a real finite delivery reservation.
+Open encrypted messaging, receipts and sender-offline repair remain unsupported;
+a grant does not create Vault access, author trust or execution authority.
+See [first-contact controls](docs/OPEN_FIRST_CONTACT_V1.md) and [routing setup and historical evidence](docs/OPEN_ROUTING_RUNTIME.md).
+At candidate preparation, 6 Pro review, cloud CI and publication were pending.
+Their final status requires the release evidence for the exact source commit.
+The full 0.28.0-alpha.1 delivery/receipt/repair milestone remains ahead. The existing
+private network profile retains its separate encrypted relay-pool exchange.
 
 This separate archive contains public source and synthetic tests, not private
 memory or a preconfigured installation. The [validation index](docs/VALIDATION.md)
@@ -15,7 +20,7 @@ report with `REVIEW_MANIFEST.json`'s source and byte inventory; case presence,
 AST parsing and results from other commits do not certify this kit.
 Read `docs/REVIEW_HANDOFF.md` and `docs/V0_25_PARITY_PLAN.md` for the full scope.
 
-The current [alpha evidence](docs/RELEASE_NOTES_V0_26_ALPHA.md) separately records
+The historical private-profile [alpha evidence](docs/RELEASE_NOTES_V0_26_ALPHA.md) separately records
 synthetic native-network journeys, independent crypto checks and loopback
 process tests. These do not establish real-model, live-cloud, cross-machine,
 native Windows or thousand-agent acceptance. The earlier two-mode entry tests
@@ -78,6 +83,7 @@ as part of this handoff**:
 python3 -B -m unittest discover -s tests -p 'test_v025_*.py' -v
 python3 -B -m unittest discover -s tests -p 'test_memory_vault.py' -v
 python3 -B -m unittest discover -s tests -p 'test_network_*.py' -v
+python3 -B -m unittest discover -s tests -p 'test_open_contact*.py' -v
 ```
 
 On Windows use `py -3 -B` and a deliberately selected local fixed NTFS review

@@ -8,16 +8,29 @@ private-first sequence. The first executable open routing slice now has
 source-pinned implementation and cloud evidence; the full architecture remains
 a development target, not a global reliability claim.
 
-Current source: **0.28.0-alpha.0.1**, an open routing/contact-discovery preview.
-Python and native TypeScript open connect/discover, standalone HTTP nodes,
-bounded late-join progress and leased contact lookup are implemented. Native
-contact discovery uses real pinned HTTP and the same protected state. Open
-messaging remains unsupported. The earlier three
+Current source candidate: **0.28.0-alpha.0.2**, explicit first-contact control
+over the existing open routing and HTTP runtime. Python and native TypeScript
+implement finite knock opt-in, fixed requests with a real dual-key challenge,
+explicit owner approval/rejection, and sender-pulled results bound to the
+original request, parties, resource, operation and expiry. Approval requires an
+actual finite delivery reservation. Local and node-side transaction accounting
+reserve later results before admitting new work. Both runtimes retain the same
+protected transport database; canonical Memory bytes, IDs and provenance are unchanged.
+See [the current candidate contract](OPEN_FIRST_CONTACT_V1.md).
+
+At candidate preparation, 6 Pro review, cloud CI, final archive checks and
+publication were pending. Their final status and test counts belong to the
+release evidence for the exact source commit, not this frozen status draft. Open encrypted messaging, receipts and sender-offline
+repair remain unsupported. The full 0.28.0-alpha.1 vertical milestone is pending.
+
+The prior native HTTP preview **0.28.0-alpha.0.1** is pinned to
+`0ddf0c5ac6aa8d12562c1df2a26ee25aeb851ed3`; its review, CI and publication evidence
+does not transfer to the new candidate. The earlier three
 100-node routing seeds passed their 99% healthy/97% bootstrap-exit gates on
 `dc485334f8ad8629db68ef25c7c618a732f15c6c`; each phase returned 1,000/1,000.
 See [the exact evidence and limits](OPEN_ROUTING_RUNTIME.md). The experiment
 uses logical signed control, not actual HTTP, SQLite, real AI or physical
-failure domains. The full 0.28.0-alpha.1 vertical milestone is still pending.
+failure domains.
 
 The retained private communication-memory network
 has a six-operation endpoint, independent issuer control, signed invitations,
@@ -62,8 +75,8 @@ candidate archives. Current source also includes an independent TypeScript
 persistent endpoint and native six-operation facade with bounded retrieval and
 dynamic handoff. [Its scope](NETWORK_TYPESCRIPT.md) still excludes complete old
 graph/cloud-worker parity and scale certification. The current release target has
-an [explicit prerelease link](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.1);
-the release page establishes publication and asset availability.
+an [explicit prerelease link](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2);
+its final publication and asset availability require source-pinned release evidence.
 The current source also includes opt-in [deterministic v2 retrieval](RETRIEVAL_V2.md),
 bounded sender repair and aligned signed-storage-response validation; those
 features do not imply they have been installed locally. Actual package and local

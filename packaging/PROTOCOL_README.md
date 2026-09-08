@@ -1,12 +1,17 @@
-# Memory Vault v0.28.0-alpha.0.1 — independent protocol
+# Memory Vault v0.28.0-alpha.0.2 — independent protocol
 
-The 0.28.0-alpha.0.1 preview adds signed open contact discovery and bounded
-multi-hop routing without a common authority or global roster. Python supports
-open connect/discover; native TypeScript adds independent HTTP nodes and the
-same Agent contact path. Open messaging remains unsupported.
-See [setup, exact-source evidence and limits](docs/OPEN_ROUTING_RUNTIME.md).
-The full 0.28.0-alpha.1 consent, delivery and repair milestone remains ahead.
-The existing private network profile retains encrypted relay-pool exchange.
+The 0.28.0-alpha.0.2 candidate adds explicit first-contact requests, approval
+and rejection in Python and native TypeScript. B signs opt-in backed by a finite
+knock lease before going offline. A proves both keys, submits a fixed request,
+and later pulls a result bound to the original request, parties, resource,
+operation and expiry. Approval requires a real finite delivery reservation.
+Open encrypted messaging, receipts and sender-offline repair remain unsupported;
+a grant does not create Vault access, author trust or execution authority.
+See [first-contact controls](docs/OPEN_FIRST_CONTACT_V1.md) and [routing setup and historical evidence](docs/OPEN_ROUTING_RUNTIME.md).
+At candidate preparation, 6 Pro review, cloud CI and publication were pending.
+Their final status requires the release evidence for the exact source commit.
+The full 0.28.0-alpha.1 delivery/receipt/repair milestone remains ahead. The existing
+private network profile retains its separate encrypted relay-pool exchange.
 
 This archive is an agreement and implementation material, not an installed
 program. No Python, database, plugin, account or network service is required
@@ -30,7 +35,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.1;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.2;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility
@@ -55,7 +60,7 @@ evidence and its [patch notes](docs/RELEASE_NOTES_V0_25_1.md) do not certify the
 current alpha.
 
 See [network-v1](docs/NETWORK_V1.md) and the version-specific
-[alpha evidence](docs/RELEASE_NOTES_V0_26_ALPHA.md) for current scope and open
+[alpha evidence](docs/RELEASE_NOTES_V0_26_ALPHA.md) for historical private-profile scope and open
 gates. Synthetic interoperability frames are not real-model adoption or
 thousand-agent performance acceptance.
 

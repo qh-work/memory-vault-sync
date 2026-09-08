@@ -47,6 +47,7 @@ PROTOCOL_DOCUMENTS = (
     "docs/V0_26_PLAN.md",
     "docs/NETWORK_TOPICS.md",
     "docs/OPEN_CONTROL_V1.md", "docs/OPEN_ROUTING_RUNTIME.md", "docs/NATIVE_OPEN_HTTP.md",
+    "docs/OPEN_FIRST_CONTACT_V1.md",
     "docs/DEPENDENCIES_NETWORK.md",
     "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md", "docs/NETWORK_TYPESCRIPT.md",
 )
@@ -58,6 +59,8 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_open_join_progress.py", "tests/test_open_network_ci.py",
     "tests/test_open_agent.py", "tests/test_open_typescript.py", "tests/test_open_typescript_state.py",
     "tests/test_open_typescript_http.py",
+    "tests/test_open_contact.py", "tests/test_open_contact_state.py", "tests/test_open_contact_http.py",
+    "tests/test_open_contact_typescript.py", "tests/test_open_contact_typescript_http.py",
     "tests/open_routing_acceptance.py",
     "tests/test_experience.py", "tests/test_experience_edges.py", "tests/test_experience_typescript.py", "tests/test_cross_author_state.py",
     "tests/test_experience_origin_identity.py", "tests/test_experience_origin_typescript.py", "tests/test_experience_int64.py",

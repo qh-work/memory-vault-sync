@@ -49,7 +49,7 @@ class _TransportState(NetworkClient):
 class OpenParticipant:
     def __init__(self, identity: Identity, state_directory: Path, *, seeds: list,
                  descriptor: Mapping[str, Any] | None = None, allow_loopback: bool = False,
-                 index_policy: Mapping[str, Any] | None = None):
+                 index_policy: Mapping[str, Any] | None = None, contact_policy: Mapping[str, Any] | None = None):
         if not isinstance(seeds, list) or len(seeds) > 2:
             raise MemoryError("open_two_initial_introductions_maximum")
         self.identity = identity
@@ -67,6 +67,8 @@ class OpenParticipant:
         if len({seed["payload"]["signing_key"]["key_id"] for seed in seeds}) != len(seeds):
             raise MemoryError("open_duplicate_seed")
         self.index_policy = dict(index_policy or {})
+        self.contact_policy = dict(contact_policy or {})
+        from memory_vault_open_contact_state import ContactState
         if set(self.index_policy) - {"enabled", "maximum_records", "maximum_bytes", "maximum_replays", "maximum_lease_seconds"}:
             raise MemoryError("open_invalid_index_policy")
         self._pending: OrderedDict[str, dict] = OrderedDict()
@@ -81,6 +83,7 @@ class OpenParticipant:
             if self.descriptor:
                 OpenCheckpoints(db).accept(self.descriptor)
                 OpenIndex(db, identity, self.descriptor, **self.index_policy).initialize()
+                ContactState(db, identity, self.descriptor, **self.contact_policy).initialize()
 
     def close(self):
         self.transport.close()
@@ -243,9 +246,9 @@ class OpenParticipant:
         result = await self._lookup(target, "general", budget)
         return {"state": result["state"], "metrics": self._metrics(budget), "errors": errors}
 
-    async def find_contact(self, owner_key_id: str):
+    async def find_contact(self, owner_key_id: str, *, budget=None):
         key = contact_key(owner_key_id)
-        budget = LookupBudget()
+        budget = budget or LookupBudget()
         route = await self._lookup(key, "directory", budget)
         found, errors, states = [], [], []
         # A directory may be queried locally under the exact same signed API.
@@ -320,6 +323,17 @@ class OpenParticipant:
     def handle(self, request):
         if self.descriptor is None:
             raise MemoryError("open_node_not_configured")
+        from memory_vault_open_contact import PROFILE, verify_rpc, sign_response as contact_response
+        payload = request.get("payload") if isinstance(request, Mapping) else None
+        if isinstance(payload, Mapping) and payload.get("schema_version") == PROFILE:
+            from memory_vault_open_contact_state import ContactState
+            verify_rpc(request, node=self.descriptor)
+            try:
+                with self.state.db() as db:
+                    result = ContactState(db, self.identity, self.descriptor, **self.contact_policy).handle(request)
+            except MemoryError as exc:
+                result = {"error": {"code": exc.code, "retryable": bool(exc.retryable)}}
+            return contact_response(self.identity, request=request, node=self.descriptor, body=result)
         now = int(time.time())
         original = verify_request(request, node=self.descriptor, now=now)
         try:
@@ -479,8 +493,9 @@ def main(argv=None):
     parser.add_argument("--config", required=True, type=Path)
     args = parser.parse_args(argv)
     raw = _read_private(args.config, MAX_RPC_BYTES)
-    config = object_fields(document(raw, maximum=MAX_RPC_BYTES),
-                           {"schema_version", "identity_path", "state_directory", "node", "seeds", "allow_loopback", "index_policy", "listen_host", "listen_port"})
+    parsed = document(raw, maximum=MAX_RPC_BYTES)
+    config = object_fields(parsed,
+                           {"schema_version", "identity_path", "state_directory", "node", "seeds", "allow_loopback", "index_policy", "listen_host", "listen_port"} | ({"contact_policy"} if "contact_policy" in parsed else set()))
     if config["schema_version"] != NODE_CONFIG:
         raise MemoryError("open_invalid_node_config")
     if (config["listen_host"] != "127.0.0.1" or type(config["listen_port"]) is not int
@@ -490,7 +505,8 @@ def main(argv=None):
     # public listener, installs a service, obtains certificates or buys resources.
     with OpenParticipant(Identity.load(Path(config["identity_path"])), Path(config["state_directory"]),
                          seeds=config["seeds"], descriptor=config["node"],
-                         allow_loopback=config["allow_loopback"], index_policy=config["index_policy"]) as participant:
+                         allow_loopback=config["allow_loopback"], index_policy=config["index_policy"],
+                         contact_policy=config.get("contact_policy")) as participant:
         server = OpenHTTPServer((config["listen_host"], config["listen_port"]), participant)
         stop = threading.Event()
         def maintenance():
