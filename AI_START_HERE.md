@@ -39,12 +39,12 @@ No cancellation removes already admitted memories or rewrites historical bytes.
 
 ## Select the network profile
 
-The explicit open profile in this preview supports Python `connect` and
+The explicit open profile in this preview supports Python and native TypeScript `connect` and
 `discover(online=true, key_id=...)` through signed, bounded routing without a
 common authority or roster. `remember` and `recall` remain local. Open message
 operations return `open_messaging_unsupported`; contact discovery grants no
-memory, mailbox or execution permission. Native TypeScript open kernels are
-included, but its full open endpoint is pending. Follow
+memory, mailbox or execution permission. Native TypeScript includes the
+independent HTTP node, constrained transport and Agent contact path. Follow
 [open setup and limits](docs/OPEN_ROUTING_RUNTIME.md).
 
 The private profile below retains invitation-based encrypted messaging and

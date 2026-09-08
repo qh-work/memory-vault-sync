@@ -177,7 +177,7 @@ Diagnostics themselves change no production routing policy or acceptance
 budget. The current report explicitly records the periodic own-coordinate
 schedule separately from the unchanged numeric maintenance limits.
 
-Still outstanding: complete native TypeScript open runtime; automatic signed
+Still outstanding: automatic signed
 descriptor renewal/address changes beyond the current descriptor lifetime;
 open first contact and recipient consent; encrypted mailboxes and receipts;
 enumeration plus ciphertext leases and node-to-node repair; hostile-overlay
