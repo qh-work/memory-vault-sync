@@ -350,3 +350,11 @@ verification and bounded cursors are preserved. No `NetworkPeer.db()` write
 transaction, remote request or reimport is used to read this historical view.
 An accepted batch remains readable after cancellation or same-version recovery;
 a rejected or unadmitted transfer does not become a source of recalled records.
+
+## Native open contacts
+
+An explicit open-client config now selects the native open participant in the
+same Agent. `connect` and targeted online `discover` use constrained actual
+HTTP; open message operations remain unavailable. The standalone native node
+uses the existing protected transport state, without an issuer or global roster.
+See [the open API, setup and test boundaries](NATIVE_OPEN_HTTP.md).

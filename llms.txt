@@ -29,9 +29,9 @@ Implement, review, contribute:
 - CONTRIBUTING.md — useful contributions with synthetic data, never private logs or keys
 - SECURITY.md — limits of trust, ciphertext relays and local process isolation
 
-0.28.0-alpha.0 adds explicit open contact discovery and bounded signed routing
-without a common authority or global roster. Python connect/online discover run;
-open send/receive and the complete TypeScript endpoint remain unsupported.
+0.28.0-alpha.0.1 adds explicit open contact discovery and bounded signed routing
+without a common authority or global roster. Python and native TypeScript
+connect/online discover and standalone HTTP nodes run; open send/receive remain unsupported.
 See docs/OPEN_ROUTING_RUNTIME.md for exact-source three-seed routing evidence,
 setup and limits. This is not the full 0.28.0-alpha.1 delivery/repair milestone.
 

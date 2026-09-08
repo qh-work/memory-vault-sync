@@ -68,7 +68,10 @@ PACKAGE_DOCUMENTS = (
     "clients/typescript/network/agent.ts", "clients/typescript/network/retrieval.ts",
     "clients/typescript/network/retrieval_text.ts", "clients/typescript/network/ranking_math.ts",
     "clients/typescript/network/open-control.ts", "clients/typescript/network/open-routing.ts",
-    "clients/typescript/network/open-state.ts",
+    "docs/NATIVE_OPEN_HTTP.md", "clients/typescript/network/open-state.ts",
+    "clients/typescript/network/open-transport.ts", "clients/typescript/network/open-participant.ts",
+    "clients/typescript/network/open-client.ts", "clients/typescript/network/open-node.ts",
+    "clients/typescript/network/client-config.ts", "clients/typescript/network/transport-state.ts",
 )
 TEMPLATE_FILES = (
     ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",

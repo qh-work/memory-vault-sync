@@ -29,7 +29,8 @@ TS_NETWORK = {"clients/typescript/network/" + name for name in
               ("README.md", "crypto.ts", "content.ts", "hints.ts", "control.ts", "package.json", "package-lock.json",
                "io.ts", "nodes.ts", "peer.ts", "records.ts", "transport.ts", "vault.ts", "privacy.ts", "setup.ts",
                "agent.ts", "retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "topics.ts",
-               "open-control.ts", "open-routing.ts", "open-state.ts")}
+               "open-control.ts", "open-routing.ts", "open-state.ts", "open-transport.ts", "open-participant.ts",
+               "open-client.ts", "open-node.ts", "client-config.ts", "transport-state.ts")}
 TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
                      ("nodes", "records", "vault", "peer", "peer_race", "transport", "setup",
                       "retrieval_text", "retrieval", "agent", "agent_network", "topics")}
@@ -78,7 +79,7 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
         self.assertGreaterEqual(len(review), 39)
-        self.assertEqual(len(TS_NETWORK), 23)
+        self.assertEqual(len(TS_NETWORK), 29)
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
         self.assertTrue({"tests/test_network_hints.py", "tests/test_network_hints_typescript.py",

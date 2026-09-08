@@ -1,14 +1,14 @@
-# Memory Vault v0.28.0-alpha.0 — authorized full client
+# Memory Vault v0.28.0-alpha.0.1 — authorized full client
 
-The 0.28.0-alpha.0 preview adds signed open contact discovery and bounded
+The 0.28.0-alpha.0.1 preview adds signed open contact discovery and bounded
 multi-hop routing without a common authority or global roster. Python supports
-open connect/discover; native TypeScript provides control/routing/state kernels.
-Open messaging and the complete TypeScript open endpoint remain unsupported.
+open connect/discover; native TypeScript adds independent HTTP nodes and the
+same Agent contact path. Open messaging remains unsupported.
 See [setup, exact-source evidence and limits](plugins/memory-vault-client/docs/OPEN_ROUTING_RUNTIME.md).
 The full 0.28.0-alpha.1 consent, delivery and repair milestone remains ahead.
 The existing private network profile retains encrypted relay-pool exchange.
 
-This full-client package targets **v0.28.0-alpha.0 native-network source**,
+This full-client package targets **v0.28.0-alpha.0.1 native-network source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

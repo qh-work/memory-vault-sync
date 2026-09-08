@@ -29,7 +29,8 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = ("settings.json", "status.json", "progress.jsonl", "errors.jsonl", "results.json")
 MAX_REPORT_BYTES = 900_000  # All explicitly uploadable files together, <1 MiB.
 MODULES = tuple("tests.test_open_" + name for name in (
-    "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "typescript", "typescript_state", "network_ci"))
+    "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "typescript", "typescript_state", "typescript_http", "network_ci")) + (
+    "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {
     "schema_version": "memory-vault-open-routing-acceptance/v2", "logical_nodes": 100,
     "profile": "routing_core_table_initial_no_restart_cache", "checkpoints": False,
@@ -201,6 +202,13 @@ def initialize(reports, mode, seed):
     sources = ["scripts/run_open_network_ci.py", "tests/open_routing_acceptance.py", "tests/test_open_routing.py",
                "memory_vault_open_routing.py", "memory_vault_open_control.py", "requirements-network-lock.txt",
                "clients/typescript/network/package-lock.json", ".github/workflows/open-network.yml"]
+    if mode == "light":
+        sources += ["clients/typescript/network/" + name for name in (
+            "open-transport.ts", "open-participant.ts", "open-node.ts", "open-client.ts",
+            "open-control.ts", "open-routing.ts", "open-state.ts", "client-config.ts", "transport-state.ts",
+            "agent.ts", "peer.ts", "io.ts", "crypto.ts")]
+        sources += ["tests/test_open_typescript_http.py", "tests/test_open_typescript_state.py",
+                    "tests/test_network_typescript_agent_network.py", "tests/test_network_packaging.py"]
     settings = {"schema_version":"memory-vault-open-ci-settings/v1", "commit_sha":sha, "mode":mode,
         "seed":seed if mode == "scale" else None, "source_sha256":{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in sources},
         "bootstrap_python":sys.version.split()[0], "expected_node":"22.19.0" if mode=="light" else None,

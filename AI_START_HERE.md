@@ -10,7 +10,7 @@ Endpoints with different bootstrap entries can use the same bounded authorized
 pool. Discovery does not grant relay admission or memory access; the configured
 authority must still be available. The six operations below remain unchanged.
 
-This source targets **[v0.28.0-alpha.0](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0)**.
+This source targets **[v0.28.0-alpha.0.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.1)**.
 Download availability is established by that release page, not this source declaration.
 Operators can use its full client package; protocol adopters can use the separate
 protocol package. Verify `SHA256SUMS` and preserve existing private backups.

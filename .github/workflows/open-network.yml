@@ -75,7 +75,7 @@ jobs:
         run: |
           python -m pip install --require-hashes --only-binary=:all: -r requirements-network-lock.txt
           npm ci --prefix clients/typescript/network --ignore-scripts --no-audit --no-fund --cache "${RUNNER_TEMP}/open-npm-cache"
-      - name: Run open tests including eight HTTP processes and native TypeScript state
+      - name: Run open tests including mixed native HTTP, persistent state and private Agent regressions
         run: python scripts/run_open_network_ci.py --mode light --phase run --report-directory reports/open-light
       - name: Refuse empty, skipped or interrupted evidence
         if: always()

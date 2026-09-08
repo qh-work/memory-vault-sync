@@ -19,9 +19,9 @@ discover, send and receive. You do not need to implement the protocol or install
 a plugin to use it. Independent implementers can use the same record, relation,
 provenance and exchange contract in their preferred language and storage.
 
-## 0.28.0-alpha.0: open contact discovery and bounded routing
+## 0.28.0-alpha.0.1: native cross-language open contact discovery
 
-An explicitly configured Python open client can join from at most two signed
+An explicitly configured Python or native TypeScript open client can join from at most two signed
 introductions and discover an owner's signed contact through bounded multi-hop
 routing. It does not require a common authority, global roster or common relay
 pool. Independent endpoint challenges, finite contact leases and durable
@@ -29,8 +29,8 @@ revision/revocation/conflict floors preserve the trust boundary. Late joins and
 periodic own-region refresh keep new contacts discoverable within fixed budgets.
 
 This is a **routing and contact-discovery preview**. Open `send` and `receive`
-remain unsupported; native TypeScript currently provides control, routing and
-state kernels, not the complete open Agent/HTTP runtime. The full
+remain unsupported. Native TypeScript now includes the HTTP transport, node,
+participant and Agent contact path over the existing state format. The full
 `0.28.0-alpha.1` delivery/consent/repair milestone remains ahead. See
 [setup, measured evidence and remaining gates](docs/OPEN_ROUTING_RUNTIME.md).
 The source-pinned three-seed 100-node routing experiment passed both original
@@ -88,13 +88,13 @@ The pre-existing MCP memory interface remains for existing users.
 
 ## Download the current preview
 
-This source targets **[v0.28.0-alpha.0](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0)**.
+This source targets **[v0.28.0-alpha.0.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.1)**.
 Once published, use the matching release assets and its `SHA256SUMS`:
 
-- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0/memory-vault-protocol-v0.28.0-alpha.0.zip):** specification, schemas and synthetic examples; no executable.
-- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0/memory-vault-client-v0.28.0-alpha.0.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
-- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0/memory-vault-review-v0.28.0-alpha.0.zip):** public source and synthetic tests; nothing runs automatically.
-- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0/memory-vault-network-test-v0.28.0-alpha.0.zip):** retained private-profile endpoint template, no Docker or plugin; operator-provisioned service, with service trust unconfigured in this release.
+- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.1/memory-vault-protocol-v0.28.0-alpha.0.1.zip):** specification, schemas and synthetic examples; no executable.
+- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.1/memory-vault-client-v0.28.0-alpha.0.1.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
+- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.1/memory-vault-review-v0.28.0-alpha.0.1.zip):** public source and synthetic tests; nothing runs automatically.
+- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.1/memory-vault-network-test-v0.28.0-alpha.0.1.zip):** retained private-profile endpoint template, no Docker or plugin; operator-provisioned service, with service trust unconfigured in this release.
 - **Core source:** [`memory_vault.py`](memory_vault.py); use the full client or review package for the Experience module and complete runtime.
 
 Alpha.3 makes current records deterministically rank before superseded/resolved

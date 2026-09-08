@@ -3,15 +3,15 @@
  * Construction and offline discovery have no filesystem or network effects.
  * This is trusted endpoint code, never an untrusted relay decryption bridge.
  */
-import * as fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
+import {loadClient} from './client-config.ts';
+import type {Client} from './client-config.ts';
 import { canonicalBytes, document, validateSigningIdentity } from './crypto.ts';
 import type { SigningIdentityDocument } from './crypto.ts';
 import { NetworkError, readPrivate } from './io.ts';
 import { CanonicalVault } from './vault.ts';
 import { canonicalExperienceBytes, parseExperienceJSON, decodeExperience, EXPERIENCE_PREFIX } from './records.ts';
 import { NetworkPeer } from './peer.ts';
+import { OpenNetworkClient } from './open-client.ts';
 import { CONTENT_SCHEMA } from './content.ts';
 import { HINT_SCHEMA } from './hints.ts';
 import { RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2 } from './retrieval.ts';
@@ -113,45 +113,6 @@ function validate(value: unknown, schema: Obj): void {
     for (const [key, child] of Object.entries(properties)) if (Object.hasOwn(value, key)) validate(value[key], child as Obj);
   }
 }
-function clientPath(value: unknown): string {
-  if (typeof value !== 'string') fail('client_path_must_be_absolute');
-  const expanded = value === '~' ? os.homedir() : value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
-  if (!path.isAbsolute(expanded) || expanded.split(path.sep).includes('..')) fail('client_path_must_be_absolute');
-  const selected = path.normalize(expanded);
-  for (let current = selected; ; current = path.dirname(current)) {
-    try { if (fs.lstatSync(current).isSymbolicLink()) fail('unsafe_client_path'); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    if (path.dirname(current) === current) break;
-  }
-  return selected;
-}
-interface Client { path: string; vault: string; identity?: string; trust?: string; sync?: string }
-function loadClient(selected: string): Client {
-  const file = clientPath(selected); let raw: Buffer;
-  try { raw = readPrivate(file, 16384)!; }
-  catch (error) {
-    const code = (error as Obj).code;
-    if (code === 'ENOENT') fail('client_not_configured');
-    if (code === 'unprotected_private_file') fail('client_file_not_private');
-    if (code === 'network_document_too_large') fail('client_file_too_large');
-    throw error;
-  }
-  const value = document(raw, 16384), required = ['schema_version','vault_path','capture_visible_turns'];
-  const optional = ['identity_path','trust_path','sync_config_path'];
-  if (required.some(key => !Object.hasOwn(value, key)) || Object.keys(value).some(key => ![...required,...optional].includes(key))) fail('invalid_client_arguments');
-  if (value.schema_version !== 'memory-vault-client-config/v1' || typeof value.capture_visible_turns !== 'boolean') fail('invalid_client_config');
-  if (value.identity_path != null && value.trust_path == null) fail('identity_requires_trust_store');
-  const result: Client = {path: file, vault: clientPath(value.vault_path)};
-  for (const [key, field] of [['identity','identity_path'],['trust','trust_path'],['sync','sync_config_path']] as const)
-    if (value[field] != null) result[key] = clientPath(value[field]);
-  const paths = Object.values(result);
-  if (new Set(paths).size !== paths.length) fail('client_paths_must_be_separate');
-  const base = path.basename(file), dot = base.lastIndexOf('.');
-  const stem = dot > 0 && dot < base.length - 1 ? base.slice(0, dot) : base;
-  const state = path.join(path.dirname(file), stem + '.state');
-  if (paths.some(item => item === state || item.startsWith(state + path.sep))) fail('keys_and_vault_must_not_be_client_state');
-  return result;
-}
 function identityFor(config: Client): SigningIdentityDocument | undefined {
   if (!config.identity) return undefined;
   let raw: Buffer;
@@ -225,12 +186,11 @@ export class Agent {
       retrieval_profile: RETRIEVAL_PROFILE, retrieval_profiles: [RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2],
       legacy_interfaces_preserved: ['handoff','share-v1','backup','restore','protocol','mcp']};
   }
-  private networkPeer(targetedDiscovery=false): NetworkPeer {
+  private networkPeer(targetedDiscovery=false): NetworkPeer|OpenNetworkClient {
     if(this.networkConfigPath===undefined)fail('network_not_configured');
     const configured=document(readPrivate(this.networkConfigPath,65536)!);
-    // The native open routing kernel is not yet a durable open endpoint host.
-    // Never interpret an explicit open config as a private roster-based config.
-    if(configured.schema_version==='memory-vault-open-client-config/v1')fail('open_profile_runtime_unsupported');
+    if(configured.schema_version==='memory-vault-open-client-config/v1')
+      return new OpenNetworkClient(this.networkConfigPath,{transport:this.transport,clientConfigPath:this.clientConfigPath});
     if(targetedDiscovery)fail('network_targeted_discovery_unsupported');
     return new NetworkPeer(this.networkConfigPath,{transport:this.transport,clientConfigPath:this.clientConfigPath});
   }
@@ -346,7 +306,7 @@ export class Agent {
         const peer = this.networkPeer(operation==='discover'&&Object.hasOwn(args,'key_id'));
         try {
           const result = operation === 'connect' ? await peer.connect(args.invitation, args.request_id) :
-            operation === 'discover' ? await peer.discover() : operation === 'send' ? await peer.send(args.request_id, args.recipients, args.text ?? '', args.memory_ids ?? [],args.control) :
+            operation === 'discover' ? await (peer instanceof OpenNetworkClient?peer.discover(args.key_id):peer.discover()) : operation === 'send' ? await peer.send(args.request_id, args.recipients, args.text ?? '', args.memory_ids ?? [],args.control) :
               Object.hasOwn(args,'respond_to')?await peer.respondTo(args.respond_to):Object.hasOwn(args,'message_id')?peer.readMessage(args.message_id,args.offset??0):await peer.receive(args.limit ?? 4);
           response = success(operation === 'receive' ? {...result,evidence_usage:{...EVIDENCE_USAGE}} : result, requestId);
         } finally { peer.close(); }
