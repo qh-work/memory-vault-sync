@@ -450,7 +450,7 @@ class OpenTypeScriptTests(unittest.TestCase):
             lanes=[[nodes[0]]],graph=graph,budget={"maximum_bytes":65535})
         self.assertEqual(small["state"],"budget_exhausted"); self.assertEqual(small["calls"],[])
 
-    def test_native_agent_targeted_discovery_refuses_unsupported_runtime_without_network(self):
+    def test_native_agent_refuses_private_target_selector_and_open_transport_override_without_network(self):
         with tempfile.TemporaryDirectory(prefix="memory-vault-open-selector-synthetic-") as temporary:
             root=Path(temporary).resolve(); private=root/"private.json"; opened=root/"open.json"
             private.write_text(json.dumps({"schema_version":"memory-vault-network-config/v1"}));private.chmod(0o600)
@@ -461,7 +461,7 @@ class OpenTypeScriptTests(unittest.TestCase):
                     {"op":"discover","online":True,"key_id":self.owner.key_id}],
                     ["invalid_client_arguments","invalid_client_arguments","invalid_client_arguments","network_targeted_discovery_unsupported"]),
                 (opened,[{"op":"connect"},{"op":"discover","online":True,"key_id":self.owner.key_id}],
-                    ["open_profile_runtime_unsupported","open_profile_runtime_unsupported"])):
+                    ["open_transport_override_unsupported","open_transport_override_unsupported"])):
                 snapshot={p.name:p.read_bytes() for p in root.iterdir()}
                 result=self.ts(mode="agent",network_config=str(config),client_config=str(root/"absent-client.json"),requests=requests)
                 self.assertEqual(result["networkCalls"],0)

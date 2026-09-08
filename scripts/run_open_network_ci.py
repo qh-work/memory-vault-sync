@@ -207,7 +207,7 @@ def initialize(reports, mode, seed):
             "open-transport.ts", "open-participant.ts", "open-node.ts", "open-client.ts",
             "open-control.ts", "open-routing.ts", "open-state.ts", "client-config.ts", "transport-state.ts",
             "agent.ts", "peer.ts", "io.ts", "crypto.ts")]
-        sources += ["tests/test_open_typescript_http.py", "tests/test_open_typescript_state.py",
+        sources += ["requirements-network-server-lock.txt", "tests/test_open_typescript.py", "tests/test_open_typescript_http.py", "tests/test_open_typescript_state.py",
                     "tests/test_network_typescript_agent_network.py", "tests/test_network_packaging.py"]
     settings = {"schema_version":"memory-vault-open-ci-settings/v1", "commit_sha":sha, "mode":mode,
         "seed":seed if mode == "scale" else None, "source_sha256":{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in sources},
@@ -243,6 +243,8 @@ def record_runtime(reports,mode,seed):
              "architecture":platform.machine(),"logical_cpus":os.cpu_count(),
              "cryptography":importlib.metadata.version("cryptography"),"joserfc":importlib.metadata.version("joserfc")}
     if mode=="light":
+        runtime["uvicorn"]=importlib.metadata.version("uvicorn")
+        runtime["starlette"]=importlib.metadata.version("starlette")
         runtime["node"]=subprocess.check_output(["node","--version"],text=True).strip()
         runtime["jose"]=json.loads((ROOT/"clients/typescript/network/node_modules/jose/package.json").read_text())["version"]
         require(runtime["node"]=="v22.19.0" and runtime["jose"]=="6.2.10")
