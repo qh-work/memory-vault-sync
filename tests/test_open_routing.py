@@ -71,7 +71,10 @@ class SyntheticRouting:
                         key = introduced["payload"]["signing_key"]["key_id"]
                         prior = next((i for i, n in enumerate(self.pending[destination])
                             if n["payload"]["signing_key"]["key_id"] == key), None)
-                        if prior is not None:
+                        if self.tables[destination].has_verified(introduced):
+                            if prior is not None:
+                                del self.pending[destination][prior]
+                        elif prior is not None:
                             self.pending[destination][prior] = introduced
                         elif len(self.pending[destination]) >= 32:
                             body = {"error": {"code": "open_pending_capacity", "retryable": True}}

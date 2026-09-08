@@ -58,7 +58,7 @@ if(input.mode==='calls'){
   let now=input.now;const table=new r.RoutingTable(input.self_key,{directory:input.directory,clock:()=>now});
   result=[];for(const event of input.events){
     const item=await outcome(()=>event.op==='learn'?table.learnVerified(event.node,event.address,event.allow_eviction??true):
-      event.op==='fail'?table.markFailed(event.key):(now=event.now,null));
+      event.op==='fail'?table.markFailed(event.key):event.op==='has'?table.hasVerified(event.node):(now=event.now,null));
     result.push({...item,stats:table.stats(),closest:table.closest(input.target,input.view??'general').map(n=>n.payload.signing_key.key_id),
       ...(input.include_replies?{replies:table.replyCandidates(input.target,input.view??'general').map(n=>n.payload.signing_key.key_id)}:{})});
   }
@@ -148,6 +148,46 @@ class OpenTypeScriptTests(unittest.TestCase):
     def request(self, action, body):
         return sign_request(self.owner, action=action, request_id="synthetic_request_" + action,
             node=self.node, body=body, issued_at=self.now, expires_at=self.now + 60)
+
+    def test_exact_verified_descriptor_status_parity_never_refreshes_failed_probes(self):
+        newer = self.make_node(self.server, revision=2)
+        fork = self.make_node(self.server, base_url="https://synthetic-fork.invalid")
+        events = [
+            {"op":"has", "node":self.node},
+            {"op":"learn", "node":self.node, "address":"192.0.2.1"},
+            {"op":"has", "node":self.node},
+            {"op":"has", "node":newer},
+            {"op":"has", "node":fork},
+            {"op":"fail", "key":self.server.key_id},
+            {"op":"has", "node":self.node},
+            {"op":"has", "node":self.node},
+            {"op":"learn", "node":newer, "address":"192.0.2.1"},
+            {"op":"has", "node":self.node},
+            {"op":"has", "node":newer},
+            {"op":"fail", "key":self.server.key_id},
+            {"op":"fail", "key":self.server.key_id},
+            {"op":"has", "node":newer},
+        ]
+        table = RoutingTable(self.owner.key_id, directory=True, now=lambda:self.now)
+        values = []
+        for event in events:
+            if event["op"] == "learn":
+                value = table.learn_verified(event["node"], event["address"])
+            elif event["op"] == "fail":
+                value = table.mark_failed(event["key"])
+            else:
+                before = table.stats()
+                value = table.has_verified(event["node"])
+                self.assertEqual(table.stats(), before)
+            values.append(value)
+        expected = [False, True, True, False, False, False, False, False,
+                    True, False, True, False, True, False]
+        self.assertEqual(values, expected)
+        actual = self.ts(mode="table", self_key=self.owner.key_id, directory=True,
+            now=self.now, target=coordinate(self.server.key_id), events=events)
+        self.assertTrue(all(item["ok"] for item in actual))
+        self.assertEqual([item["value"] for item in actual], expected)
+        self.assertEqual(actual[-1]["stats"], table.stats())
 
     def test_exact_signed_bytes_all_actions_and_leases(self):
         options = {key: self.node["payload"][key] for key in ("base_url", "storage_epoch", "roles", "revision", "issued_at", "expires_at", "status")}

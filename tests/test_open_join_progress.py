@@ -122,6 +122,29 @@ class OpenJoinProgressTests(unittest.IsolatedAsyncioTestCase):
             await neighbour.maintain()
             self.assertIn(net.nodes[0], neighbour.table.closest(target))
 
+    async def test_repeated_proven_announcements_do_not_starve_new_endpoint_challenges(self):
+        net = self.network
+        receiver = net.participants[0]
+        # Establish endpoint proof through actual outbound challenges first.
+        # Repeated advertisements of those same descriptors must not consume
+        # every pending slot needed by an as-yet-unverified late endpoint.
+        for sender in range(2, 34):
+            await net.hello(0, sender, advertise=False)
+        self.assertGreater(receiver.table.stats()["general_active"], 8)
+        for sender in range(2, 34):
+            await net.hello(sender, 0)
+        await net.hello(34, 0)
+        self.assertIn(net.identities[34].key_id, receiver._pending)
+        self.assertLessEqual(len(receiver._pending), 32)
+        self.assertNotIn(net.nodes[34], receiver.table.closest(coordinate(net.identities[34].key_id)))
+        proven = next(i for i in range(2, 34) if receiver.table.has_verified(net.nodes[i]))
+        key = net.identities[proven].key_id
+        self.assertNotIn(key, receiver._pending)
+        self.assertFalse(receiver.table.mark_failed(key))
+        await net.hello(proven, 0)
+        self.assertIn(key, receiver._pending)
+        self.assertFalse(receiver.table.has_verified(net.nodes[proven]))
+
     async def test_full_pending_returns_signed_retryable_backpressure_without_discarding_existing(self):
         net = self.network
         await net.fill_first_two_queues()

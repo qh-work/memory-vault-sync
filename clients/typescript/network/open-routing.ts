@@ -130,6 +130,15 @@ export class RoutingTable{
     }else if(!payload.roles.includes('directory'))this.introductions=this.introductions.filter(e=>e.node.payload.signing_key.key_id!==payload.signing_key.key_id);
     return active;
   }
+  hasVerified(value:SignedNode):boolean{
+    const payload=verifyNode(value,{now:Math.floor(this.clock())});
+    const fingerprint=documentSha256(value as DocumentInput);
+    this.prune();const entries:Entry[]=[...this.introductions];
+    for(const view of [this.general,this.directories])for(const bucket of view.values())entries.push(...bucket.active,...bucket.replacement);
+    // A repeat announcement never refreshes a proof or resets failed probes.
+    return entries.some(entry=>entry.node.payload.signing_key.key_id===payload.signing_key.key_id&&entry.failures===0&&
+      documentSha256(entry.node as DocumentInput)===fingerprint);
+  }
   closest(target:string,view:OpenView='general',limit=8):SignedNode[]{
     digestHex(target);if(!['general','directory'].includes(view))fail('open_invalid_view');
     if(!Number.isSafeInteger(limit)||limit<0||limit>32)fail('open_invalid_routing_budget');

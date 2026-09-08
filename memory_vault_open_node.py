@@ -329,9 +329,16 @@ class OpenParticipant:
                     self._accept(body["node"])
                     key = body["node"]["payload"]["signing_key"]["key_id"]
                     with self._pending_lock:
-                        if len(self._pending) >= 32 and key not in self._pending:
+                        if self.table.has_verified(body["node"]):
+                            # Already-proven unchanged neighbours must not keep
+                            # refilling the queue ahead of new endpoint probes.
+                            # This does not learn the inbound claim, renew its
+                            # expiry, or reset any failed-probe counter.
+                            self._pending.pop(key, None)
+                        elif len(self._pending) >= 32 and key not in self._pending:
                             raise MemoryError("open_pending_capacity", retryable=True)
-                        self._pending[key] = body["node"]
+                        else:
+                            self._pending[key] = body["node"]
                 result = {"node": self.descriptor}
             elif action == "find":
                 result = {"nodes": self.table.reply_candidates(body["target"], body["view"])}

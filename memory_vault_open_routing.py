@@ -207,6 +207,15 @@ class RoutingTable:
                 self._introductions = [e for e in self._introductions if e.key != key]
             return active_any
 
+    def has_verified(self, signednode: Mapping[str, Any]) -> bool:
+        """Exact live proof with no failed probe; does not renew or learn it."""
+        payload = verify_node(signednode, now=int(self.now()))
+        raw = canonical_bytes(signednode)
+        with self._lock:
+            self._prune()
+            return any(entry.failures == 0 and canonical_bytes(entry.node) == raw
+                       for entry in self._known(payload["signing_key"]["key_id"]))
+
     def closest(self, target: str, view: str = "general", limit: int = 8) -> list[dict[str, Any]]:
         digest(target)
         _view(view)

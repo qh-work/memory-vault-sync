@@ -45,6 +45,12 @@ coordinate, then one bounded routing lookup, under a shared 16-RPC, 1 MiB
 response, five-second budget. A full
 32-entry introduction queue returns signed retryable backpressure without
 discarding earlier pending nodes; later self-announcements allow retry.
+An unchanged, still-valid descriptor already retained from an independent
+successful challenge does not reenter that queue. This prevents repeated
+proven neighbours from consuming all pending capacity ahead of new endpoints.
+The inbound advertisement neither renews endpoint proof nor clears probe
+failures; a changed descriptor or a previously failed probe still needs a new
+challenge, as does a peer absent from the bounded routing table.
 A verified, correctly bound hello error still proves that seed's endpoint and
 can populate the caller's bounded routing table. The error remains an admission
 failure; it does not put the rejected advertisement in the receiver's queue.
