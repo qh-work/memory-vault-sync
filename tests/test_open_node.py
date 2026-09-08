@@ -157,15 +157,22 @@ class OpenNodeTests(unittest.TestCase):
                 atomic_write(net.configs[0], canonical_bytes(config), replace=True)
                 net.nodes[0] = new
                 net.start(0)
-                # A fresh signed response has already proved the newer
-                # descriptor; old configuration must not mask this proof.
-                asyncio.run(client._call(new, "hello", {"node": None}, LookupBudget()))
+                # The old configured seed returns its newer signed descriptor
+                # during public join; lookup must retain that fresh proof.
+                joined = asyncio.run(client.join())
+                self.assertEqual(joined["state"], "closest_known")
+                self.assertFalse(joined["partial"])
+                self.assertEqual(joined["errors"], [])
                 target = coordinate(net.identities[0].key_id)
                 warm = asyncio.run(client._lookup(target, "general", LookupBudget()))
                 self.assertEqual(warm["candidates"], [new])
                 self.assertEqual(warm["metrics"]["errors"], [])
             with OpenParticipant(identity, directory, seeds=[old], allow_loopback=True) as cold:
                 self.assertEqual(cold.table.stats()["general_active"], 0)
+                rejoined = asyncio.run(cold.join())
+                self.assertEqual(rejoined["state"], "closest_known")
+                self.assertFalse(rejoined["partial"])
+                self.assertEqual(rejoined["errors"], [])
                 result = asyncio.run(cold._lookup(target, "general", LookupBudget()))
                 self.assertEqual(result["candidates"], [new])
                 self.assertEqual(result["metrics"]["requests"], 1)

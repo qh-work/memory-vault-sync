@@ -186,7 +186,13 @@ class OpenParticipant:
     async def join(self):
         budget = LookupBudget()
         errors = []
-        for seed in self.seeds:
+        # Rejoining may already have a newer verified incarnation in the
+        # restart cache. Keep the same explicit seed keys, resolving their
+        # current signed bytes through the bounded merge used by lookup.
+        initial = self._initial(coordinate(self.identity.key_id), "general")
+        known = {node["payload"]["signing_key"]["key_id"]: node for lane in initial for node in lane}
+        for configured in self.seeds:
+            seed = known.get(configured["payload"]["signing_key"]["key_id"], configured)
             try:
                 await self._call(seed, "hello", {"node": self.descriptor}, budget)
             except MemoryError as exc:
