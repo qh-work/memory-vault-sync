@@ -251,3 +251,10 @@ or real memory are discovered, and no dependencies are installed by the test.
 On 2026-08-31 the 7 control tests and existing 8 independent crypto tests passed
 together (15 tests, macOS arm64 / Node 22.19.0 / CPython 3.11.4). This is runtime
 interop evidence, not a static TypeScript compiler check or an external audit.
+
+## Open contact profile
+
+`open-client.ts`, `open-participant.ts`, `open-transport.ts` and `open-node.ts`
+provide native open contact discovery and finite HTTP directory nodes. The same
+Agent dispatches an explicit open config without creating a private-profile peer.
+Open messaging is still unsupported. See [native open HTTP](../../../docs/NATIVE_OPEN_HTTP.md).

@@ -10,7 +10,7 @@ Endpoints with different bootstrap entries can use the same bounded authorized
 pool. Discovery does not grant relay admission or memory access; the configured
 authority must still be available. The six operations below remain unchanged.
 
-This source targets **[v0.28.0-alpha.0](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0)**.
+This source targets **[v0.28.0-alpha.0.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.1)**.
 Download availability is established by that release page, not this source declaration.
 Operators can use its full client package; protocol adopters can use the separate
 protocol package. Verify `SHA256SUMS` and preserve existing private backups.
@@ -39,12 +39,12 @@ No cancellation removes already admitted memories or rewrites historical bytes.
 
 ## Select the network profile
 
-The explicit open profile in this preview supports Python `connect` and
+The explicit open profile in this preview supports Python and native TypeScript `connect` and
 `discover(online=true, key_id=...)` through signed, bounded routing without a
 common authority or roster. `remember` and `recall` remain local. Open message
 operations return `open_messaging_unsupported`; contact discovery grants no
-memory, mailbox or execution permission. Native TypeScript open kernels are
-included, but its full open endpoint is pending. Follow
+memory, mailbox or execution permission. Native TypeScript includes the
+independent HTTP node, constrained transport and Agent contact path. Follow
 [open setup and limits](docs/OPEN_ROUTING_RUNTIME.md).
 
 The private profile below retains invitation-based encrypted messaging and

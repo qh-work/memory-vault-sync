@@ -63,11 +63,14 @@ class HTTPNodes:
             for reservation in reservations:
                 reservation.close()
 
+    def command(self, index):
+        return [sys.executable, str(Path(__file__).resolve().parents[1] / "memory_vault_open_node.py"),
+                "--config", str(self.configs[index])]
+
     def start(self, index):
         log = open(self.root / ("synthetic_node_" + str(index) + ".log"), "ab")
         self.logs[index] = log
-        process = subprocess.Popen([sys.executable, str(Path(__file__).resolve().parents[1] / "memory_vault_open_node.py"),
-                                    "--config", str(self.configs[index])], stdout=log, stderr=log,
+        process = subprocess.Popen(self.command(index), stdout=log, stderr=log,
                                    cwd=Path(__file__).resolve().parents[1])
         self.processes[index] = process
         port = int(self.nodes[index]["payload"]["base_url"].rsplit(":", 1)[1])

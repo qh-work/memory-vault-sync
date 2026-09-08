@@ -8,7 +8,8 @@ and the existing `network-v1` message implementation remain available.
 
 ## What runs
 
-`memory_vault_open_node.py` runs an independently configured HTTP process.
+`memory_vault_open_node.py` and native `clients/typescript/network/open-node.ts`
+run independently configured HTTP processes.
 An ordinary `OpenParticipant` needs its existing Ed25519 identity, its protected
 transport-state directory and at most two signed introductions. A client does
 not need to run a server. It finds another owner's signed contact using
@@ -36,7 +37,7 @@ endpoint. This does not evict stable active neighbors. Exploratory find probes
 can refresh or fill replacement slots, but cannot churn a full replacement
 list; direct hello probes can rotate it. Expiry or two failed probes remove a
 replacement just as they remove an active peer.
-OS DNS work uses three fixed workers; a hung resolution can occupy a worker
+OS DNS work uses at most three outstanding resolutions; a hung resolution can occupy a slot
 but cannot create an unbounded queue or extend the caller's deadline.
 
 Node maintenance takes at most two pending endpoint challenges, up to two
@@ -83,7 +84,7 @@ acknowledging withdrawal does not claim that the contact is publicly available.
 
 ## Storage and interfaces
 
-Python uses the existing protected `network.sqlite3` mechanism. The
+Python and native TypeScript use the existing protected `network.sqlite3` mechanism. The
 `open_*` tables hold routing/control checkpoints, a bounded restart cache,
 contact leases and replay responses; they are not a second memory store.
 Signed revision, revocation and same-revision conflict floors survive normal
@@ -96,7 +97,8 @@ while retaining the seed's bounded probe position. This does not grant endpoint
 proof or bypass the persistent revision/conflict floor; the selected descriptor
 must still answer a fresh challenge.
 
-The official Python Agent/HTTP/MCP entry points keep the six operations.
+The official Python Agent/HTTP/MCP entry points and native TypeScript Agent keep
+the six operations.
 An explicitly selected `memory-vault-open-client-config/v1` config uses
 `connect` to discover reachable peers and
 `discover(online=true, key_id="ed25519_…")` for a known owner's contact.
@@ -106,9 +108,13 @@ is rejected. Private-profile targeted discovery is explicitly unsupported.
 Open `send`, `receive`, message reads and private invitations currently return
 explicit unsupported errors. They do not silently enter the private profile,
 construct an empty roster, send plaintext or grant permission. Native
-TypeScript includes independent signed control and routing kernels with the
-same raw vectors; it does not yet provide the complete open-profile Agent
-or a standalone open HTTP node. Its unsupported entry points are explicit.
+TypeScript reuses its independent control/routing/state kernels through
+`OpenParticipant`, `OpenHTTPTransport`, `OpenNetworkClient` and a standalone
+HTTP node. Both profiles share client-config validation and the existing
+protected transport schema initializer. Open code never opens the Vault.
+Node uses built-in HTTP/TLS/DNS/SQLite/crypto and the existing locked JOSE
+dependency; it never invokes Python to implement a protocol operation.
+See [native API and validation](NATIVE_OPEN_HTTP.md).
 
 ## Running a node
 
@@ -123,6 +129,7 @@ An operator serving public peers must provide HTTPS termination separately.
 
 ```sh
 python memory_vault_open_node.py --config /absolute/private/open-node.json
+node --experimental-strip-types clients/typescript/network/open-node.ts --config /absolute/private/open-node.json
 ```
 
 No Docker, new dependencies, service installation, public server or paid
@@ -137,7 +144,7 @@ The test names below identify executable synthetic evidence, not real agents:
 python -m unittest tests.test_open_control tests.test_open_index tests.test_open_state
 python -m unittest tests.test_open_transport tests.test_open_node tests.test_open_agent
 python -m unittest tests.test_open_routing tests.test_open_join_progress tests.test_open_typescript
-python -m unittest tests.test_open_typescript_state tests.test_open_network_ci
+python -m unittest tests.test_open_typescript_state tests.test_open_typescript_http tests.test_open_network_ci
 ```
 
 Use the repository's locked network dependencies and Node runtime for native
@@ -170,7 +177,7 @@ Diagnostics themselves change no production routing policy or acceptance
 budget. The current report explicitly records the periodic own-coordinate
 schedule separately from the unchanged numeric maintenance limits.
 
-Still outstanding: complete native TypeScript open runtime; automatic signed
+Still outstanding: automatic signed
 descriptor renewal/address changes beyond the current descriptor lifetime;
 open first contact and recipient consent; encrypted mailboxes and receipts;
 enumeration plus ciphertext leases and node-to-node repair; hostile-overlay

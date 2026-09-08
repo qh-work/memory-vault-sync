@@ -8,10 +8,11 @@ private-first sequence. The first executable open routing slice now has
 source-pinned implementation and cloud evidence; the full architecture remains
 a development target, not a global reliability claim.
 
-Current source: **0.28.0-alpha.0**, an open routing/contact-discovery preview.
-Python open connect/discover, native TypeScript control/routing/state kernels,
-bounded late-join progress and leased contact lookup are implemented. Open
-messaging and the full TypeScript open runtime remain unsupported. All three
+Current source: **0.28.0-alpha.0.1**, an open routing/contact-discovery preview.
+Python and native TypeScript open connect/discover, standalone HTTP nodes,
+bounded late-join progress and leased contact lookup are implemented. Native
+contact discovery uses real pinned HTTP and the same protected state. Open
+messaging remains unsupported. The earlier three
 100-node routing seeds passed their 99% healthy/97% bootstrap-exit gates on
 `dc485334f8ad8629db68ef25c7c618a732f15c6c`; each phase returned 1,000/1,000.
 See [the exact evidence and limits](OPEN_ROUTING_RUNTIME.md). The experiment
@@ -61,7 +62,7 @@ candidate archives. Current source also includes an independent TypeScript
 persistent endpoint and native six-operation facade with bounded retrieval and
 dynamic handoff. [Its scope](NETWORK_TYPESCRIPT.md) still excludes complete old
 graph/cloud-worker parity and scale certification. The current release target has
-an [explicit prerelease link](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0);
+an [explicit prerelease link](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.1);
 the release page establishes publication and asset availability.
 The current source also includes opt-in [deterministic v2 retrieval](RETRIEVAL_V2.md),
 bounded sender repair and aligned signed-storage-response validation; those

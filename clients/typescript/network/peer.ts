@@ -22,10 +22,11 @@ import { CONTENT_SCHEMA, MAX_CONTENT_SHARE_BYTES, validateContent, contentText, 
 import type { NetworkContent } from './content.ts';
 import { HINT_SCHEMA, SESSION_SCHEMA, SESSION_PREFIX, MAX_SESSION_BYTES, validateHintControl, validateHintSession, hintMessageId, readHintPolicy, writeHintPolicy, grantFor } from './hints.ts';
 import type { HintControl, HintPolicy, HintSession, RequesterSession, OwnerSession } from './hints.ts';
-import { absolutePath, readPrivate, openPrivateDatabase, transaction, NetworkError } from './io.ts';
+import { absolutePath, readPrivate, transaction, NetworkError } from './io.ts';
 import { HTTPTransport, origin } from './transport.ts';
 import { readTrustedKeys } from './setup.ts';
 import type { Transport } from './transport.ts';
+import {openTransportState} from './transport-state.ts';
 
 type Obj = Record<string, any>;
 type RelayPlan = { readonly relays: readonly string[]; readonly target: number;
@@ -116,24 +117,9 @@ export class NetworkPeer {
   private db(): DatabaseSync {
     if (this.closed) fail('network_transport_closed');
     if (this.database) return this.database;
-    const db = openPrivateDatabase(path.join(this.directory, 'network.sqlite3'));
-    try {
-      db.exec(`CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS outbox(request_id TEXT PRIMARY KEY,message_id TEXT NOT NULL UNIQUE,input_sha TEXT NOT NULL,body BLOB NOT NULL,envelope BLOB,roster BLOB,receipts TEXT NOT NULL DEFAULT '{}',recipients BLOB);
-        CREATE TABLE IF NOT EXISTS inbox(message_id TEXT PRIMARY KEY,digest TEXT NOT NULL,sender TEXT NOT NULL,body BLOB NOT NULL,result TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS acknowledgements(message_id TEXT NOT NULL,recipient TEXT NOT NULL,receipt BLOB NOT NULL,PRIMARY KEY(message_id,recipient));
-        CREATE TABLE IF NOT EXISTS quarantine(message_id TEXT PRIMARY KEY,digest TEXT NOT NULL UNIQUE,sender TEXT NOT NULL,envelope BLOB NOT NULL,code TEXT NOT NULL);`);
-      transaction(db, () => {
-        if (!(db.prepare('PRAGMA table_info(outbox)').all() as Obj[]).some(row => row.name === 'recipients')) db.exec('ALTER TABLE outbox ADD COLUMN recipients BLOB');
-        const prior = db.prepare("SELECT value FROM state WHERE key='configuration_binding'").get() as Obj | undefined;
-        if (!prior) {
-          if (['state','outbox','inbox','acknowledgements','quarantine'].some(table => db.prepare('SELECT 1 FROM '+table+' LIMIT 1').get())) fail('network_state_binding_missing');
-          db.prepare('INSERT INTO state VALUES(?,?)').run('configuration_binding', json(this.binding));
-        } else if (!equal(parse(prior.value), this.binding)) fail('network_state_configuration_mismatch');
-      });
-      this.database = db; return db;
-    } catch (error) { db.close(); throw error; }
+    return this.database = openTransportState(this.directory,this.binding);
   }
+
   private state(key: string): any {
     const row = this.db().prepare('SELECT value FROM state WHERE key=?').get(key) as Obj | undefined;
     return row ? parse(row.value) : undefined;

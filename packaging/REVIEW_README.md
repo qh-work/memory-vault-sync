@@ -1,9 +1,9 @@
-# Memory Vault v0.28.0-alpha.0 independent review kit
+# Memory Vault v0.28.0-alpha.0.1 independent review kit
 
-The 0.28.0-alpha.0 preview adds signed open contact discovery and bounded
+The 0.28.0-alpha.0.1 preview adds signed open contact discovery and bounded
 multi-hop routing without a common authority or global roster. Python supports
-open connect/discover; native TypeScript provides control/routing/state kernels.
-Open messaging and the complete TypeScript open endpoint remain unsupported.
+open connect/discover; native TypeScript adds independent HTTP nodes and the
+same Agent contact path. Open messaging remains unsupported.
 See [setup, exact-source evidence and limits](docs/OPEN_ROUTING_RUNTIME.md).
 The full 0.28.0-alpha.1 consent, delivery and repair milestone remains ahead.
 The existing private network profile retains encrypted relay-pool exchange.

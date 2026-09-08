@@ -1,16 +1,36 @@
 {
   "name": "memory-vault-network-crypto",
-  "version": "0.28.0-alpha.0",
+  "version": "0.28.0-alpha.0.1",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./crypto.ts", "./crypto": "./crypto.ts", "./control": "./control.ts",
-    "./nodes": "./nodes.ts", "./records": "./records.ts", "./vault": "./vault.ts",
-    "./peer": "./peer.ts", "./content": "./content.ts", "./hints": "./hints.ts", "./setup": "./setup.ts", "./transport": "./transport.ts",
-    "./agent": "./agent.ts", "./retrieval": "./retrieval.ts", "./topics": "./topics.ts",
-    "./open-control": "./open-control.ts", "./open-routing": "./open-routing.ts", "./open-state": "./open-state.ts"
+    ".": "./crypto.ts",
+    "./crypto": "./crypto.ts",
+    "./control": "./control.ts",
+    "./nodes": "./nodes.ts",
+    "./records": "./records.ts",
+    "./vault": "./vault.ts",
+    "./peer": "./peer.ts",
+    "./content": "./content.ts",
+    "./hints": "./hints.ts",
+    "./setup": "./setup.ts",
+    "./transport": "./transport.ts",
+    "./agent": "./agent.ts",
+    "./retrieval": "./retrieval.ts",
+    "./topics": "./topics.ts",
+    "./open-control": "./open-control.ts",
+    "./open-routing": "./open-routing.ts",
+    "./open-state": "./open-state.ts",
+    "./open-client": "./open-client.ts",
+    "./open-node": "./open-node.ts",
+    "./open-participant": "./open-participant.ts",
+    "./open-transport": "./open-transport.ts"
   },
   "types": "./crypto.ts",
-  "engines": { "node": ">=22.19.0" },
-  "dependencies": { "jose": "6.2.10" }
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dependencies": {
+    "jose": "6.2.10"
+  }
 }
