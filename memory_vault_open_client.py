@@ -56,7 +56,11 @@ class OpenNetworkClient:
 
     def connect(self, *, invitation=None, request_id=None):
         if invitation is not None:
-            raise MemoryError("open_private_invitation_unsupported")
+            from memory_vault_open_contact_client import OpenContactClient, CONNECT_SCHEMA
+            if not isinstance(invitation, dict) or invitation.get("schema_version") != CONNECT_SCHEMA:
+                raise MemoryError("open_private_invitation_unsupported")
+            result = asyncio.run(OpenContactClient(self.participant, self.encryption).dispatch(invitation, request_id))
+            return {**result, "profile": "open-routing-v1", "network_accessed": True}
         result = asyncio.run(self.participant.join())
         return {**result, "profile": "open-routing-v1", "network_accessed": True,
                 "open_messaging_supported": False}

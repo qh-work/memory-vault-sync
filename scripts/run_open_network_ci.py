@@ -29,7 +29,8 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = ("settings.json", "status.json", "progress.jsonl", "errors.jsonl", "results.json")
 MAX_REPORT_BYTES = 900_000  # All explicitly uploadable files together, <1 MiB.
 MODULES = tuple("tests.test_open_" + name for name in (
-    "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "typescript", "typescript_state", "typescript_http", "network_ci")) + (
+    "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "typescript", "typescript_state", "typescript_http", "network_ci",
+    "contact", "contact_state", "contact_http", "contact_typescript", "contact_typescript_http")) + (
     "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {
     "schema_version": "memory-vault-open-routing-acceptance/v2", "logical_nodes": 100,
@@ -206,8 +207,13 @@ def initialize(reports, mode, seed):
         sources += ["clients/typescript/network/" + name for name in (
             "open-transport.ts", "open-participant.ts", "open-node.ts", "open-client.ts",
             "open-control.ts", "open-routing.ts", "open-state.ts", "client-config.ts", "transport-state.ts",
+            "open-contact.ts", "open-contact-state.ts", "open-contact-client.ts",
             "agent.ts", "peer.ts", "io.ts", "crypto.ts")]
         sources += ["requirements-network-server-lock.txt", "tests/test_open_typescript.py", "tests/test_open_typescript_http.py", "tests/test_open_typescript_state.py",
+                    "memory_vault_open_contact.py", "memory_vault_open_contact_state.py", "memory_vault_open_contact_client.py",
+                    "memory_vault_open_client.py", "memory_vault_open_node.py",
+                    "tests/test_open_contact.py", "tests/test_open_contact_state.py", "tests/test_open_contact_http.py",
+                    "tests/test_open_contact_typescript.py", "tests/test_open_contact_typescript_http.py",
                     "tests/test_network_typescript_agent_network.py", "tests/test_network_packaging.py"]
     settings = {"schema_version":"memory-vault-open-ci-settings/v1", "commit_sha":sha, "mode":mode,
         "seed":seed if mode == "scale" else None, "source_sha256":{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in sources},

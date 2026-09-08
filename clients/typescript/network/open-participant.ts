@@ -9,6 +9,9 @@ import {absolutePath,NetworkError,transaction} from './io.ts';
 import {openTransportState} from './transport-state.ts';
 import {OpenCheckpoints,OpenIndex} from './open-state.ts';
 import type {IndexOptions} from './open-state.ts';
+import {ContactState} from './open-contact-state.ts';
+import type {ContactStateOptions} from './open-contact-state.ts';
+import {verifyRpc as verifyContactRpc,signResponse as signContactResponse} from './open-contact.ts';
 import {coordinate,contactKey,verifyNode,verifyContact,signRequest,verifyRequest,verifyResponse,signResponse} from './open-control.ts';
 import type {SignedNode,SignedContact,SignedOpen,OpenAction,OpenView} from './open-control.ts';
 import {RoutingTable,LookupBudget,lookup,maintenanceTarget} from './open-routing.ts';
@@ -22,13 +25,13 @@ function code(error:unknown):string{
   return typeof candidate==='string'&&/^[a-z][a-z0-9_]{1,63}$/.test(candidate)?candidate:'open_storage_unavailable';
 }
 const same=(a:unknown,b:unknown)=>Buffer.from(canonicalBytes(a)).equals(Buffer.from(canonicalBytes(b)));
-export interface ParticipantOptions{seeds:SignedNode[];descriptor?:SignedNode;allow_loopback?:boolean;index_policy?:IndexOptions;}
+export interface ParticipantOptions{seeds:SignedNode[];descriptor?:SignedNode;allow_loopback?:boolean;index_policy?:IndexOptions;contact_policy?:ContactStateOptions;}
 export class OpenParticipant{
   readonly identity:SigningIdentityDocument;readonly descriptor:SignedNode|null;
   readonly table:RoutingTable;readonly transport:OpenHTTPTransport;readonly seeds:SignedNode[];
   readonly keyId:string;
   private readonly database:DatabaseSync;private readonly checkpoints:OpenCheckpoints;
-  private readonly index?:OpenIndex;
+  private readonly index?:OpenIndex;private readonly contact?:ContactState;
   private readonly pending=new Map<string,SignedNode>();
   private maintenanceCycle=0;private closed=false;private tail:Promise<unknown>=Promise.resolve();
   constructor(identity:SigningIdentityDocument,stateDirectory:string,options:ParticipantOptions){
@@ -51,7 +54,10 @@ export class OpenParticipant{
       this.checkpoints=new OpenCheckpoints(this.database);this.checkpoints.initialize();
       this.database.exec(`CREATE TABLE IF NOT EXISTS open_peer_cache(key_id TEXT PRIMARY KEY,node BLOB NOT NULL,seen_at INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS open_peer_seen ON open_peer_cache(seen_at);`);
-      if(this.descriptor){this.accept(this.descriptor);this.index=new OpenIndex(this.database,this.identity,this.descriptor,policy);this.index.initialize();}
+      if(this.descriptor){
+        this.accept(this.descriptor);this.index=new OpenIndex(this.database,this.identity,this.descriptor,policy);this.index.initialize();
+        this.contact=new ContactState(this.database,this.identity,this.descriptor,options.contact_policy??{});this.contact.initialize();
+      }
     }catch(error){this.database.close();this.transport.close();throw error;}
   }
   close():void{if(this.closed)return;this.closed=true;this.transport.close();this.database.close();}
@@ -60,6 +66,10 @@ export class OpenParticipant{
     const next=this.tail.then(()=>{this.ready();return operation();});this.tail=next.catch(()=>undefined);return next;
   }
   private accept(value:SignedNode|SignedContact):void{this.ready();this.checkpoints.accept(value as DocumentInput);}
+  /** Synchronous contact storage access; never keep a DB transaction over await. */
+  contactStorage<T>(operation:(database:DatabaseSync)=>T):T{this.ready();return operation(this.database);}
+  acceptContactControl(value:SignedNode|SignedContact):void{this.accept(value);}
+  lookupContactResource(target:string,budget:LookupBudget){this.ready();return this.lookup(target,'general',budget);}
   private cache(node:SignedNode):void{
     this.ready();transaction(this.database,()=>{
       this.database.prepare('INSERT OR REPLACE INTO open_peer_cache VALUES(?,?,?)').run(node.payload.signing_key.key_id,canonicalBytes(node),now());
@@ -120,8 +130,8 @@ export class OpenParticipant{
       for(let offset=0;offset<Math.min(2,peers.length);offset++){try{await this.call(peers[(cycle*2+offset)%peers.length],'hello',{node:this.descriptor},budget);}catch(error){errors.push(code(error));}}}
     const result=await this.lookup(target,'general',budget);return {state:result.state,metrics:this.metrics(budget),errors};
   });}
-  findContact(ownerKeyId:string):Promise<Obj>{return this.serial(async()=>{
-    const key=contactKey(ownerKeyId),budget=new LookupBudget(),route=await this.lookup(key,'directory',budget);
+  findContact(ownerKeyId:string,budget=new LookupBudget()):Promise<Obj>{return this.serial(async()=>{
+    const key=contactKey(ownerKeyId),route=await this.lookup(key,'directory',budget);
     const found:Obj[]=[],errors:string[]=[],states:string[]=[],peers=[...route.candidates];
     if(this.descriptor?.payload.roles.includes('directory'))peers.push(this.descriptor);
     for(const node of peers.slice(0,8)){try{const body=await this.call(node,'get',{key},budget);states.push(body.state);
@@ -162,5 +172,14 @@ export class OpenParticipant{
     }catch(error){if(!(error instanceof NetworkCryptoError))throw error;
       result={error:{code:code(error),retryable:(error as any)?.retryable===true}};}
     return signResponse(this.identity,{request,node:this.descriptor,body:result,issued_at:issued,expires_at:Math.min(issued+60,original.expires_at)});
+  }
+  /** Real JOSE challenge encryption is async; ordinary routing stays synchronous. */
+  async handleContact(request:SignedOpen):Promise<SignedOpen>{
+    this.ready();if(!this.descriptor||!this.contact)fail('open_node_not_configured');
+    verifyContactRpc(request,{node:this.descriptor});let result:Obj;
+    try{result=await this.contact.handle(request);}
+    catch(error){if(!(error instanceof NetworkCryptoError))throw error;
+      result={error:{code:code(error),retryable:(error as any)?.retryable===true}};}
+    this.ready();return signContactResponse(this.identity,{request,node:this.descriptor,body:result});
   }
 }

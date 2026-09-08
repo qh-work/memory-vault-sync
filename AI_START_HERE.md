@@ -10,8 +10,10 @@ Endpoints with different bootstrap entries can use the same bounded authorized
 pool. Discovery does not grant relay admission or memory access; the configured
 authority must still be available. The six operations below remain unchanged.
 
-This source targets **[v0.28.0-alpha.0.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.1)**.
-Download availability is established by that release page, not this source declaration.
+This source targets **[v0.28.0-alpha.0.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)**.
+At preparation, this first-contact candidate's 6 Pro review, cloud CI and
+publication were pending. Use the release evidence for the exact source commit
+to establish their final status and actual download availability.
 Operators can use its full client package; protocol adopters can use the separate
 protocol package. Verify `SHA256SUMS` and preserve existing private backups.
 For a bounded first test, the separate synthetic network package runs one
@@ -39,13 +41,20 @@ No cancellation removes already admitted memories or rewrites historical bytes.
 
 ## Select the network profile
 
-The explicit open profile in this preview supports Python and native TypeScript `connect` and
+The open profile supports Python and native TypeScript `connect` and
 `discover(online=true, key_id=...)` through signed, bounded routing without a
-common authority or roster. `remember` and `recall` remain local. Open message
-operations return `open_messaging_unsupported`; contact discovery grants no
-memory, mailbox or execution permission. Native TypeScript includes the
-independent HTTP node, constrained transport and Agent contact path. Follow
-[open setup and limits](docs/OPEN_ROUTING_RUNTIME.md).
+common authority or roster. Its explicit first-contact branch uses
+`memory-vault-open-contact-connect/v1` inside `connect.invitation`: B enables a
+finite knock queue, A requests contact after proving both keys, B polls and
+explicitly approves or rejects, and A pulls its request-bound result. Approval
+requires a real finite resource lease; it does not start a model or authorize
+Vault reads, memory admission or execution. Follow the exact fields in
+[first-contact controls](docs/OPEN_FIRST_CONTACT_V1.md) and
+[routing setup](docs/OPEN_ROUTING_RUNTIME.md).
+
+`remember` and `recall` remain local. Open message operations still return
+`open_messaging_unsupported`, including after verified approval. Encrypted
+delivery, storage/recipient receipts and sender-offline repair are unfinished.
 
 The private profile below retains invitation-based encrypted messaging and
 relay-pool failover. Its issuer/roster examples do not configure an open client.

@@ -1,12 +1,39 @@
-# Memory Vault v0.28.0-alpha.0.1 — native open HTTP contact preview
+# Memory Vault v0.28.0-alpha.0.2 — explicit first-contact candidate
 
-This preview adds open contact discovery without a common authority, global
-roster or shared relay pool. It adds native TypeScript HTTP nodes, clients and the Agent contact path;
-the full 0.28.0-alpha.1 consent, encrypted delivery and repair milestone
-remains in development. Verify the release manifest and downloaded hashes
-to establish the actual package source and bytes.
+This candidate extends native Python/TypeScript open routing with fixed
+first-contact requests, explicit approval/rejection and verifiable finite
+resource authorization. It requires no common authority, global roster or
+shared relay pool. At candidate preparation, 6 Pro review, cloud CI, final
+archive checks and publication were pending; no final test count is declared
+here. Use release evidence for the exact source commit for the final status,
+and verify the release manifest and downloaded hashes against that source.
 
 ## New capability
+
+- B explicitly acquires a finite knock lease and signs opt-in before going
+  offline. A created afterward, with no B delivery grant, discovers the signed
+  endpoint through bounded routing and proves possession of both signing and
+  encryption keys with the existing real JWE primitives.
+- The first request has fixed fields and no free text, callback, attachment or
+  arbitrary ciphertext. R transactionally reserves the request, eventual result
+  and replay state; a queued request is not a delivered message or approval.
+- B polls and explicitly approves or rejects. Approval requires a real finite
+  delivery reservation, exclusively bound to that request. A pulls and verifies
+  B's decision against the original request, both parties, node/epoch, concrete
+  resource, operation and expiry. A rejection has no grant.
+- Poll filters requests against the current policy before selecting its bounded
+  page. A policy update cannot leave stale requests blocking newer valid ones;
+  retained evidence, replay state and capacity charges remain in place.
+- Local client records reserve future result and decision/allocation space before
+  remote obligations are created. Exact retries and Python/TypeScript restarts
+  reuse the same protected database. Admission limits preserve bounded result
+  challenge capacity and separate submit/result encryption slots.
+- The existing six-operation facade gains explicit first-contact controls under
+  `connect`; ordinary join, local Memory operations and original record bytes,
+  IDs, signatures and provenance remain intact. No grant creates author trust,
+  Vault access or model execution. See [the exact candidate contract](../docs/OPEN_FIRST_CONTACT_V1.md).
+
+## Retained routing and native HTTP baseline
 
 - An explicitly configured Python or native TypeScript client joins from at most two signed
   introductions and discovers an owner's signed contact through actual
@@ -23,7 +50,7 @@ to establish the actual package source and bytes.
   unknown or failed peers still require independent challenges. Every fourth
   maintenance lookup refreshes the owner's own region under the same numeric
   budget, so later announcements can reach newly discoverable neighbours.
-- Native TypeScript now supplies constrained outbound HTTP, finite node admission,
+- Native TypeScript supplies constrained outbound HTTP, finite node admission,
   native participant orchestration and open Agent dispatch. Python and TypeScript
   reuse the same client configuration, signing identity, protected transport DB
   and control/index tables. No Python subprocess implements the native path.
@@ -37,12 +64,18 @@ The retained private profile continues to provide authorized encrypted relay
 exchange. Its issuer, roster and common pool are not dependencies of the open
 contact-discovery profile. See [open setup and limits](../docs/OPEN_ROUTING_RUNTIME.md).
 
-## Measured evidence
+## Candidate verification and historical evidence
 
-The native HTTP regression suite is `tests.test_open_typescript_http`. Its
-source and actual execution must be matched to the release manifest and CI;
-test presence alone is not a passing result. No new scale run is claimed for
-this transport-only extension. Routing kernels and maintenance budgets are unchanged.
+The first-contact suites exercise strict schemas and binding, actual dual-key
+JWE, transactional capacity/rollback, local result reservations, explicit
+decisions and native/Python HTTP and SQLite restarts. Match their actual execution
+to the candidate source; test presence is not a pass. No new scale experiment,
+real-model continuation, cross-region run or complete delivery claim is made.
+
+The prior native HTTP preview **0.28.0-alpha.0.1** is pinned to
+`0ddf0c5ac6aa8d12562c1df2a26ee25aeb851ed3`. Its native HTTP suite,
+`tests.test_open_typescript_http`, review, CI and downloaded assets retain that
+historical scope and do not certify the current first-contact candidate.
 
 Earlier routing functional source: `dc485334f8ad8629db68ef25c7c618a732f15c6c`.
 The [three-seed cloud experiment](https://github.com/qh-work/memory-vault-sync/actions/runs/34191451681)
@@ -67,12 +100,12 @@ are separate evidence. Earlier scale failures are preserved, not relabelled.
 
 ## Matching artifacts and retained data
 
-- `memory-vault-protocol-v0.28.0-alpha.0.1.zip`: specification, structural schemas
+- `memory-vault-protocol-v0.28.0-alpha.0.2.zip`: specification, structural schemas
   and synthetic vectors, with no executable code.
-- `memory-vault-client-v0.28.0-alpha.0.1.zip`: source-built runtime, plugin and
+- `memory-vault-client-v0.28.0-alpha.0.2.zip`: source-built runtime, plugin and
   local marketplace catalog.
-- `memory-vault-review-v0.28.0-alpha.0.1.zip`: public source and synthetic tests.
-- `memory-vault-network-test-v0.28.0-alpha.0.1.zip`: retained private-profile
+- `memory-vault-review-v0.28.0-alpha.0.2.zip`: public source and synthetic tests.
+- `memory-vault-network-test-v0.28.0-alpha.0.2.zip`: retained private-profile
   synthetic endpoint template; service trust is unconfigured and requires
   operator provisioning. It is not an open-network delivery demo.
 - `memory_vault.py`, `PROTOCOL.md`, `release-manifest.json`, `SHA256SUMS`:
@@ -87,8 +120,9 @@ service or paid resources are changed by extracting this release. Preserve old
 runtime and private backups; automatic migration is not provided. Never reuse
 a stale control backup as fresh permission.
 
-Still pending: automatic signed descriptor renewal/address changes,
-first-contact consent, encrypted mailboxes and
+Candidate-preparation review, CI and publication status is recorded above;
+final outcomes require exact-source release evidence. Remaining implementation:
+automatic signed descriptor renewal/address changes, encrypted mailboxes and
 receipts, finite ciphertext leases and sender-independent replica repair,
 hostile-overlay and larger independent growth-axis experiments, and actual
 multi-model/cross-region acceptance. An expired descriptor is unusable; this

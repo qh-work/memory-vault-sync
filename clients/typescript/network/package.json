@@ -1,6 +1,6 @@
 {
   "name": "memory-vault-network-crypto",
-  "version": "0.28.0-alpha.0.1",
+  "version": "0.28.0-alpha.0.2",
   "private": true,
   "type": "module",
   "exports": {
@@ -24,7 +24,10 @@
     "./open-client": "./open-client.ts",
     "./open-node": "./open-node.ts",
     "./open-participant": "./open-participant.ts",
-    "./open-transport": "./open-transport.ts"
+    "./open-transport": "./open-transport.ts",
+    "./open-contact": "./open-contact.ts",
+    "./open-contact-state": "./open-contact-state.ts",
+    "./open-contact-client": "./open-contact-client.ts"
   },
   "types": "./crypto.ts",
   "engines": {
