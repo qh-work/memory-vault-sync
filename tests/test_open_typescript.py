@@ -261,6 +261,10 @@ class OpenTypeScriptTests(unittest.TestCase):
             for name, function in (("coordinate", coordinate), ("contactKey", contact_key)):
                 calls.append(dict(name=name, args=[key])); expected.append({"ok": True, "value": function(key)})
             calls.append(dict(name="maintenanceTarget", args=[key, 2**53-1])); expected.append({"ok": True, "value": maintenance_target(key, 2**53-1)})
+            for cycle in (0,1,3,4,5):
+                calls.append(dict(name="maintenanceTarget",args=[key,cycle]))
+                value=coordinate(key) if cycle%4==0 else maintenance_target(key,cycle)
+                expected.append({"ok":True,"value":value})
         for left, right in (("0"*64, "f"*64), (coordinate(self.owner.key_id), coordinate(self.server.key_id))):
             calls.append(dict(name="distance", args=[left,right])); expected.append({"ok":True,"value":f"{distance(left,right):064x}"})
         for address in ("192.0.2.9", "2001:db8:abcd:1234::1", "::ffff:192.0.2.9", "::1", "2001:0:0:1::2", "host.invalid", "fe80::1%lo0"):

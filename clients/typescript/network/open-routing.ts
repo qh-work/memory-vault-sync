@@ -26,7 +26,8 @@ function bucketIndex(self:string,other:string):number{
   return -1;
 }
 export function maintenanceTarget(keyId:string,cycle:number):string{
-  coordinate(keyId);if(!Number.isSafeInteger(cycle)||cycle<0)fail('open_invalid_routing_budget');
+  const own=coordinate(keyId);if(!Number.isSafeInteger(cycle)||cycle<0)fail('open_invalid_routing_budget');
+  if(cycle%4===0)return own;
   return sha256(Buffer.from('memory-vault-open-maintenance/v1\0'+keyId+'\0'+cycle,'ascii'));
 }
 function ipv6Words(address:string):number[]{

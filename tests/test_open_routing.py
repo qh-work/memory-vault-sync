@@ -146,8 +146,8 @@ class SyntheticRouting:
                     except MemoryError:
                         pass
                 target = maintenance_target(self.identities[caller].key_id, cycle)
-                # Same self-region announcement selection as native maintain;
-                # the independent random lookup target and RPC budget stay fixed.
+                # Same self-region announcements, periodic own/random refresh
+                # target and shared RPC budget as native maintain.
                 peers = self.tables[caller].closest(coordinate(self.identities[caller].key_id), "general", limit=8)
                 for offset in range(min(2, len(peers))):
                     peer = peers[(cycle * 2 + offset) % len(peers)]

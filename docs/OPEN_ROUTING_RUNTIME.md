@@ -55,7 +55,13 @@ A verified, correctly bound hello error still proves that seed's endpoint and
 can populate the caller's bounded routing table. The error remains an admission
 failure; it does not put the rejected advertisement in the receiver's queue.
 This lets a node start discovery even when its first announcement is refused.
-The lookup's refresh coordinate still varies each cycle. Self-announcements
+Every fourth maintenance lookup refreshes the node's own coordinate; the other
+three retain the independent deterministic random targets. This uses the same
+single lookup and shared allowance, not an extra refresh RPC budget. Random
+global lookups alone can miss a small local region after new neighbours become
+discoverable, leaving announcements tied to old introductions. Periodic local
+refresh gives later announcements fresh, independently verified neighbours.
+Self-announcements
 use the node's own region to help nearby routers introduce it during a lookup;
 every receiving peer still challenges the endpoint.
 The HTTP node runs that work independently from agent sessions. Incoming
@@ -158,8 +164,11 @@ causal paths for the first failure of at most eight distinct targets per phase.
 All failures still remain in the full denominator. These observations never
 add routes or make requests. The report validator rejects arbitrary payloads,
 descriptors, keys, addresses and extra fields; the combined report byte limit
-remains below 1 MiB. This diagnostic schema revision changes no acceptance
-threshold, production routing policy or maintenance budget.
+remains below 1 MiB. The child serializes compact JSON so indentation cannot
+exhaust its output cap while preserving every failure and bounded sample.
+Diagnostics themselves change no production routing policy or acceptance
+budget. The current report explicitly records the periodic own-coordinate
+schedule separately from the unchanged numeric maintenance limits.
 
 Still outstanding: complete native TypeScript open runtime; automatic signed
 descriptor renewal/address changes beyond the current descriptor lifetime;

@@ -123,6 +123,7 @@ async def run(seed=17, queries=1000, nodes=100):
         "ai_instances": 0, "physical_failure_domains_verified": False, "maintenance_cycles": 20, "maintenance_requests_per_node_cycle": 16,
         "maintenance_response_bytes_per_node_cycle": 1048576, "maintenance_seconds_per_node_cycle": 5,
         "maintenance_pending_probes": 2, "maintenance_announcements": 2,
+        "maintenance_target_schedule": "own_coordinate_every_fourth_cycle_otherwise_random",
         "pending_overflow": "signed_retryable_rejection", "pending_capacity": 32, "join_notify_count": 2,
         "maintenance_and_join_requests": join_requests, "maintenance_and_join_response_bytes": join_response_bytes,
         "maintenance_and_join_seconds": join_seconds, "phases": phases,
@@ -141,7 +142,9 @@ def main():
     if not 1 <= options.queries <= 1000:
         parser.error("queries must be 1..1000")
     result = asyncio.run(run(options.seed, options.queries, options.nodes))
-    print(json.dumps(result, sort_keys=True, indent=2))
+    # Preserve every failure and bounded diagnostic within the CI pipe limit;
+    # indentation alone can more than triple this public JSON document.
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     raise SystemExit(0 if result["passed"] else 1)
 
 

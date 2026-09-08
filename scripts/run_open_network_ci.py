@@ -40,6 +40,7 @@ EXPECTED = {
     "maintenance_seconds_per_node_cycle": 5, "maintenance_pending_probes": 2,
     "pending_capacity": 32, "join_notify_count": 2,
     "maintenance_announcements": 2, "pending_overflow": "signed_retryable_rejection",
+    "maintenance_target_schedule": "own_coordinate_every_fourth_cycle_otherwise_random",
 }
 ROUTING_STATS = {"general_active", "general_replacements", "directory_active", "directory_replacements", "directory_introductions"}
 PHASE_FIELDS = {"queries", "successes", "success_rate", "threshold", "passed", "failures",

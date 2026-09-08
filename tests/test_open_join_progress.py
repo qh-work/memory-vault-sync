@@ -41,10 +41,11 @@ class _LogicalTransport:
 
 
 class NativeJoinNetwork:
-    def __init__(self, root, count=35):
+    def __init__(self, root, count=35, fixture_seed=None):
         now = int(time.time())
         self.identities = [Identity(Ed25519PrivateKey.from_private_bytes(hashlib.sha256(
-            f"synthetic-open-join-progress:{i}".encode()).digest())) for i in range(count)]
+            (f"synthetic-open-join-progress:{i}" if fixture_seed is None else
+             f"synthetic-open-routing:{fixture_seed}:{i}").encode()).digest())) for i in range(count)]
         self.nodes = [issue_node(identity, base_url=f"https://join-node-{i}.invalid",
             storage_epoch=f"synthetic-join-epoch-{i}", roles=["directory", "router"], revision=1,
             issued_at=now-1, expires_at=now+3599) for i, identity in enumerate(self.identities)]
@@ -71,6 +72,45 @@ class NativeJoinNetwork:
         for sender in range(2, 34):
             for recipient in (0, 1):
                 await self.hello(sender, recipient)
+
+
+class OpenNeighbourRefreshTests(unittest.IsolatedAsyncioTestCase):
+    async def test_maintenance_finds_newly_visible_own_region_within_four_cycles(self):
+        # Three public synthetic rows from seed43's observed maintenance state.
+        # This is a bounded signed-edge fixture, not a 100-node acceptance run.
+        rows={
+            3: ([0,2,4,8,10,11,13,17,1,7,12,16,32,15,54,50,5,9,14,20,22,93,36,76,6,72,55,89,18,65,45,21,51,57],
+                [90,99,78,24,52,74]),
+            6: ([0,2,4,8,10,13,11,19,1,7,12,32,16,15,54,98,3,21,51,86,47,57,45,46,5,9,14,22,93,20,24,96,18,55,72,65,89,38,44,61,75],
+                [88,91,50,68,34,33,64,67]),
+            63: ([0,2,4,10,8,19,11,13,1,7,12,16,54,98,52,50,3,5,14,9,76,33,94,34,78,6],
+                 [56,87,68,15,97,36]),
+        }
+        with tempfile.TemporaryDirectory(prefix="synthetic-neighbour-refresh-") as temporary:
+            net=NativeJoinNetwork(Path(temporary).resolve(),100,fixture_seed=43)
+            try:
+                for owner,(active,spare) in rows.items():
+                    for peer in active+spare:
+                        await net.hello(owner,peer,advertise=False)
+                participant=net.participants[63];target=coordinate(participant.identity.key_id)
+                self.assertNotIn(net.nodes[57],participant.table.closest(target))
+                for _ in range(4):
+                    result=await participant.maintain()
+                    self.assertLessEqual(result["metrics"]["requests"],16)
+                    self.assertLessEqual(result["metrics"]["response_bytes"],1048576)
+                self.assertEqual(participant.table.closest(target)[0],net.nodes[57])
+                # Discovery must feed bounded later announcements, and receiving
+                # one still does not transfer the owner's endpoint proof.
+                await participant.maintain()
+                self.assertIn(participant.identity.key_id,net.participants[57]._pending)
+                self.assertFalse(net.participants[57].table.has_verified(net.nodes[63]))
+                await net.participants[57].maintain()
+                self.assertTrue(net.participants[57].table.has_verified(net.nodes[63]))
+                await net.hello(36,3,advertise=False)
+                cold=await net.participants[36]._lookup(target,"general",LookupBudget())
+                self.assertIn(net.nodes[63],cold["candidates"])
+            finally:
+                net.close()
 
 
 class OpenJoinProgressTests(unittest.IsolatedAsyncioTestCase):

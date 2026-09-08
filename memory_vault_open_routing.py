@@ -53,9 +53,14 @@ def distance(first: str, second: str) -> int:
 
 
 def maintenance_target(key_id: str, cycle: int) -> str:
-    coordinate(key_id)
+    own = coordinate(key_id)
     if type(cycle) is not int or not 0 <= cycle <= (1 << 53) - 1:
         raise OpenRoutingError("open_invalid_routing_budget")
+    # Random global refresh alone can repeatedly miss a small local region
+    # after new peers become discoverable. Refresh that region periodically so
+    # later self-announcements use fresh neighbours under the same RPC budget.
+    if cycle % 4 == 0:
+        return own
     return hashlib.sha256(b"memory-vault-open-maintenance/v1\x00" + key_id.encode("ascii")
                           + b"\x00" + str(cycle).encode("ascii")).hexdigest()
 

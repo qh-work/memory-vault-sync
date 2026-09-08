@@ -1,5 +1,6 @@
 """Fast reports and four-node observer checks; never start the scale experiment."""
 import copy
+import contextlib
 import io
 import json
 from pathlib import Path
@@ -28,6 +29,35 @@ def synthetic_report():
 
 
 class OpenNetworkCITests(unittest.TestCase):
+    def test_maximal_failure_diagnostics_fit_child_and_report_caps(self):
+        from tests import open_routing_acceptance as acceptance
+        value=synthetic_report();graph=[]
+        for i in range(100):
+            peers=[j for j in range(100) if j!=i]
+            graph.append({"node":i,"active":peers[:50],"spare":peers[50:],"pending":peers[:32]})
+        value["routing_diagnostics"]["maintenance_graph"]=graph
+        for name,phase in value["phases"].items():
+            phase.update(successes=0,success_rate=0.,passed=False,failures=[
+                {"query":i,"source":99,"target":2+i%97,"state":"closest_known","requests":64} for i in range(1000)])
+            diagnostic=value["routing_diagnostics"]["phases"][name];diagnostic["graph"]=graph
+            for query in range(8):
+                holders=[i for i in range(100) if i!=query+2]
+                diagnostic["failure_samples"].append({"query":query,"initial":list(range(16)),"returned":list(range(80,88)),
+                    "replies":[{"peer":i,"returned":list(range(80,88))} for i in range(64)],
+                    "paths":[{"peer":i,"parent":None if i==0 else i-1,"lane":0,"source_bits":3,"depth":i,"state":"verified"} for i in range(64)],
+                    "target_holders":{"active":holders,"spare":[],"pending":holders}})
+        value["passed"]=False;ci.validate_scale(value,17)
+        async def fake_run(*args):return value  # Serializer-only test, no routing run.
+        output=io.StringIO()
+        with mock.patch.object(acceptance,"run",fake_run),mock.patch.object(sys,"argv",["acceptance"]),contextlib.redirect_stdout(output):
+            with self.assertRaises(SystemExit) as stopped:acceptance.main()
+        self.assertEqual(stopped.exception.code,1)
+        self.assertEqual(json.loads(output.getvalue()),value)
+        self.assertLessEqual(len(output.getvalue().encode()),750000)
+        with tempfile.TemporaryDirectory() as temporary:
+            reports=ci.Reports(temporary);reports.write("results.json",value);reports.status("failed",False,True)
+            self.assertLess(sum(p.stat().st_size for p in Path(temporary).iterdir()),ci.MAX_REPORT_BYTES)
+
     def test_diagnostics_reject_payloads_indices_and_unbound_failure_samples(self):
         sample={"query":0,"initial":[0,1],"returned":[1],"replies":[{"peer":1,"returned":[0]}],
                 "paths":[{"peer":1,"parent":None,"lane":0,"source_bits":1,"depth":0,"state":"verified"}],
