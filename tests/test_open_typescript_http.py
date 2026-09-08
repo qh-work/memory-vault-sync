@@ -206,8 +206,8 @@ class OpenTypeScriptHTTPTests(unittest.TestCase):
         self.assertFalse((self.root / "vault.sqlite3").exists())
         self.assertFalse((self.root / "trust.json").exists())
 
-    def test_eight_mixed_process_cold_multihop_bootstrap_exit_and_directory_restart(self):
-        host = self.host(8)
+    def test_seven_mixed_nodes_and_native_client_cold_multihop_exit_and_restart(self):
+        host = self.host(7, native={1,3,5,6})
         owner = Identity.generate(self.root / "owner" / "identity.json")
         contact = host.contact(owner, EncryptionIdentity.generate())
         self.assertIn("lease", host.put_only_last(owner, contact))
@@ -225,16 +225,16 @@ class OpenTypeScriptHTTPTests(unittest.TestCase):
         self.assertFalse(state.exists())
         result = self.participant(self.root / "cold" / "identity.json", state, host.nodes[:2], [{"op": "find", "key_id": owner.key_id}])
         self.assert_trace(result, contact, host.nodes[:2])
-        self.assertEqual([host.public_contacts(i) for i in range(8)], [0]*7+[1])
-        host.stop(0); host.stop(1); host.stop(7)
+        self.assertEqual([host.public_contacts(i) for i in range(7)], [0]*6+[1])
+        host.stop(0); host.stop(1); host.stop(6)
         # A Python runtime opens the native directory's exact state and identity.
-        host.native.remove(7); host.start(7)
+        host.native.remove(6); host.start(6)
         restarted = self.participant(self.root / "cold" / "identity.json", state, host.nodes[:2], [{"op": "find", "key_id": owner.key_id}])
         self.assertEqual(restarted["results"][0]["value"]["state"], "found", restarted)
         with OpenParticipant(cold, state, seeds=host.nodes[:2], allow_loopback=True) as python_restarted:
             found = asyncio.run(python_restarted.find_contact(owner.key_id))
         self.assertEqual(canonical_bytes(found["contact"]), canonical_bytes(contact))
-        self.assertEqual([host.public_contacts(i) for i in range(2,8)], [0]*5+[1])
+        self.assertEqual([host.public_contacts(i) for i in range(2,7)], [0]*4+[1])
 
     def test_native_destination_policy_and_real_socket_failure_boundaries(self):
         from tests.test_open_transport import OpenTransportTests

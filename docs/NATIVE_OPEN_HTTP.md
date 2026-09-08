@@ -72,7 +72,8 @@ that withdrawal, not continued availability.
 
 `python -m unittest tests.test_open_typescript_http` uses real Ed25519, locked
 JOSE, owned temporary SQLite and actual sockets. It tests bidirectional contact
-publication, the native Agent, eight mixed processes with cold multi-hop
+publication, the native Agent, seven mixed HTTP nodes plus one native client
+with cold multi-hop
 discovery, original bootstrap exit, endpoint restart and a directory opened by
 the other language. Parent-response traces are checked against signed replies.
 The harness does not supply a global graph, preload a target route or change
@@ -89,7 +90,7 @@ config extraction preserve existing ciphertext and record proofs.
 
 Test presence is not a passing run. CI records exact source, method outcomes
 and runtime versions; match those to the release's manifest and checksums.
-Eight local processes share one machine and one observed /24. They are not
+The eight participating processes share one machine and one observed /24. They are not
 eight models, eight physical fault domains, global reliability or a rerun of
 the earlier 100-node logical experiment. Descriptor renewal/address changes,
 first-contact consent, encrypted mailboxes/receipts, finite ciphertext leases

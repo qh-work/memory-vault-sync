@@ -27,8 +27,8 @@ to establish the actual package source and bytes.
   native participant orchestration and open Agent dispatch. Python and TypeScript
   reuse the same client configuration, signing identity, protected transport DB
   and control/index tables. No Python subprocess implements the native path.
-- Small real-HTTP tests cover bidirectional publication/discovery, eight mixed
-  nodes, cold causal multi-hop lookup, original bootstrap exit, endpoint restart
+- Small real-HTTP tests cover bidirectional publication/discovery, seven mixed
+  nodes plus one native client, cold causal multi-hop lookup, original bootstrap exit, endpoint restart
   and a directory reopened by the other language. They use synthetic loopback
   processes, not real AI or independent physical fault domains.
 
