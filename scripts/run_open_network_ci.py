@@ -31,7 +31,7 @@ MAX_REPORT_BYTES = 900_000  # All explicitly uploadable files together, <1 MiB.
 MODULES = tuple("tests.test_open_" + name for name in (
     "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "typescript", "typescript_state", "network_ci"))
 EXPECTED = {
-    "schema_version": "memory-vault-open-routing-acceptance/v1", "logical_nodes": 100,
+    "schema_version": "memory-vault-open-routing-acceptance/v2", "logical_nodes": 100,
     "profile": "routing_core_table_initial_no_restart_cache", "checkpoints": False,
     "initial_closest_entries": 16, "full_runtime_benchmark": False, "real_ed25519": True,
     "transport": "in_process_signed_control", "actual_http": False, "ai_instances": 0,
@@ -60,10 +60,71 @@ def number(value):
     return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 10**15
 
 
+def validate_diagnostics(value, phases):
+    """Only finite synthetic indices and routing outcomes, never descriptors."""
+    def index(value):
+        return type(value) is int and 0 <= value < 100
+
+    def indices(value, limit):
+        require(type(value) is list and len(value) <= limit and all(index(i) for i in value))
+        require(len(set(value)) == len(value))
+
+    def graph(value):
+        require(type(value) is list and len(value) == 100)
+        require(all(type(row) is dict and set(row) == {"node", "active", "spare", "pending"} for row in value))
+        require(all(index(row["node"]) for row in value))
+        require({row["node"] for row in value} == set(range(100)))
+        for row in value:
+            for kind in ("active", "spare", "pending"):
+                indices(row[kind], 32 if kind == "pending" else 99)
+                require(row["node"] not in row[kind])
+            require(not set(row["active"]) & set(row["spare"]))
+
+    require(type(value) is dict and set(value) == {"schema_version", "maintenance_graph", "phases"})
+    require(value["schema_version"] == "memory-vault-open-routing-diagnostics/v1")
+    require(type(value["phases"]) is dict and set(value["phases"]) == set(phases))
+    graph(value["maintenance_graph"])
+    for name, diagnostic in value["phases"].items():
+        require(type(diagnostic) is dict and set(diagnostic) == {"graph", "failure_samples"})
+        graph(diagnostic["graph"])
+        samples = diagnostic["failure_samples"]
+        require(type(samples) is list and len(samples) <= 8)
+        failures = {f["query"]: f for f in phases[name]["failures"]}
+        sampled_targets = set()
+        for sample in samples:
+            require(type(sample) is dict and set(sample) == {"query", "initial", "returned", "replies", "paths", "target_holders"})
+            require(type(sample["query"]) is int and sample["query"] in failures)
+            failure = failures[sample["query"]]
+            require(failure["target"] not in sampled_targets)
+            sampled_targets.add(failure["target"])
+            indices(sample["initial"], 16); indices(sample["returned"], 8)
+            require(failure["target"] not in sample["returned"])
+            holders = sample["target_holders"]
+            require(type(holders) is dict and set(holders) == {"active", "spare", "pending"})
+            for peers in holders.values():
+                indices(peers, 99); require(failure["target"] not in peers)
+            replies = sample["replies"]
+            require(type(replies) is list and len(replies) <= failure["requests"])
+            for reply in replies:
+                require(type(reply) is dict and set(reply) == {"peer", "returned"} and index(reply["peer"]))
+                indices(reply["returned"], 8)
+            require(len({r["peer"] for r in replies}) == len(replies))
+            paths = sample["paths"]
+            require(type(paths) is list and len(paths) <= failure["requests"])
+            for path in paths:
+                require(type(path) is dict and set(path) == {"peer", "parent", "lane", "source_bits", "depth", "state"})
+                require(index(path["peer"]) and (path["parent"] is None or index(path["parent"])))
+                require(type(path["lane"]) is int and path["lane"] in (0, 1))
+                require(type(path["source_bits"]) is int and 1 <= path["source_bits"] <= 3)
+                require(type(path["depth"]) is int and 0 <= path["depth"] <= 128)
+                require(path["state"] in {"verified", "failed"})
+            require(len({p["peer"] for p in paths}) == len(paths))
+
+
 def validate_scale(value, seed):
     """Exact public result inventory prevents accidental logs/keys/path fields."""
     extra = {"seed", "maintenance_and_join_requests", "maintenance_and_join_response_bytes", "maintenance_and_join_seconds",
-             "phases", "max_per_node_routing_state", "sum_per_node_routing_state", "total_seconds", "passed"}
+             "phases", "max_per_node_routing_state", "sum_per_node_routing_state", "total_seconds", "passed", "routing_diagnostics"}
     require(type(value) is dict and set(value) == set(EXPECTED) | extra)
     for key, expected in EXPECTED.items():
         require(type(value[key]) is type(expected) and value[key] == expected)
@@ -94,6 +155,7 @@ def validate_scale(value, seed):
             require(failure["state"] in {"closest_known", "budget_exhausted", "unreachable"})
             require(type(failure["requests"]) is int and 0 <= failure["requests"] <= 64)
     require(value["passed"] == all(phase["passed"] for phase in value["phases"].values()))
+    validate_diagnostics(value["routing_diagnostics"], value["phases"])
     return value
 
 

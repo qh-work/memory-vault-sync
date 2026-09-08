@@ -40,6 +40,7 @@ class SyntheticRouting:
         self.active = self.peak = 0
         self.calls = []
         self.respond = None
+        self.find_observations = None  # Optional passive synthetic diagnostics.
 
     def signer(self, caller):
         def sign(peer, action, body):
@@ -83,6 +84,9 @@ class SyntheticRouting:
                 else:
                     body = {"nodes": self.tables[destination].reply_candidates(
                         original["body"]["target"], original["body"]["view"])}
+                    if self.find_observations is not None:
+                        self.find_observations.append({"peer": destination, "returned": [
+                            self.by_key[n["payload"]["signing_key"]["key_id"]] for n in body["nodes"]]})
                 response = sign_response(self.identities[destination], request=request,
                     node=self.nodes[destination], body=body, issued_at=self.now, expires_at=self.now + 60)
                 size = len(canonical_bytes(response))

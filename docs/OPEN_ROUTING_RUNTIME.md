@@ -152,6 +152,14 @@ denominator. The 17/29/43 runs must report their actual outcomes before any
 schedule was cancelled and is not acceptance evidence.
 The open-network CI jobs check out the exact PR head SHA and record the checked
 out commit plus source hashes before running tests.
+The v2 synthetic report also records bounded, passive diagnostics: table and
+pending membership as synthetic node indices, actual returned indices and
+causal paths for the first failure of at most eight distinct targets per phase.
+All failures still remain in the full denominator. These observations never
+add routes or make requests. The report validator rejects arbitrary payloads,
+descriptors, keys, addresses and extra fields; the combined report byte limit
+remains below 1 MiB. This diagnostic schema revision changes no acceptance
+threshold, production routing policy or maintenance budget.
 
 Still outstanding: complete native TypeScript open runtime; automatic signed
 descriptor renewal/address changes beyond the current descriptor lifetime;

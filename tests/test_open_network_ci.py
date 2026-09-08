@@ -1,4 +1,4 @@
-"""Fast report/command checks. These never start the actual routing experiment."""
+"""Fast reports and four-node observer checks; never start the scale experiment."""
 import copy
 import io
 import json
@@ -16,14 +16,33 @@ def synthetic_report():
     phase={key:0 for key in ci.PHASE_FIELDS-{ "failures","passed" }}
     phase.update(queries=1000,successes=1000,success_rate=1.0,threshold=.99,passed=True,failures=[],
                  requests_p50=2,requests_p95=3,requests_max=4,candidate_peak=8,concurrency_peak=3)
+    graph=[{"node":i,"active":[],"spare":[],"pending":[]} for i in range(100)]
+    diagnostics={"schema_version":"memory-vault-open-routing-diagnostics/v1", "maintenance_graph":graph,
+        "phases":{name:{"graph":copy.deepcopy(graph),"failure_samples":[]} for name in ("healthy","bootstrap_exit")}}
     return {**ci.EXPECTED,"seed":17,"maintenance_and_join_requests":10,
         "maintenance_and_join_response_bytes":100,"maintenance_and_join_seconds":1.0,
         "phases":{"healthy":phase,"bootstrap_exit":{**copy.deepcopy(phase),"threshold":.97}},
         "max_per_node_routing_state":{k:1 for k in ci.ROUTING_STATS},
-        "sum_per_node_routing_state":{k:100 for k in ci.ROUTING_STATS},"total_seconds":2.0,"passed":True}
+        "sum_per_node_routing_state":{k:100 for k in ci.ROUTING_STATS},"total_seconds":2.0,"passed":True,
+        "routing_diagnostics":diagnostics}
 
 
 class OpenNetworkCITests(unittest.TestCase):
+    def test_diagnostics_reject_payloads_indices_and_unbound_failure_samples(self):
+        sample={"query":0,"initial":[0,1],"returned":[1],"replies":[{"peer":1,"returned":[0]}],
+                "paths":[{"peer":1,"parent":None,"lane":0,"source_bits":1,"depth":0,"state":"verified"}],
+                "target_holders":{"active":[],"spare":[],"pending":[0]}}
+        value=synthetic_report(); phase=value["phases"]["healthy"]
+        phase.update(successes=999,success_rate=.999,failures=[{"query":0,"source":2,"target":3,"state":"closest_known","requests":1}])
+        value["routing_diagnostics"]["phases"]["healthy"]["failure_samples"]=[sample]
+        ci.validate_scale(value,17)
+        for field, replacement in (("query",1),("initial",[True]),("returned",[3]),("replies",[{"peer":1,"returned":[],"secret":"synthetic"}]),
+                                   ("paths",[{**sample["paths"][0],"parent":"ed25519_synthetic"}])):
+            bad=copy.deepcopy(value);bad["routing_diagnostics"]["phases"]["healthy"]["failure_samples"][0][field]=replacement
+            with self.subTest(field=field),self.assertRaises(ci.InvalidReport):ci.validate_scale(bad,17)
+        bad=copy.deepcopy(value);bad["routing_diagnostics"]["maintenance_graph"][0]["pending"]=list(range(1,34))
+        with self.assertRaises(ci.InvalidReport):ci.validate_scale(bad,17)
+
     def test_complete_current_profile_and_complete_failure_remain_distinct(self):
         value=synthetic_report();self.assertIs(ci.validate_scale(value,17),value)
         failed=copy.deepcopy(value);phase=failed["phases"]["healthy"]
@@ -102,6 +121,34 @@ class OpenNetworkCITests(unittest.TestCase):
             saved=json.loads((Path(temporary)/"results.json").read_text())
             self.assertTrue(all(len(p["failures"])==702 for p in saved["phases"].values()))
             self.assertLess(sum(p.stat().st_size for p in Path(temporary).iterdir()),1024*1024)
+
+
+class DiagnosticObservationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_passive_diagnostics_preserve_signed_lookup_and_storage(self):
+        from tests.open_routing_acceptance import failure_sample, routing_graph
+        from tests.test_open_routing import SyntheticRouting
+        from memory_vault_open_control import coordinate
+        from memory_vault_open_routing import LookupBudget
+        networks=[SyntheticRouting(4,seed=43),SyntheticRouting(4,seed=43)]
+        for network in networks:
+            await network.hello(1,network.nodes[2],LookupBudget())
+            await network.hello(0,network.nodes[1],LookupBudget())
+        calls=copy.deepcopy(networks[1].calls)
+        before=routing_graph(networks[1]);self.assertEqual(before,routing_graph(networks[1]))
+        self.assertEqual(calls,networks[1].calls)
+        networks[1].find_observations=[]
+        target=coordinate(networks[0].identities[3].key_id)
+        plain=await networks[0].search(0,target)
+        observed=await networks[1].search(0,target)
+        self.assertEqual(plain,observed)
+        self.assertEqual(routing_graph(networks[0]),routing_graph(networks[1]))
+        self.assertEqual(networks[0].calls,networks[1].calls)
+        self.assertEqual(networks[1].find_observations,[{"peer":1,"returned":[2]},{"peer":2,"returned":[]}])
+        snapshot=routing_graph(networks[1]);calls=copy.deepcopy(networks[1].calls)
+        sample=failure_sample(networks[1],{"query":0,"target":3},[1],observed)
+        self.assertEqual(sample["target_holders"],{"active":[],"spare":[],"pending":[]})
+        self.assertEqual(sample["paths"][1]["parent"],1)
+        self.assertEqual(snapshot,routing_graph(networks[1]));self.assertEqual(calls,networks[1].calls)
 
 
 if __name__=="__main__":unittest.main()

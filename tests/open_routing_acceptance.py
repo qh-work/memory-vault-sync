@@ -18,6 +18,33 @@ import time
 from memory_vault_open_control import coordinate
 from tests.test_open_routing import SyntheticRouting
 
+MAX_FAILURE_SAMPLES = 8
+
+
+def routing_graph(network):
+    """Read already-created synthetic state; never add routes or probe peers."""
+    def indices(entries):
+        return [network.by_key[e.key] for bucket in entries.values() for e in bucket]
+    return [{"node": i, "active": indices(table._active["general"]),
+             "spare": indices(table._replacement["general"]),
+             "pending": [network.by_key[n["payload"]["signing_key"]["key_id"]]
+                         for n in network.pending[i]]} for i, table in enumerate(network.tables)]
+
+
+def failure_sample(network, failure, initial, result):
+    graph = routing_graph(network)
+    target = failure["target"]
+    return {"query": failure["query"], "initial": initial,
+            "returned": [network.by_key[n["payload"]["signing_key"]["key_id"]]
+                         for n in result["candidates"]],
+            "replies": network.find_observations,
+            "paths": [{"peer": network.by_key[p["key_id"]],
+                       "parent": None if p["parent_key_id"] is None else network.by_key[p["parent_key_id"]],
+                       **{k:p[k] for k in ("lane", "source_bits", "depth", "state")}}
+                      for p in result["metrics"]["paths"]],
+            "target_holders": {kind: [row["node"] for row in graph if target in row[kind]]
+                               for kind in ("active", "spare", "pending")}}
+
 
 def percentile(values, fraction):
     return sorted(values)[min(len(values) - 1, int((len(values) - 1) * fraction))]
@@ -36,18 +63,23 @@ async def run(seed=17, queries=1000, nodes=100):
     join_seconds = time.monotonic() - started
     join_requests, join_response_bytes = network.rpc_count, network.response_bytes
     phases = {}
+    diagnostics = {"schema_version": "memory-vault-open-routing-diagnostics/v1",
+                   "maintenance_graph": routing_graph(network), "phases": {}}
     for name in ("healthy", "bootstrap_exit"):
         if name == "bootstrap_exit":
             network.offline.update((0, 1))
         request_counts, durations, failures, peaks = [], [], [], []
         newly_introduced_paths = unknown_initial_targets = 0
+        samples, sampled_targets = [], set()
         before_requests, before_bytes = network.rpc_count, network.response_bytes
         for index, (source, destination) in enumerate(pairs):
             target = coordinate(network.identities[destination].key_id)
-            known = {n["payload"]["signing_key"]["key_id"] for n in network.tables[source].closest(target, limit=16)}
+            initial = network.tables[source].closest(target, limit=16)
+            known = {n["payload"]["signing_key"]["key_id"] for n in initial}
             if network.identities[destination].key_id not in known:
                 unknown_initial_targets += 1
             start = time.monotonic()
+            network.find_observations = []
             result = await network.search(source, target)
             durations.append((time.monotonic() - start) * 1000)
             metrics = result["metrics"]
@@ -58,6 +90,11 @@ async def run(seed=17, queries=1000, nodes=100):
             if not reached:
                 failures.append({"query": index, "source": source, "target": destination,
                                  "state": result["state"], "requests": metrics["requests"]})
+                if destination not in sampled_targets and len(samples) < MAX_FAILURE_SAMPLES:
+                    samples.append(failure_sample(network, failures[-1], [
+                        network.by_key[n["payload"]["signing_key"]["key_id"]] for n in initial], result))
+                    sampled_targets.add(destination)
+            network.find_observations = None
             if any(p["parent_key_id"] is not None and p["key_id"] not in known for p in metrics["paths"]):
                 newly_introduced_paths += 1
             if (index + 1) % 100 == 0:
@@ -77,8 +114,9 @@ async def run(seed=17, queries=1000, nodes=100):
             "requests_max": max(request_counts), "latency_ms_p50": statistics.median(durations),
             "latency_ms_p95": percentile(durations, .95), "candidate_peak": max(p[0] for p in peaks),
             "concurrency_peak": max(p[1] for p in peaks)}
+        diagnostics["phases"][name] = {"graph": routing_graph(network), "failure_samples": samples}
     stats = [table.stats() for table in network.tables]
-    return {"schema_version": "memory-vault-open-routing-acceptance/v1", "seed": seed, "logical_nodes": nodes,
+    return {"schema_version": "memory-vault-open-routing-acceptance/v2", "seed": seed, "logical_nodes": nodes,
         "profile": "routing_core_table_initial_no_restart_cache", "checkpoints": False,
         "initial_closest_entries": 16, "full_runtime_benchmark": False,
         "real_ed25519": True, "transport": "in_process_signed_control", "actual_http": False,
@@ -90,7 +128,7 @@ async def run(seed=17, queries=1000, nodes=100):
         "maintenance_and_join_seconds": join_seconds, "phases": phases,
         "max_per_node_routing_state": {key: max(s[key] for s in stats) for key in stats[0]},
         "sum_per_node_routing_state": {key: sum(s[key] for s in stats) for key in stats[0]},
-        "total_seconds": time.monotonic() - started,
+        "total_seconds": time.monotonic() - started, "routing_diagnostics": diagnostics,
         "passed": all(phase["passed"] for phase in phases.values())}
 
 
