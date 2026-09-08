@@ -21,6 +21,9 @@ and verify the release manifest and downloaded hashes against that source.
   delivery reservation, exclusively bound to that request. A pulls and verifies
   B's decision against the original request, both parties, node/epoch, concrete
   resource, operation and expiry. A rejection has no grant.
+- Poll filters requests against the current policy before selecting its bounded
+  page. A policy update cannot leave stale requests blocking newer valid ones;
+  retained evidence, replay state and capacity charges remain in place.
 - Local client records reserve future result and decision/allocation space before
   remote obligations are created. Exact retries and Python/TypeScript restarts
   reuse the same protected database. Admission limits preserve bounded result

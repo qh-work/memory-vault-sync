@@ -99,9 +99,9 @@ class ContactTypeScriptHTTPTests(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace')[-6000:])
         payload=json.loads(result.stdout);self.assertEqual(payload['subprocessCalls'],0);return payload
 
-    def native(self,name,seeds,operations):
+    def native(self,name,seeds,operations,*,state_name=None):
         return self.ts(mode='contact',identity=json.loads((self.root/name/'identity.json').read_bytes()),
-            encryption=json.loads((self.root/name/'encryption.json').read_bytes()),state=str(self.root/name/'transport'),
+            encryption=json.loads((self.root/name/'encryption.json').read_bytes()),state=str(self.root/(state_name or name)/'transport'),
             seeds=seeds,operations=operations)
 
     def values(self,result):
@@ -132,6 +132,50 @@ class ContactTypeScriptHTTPTests(unittest.TestCase):
             for candidate in checked['body'].get('nodes',[]):
                 key=candidate['payload']['signing_key']['key_id'];introduced.add(key);known[key]=candidate
         self.assertTrue(traversed,'No response-derived real HTTP hop')
+
+    def test_native_current_policy_poll_then_decide_after_same_lease_revision_and_restart(self):
+        host=self.host(1,{0});b,_=self.identity('revision-owner')
+        options={'allocation_id':'native_revision_knock','max_pending':8,'revision':1}
+        enabled=self.values(self.native('revision-owner',host.nodes,[{'op':'enable','node':host.nodes[0],'options':options}]))[0]
+        for index in range(4):
+            name='old-sender-'+str(index);signer,encryption=self.identity(name)
+            sender=self.python(name,signer,encryption,host.nodes)
+            self.assertEqual(asyncio.run(sender.request(b.key_id,request_id='a_old_'+str(index)))['state'],'contact_queued')
+            sender.participant.close()
+        database=self.root/'node_0/transport/network.sqlite3'
+        def rows():
+            with sqlite3.connect(database) as db:
+                return db.execute('SELECT * FROM open_contact_requests WHERE lease_id=? ORDER BY request_id,sender',
+                    (enabled['lease_id'],)).fetchall()
+        old=rows();self.assertEqual(len(old),4)
+        # The same B explicitly enables P2 from a fresh official client state.
+        # Allocation replay returns the original lease; no local row is edited.
+        current=self.values(self.native('revision-owner',host.nodes,[{'op':'enable','node':host.nodes[0],
+            'options':{**options,'revision':2}}],state_name='revision-owner-p2'))[0]
+        self.assertEqual(current['lease_id'],enabled['lease_id'])
+        self.identity('current-sender')
+        queued=self.native('current-sender',host.nodes,[{'op':'request','recipient_key_id':b.key_id,'request_id':'z_current'}])
+        self.assertEqual(self.values(queued)[0]['state'],'contact_queued')
+        actions=[call['request']['payload']['action'] for call in queued['calls']
+            if call['request']['payload']['schema_version']==PROFILE]
+        self.assertIn('challenge',actions);self.assertIn('submit',actions)
+        before=rows();self.assertEqual(before[:4],old);self.assertEqual(len(before),5)
+        host.stop(0);host.start(0)
+        polled=self.native('revision-owner',host.nodes,[{'op':'poll','lease_id':enabled['lease_id']}],state_name='revision-owner-p2')
+        pending=self.values(polled)[0]['requests']
+        self.assertEqual([item['request_id'] for item in pending],['z_current'])
+        self.assertEqual(rows(),before)
+        contact_calls=[call for call in polled['calls'] if call['request']['payload']['schema_version']==PROFILE]
+        self.assertEqual([call['request']['payload']['action'] for call in contact_calls],['poll'])
+        self.assertEqual(contact_calls[0]['observed_address'],'127.0.0.1')
+        self.assertLessEqual(len(canonical_bytes(contact_calls[0]['response']['payload']['body']['requests'])),16*1024)
+        result=self.native('revision-owner',host.nodes,[{'op':'decide','request_ref':pending[0]['request_ref'],
+            'options':{'decision':'approved','max_items':1,'max_bytes':8192}}],state_name='revision-owner-p2')
+        self.assertEqual(self.values(result)[0]['state'],'decided')
+        approved=self.values(self.native('current-sender',host.nodes,[{'op':'result','request_id':'z_current'}]))[0]
+        self.assertEqual(approved['state'],'approved');self.assertTrue(approved['authority_verified'])
+        self.assertFalse(approved['open_messaging_supported'])
+        self.assertEqual(rows()[:4],old)
 
     def test_native_cold_sender_offline_python_owner_shared_client_and_resource_restart(self):
         host=self.host(7,{1,3,5})

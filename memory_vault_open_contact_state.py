@@ -379,15 +379,24 @@ class ContactState:
         lease = self._lease(rpc["body"]["lease_id"], now)
         if lease["owner"] != rpc["signing_key"]["key_id"] or lease["purpose"] != "knock":
             fail("contact_wrong_subject")
-        self._policy(lease["owner"], now)
+        policy, resource = self._policy(lease["owner"], now)
         requests, size = [], 0
-        for row in self.db.execute("SELECT record FROM open_contact_requests WHERE lease_id=? AND state='pending' AND expires_at>? ORDER BY request_id,sender LIMIT 4", (lease["lease_id"], now)):
+        # A policy revision invalidates old requests but not their retained
+        # obligations. Scan the existing per-lease maximum before limiting the
+        # current-policy page; otherwise four stale rows can block every poll.
+        for row in self.db.execute("SELECT record FROM open_contact_requests WHERE lease_id=? AND state='pending' AND expires_at>? ORDER BY request_id,sender LIMIT 32", (lease["lease_id"], now)):
             record = document(bytes(row[0]))
+            try:
+                verify_request(record, policy=policy, lease=resource, node=self.node, now=now)
+            except ContactError:
+                continue
             amount = len(canonical_bytes(record))
             if size + amount > 16 * 1024:
                 break
             requests.append(record)
             size += amount
+            if len(requests) == 4:
+                break
         return {"requests": requests}
 
     def _decide(self, rpc, now):

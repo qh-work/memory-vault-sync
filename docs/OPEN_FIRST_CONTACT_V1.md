@@ -115,6 +115,13 @@ fail-closed boundary, not automatic migration. GC never deletes long-term Vault
 records. A lost state binding requires a different resource epoch and new
 permission; restoring old authorizations is unsupported.
 
+Owner poll checks the current policy and lease in the same state transaction,
+then examines at most the existing 32 retained requests per lease before
+selecting up to four valid requests within 16 KiB. Requests invalidated by a
+policy update do not occupy the returned page, but retain their original bytes,
+capacity charge and replay obligations until their normal collection boundary.
+They cannot be approved under the new policy.
+
 Clients persist the exact logical request and explicit decision before sending.
 They atomically reserve the local records needed for each phase before creating
 remote resource obligations. Outgoing requests reserve their eventual result

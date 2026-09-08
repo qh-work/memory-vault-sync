@@ -20,6 +20,7 @@ from memory_vault_open_contact import (
 )
 from tests import test_network_typescript_agent_network as ts_runtime
 from tests import test_open_contact as py_fixture
+from tests import test_open_contact_state as state_fixture
 
 
 DRIVER = r"""
@@ -272,6 +273,127 @@ class OpenContactTypeScriptTests(unittest.TestCase):
         response = sign_response(h.server, request=rpc, node=h.node, body=dict(lease=h.lease), now=h.now)
         self.assert_rejections([("lease_extension", "verifyResponse", response, dict(**self.options, request=rpc),
                                 lambda value: verify_response(value, request=rpc, node=h.node, now=h.now))])
+
+
+class ContactNativePollTests(unittest.TestCase):
+    """Real native admission and bounded current-policy reads across restart."""
+
+    @classmethod
+    def setUpClass(cls):
+        state_fixture.ContactNativeStateTests.setUpClass.__func__(cls)
+
+    setUp = state_fixture.ContactStateTests.setUp
+    call = state_fixture.ContactStateTests.call
+    allocate = state_fixture.ContactStateTests.allocate
+    make_policy = state_fixture.ContactStateTests.make_policy
+    request = state_fixture.ContactStateTests.request
+    decision = state_fixture.ContactStateTests.decision
+    native = state_fixture.ContactNativeStateTests.native
+    event = state_fixture.ContactNativeStateTests.event
+    value = state_fixture.ContactNativeStateTests.value
+
+    def revision_queue(self):
+        self.b = state_fixture.Identity.generate(self.root / "native_revision_owner.json")
+        self.b_enc = state_fixture.EncryptionIdentity.generate()
+        self.lease = self.value(self.event(self.b, "lease", {
+            "encryption_key": self.b_enc.public_descriptor(), "purpose": "knock",
+            "max_items": 8, "max_bytes": 8 * state_fixture.SLOT_BYTES,
+            "lease_seconds": 600, "allocation_id": "native_revision_knock"}))["lease"]
+        self.put_revision(1)
+
+    def put_revision(self, revision, *, status="active"):
+        self.policy = self.make_policy(revision=revision, status=status)
+        self.value(self.event(self.b, "policy.put", {"lease": self.lease, "policy": self.policy}))
+
+    def admission(self, request_id, *, submit=True):
+        signer = state_fixture.Identity.generate(self.root / (request_id + ".json"))
+        encryption = state_fixture.EncryptionIdentity.generate()
+        request = self.request(request_id=request_id, signer=signer, encryption=encryption)
+        challenge = self.value(self.event(signer, "challenge", {"request": request, "purpose": "submit"}))["challenge"]
+        proof = {"request": request, "challenge": challenge, "answer": solve_challenge(challenge,
+            request=request, node=self.node, purpose="submit", encryption_identity=encryption, now=self.now)}
+        if submit:
+            self.assertEqual(self.value(self.event(signer, "submit", proof))["state"], "contact_queued")
+        return request, signer, proof
+
+    def rows(self):
+        return [tuple(row) for row in self.db.execute(
+            "SELECT * FROM open_contact_requests WHERE lease_id=? ORDER BY request_id,sender",
+            (self.lease["payload"]["lease_id"],))]
+
+    def poll_event(self):
+        return self.event(self.b, "poll", {"lease_id": self.lease["payload"]["lease_id"]})
+
+    def test_native_current_policy_filters_before_limit_and_preserves_old_evidence(self):
+        self.revision_queue()
+        old = [self.admission("a_old_" + str(index)) for index in range(4)]
+        old_rows = self.rows()
+        # Exact submit replay still works before the policy changes.
+        self.value(self.event(old[0][1], "submit", old[0][2]))
+        self.assertEqual(self.rows(), old_rows)
+        self.put_revision(2)
+        current, _, _ = self.admission("z_current")
+        before = self.rows()
+        results = self.native([self.poll_event(), {"op": "reopen"}, self.poll_event()])
+        for result in (results[0], results[2]):
+            self.assertEqual(result, {"ok": True, "value": {"requests": [current]}})
+            self.assertLessEqual(len(canonical_bytes(result["value"]["requests"])), 16 * 1024)
+        self.assertEqual(self.rows(), before)
+        self.assertEqual(before[:4], old_rows)
+        self.assertEqual(len(before), 5)
+        delivery = self.value(self.event(self.b, "lease", {"encryption_key": self.b_enc.public_descriptor(),
+            "purpose": "delivery", "max_items": 1, "max_bytes": 8192,
+            "lease_seconds": 600, "allocation_id": "native_stale_decision"}))["lease"]
+        stale = self.native([self.event(self.b, "decide", {"request": old[0][0],
+            "decision": self.decision(old[0][0], delivery=delivery)}), self.event(old[0][1], "submit", old[0][2])])
+        self.assertEqual(stale, [{"ok": False, "code": "contact_request_mismatch"}] * 2)
+        self.assertEqual(self.rows(), before)
+        self.assertIsNone(self.db.execute("SELECT grant_request FROM open_contact_resource_leases WHERE lease_id=?",
+            (delivery["payload"]["lease_id"],)).fetchone()[0])
+
+        # Retained stale rows still charge the eight-slot lease. Poll neither
+        # releases quota nor removes the current response's four-item cap.
+        more = [self.admission("z_current_" + str(index))[0] for index in range(3)]
+        self.assertEqual(self.value(self.poll_event()), {"requests": [current, *more]})
+        stranger = state_fixture.Identity.generate(self.root / "native_overflow.json")
+        overflow = self.request(request_id="z_overflow", signer=stranger)
+        self.assertEqual(self.native([self.event(stranger, "challenge", {"request": overflow, "purpose": "submit"})])[0],
+            {"ok": False, "code": "contact_capacity"})
+        self.assertEqual(len(self.rows()), 8)
+
+    def test_native_policy_update_interleaves_poll_and_challenge_without_reviving_old_requests(self):
+        self.revision_queue()
+        old, _, _ = self.admission("a_old")
+        _, sender, proof = self.admission("a_inflight", submit=False)
+        self.policy = self.make_policy(revision=2)
+        results = self.native([self.poll_event(), self.event(self.b, "policy.put", {"lease": self.lease, "policy": self.policy}),
+            self.poll_event(), {"op": "reopen"}, self.poll_event(), self.event(sender, "submit", proof)])
+        self.assertEqual(results[0], {"ok": True, "value": {"requests": [old]}})
+        for index in (2, 4):
+            self.assertEqual(results[index], {"ok": True, "value": {"requests": []}})
+        self.assertEqual(results[5], {"ok": False, "code": "contact_request_mismatch"})
+        current, _, _ = self.admission("z_current")
+        self.assertEqual(self.value(self.poll_event()), {"requests": [current]})
+        before = self.rows()
+        self.put_revision(3)
+        self.assertEqual(self.value(self.poll_event()), {"requests": []})
+        self.assertEqual(self.rows(), before)
+        self.put_revision(4, status="revoked")
+        results = self.native([{"op": "revoke", "lease_id": self.lease["payload"]["lease_id"]},
+            {"op": "reopen"}, self.poll_event()])
+        self.assertEqual(results[2], {"ok": False, "code": "contact_lease_revoked"})
+        self.assertEqual(self.rows(), before)
+
+    def test_native_poll_four_item_cap_and_expired_rows_keep_retention(self):
+        self.revision_queue()
+        requests = [self.admission("current_" + str(index))[0] for index in range(5)]
+        response = self.value(self.poll_event())
+        self.assertEqual(response, {"requests": requests[:4]})
+        self.assertLessEqual(len(canonical_bytes(response["requests"])), 16 * 1024)
+        before = self.rows()
+        self.now += 401  # Requests expired; their expires+30 evidence is live.
+        self.assertEqual(self.value(self.poll_event()), {"requests": []})
+        self.assertEqual(self.rows(), before)
 
 
 if __name__ == "__main__":

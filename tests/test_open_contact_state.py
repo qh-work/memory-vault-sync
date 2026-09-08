@@ -99,6 +99,108 @@ class ContactStateTests(unittest.TestCase):
     def count(self, table):
         return self.db.execute("SELECT count(*) FROM " + table).fetchone()[0]
 
+    def revision_queue(self):
+        # A separate synthetic B explicitly allocates eight slots. No admitted
+        # request or lease is inserted by the fixture: all use the real RPCs.
+        self.b = Identity.generate(self.root / "revision_owner.json")
+        self.b_enc = EncryptionIdentity.generate()
+        self.lease = self.allocate(items=8, allocation="revision_knock")
+        self.policy = self.make_policy()
+        self.call(self.b, "policy.put", {"lease": self.lease, "policy": self.policy})
+
+    def admit_revision_request(self, request_id):
+        signer = Identity.generate(self.root / (request_id + ".json"))
+        encryption = EncryptionIdentity.generate()
+        request = self.request(request_id=request_id, signer=signer, encryption=encryption)
+        proof = self.proof(request, signer=signer, encryption=encryption)
+        self.assertEqual(self.call(signer, "submit", proof)["state"], "contact_queued")
+        return request, signer, encryption
+
+    def put_revision(self, revision, *, status="active"):
+        self.policy = self.make_policy(revision=revision, status=status)
+        self.call(self.b, "policy.put", {"lease": self.lease, "policy": self.policy})
+
+    def revision_rows(self):
+        return self.db.execute("SELECT request_id,record,state,decision,retain_until FROM open_contact_requests WHERE lease_id=? ORDER BY request_id",
+                               (self.lease["payload"]["lease_id"],)).fetchall()
+
+    def test_poll_policy_revision_filters_before_four_request_limit_after_restart(self):
+        self.revision_queue()
+        for index in range(4):
+            self.admit_revision_request("a_old_" + str(index))
+        old_rows = self.revision_rows()
+        self.put_revision(2)
+        self.admit_revision_request("z_current")
+        self.assertEqual(len(self.revision_rows()), 5)  # Below the explicit cap8.
+        for restart in (False, True):
+            with self.subTest(restart=restart), self.transport.db() as db:
+                state = ContactState(db, self.node_id, self.node, enabled=True, clock=lambda: self.now) if restart else self.state
+                if restart:
+                    state.initialize()
+                response = self.call(self.b, "poll", {"lease_id": self.lease["payload"]["lease_id"]}, state)
+                self.assertEqual([r["payload"]["request_id"] for r in response["requests"]], ["z_current"])
+        self.assertEqual(self.revision_rows()[:4], old_rows)
+
+    def test_poll_policy_interleaving_only_exposes_current_revision(self):
+        self.revision_queue()
+        self.admit_revision_request("a_old_0")
+        self.admit_revision_request("a_old_2")
+        self.put_revision(2)
+        self.admit_revision_request("a_old_1")
+        self.admit_revision_request("a_old_3")
+        self.put_revision(3)
+        self.admit_revision_request("z_current")
+        with self.transport.db() as db:
+            restarted = ContactState(db, self.node_id, self.node, enabled=True, clock=lambda: self.now)
+            restarted.initialize()
+            response = self.call(self.b, "poll", {"lease_id": self.lease["payload"]["lease_id"]}, restarted)
+        self.assertEqual([r["payload"]["request_id"] for r in response["requests"]], ["z_current"])
+        self.assertEqual(len(self.revision_rows()), 5)
+
+    def test_hidden_old_policy_requests_keep_capacity_records_and_cannot_be_approved(self):
+        self.revision_queue()
+        old = [self.admit_revision_request("a_old_" + str(index)) for index in range(4)]
+        old_policy, old_rows = self.policy, self.revision_rows()
+        delivery = self.allocate(purpose="delivery", items=1, allocation="old_policy_delivery")
+        decision = self.decision(old[0][0], delivery=delivery)
+        self.put_revision(2)
+        with self.assertRaisesRegex(MemoryError, "contact_request_mismatch"):
+            self.call(self.b, "decide", {"request": old[0][0], "decision": decision})
+        self.assertIsNone(self.db.execute("SELECT grant_request FROM open_contact_resource_leases WHERE lease_id=?",
+                                         (delivery["payload"]["lease_id"],)).fetchone()[0])
+        # Hiding a stale request must not erase the live same-pair obligation.
+        signer, encryption = old[0][1:]
+        with self.assertRaisesRegex(MemoryError, "contact_pending_exists"):
+            self.proof(self.request(request_id="new_same_pair", signer=signer, encryption=encryption),
+                       signer=signer, encryption=encryption)
+        for index in range(4):
+            self.admit_revision_request("z_current_" + str(index))
+        with self.assertRaisesRegex(MemoryError, "contact_capacity"):
+            self.admit_revision_request("zz_over_capacity")
+        self.assertEqual(self.revision_rows()[:4], old_rows)
+        self.assertEqual(len(self.revision_rows()), 8)
+        response = self.call(self.b, "poll", {"lease_id": self.lease["payload"]["lease_id"]})
+        self.assertEqual([r["payload"]["request_id"] for r in response["requests"]],
+                         ["z_current_" + str(index) for index in range(4)])
+
+    def test_poll_all_policy_invalid_then_revoked_returns_bounded_control(self):
+        self.revision_queue()
+        for index in range(4):
+            self.admit_revision_request("a_old_" + str(index))
+        old_rows = self.revision_rows()
+        self.put_revision(2)
+        for index in range(2):
+            with self.subTest(poll=index):
+                response = self.call(self.b, "poll", {"lease_id": self.lease["payload"]["lease_id"]})
+                self.assertEqual(response, {"requests": []})
+                self.assertLessEqual(len(canonical_bytes(response)), 65536)
+        self.assertEqual(self.revision_rows(), old_rows)
+        self.put_revision(3, status="revoked")
+        for index in range(2):
+            with self.assertRaisesRegex(MemoryError, "contact_lease_revoked"):
+                self.call(self.b, "poll", {"lease_id": self.lease["payload"]["lease_id"]})
+        self.assertEqual(self.revision_rows(), old_rows)
+
     def test_real_request_reserved_result_approved_resource_and_protected_store(self):
         request = self.request()
         result = self.call(self.a, "submit", self.proof(request))

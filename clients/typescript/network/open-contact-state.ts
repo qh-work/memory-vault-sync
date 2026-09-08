@@ -247,10 +247,17 @@ export class ContactState {
   }
   private poll(rpc:Obj,now:number):Obj{
     const lease=this.lease(rpc.body.lease_id,now);
-    if(lease.owner!==rpc.signing_key.key_id||lease.purpose!=='knock')fail('contact_wrong_subject');this.policy(lease.owner,now);
+    if(lease.owner!==rpc.signing_key.key_id||lease.purpose!=='knock')fail('contact_wrong_subject');
+    const [policy,resource]=this.policy(lease.owner,now);
     const requests:Obj[]=[];let size=0;
-    for(const row of this.db.prepare("SELECT record FROM open_contact_requests WHERE lease_id=? AND state='pending' AND expires_at>? ORDER BY request_id,sender LIMIT 4").all(lease.lease_id,now) as Obj[]){
-      const record=parsed(row.record),amount=canonicalBytes(record).length;if(size+amount>16*1024)break;requests.push(record);size+=amount;
+    // The lease has at most 32 retained requests. Stale rows still consume
+    // their reservations, but cannot occupy the current policy's read window.
+    for(const row of this.db.prepare("SELECT record FROM open_contact_requests WHERE lease_id=? AND state='pending' AND expires_at>? ORDER BY request_id,sender LIMIT 32").all(lease.lease_id,now) as Obj[]){
+      const record=parsed(row.record);
+      try{verifyRequest(record,{policy,lease:resource,node:this.node,now});}
+      catch(error){if(error instanceof ContactError)continue;throw error;}
+      const amount=canonicalBytes(record).length;if(size+amount>16*1024)break;requests.push(record);size+=amount;
+      if(requests.length===4)break;
     }
     return {requests};
   }

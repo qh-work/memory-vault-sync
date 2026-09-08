@@ -44,6 +44,52 @@ class ContactHTTPTests(unittest.TestCase):
         self.addCleanup(participant.close)
         return OpenContactClient(participant, encryption)
 
+    def test_current_policy_poll_and_decide_survive_old_queue_and_http_restart(self):
+        host = self.host(1)
+        owner = self.client("old-policy-owner", host.nodes)
+        enabled = asyncio.run(owner.enable(host.nodes[0], allocation_id="revision_knock", max_pending=8))
+        lease_id = enabled["lease_id"]
+        session = owner._load("policy", lease_id)
+        for index in range(4):
+            sender = self.client("old-sender-" + str(index), host.nodes)
+            submitted = asyncio.run(sender.request(owner.identity.key_id, request_id="a_old_" + str(index)))
+            self.assertEqual(submitted["state"], "contact_queued")
+        # Capture old inbox references through the official poll before P2.
+        old_pending = asyncio.run(owner.poll(lease_id))["requests"]
+        self.assertEqual([r["request_id"] for r in old_pending], ["a_old_" + str(i) for i in range(4)])
+        # A separate persistent B client reuses the same dual keys and exact
+        # allocation through official enable. R returns the same lease before
+        # accepting signed P2; the old directory and admitted rows are intact.
+        # This does not claim same-directory enable supports changing revision.
+        current = self.client("current-policy-owner", host.nodes, owner.identity, owner.encryption)
+        renewed = asyncio.run(current.enable(host.nodes[0], allocation_id="revision_knock", max_pending=8, revision=2))
+        self.assertEqual(renewed["lease_id"], lease_id)
+        current_session = current._load("policy", lease_id)
+        self.assertEqual(current_session["lease"], session["lease"])
+        self.assertEqual(current_session["policy"]["payload"]["revision"], 2)
+        sender = self.client("current-sender", host.nodes)
+        self.assertEqual(asyncio.run(sender.request(owner.identity.key_id, request_id="z_current"))["state"], "contact_queued")
+        with sqlite3.connect(self.root / "node_0/transport/network.sqlite3") as db:
+            old_rows = db.execute("SELECT request_id,record,state,decision,retain_until FROM open_contact_requests WHERE request_id LIKE 'a_old_%' ORDER BY request_id").fetchall()
+            self.assertEqual(db.execute("SELECT count(*) FROM open_contact_requests WHERE lease_id=?", (lease_id,)).fetchone()[0], 5)
+        current.participant.close()
+        host.stop(0)
+        host.start(0)
+        current = self.client("current-policy-owner", host.nodes, owner.identity, owner.encryption)
+        pending = asyncio.run(current.poll(lease_id))
+        self.assertEqual([r["request_id"] for r in pending["requests"]], ["z_current"])
+        decided = asyncio.run(current.decide(pending["requests"][0]["request_ref"], decision="approved", max_items=1, max_bytes=64))
+        self.assertEqual(decided["state"], "decided")
+        result = asyncio.run(sender.result("z_current"))
+        self.assertEqual(result["state"], "approved")
+        self.assertTrue(result["authority_verified"])
+        self.assertEqual(asyncio.run(current.poll(lease_id))["requests"], [])
+        with self.assertRaisesRegex(MemoryError, "contact_request_mismatch"):
+            asyncio.run(owner.decide(old_pending[0]["request_ref"], decision="approved", max_items=1, max_bytes=64))
+        with sqlite3.connect(self.root / "node_0/transport/network.sqlite3") as db:
+            self.assertEqual(db.execute("SELECT request_id,record,state,decision,retain_until FROM open_contact_requests WHERE request_id LIKE 'a_old_%' ORDER BY request_id").fetchall(), old_rows)
+            self.assertEqual(db.execute("SELECT count(*) FROM open_contact_resource_leases WHERE purpose='delivery' AND grant_request IS NOT NULL").fetchone()[0], 1)
+
     def test_offline_owner_then_new_sender_real_multihop_decision_and_restart(self):
         host = self.host(7)
         owner = self.client("owner", host.nodes[-2:])
