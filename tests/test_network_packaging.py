@@ -22,11 +22,14 @@ BUILDER = ROOT / "scripts/build_client_plugin.py"
 RELEASE = ROOT / "scripts/build_release.py"
 LAUNCHER = ROOT / "plugins/memory-vault-client/scripts/launcher.py"
 NEW_MODULES = {"memory_vault_nodes.py", "memory_vault_node.py", "memory_vault_network_recovery.py", "memory_vault_node_transfer.py",
-               "memory_vault_topics.py", "memory_vault_topic_store.py", "memory_vault_network_hints.py"}
+               "memory_vault_topics.py", "memory_vault_topic_store.py", "memory_vault_network_hints.py",
+               "memory_vault_open_control.py", "memory_vault_open_routing.py", "memory_vault_open_index.py",
+               "memory_vault_open_state.py", "memory_vault_open_transport.py", "memory_vault_open_node.py", "memory_vault_open_client.py"}
 TS_NETWORK = {"clients/typescript/network/" + name for name in
               ("README.md", "crypto.ts", "content.ts", "hints.ts", "control.ts", "package.json", "package-lock.json",
                "io.ts", "nodes.ts", "peer.ts", "records.ts", "transport.ts", "vault.ts", "privacy.ts", "setup.ts",
-               "agent.ts", "retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "topics.ts")}
+               "agent.ts", "retrieval.ts", "retrieval_text.ts", "ranking_math.ts", "topics.ts",
+               "open-control.ts", "open-routing.ts", "open-state.ts")}
 TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
                      ("nodes", "records", "vault", "peer", "peer_race", "transport", "setup",
                       "retrieval_text", "retrieval", "agent", "agent_network", "topics")}
@@ -49,7 +52,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 49)
+        self.assertEqual(len(allowed), 56)
         self.assertTrue(NEW_MODULES <= allowed)
         for name in allowed:
             path = ROOT / name
@@ -75,7 +78,7 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
         self.assertGreaterEqual(len(review), 39)
-        self.assertEqual(len(TS_NETWORK), 20)
+        self.assertEqual(len(TS_NETWORK), 23)
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
         self.assertTrue({"tests/test_network_hints.py", "tests/test_network_hints_typescript.py",

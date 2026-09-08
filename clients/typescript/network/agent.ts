@@ -86,7 +86,7 @@ const SHAPES: Obj = {
     relations: {type: 'array', maxItems: 32, items: {type: 'object'}}, experience: {type: 'object'}}, ['request_id','kind','text']),
   recall: shape({query: text, memory_id: {type: 'string', maxLength: 64}, received_batch_message_id: {type:'string',maxLength:128}, cursor: {type: 'string', maxLength: 4096}, handoff: {type: 'boolean'},
     ranking_profile: {type: 'string', maxLength: 128}, include_experience: {type: 'boolean'}}),
-  discover: shape({online: {type: 'boolean'}}),
+  discover: shape({online: {type: 'boolean'}, key_id: {type:'string',pattern:/^ed25519_[0-9a-f]{64}(?![\s\S])/}}),
   send: shape({request_id: identifier, recipients: {type: 'array', maxItems: 16, items: {type: 'string', maxLength: 128}},
     text, memory_ids: {type: 'array', maxItems: 32, items: {type: 'string', maxLength: 64}}, control: {type:'object'}}, ['request_id','recipients']),
   receive: shape({limit: {type: 'integer', minimum: 1, maximum: 16}, message_id: {type:'string', maxLength:128},
@@ -225,6 +225,15 @@ export class Agent {
       retrieval_profile: RETRIEVAL_PROFILE, retrieval_profiles: [RETRIEVAL_PROFILE, RETRIEVAL_PROFILE_V2],
       legacy_interfaces_preserved: ['handoff','share-v1','backup','restore','protocol','mcp']};
   }
+  private networkPeer(targetedDiscovery=false): NetworkPeer {
+    if(this.networkConfigPath===undefined)fail('network_not_configured');
+    const configured=document(readPrivate(this.networkConfigPath,65536)!);
+    // The native open routing kernel is not yet a durable open endpoint host.
+    // Never interpret an explicit open config as a private roster-based config.
+    if(configured.schema_version==='memory-vault-open-client-config/v1')fail('open_profile_runtime_unsupported');
+    if(targetedDiscovery)fail('network_targeted_discovery_unsupported');
+    return new NetworkPeer(this.networkConfigPath,{transport:this.transport,clientConfigPath:this.clientConfigPath});
+  }
   private recall(args: Obj): Obj {
     const config = loadClient(this.clientConfigPath); let ids: unknown[], offset = 0, retrieval:Obj|undefined, includeExperience = args.include_experience === true;
     let batchId:string|undefined,rootIndex=0,batch:BatchRecall|undefined;
@@ -270,7 +279,7 @@ export class Agent {
     }
     if(batchId!==undefined){
       if(this.networkConfigPath===undefined)fail('network_not_configured');
-      const peer=new NetworkPeer(this.networkConfigPath,{transport:this.transport,clientConfigPath:this.clientConfigPath});
+      const peer=this.networkPeer();
       let selected:string[];
       try{selected=peer.readReceivedBatch(batchId);}finally{peer.close();}
       if(rootIndex>=selected.length)fail('invalid_recall_cursor');
@@ -312,6 +321,7 @@ export class Agent {
       if (!OPERATIONS.includes(operation)) fail('unsupported_agent_operation');
       const args = Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'op'));
       validate(args, SHAPES[operation]); let response: Obj;
+      if(operation==='discover'&&Object.hasOwn(args,'key_id')&&!args.online)fail('invalid_client_arguments');
       if(operation==='receive'){
         if(Object.hasOwn(args,'respond_to')&&Object.keys(args).length!==1)fail('ambiguous_receive_selector');
         if(Object.hasOwn(args,'message_id')&&Object.hasOwn(args,'limit'))fail('ambiguous_receive_selector');
@@ -333,7 +343,7 @@ export class Agent {
       } else if (operation === 'recall') response = this.recall(args);
       else {
         if (this.networkConfigPath === undefined) fail('network_not_configured');
-        const peer = new NetworkPeer(this.networkConfigPath, {transport: this.transport, clientConfigPath: this.clientConfigPath});
+        const peer = this.networkPeer(operation==='discover'&&Object.hasOwn(args,'key_id'));
         try {
           const result = operation === 'connect' ? await peer.connect(args.invitation, args.request_id) :
             operation === 'discover' ? await peer.discover() : operation === 'send' ? await peer.send(args.request_id, args.recipients, args.text ?? '', args.memory_ids ?? [],args.control) :

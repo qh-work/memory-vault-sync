@@ -30,6 +30,8 @@ REQUIRED_MODULES = (
     "memory_vault_network_worker.py", "memory_vault_nodes.py", "memory_vault_node.py",
     "memory_vault_network_recovery.py", "memory_vault_node_transfer.py",
     "memory_vault_topics.py", "memory_vault_topic_store.py",
+    "memory_vault_open_control.py", "memory_vault_open_routing.py", "memory_vault_open_index.py",
+    "memory_vault_open_state.py", "memory_vault_open_transport.py", "memory_vault_open_node.py", "memory_vault_open_client.py",
 )
 OPTIONAL_MODULES: tuple[str, ...] = ()
 PACKAGE_DOCUMENTS = (
@@ -51,6 +53,7 @@ PACKAGE_DOCUMENTS = (
     "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
     "docs/V0_26_PLAN.md",
     "docs/NETWORK_TOPICS.md",
+    "docs/OPEN_CONTROL_V1.md", "docs/OPEN_ROUTING_RUNTIME.md",
     "requirements-network-lock.txt", "requirements-network-server-lock.txt", "docs/DEPENDENCIES_NETWORK.md",
     "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md", "docs/NETWORK_TYPESCRIPT.md",
     "clients/typescript/index.ts", "clients/typescript/README.md", "clients/typescript/package.json",
@@ -64,6 +67,8 @@ PACKAGE_DOCUMENTS = (
     "clients/typescript/network/setup.ts",
     "clients/typescript/network/agent.ts", "clients/typescript/network/retrieval.ts",
     "clients/typescript/network/retrieval_text.ts", "clients/typescript/network/ranking_math.ts",
+    "clients/typescript/network/open-control.ts", "clients/typescript/network/open-routing.ts",
+    "clients/typescript/network/open-state.ts",
 )
 TEMPLATE_FILES = (
     ".codex-plugin/plugin.json", ".mcp.json", "hooks/hooks.json",

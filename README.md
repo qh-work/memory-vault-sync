@@ -8,8 +8,11 @@ protocol adoption. Neither owns the memory.**
 **Current development priority: global decentralized networking.** The
 [architecture and roadmap](docs/OPEN_NETWORK_ROADMAP.md) specify bounded
 multi-hop discovery, local consent, sharded resources and sender-independent
-replica maintenance. This is a design under review, not a claim that the
-released private-network preview already implements it.
+replica maintenance. The whole architecture passed its design review; the
+[first routing implementation](docs/OPEN_ROUTING_RUNTIME.md) now provides
+signed multi-hop contact discovery without a common authority. This is not a
+claim that the released private preview or this first slice completes the
+global communication and storage network.
 
 Use an existing endpoint through six operations: connect, remember, recall,
 discover, send and receive. You do not need to implement the protocol or install

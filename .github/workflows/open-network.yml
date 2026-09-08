@@ -1,0 +1,149 @@
+name: Open network evidence
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - '.github/workflows/open-network.yml'
+      - 'memory_vault*.py'
+      - 'clients/typescript/**'
+      - 'requirements-network-lock.txt'
+      - 'scripts/run_open_network_ci.py'
+      - 'tests/test_open*.py'
+      - 'tests/open_routing_acceptance.py'
+      - 'tests/test_network_typescript_agent_network.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/open-network.yml'
+      - 'memory_vault*.py'
+      - 'clients/typescript/**'
+      - 'requirements-network-lock.txt'
+      - 'scripts/run_open_network_ci.py'
+      - 'tests/test_open*.py'
+      - 'tests/open_routing_acceptance.py'
+      - 'tests/test_network_typescript_agent_network.py'
+  workflow_dispatch:
+    inputs:
+      run_scale:
+        description: 'Run all three synthetic 100-node seeds (not AI or internet acceptance)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: '1'
+  PYTHONHASHSEED: '0'
+  PIP_DISABLE_PIP_VERSION_CHECK: '1'
+  PIP_NO_CACHE_DIR: '1'
+
+jobs:
+  light:
+    name: Open protocol and real local HTTP regression
+    if: github.event_name != 'pull_request' || github.event.action != 'labeled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: open-network-light-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record exact source and incomplete status before setup
+        run: python3 scripts/run_open_network_ci.py --mode light --phase initialize --report-directory reports/open-light
+      - name: Preserve initial evidence if setup or runner later fails
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: open-light-initial-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/open-light/settings.json
+            reports/open-light/status.json
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f # v6.1.0
+        with:
+          node-version: '22.19.0'
+          package-manager-cache: false
+      - name: Install locked dependencies; no lifecycle scripts or retained cache
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-network-lock.txt
+          npm ci --prefix clients/typescript/network --ignore-scripts --no-audit --no-fund --cache "${RUNNER_TEMP}/open-npm-cache"
+      - name: Run open tests including eight HTTP processes and native TypeScript state
+        run: python scripts/run_open_network_ci.py --mode light --phase run --report-directory reports/open-light
+      - name: Refuse empty, skipped or interrupted evidence
+        if: always()
+        run: python3 scripts/run_open_network_ci.py --mode light --phase finalize --report-directory reports/open-light
+      - name: Preserve only bounded public reports (never fixtures, keys or databases)
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: open-light-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/open-light/settings.json
+            reports/open-light/status.json
+            reports/open-light/progress.jsonl
+            reports/open-light/errors.jsonl
+            reports/open-light/results.json
+          if-no-files-found: error
+          retention-days: 1
+
+  scale:
+    name: Synthetic routing seed ${{ matrix.seed }}
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.run_scale == true) ||
+      (github.event_name == 'pull_request' && github.event.action == 'labeled' &&
+       github.event.label.name == 'open-network-scale')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [17, 29, 43]
+    concurrency:
+      group: open-network-scale-${{ github.event.pull_request.number || github.ref }}-${{ matrix.seed }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record immutable settings; old stronger-maintenance runs are not inputs
+        run: python3 scripts/run_open_network_ci.py --mode scale --phase initialize --seed ${{ matrix.seed }} --report-directory reports/open-scale
+      - name: Preserve initial evidence independently of test completion
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: open-scale-${{ matrix.seed }}-initial-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/open-scale/settings.json
+            reports/open-scale/status.json
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install hashed Python runtime only; this stage does not use Node
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-network-lock.txt
+      - name: Run 100 nodes and 1000 identical queries per phase with current bounded maintenance
+        run: python scripts/run_open_network_ci.py --mode scale --phase run --seed ${{ matrix.seed }} --report-directory reports/open-scale
+      - name: Refuse empty, stale-profile or interrupted results
+        if: always()
+        run: python3 scripts/run_open_network_ci.py --mode scale --phase finalize --seed ${{ matrix.seed }} --report-directory reports/open-scale
+      - name: Preserve full synthetic results, causal progress and classified errors
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: open-scale-${{ matrix.seed }}-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/open-scale/settings.json
+            reports/open-scale/status.json
+            reports/open-scale/progress.jsonl
+            reports/open-scale/errors.jsonl
+            reports/open-scale/results.json
+          if-no-files-found: error
+          retention-days: 1

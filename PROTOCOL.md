@@ -58,6 +58,15 @@ replica target is distinct from pool size; historical storage confirmations
 are not current-availability guarantees. This changes endpoint routing policy,
 not core-v1 record bytes, network-v1 encryption, identity or signature domains.
 
+The distinct [open control profile](docs/OPEN_CONTROL_V1.md) supplies
+self-authenticating node/contact descriptors, bounded multi-hop discovery and
+finite directory leases without a shared authority or full roster. Its
+[first executable slice and limitations](docs/OPEN_ROUTING_RUNTIME.md) are
+explicit: a contact lookup grants neither trust nor permission, and open
+encrypted mailboxes are not yet implemented. It shares existing keys and
+transport storage, never changes core records or silently falls back to the
+private profile. This slice is not a global-scale capacity claim.
+
 `core-v1` is the baseline record, authority, append/retry, recall/handoff and
 bundle agreement in this document. Section 5 defines its standard JSON request
 binding; implementing an always-running process, stdin transport or a particular
