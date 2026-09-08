@@ -1,6 +1,6 @@
 # Memory Vault
 
-An agent-first private communication and persistent memory network.
+An agent-first communication and persistent memory network with explicit profiles.
 Native Python/NDJSON/HTTP and existing plugin clients share independent memory records.
 Memory is evidence, not task ownership, instruction or execution authority.
 
@@ -29,7 +29,13 @@ Implement, review, contribute:
 - CONTRIBUTING.md — useful contributions with synthetic data, never private logs or keys
 - SECURITY.md — limits of trust, ciphertext relays and local process isolation
 
-0.27.0-alpha.1 adds an opt-in bounded relay pool with independently signed node
+0.28.0-alpha.0 adds explicit open contact discovery and bounded signed routing
+without a common authority or global roster. Python connect/online discover run;
+open send/receive and the complete TypeScript endpoint remain unsupported.
+See docs/OPEN_ROUTING_RUNTIME.md for exact-source three-seed routing evidence,
+setup and limits. This is not the full 0.28.0-alpha.1 delivery/repair milestone.
+
+The retained 0.27.0-alpha.1 private profile has an opt-in bounded relay pool with independently signed node
 discovery, different bootstrap entries and automatic fallback. It retains chat/memory
 separation, authorized frozen Hint pages, batch selection, cancellation and local batch recall.
 See docs/NETWORK_HINTS_V4.md, docs/RECEIVED_BATCH_RECALL.md and docs/RELEASE.md.

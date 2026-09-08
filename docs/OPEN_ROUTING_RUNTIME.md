@@ -178,6 +178,63 @@ and independent growth-axis tests; 250/500/1,000-node runs and real multi-model
 acceptance. An expired descriptor stops being usable; this slice must not be
 advertised as unattended perpetual operation or global scale certification.
 
+## Routing preview evidence: 0.28.0-alpha.0
+
+The functional source is `dc485334f8ad8629db68ef25c7c618a732f15c6c`.
+[Three-seed cloud run 34191451681](https://github.com/qh-work/memory-vault-sync/actions/runs/34191451681)
+completed with the original 100-node, 20-cycle profile and predetermined
+1,000 queries per phase. All recorded source hashes matched that commit.
+
+| Seed | Healthy successes / queries | Bootstrap-exit successes / queries | Original 99% / 97% gates |
+| --- | --- | --- | --- |
+| 17 | 1,000 / 1,000 | 1,000 / 1,000 | PASS |
+| 29 | 1,000 / 1,000 | 1,000 / 1,000 | PASS |
+| 43 | 1,000 / 1,000 | 1,000 / 1,000 | PASS |
+
+Each seed is evaluated independently; unsuccessful queries remain in the
+denominator. Here all six full failure lists are empty. The report explicitly
+records `own_coordinate_every_fourth_cycle_otherwise_random`; the schedule
+changed while numeric budgets remained unchanged. The bootstrap-exit phase
+inherits the healthy phase's learning; it is not an independently reset network.
+The experiment uses real Ed25519 with `in_process_signed_control`,
+`actual_http=false`, `checkpoints=false` and `ai_instances=0`. It measures the
+routing kernel, not 100-node HTTP/SQLite or independent physical fault domains.
+A faster job duration is not a controlled performance comparison.
+
+[Light cloud run 34191411538](https://github.com/qh-work/memory-vault-sync/actions/runs/34191411538)
+passed 84 distinct methods with zero failures, errors or skips, including real
+native TypeScript vectors. Method counts do not include repeated subtest
+events. [Protocol CI 34191411486](https://github.com/qh-work/memory-vault-sync/actions/runs/34191411486)
+passed on Linux, macOS and Windows. These are separate from 50 selected local
+methods and a bounded independent implementation review; counts are not added
+together as distinct coverage. The local near-neighbour regression uses direct
+signed participant calls, not sockets: 121 setup hellos establish three rows;
+four maintenance cycles discover a neighbour, followed by later advertisement,
+independent challenge and third-party lookup.
+
+Complete public scale artifacts and their downloaded ZIP SHA-256 values:
+
+| Seed | Artifact ID | SHA-256 |
+| --- | --- | --- |
+| 17 | 10042662646 | e5a0e8b09b4be03cd511d9ca2f4c27f277452613d71ba59c9690b7c22a7097e9 |
+| 29 | 10042565658 | b35324bf3e64c3da85c1e00d1c9653538d87c8ddfcb3dc70aeb42072ff40f902 |
+| 43 | 10042654978 | 822265de7271915d94ac795b3292185e3eee19dac598baf1ffc8b1b312e9bce2 |
+
+The light artifact is 10042384060, SHA-256
+`8c3d53ff5bb52a2dafca17dcb5c04ebb17b781dae48a192b65861c232337fa5d`.
+Each artifact contains complete settings, status, progress, errors and results.
+A checksum identifies supplied bytes; it is not a publisher signature or
+independent runner attestation.
+
+Earlier results remain failed evidence. On both `f3de510` and `52a233a`,
+seeds 17/29/43 respectively returned 997/997, 1000/1000 and 983/986 healthy/exit
+successes per 1,000. Seed43 failed the healthy gate; its diagnostic traces led
+to the own-region refresh repair. Those runs are not relabelled as passes.
+The `0.28.0-alpha.0` package identifies its own source commit and limited
+packaging checks; this functional experiment remains pinned to `dc48533`.
+It does not complete the `0.28.0-alpha.1` consent, encrypted delivery and repair
+milestone or establish unbounded/global reliability.
+
 ## Upgrade and rollback
 
 This is an explicit development profile. Do not point it at a private-profile
