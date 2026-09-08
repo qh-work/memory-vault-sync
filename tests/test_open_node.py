@@ -21,7 +21,7 @@ from memory_vault_open_control import (
     contact_key, issue_contact, issue_node, sign_request, verify_response,
 )
 from memory_vault_open_node import NODE_CONFIG, OpenParticipant
-from memory_vault_open_routing import SOURCE_CAP, source_group
+from memory_vault_open_routing import LookupBudget, SOURCE_CAP, source_group
 from memory_vault_open_transport import OpenHTTPTransport
 from memory_vault_storage import atomic_write
 from memory_vault_trust import Identity
@@ -137,6 +137,91 @@ def nodes(count):
 
 
 class OpenNodeTests(unittest.TestCase):
+    def test_verified_seed_revision_survives_configured_old_seed_and_client_restart(self):
+        from memory_vault_open_control import coordinate
+        from memory_vault_network_crypto import document
+        with nodes(1) as net:
+            root = net.root
+            identity = Identity.generate(root / "client-identity.json")
+            directory = root / "client-transport"
+            old = net.nodes[0]
+            now = int(time.time())
+            new = issue_node(net.identities[0], base_url=old["payload"]["base_url"],
+                storage_epoch=old["payload"]["storage_epoch"], roles=["directory", "router"],
+                revision=2, issued_at=now, expires_at=now + 3600)
+            with OpenParticipant(identity, directory, seeds=[old], allow_loopback=True) as client:
+                asyncio.run(client._call(old, "hello", {"node": None}, LookupBudget()))
+                net.stop(0)
+                config = document(net.configs[0].read_bytes())
+                config["node"] = new
+                atomic_write(net.configs[0], canonical_bytes(config), replace=True)
+                net.nodes[0] = new
+                net.start(0)
+                # A fresh signed response has already proved the newer
+                # descriptor; old configuration must not mask this proof.
+                asyncio.run(client._call(new, "hello", {"node": None}, LookupBudget()))
+                target = coordinate(net.identities[0].key_id)
+                warm = asyncio.run(client._lookup(target, "general", LookupBudget()))
+                self.assertEqual(warm["candidates"], [new])
+                self.assertEqual(warm["metrics"]["errors"], [])
+            with OpenParticipant(identity, directory, seeds=[old], allow_loopback=True) as cold:
+                self.assertEqual(cold.table.stats()["general_active"], 0)
+                result = asyncio.run(cold._lookup(target, "general", LookupBudget()))
+                self.assertEqual(result["candidates"], [new])
+                self.assertEqual(result["metrics"]["requests"], 1)
+                self.assertEqual(result["metrics"]["errors"], [])
+
+    def test_owner_revocation_reaches_directory_and_cannot_restore_stale_contact(self):
+        with nodes(1) as host:
+            owner = Identity.generate(host.root / "synthetic_owner" / "identity.json")
+            encryption = EncryptionIdentity.generate()
+            contact = host.contact(owner, encryption)
+            state = host.root / "synthetic_publisher"
+            with OpenParticipant(owner, state, seeds=host.nodes, allow_loopback=True) as publisher:
+                first = asyncio.run(publisher.publish_contact(contact))
+                self.assertEqual(first["confirmed_leases"], 1)
+                now = int(time.time())
+                revoked = issue_contact(owner, encryption_key=encryption.public_descriptor(), revision=2,
+                    allow_discovery=False, endpoints=[], issued_at=now, expires_at=now+600, status="revoked")
+                withdrawn = asyncio.run(publisher.publish_contact(revoked))
+                self.assertEqual(withdrawn["confirmed_leases"], 1)
+                self.assertEqual(withdrawn["leases"][0]["payload"]["contact_revision"], 2)
+                repeated = asyncio.run(publisher.publish_contact(revoked))
+                self.assertEqual(repeated["confirmed_leases"], 1)
+                self.assertEqual(host.public_contacts(0), 0)
+                with self.assertRaisesRegex(MemoryError, "open_control_rollback"):
+                    asyncio.run(publisher.publish_contact(contact))
+                # A valid conflicting owner signature cannot use the narrow
+                # revocation path to bypass a persisted local conflict floor.
+                fork = issue_contact(owner, encryption_key=encryption.public_descriptor(), revision=2,
+                    allow_discovery=False, endpoints=contact["payload"]["endpoints"],
+                    issued_at=now, expires_at=now+600, status="revoked")
+                with self.assertRaisesRegex(MemoryError, "open_control_conflict"):
+                    asyncio.run(publisher.publish_contact(fork))
+                foreign = Identity.generate(host.root / "synthetic_foreign" / "identity.json")
+                foreign_revocation = issue_contact(foreign, encryption_key=encryption.public_descriptor(), revision=1,
+                    allow_discovery=False, endpoints=[], issued_at=now, expires_at=now+600, status="revoked")
+                with self.assertRaisesRegex(MemoryError, "open_contact_owner_required"):
+                    asyncio.run(publisher.publish_contact(foreign_revocation))
+            # A cold observer uses the signed directory API, with no local copy
+            # of the owner's revocation or publisher checkpoint injected.
+            observer = Identity.generate(host.root / "synthetic_observer" / "identity.json")
+            with OpenParticipant(observer, host.root / "synthetic_observer_state", seeds=host.nodes,
+                                 allow_loopback=True) as reader:
+                result = asyncio.run(reader.find_contact(owner.key_id))
+                self.assertEqual(result["state"], "inconclusive")
+                self.assertIsNone(result["contact"])
+            host.stop(0)
+            host.start(0)
+            transport = OpenHTTPTransport(allow_loopback=True)
+            self.addCleanup(transport.close)
+            now = int(time.time())
+            request = sign_request(observer, action="get", node=host.nodes[0], request_id="synthetic_revoked_after_restart",
+                body={"key":contact_key(owner.key_id)}, issued_at=now, expires_at=now+60)
+            reply = transport.request(host.nodes[0]["payload"]["base_url"], request, deadline=time.monotonic()+5)
+            self.assertEqual(verify_response(reply.response, request=request, node=host.nodes[0])["body"],
+                             {"state":"revoked"})
+
     def test_two_real_processes_discovery_and_explicit_degraded_index_publication(self):
         with nodes(2) as host:
             owner = Identity.generate(host.root / "contact_owner" / "identity.json")

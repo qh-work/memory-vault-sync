@@ -40,14 +40,18 @@ OS DNS work uses three fixed workers; a hung resolution can occupy a worker
 but cannot create an unbounded queue or extend the caller's deadline.
 
 Node maintenance takes at most two pending endpoint challenges, up to two
-self-announcements to previously verified peers, then one bounded routing
-lookup, under a shared 16-RPC, 1 MiB response, five-second budget. A full
+self-announcements rotating over the eight verified peers nearest its own
+coordinate, then one bounded routing lookup, under a shared 16-RPC, 1 MiB
+response, five-second budget. A full
 32-entry introduction queue returns signed retryable backpressure without
 discarding earlier pending nodes; later self-announcements allow retry.
 A verified, correctly bound hello error still proves that seed's endpoint and
 can populate the caller's bounded routing table. The error remains an admission
 failure; it does not put the rejected advertisement in the receiver's queue.
 This lets a node start discovery even when its first announcement is refused.
+The lookup's refresh coordinate still varies each cycle. Self-announcements
+use the node's own region to help nearby routers introduce it during a lookup;
+every receiving peer still challenges the endpoint.
 The HTTP node runs that work independently from agent sessions. Incoming
 connections, request rates, headers, bodies and total connection time are
 bounded. This is resource containment, not an Internet DDoS certification.
@@ -59,6 +63,11 @@ private grants or mailbox relationships. Three distinct accepted leases are
 the desired index replication count. Fewer are reported as degraded;
 aliases of the same responding socket do not increase the count. Even three
 confirmations do not establish three physical fault domains.
+The owner can propagate its own signed contact revocation through
+`publish_contact` after the local checkpoint records it. Only the expected
+revocation refusal is handled for that propagation; foreign ownership,
+rollback, conflict and storage failures still stop the operation. A lease
+acknowledging withdrawal does not claim that the contact is publicly available.
 
 ## Storage and interfaces
 
@@ -69,6 +78,11 @@ Signed revision, revocation and same-revision conflict floors survive normal
 restart. A conflict is not resolved by picking an arrival order or a larger
 hash. Security floors are reserved separately from expendable routing caches;
 full capacity causes an explicit refusal. See [the control contract](OPEN_CONTROL_V1.md).
+When the configured seed, routing table and restart cache contain different
+signed revisions of one key, initial lookup selects the newest known revision
+while retaining the seed's bounded probe position. This does not grant endpoint
+proof or bypass the persistent revision/conflict floor; the selected descriptor
+must still answer a fresh challenge.
 
 The official Python Agent/HTTP/MCP entry points keep the six operations.
 An explicitly selected `memory-vault-open-client-config/v1` config uses

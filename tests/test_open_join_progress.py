@@ -96,6 +96,32 @@ class OpenJoinProgressTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(net.identities[34].key_id, receiver._pending)
         self.assertNotIn(net.nodes[34], receiver.table.reply_candidates(coordinate(net.identities[34].key_id)))
 
+    async def test_maintenance_makes_owner_visible_to_its_verified_near_neighbours(self):
+        net = self.network
+        owner = net.participants[0]
+        target = coordinate(net.identities[0].key_id)
+        # Only successful signed hellos establish the owner's local neighbours;
+        # none advertises the owner to those endpoints yet.
+        for receiver in range(1, len(net.nodes)):
+            await net.hello(0, receiver, advertise=False)
+        closest = owner.table.closest(target, limit=8)
+        self.assertEqual(len(closest), 8)
+        by_key = {identity.key_id: i for i, identity in enumerate(net.identities)}
+        neighbours = [net.participants[by_key[node["payload"]["signing_key"]["key_id"]]] for node in closest]
+        for neighbour in neighbours:
+            self.assertNotIn(owner.identity.key_id, neighbour._pending)
+        for _ in range(4):
+            result = await owner.maintain()
+            self.assertLessEqual(result["metrics"]["requests"], 16)
+            self.assertLessEqual(result["metrics"]["response_bytes"], 1024*1024)
+        # Random refresh coordinates must not leave the owner's own XOR region
+        # without introductions. Receivers still need their independent probe.
+        for neighbour in neighbours:
+            self.assertIn(owner.identity.key_id, neighbour._pending)
+            self.assertNotIn(net.nodes[0], neighbour.table.closest(target))
+            await neighbour.maintain()
+            self.assertIn(net.nodes[0], neighbour.table.closest(target))
+
     async def test_full_pending_returns_signed_retryable_backpressure_without_discarding_existing(self):
         net = self.network
         await net.fill_first_two_queues()

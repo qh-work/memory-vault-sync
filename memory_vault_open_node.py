@@ -118,12 +118,19 @@ class OpenParticipant:
             try:
                 raw = verify_node(node)
                 if raw["status"] == "active" and raw["signing_key"]["key_id"] != self.identity.key_id:
-                    unique.setdefault(raw["signing_key"]["key_id"], node)
+                    key = raw["signing_key"]["key_id"]
+                    previous = unique.get(key)
+                    # Keep a seed's probe position, but prefer a newer signed
+                    # incarnation already present in the table/restart cache.
+                    # Selection remains an introduction; _rpc still checks the
+                    # durable floor and challenges its exact descriptor.
+                    if previous is None or raw["revision"] > previous["payload"]["revision"]:
+                        unique[key] = node
             except MemoryError:
                 continue
-            if len(unique) == 32:
-                break
-        nodes = list(unique.values())
+        # Scan all bounded inputs before truncation, since a newer incarnation
+        # of an early seed may be the last cache entry.
+        nodes = list(unique.values())[:32]
         return [nodes[::2], nodes[1::2]]
 
     def _request(self, node, action, body):
@@ -215,10 +222,12 @@ class OpenParticipant:
         self._maintenance_cycle += 1
         # A full remote introduction queue may reject a first announcement.
         # Retry our own announcement within this same maintenance allowance,
-        # rotating only over peers already proven by an actual response. No
-        # fresh third-party URL is promoted or probed by this selection step.
+        # rotating over the nearest proven peers to OUR coordinate. Random
+        # refresh targets discover routes, but announcing only in those regions
+        # can leave our own neighbourhood unable to introduce us to a lookup.
+        # No fresh third-party URL is promoted by this selection step.
         if self.descriptor is not None:
-            peers = self.table.closest(target, "general", limit=16)
+            peers = self.table.closest(coordinate(self.identity.key_id), "general", limit=8)
             for offset in range(min(2, len(peers))):
                 peer = peers[(cycle * 2 + offset) % len(peers)]
                 try:
@@ -269,7 +278,15 @@ class OpenParticipant:
         owner = verify_contact(contact)
         if owner["signing_key"] != self.identity.public_descriptor():
             raise MemoryError("open_contact_owner_required")
-        self._accept(contact)
+        try:
+            self._accept(contact)
+        except MemoryError as exc:
+            # accept persists a valid revocation before refusing its use as an
+            # active contact. The verified owner may still propagate those
+            # exact withdrawal bytes to directories. Rollback/conflict/storage
+            # failures remain terminal; no general checkpoint rule is relaxed.
+            if owner["status"] != "revoked" or exc.code != "open_control_revoked":
+                raise
         budget = LookupBudget()
         route = await self._lookup(contact_key(self.identity.key_id), "directory", budget)
         receipts, errors, keys, addresses = [], [], set(), set()
