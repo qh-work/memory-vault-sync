@@ -4,18 +4,28 @@
 local routing and sharded resource growth, not a larger private relay pool.
 The [open-network roadmap](OPEN_NETWORK_ROADMAP.md) and its architecture,
 first-contact/custody flows and falsifiable acceptance model supersede the older
-private-first sequence. They are design candidates; no new open-network or
-scale test has passed merely because these documents exist. Source/release
-capabilities below remain unchanged.
+private-first sequence. The first executable open routing slice now has
+source-pinned implementation and cloud evidence; the full architecture remains
+a development target, not a global reliability claim.
 
-Current source: **0.27.0-alpha.1**. The optional communication-memory network
+Current source: **0.28.0-alpha.0**, an open routing/contact-discovery preview.
+Python open connect/discover, native TypeScript control/routing/state kernels,
+bounded late-join progress and leased contact lookup are implemented. Open
+messaging and the full TypeScript open runtime remain unsupported. All three
+100-node routing seeds passed their 99% healthy/97% bootstrap-exit gates on
+`dc485334f8ad8629db68ef25c7c618a732f15c6c`; each phase returned 1,000/1,000.
+See [the exact evidence and limits](OPEN_ROUTING_RUNTIME.md). The experiment
+uses logical signed control, not actual HTTP, SQLite, real AI or physical
+failure domains. The full 0.28.0-alpha.1 vertical milestone is still pending.
+
+The retained private communication-memory network
 has a six-operation endpoint, independent issuer control, signed invitations,
 JWE encryption, bounded relay-pool delivery, durable retries and endpoint receipts.
 Existing core records, personal backups, handoff packages and plugin entrypoints
 remain. Native encrypted Drive is wired to the existing queue; live cloud
 credentials/upload/readback remain unverified. See
 [current alpha evidence](RELEASE_NOTES_V0_26_ALPHA.md) and
-[network setup](NETWORK_QUICKSTART.md). No real-model or scale acceptance is claimed.
+[private network setup](NETWORK_QUICKSTART.md). No real-model acceptance is claimed.
 
 The 0.27.0-alpha.1 feature adds opt-in signed relay discovery, a common bounded
 pool across different bootstrap entries, and fallback until the requested one
@@ -51,7 +61,7 @@ candidate archives. Current source also includes an independent TypeScript
 persistent endpoint and native six-operation facade with bounded retrieval and
 dynamic handoff. [Its scope](NETWORK_TYPESCRIPT.md) still excludes complete old
 graph/cloud-worker parity and scale certification. The current release target has
-an [explicit prerelease link](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.27.0-alpha.1);
+an [explicit prerelease link](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0);
 the release page establishes publication and asset availability.
 The current source also includes opt-in [deterministic v2 retrieval](RETRIEVAL_V2.md),
 bounded sender repair and aligned signed-storage-response validation; those
@@ -59,7 +69,7 @@ features do not imply they have been installed locally. Actual package and local
 upgrade evidence is separate. Historical reports below do not become
 current-version validation by inclusion here.
 
-Earlier release pages/assets are now nonpublic drafts and their old public
+Older withdrawn release pages/assets remain nonpublic drafts and their old public
 tags/development branches were removed at the owner's request. The sanitized
 main history remains. This does not remove read-only PR refs, forks, caches or
 already downloaded copies; do not treat the cleanup as proof of zero exposure.

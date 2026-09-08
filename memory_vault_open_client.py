@@ -1,0 +1,90 @@
+"""Explicit open profile for the same six-operation Agent facade.
+
+This first runtime supplies contact discovery, not open encrypted mailboxes.
+Unsupported message operations fail explicitly and never select a private
+authority or downgrade encryption. Remember/recall stay in the existing Vault.
+"""
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+
+from memory_vault import MemoryError
+from memory_vault_client import ClientConfig
+from memory_vault_network import _read_private
+from memory_vault_network_crypto import EncryptionIdentity, document, object_fields
+from memory_vault_open_node import OpenParticipant
+from memory_vault_trust import Identity
+
+CONFIG_SCHEMA = "memory-vault-open-client-config/v1"
+
+
+class OpenNetworkClient:
+    supports_targeted_discovery = True
+
+    def __init__(self, config_path: Path, *, transport=None):
+        if transport is not None:
+            raise MemoryError("open_transport_override_unsupported")
+        raw = _read_private(Path(config_path), 65536)
+        if raw is None:
+            raise MemoryError("network_not_configured")
+        config = object_fields(document(raw, maximum=65536),
+                               {"schema_version", "client_config_path", "state_directory", "encryption_key_path", "seeds", "allow_loopback"})
+        if config["schema_version"] != CONFIG_SCHEMA:
+            raise MemoryError("open_invalid_client_config")
+        self.client_config = ClientConfig.load(Path(config["client_config_path"]))
+        if self.client_config.identity_path is None:
+            raise MemoryError("network_signing_identity_required")
+        self.identity = Identity.load(self.client_config.identity_path)
+        # Bind the same encryption identity; merely loading it does not claim a
+        # remote live X25519 possession challenge or authorize memory sharing.
+        self.encryption = EncryptionIdentity.load(Path(config["encryption_key_path"]))
+        directory = Path(config["state_directory"])
+        if not directory.is_absolute() or directory == self.client_config.vault_path.parent:
+            raise MemoryError("network_separate_state_required")
+        self.participant = OpenParticipant(self.identity, directory, seeds=config["seeds"],
+                                           allow_loopback=config["allow_loopback"])
+
+    def __enter__(self):
+        return self
+
+    def close(self):
+        self.participant.close()
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def connect(self, *, invitation=None, request_id=None):
+        if invitation is not None:
+            raise MemoryError("open_private_invitation_unsupported")
+        result = asyncio.run(self.participant.join())
+        return {**result, "profile": "open-routing-v1", "network_accessed": True,
+                "open_messaging_supported": False}
+
+    def discover(self, *, online=True, key_id=None):
+        if online is not True:
+            if key_id is not None:
+                raise MemoryError("invalid_client_arguments")
+            return {"profile": "open-routing-v1", "state": "local", "network_accessed": False,
+                    "discovery_grants_access": False}
+        if key_id is None:
+            return {"profile": "open-routing-v1", "state": "target_key_required",
+                    "global_member_list": False, "network_accessed": False,
+                    "discovery_grants_access": False}
+        result = asyncio.run(self.participant.find_contact(key_id))
+        # Full causality traces are available from the runtime/acceptance tools.
+        # The common Agent response has its original bounded 8 KiB output.
+        result.pop("route", None)
+        return {**result, "profile": "open-routing-v1", "network_accessed": True}
+
+    def send(self, **arguments):
+        raise MemoryError("open_messaging_unsupported")
+
+    def receive(self, **arguments):
+        raise MemoryError("open_messaging_unsupported")
+
+    def read_message(self, **arguments):
+        raise MemoryError("open_messaging_unsupported")
+
+    def respond_to(self, *arguments):
+        raise MemoryError("open_messaging_unsupported")

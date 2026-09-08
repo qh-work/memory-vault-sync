@@ -6,27 +6,29 @@ The protocol is independent of language, storage, model, session, device and
 task. The authorized full client automates the same canonical record contract;
 an independent implementation is not required to install it or import Python.
 
-The current prerelease build target is **0.27.0-alpha.1**, extending the
-published alpha.5 baseline (main `608d54578b9ce30f10fe450ad651f1cd8620a2e7`).
-It adds an opt-in signed relay pool, different bootstrap entries and automatic
-fallback with an explicit storage-confirmation target. See
-[relay-pool behavior and verification](RELAY_POOL.md). Existing Experience,
-content/v2, Hint v4 and local accepted-batch semantics remain.
+The current prerelease build target is **0.28.0-alpha.0**, an open routing and
+contact-discovery preview extending the retained 0.27.0-alpha.1 private profile.
+It adds signed, bounded multi-hop discovery without a common authority or
+roster, leased contact shards and persistent control floors. Python open
+connect/discover and native TypeScript kernels are included. Open messaging,
+the complete TypeScript open endpoint, first-contact consent and ciphertext
+repair remain outside this preview. See [measured scope](OPEN_ROUTING_RUNTIME.md).
+The 0.28.0-alpha.1 full vertical milestone remains pending.
 Publication must be independently verified at the
-[target release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.27.0-alpha.1);
+[target release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0);
 this source document is not proof of upload, installation or certification.
 The older v0.25 reports below are historical evidence, not current download
 instructions or acceptance of this prerelease.
 
 The release builder produces:
 
-- `memory-vault-protocol-v0.27.0-alpha.1.zip`: specification, schemas, synthetic
+- `memory-vault-protocol-v0.28.0-alpha.0.zip`: specification, schemas, synthetic
   interchange examples and implementer guides, **no executable files**.
-- `memory-vault-client-v0.27.0-alpha.1.zip`: complete source-built runtime, plugin,
+- `memory-vault-client-v0.28.0-alpha.0.zip`: complete source-built runtime, plugin,
   local marketplace catalog and explicit setup instructions.
-- `memory-vault-review-v0.27.0-alpha.1.zip`: public synthetic tests and source/build
+- `memory-vault-review-v0.28.0-alpha.0.zip`: public synthetic tests and source/build
   material for reviewers to run only with their user's authorization.
-- `memory-vault-network-test-v0.27.0-alpha.1.zip`: synthetic endpoint template;
+- `memory-vault-network-test-v0.28.0-alpha.0.zip`: synthetic endpoint template;
   this release has unconfigured service trust and requires operator provisioning.
 - `memory_vault.py`: core source; Experience use also needs the companion module
   included in the client/review packages.
@@ -49,13 +51,16 @@ services; the source exposes explicit fail-closed boundaries.
 
 ## Publication is not certification
 
-This is a bounded private-network preview, not global P2P, real-model adoption,
-scale or production-security certification. The authority remains a single
-configured service. The normal source/archive privacy and dependency gates
-remain required. The final targeted 74-method developer run passed in 185.310 seconds, with
-unchanged source/test hashes and no failures, errors or skips. Exact commands
-and scope are in [RELAY_POOL.md](RELAY_POOL.md); previous source-pinned alpha.5 and Experience
-results remain historical evidence, not a pass for this feature or the full suite.
+The source-pinned routing experiment on `dc485334f8ad8629db68ef25c7c618a732f15c6c`
+passed all three original 99% healthy / 97% bootstrap-exit gates: seeds17/29/43
+each returned 1,000/1,000 in both phases. The 84-method open CI and three-platform
+protocol CI also passed. See [complete source/run/artifact bindings and limits](OPEN_ROUTING_RUNTIME.md).
+This is logical in-process signed routing, not 100-node HTTP/SQLite, actual AI
+or independent physical failure-domain acceptance. It does not establish global
+reliability, unlimited capacity or production security. Release-only metadata
+checks and actual downloaded bytes are recorded separately in the release body.
+Historical relay-pool and Experience results retain their original source pins;
+none is a whole-suite pass for this preview.
 
 Current controls use content/v2 and Hint v4 within network-v1; old preview
 forms are rejected. No automatic private upgrade, migration or plugin

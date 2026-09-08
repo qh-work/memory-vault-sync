@@ -89,7 +89,8 @@ def definitions() -> list[dict[str, Any]]:
                            "received_batch_message_id": {"type": "string", "maxLength": 128},
                            "cursor": {"type": "string", "maxLength": 4096}, "handoff": {"type": "boolean"},
                            "ranking_profile": {"type": "string", "maxLength": 128}, "include_experience": {"type": "boolean"}}),
-        "discover": _schema({"online": {"type": "boolean"}}),
+        "discover": _schema({"online": {"type": "boolean"},
+                             "key_id": {"type": "string", "pattern": "^ed25519_[0-9a-f]{64}$"}}),
         "send": _schema({"request_id": identifier, "recipients": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"type": "string", "maxLength": 128}},
                          "text": text, "memory_ids": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 64}},
                          "control": {"type": "object"}}, ["request_id", "recipients"]),
@@ -119,8 +120,14 @@ class Agent:
     def _network(self) -> Any:
         if self.network_config is None:
             raise MemoryError("network_not_configured")
-        from memory_vault_network import NetworkClient
-        client = NetworkClient(self.network_config, transport=self.transport)
+        from memory_vault_network import NetworkClient, _read_private
+        raw = _read_private(self.network_config, 64 * 1024)
+        config = strict_json_loads(raw) if raw is not None else {}
+        if isinstance(config, dict) and config.get("schema_version") == "memory-vault-open-client-config/v1":
+            from memory_vault_open_client import OpenNetworkClient
+            client = OpenNetworkClient(self.network_config, transport=self.transport)
+        else:
+            client = NetworkClient(self.network_config, transport=self.transport)
         if client.client_config.path != self.client_config.absolute():
             raise MemoryError("network_client_config_mismatch")
         return client
@@ -273,6 +280,8 @@ class Agent:
                     raise MemoryError("message_id_required")
             if operation == "send" and "control" in arguments and ("text" in arguments or "memory_ids" in arguments):
                 raise MemoryError("network_invalid_send")
+            if operation == "discover" and "key_id" in arguments and arguments.get("online") is not True:
+                raise MemoryError("invalid_client_arguments")
             if operation == "discover" and not arguments.get("online"):
                 response = success(self.discovery())
             elif operation == "remember":
@@ -286,6 +295,8 @@ class Agent:
                 response = self._recall(arguments)
             else:
                 with self._network() as network:
+                    if operation == "discover" and "key_id" in arguments and not getattr(network, "supports_targeted_discovery", False):
+                        raise MemoryError("network_targeted_discovery_unsupported")
                     if operation == "receive" and "message_id" in arguments:
                         result = network.read_message(**arguments)
                     elif operation == "receive" and "respond_to" in arguments:

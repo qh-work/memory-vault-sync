@@ -46,12 +46,18 @@ PROTOCOL_DOCUMENTS = (
     "docs/NETWORK_V1.md", "docs/NETWORK_CONTENT_V2.md", "docs/NETWORK_HINTS_V1.md", "docs/NETWORK_HINTS_V2.md", "docs/NETWORK_HINTS_V3.md", "docs/NETWORK_HINTS_V4.md", "docs/RECEIVED_BATCH_RECALL.md", "docs/RELAY_POOL.md", "docs/NETWORK_QUICKSTART.md", "docs/NATIVE_DRIVE.md", "docs/RELEASE_NOTES_V0_26_ALPHA.md",
     "docs/V0_26_PLAN.md",
     "docs/NETWORK_TOPICS.md",
+    "docs/OPEN_CONTROL_V1.md", "docs/OPEN_ROUTING_RUNTIME.md",
     "docs/DEPENDENCIES_NETWORK.md",
     "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md", "docs/NETWORK_TYPESCRIPT.md",
 )
 # Each executable network review fixture is selected deliberately. A matching
 # filename alone never enrolls a new local test into the public review kit.
 NETWORK_REVIEW_TESTS = (
+    "tests/test_open_control.py", "tests/test_open_state.py", "tests/test_open_index.py",
+    "tests/test_open_routing.py", "tests/test_open_transport.py", "tests/test_open_node.py",
+    "tests/test_open_join_progress.py", "tests/test_open_network_ci.py",
+    "tests/test_open_agent.py", "tests/test_open_typescript.py", "tests/test_open_typescript_state.py",
+    "tests/open_routing_acceptance.py",
     "tests/test_experience.py", "tests/test_experience_edges.py", "tests/test_experience_typescript.py", "tests/test_cross_author_state.py",
     "tests/test_experience_origin_identity.py", "tests/test_experience_origin_typescript.py", "tests/test_experience_int64.py",
     "tests/test_experience_http_int64.py",
@@ -149,6 +155,7 @@ def review_sources(material: list[Path], source_tree: ReleaseSource) -> list[Pat
     paths.extend(ROOT / name for name in (
         "scripts/build_client_plugin.py", "scripts/build_release.py", "scripts/release_source.py",
         "scripts/verify_client_package.py",
+        "scripts/run_open_network_ci.py", ".github/workflows/open-network.yml",
         "packaging/marketplace.json", "packaging/PROTOCOL_README.md", "packaging/CLIENT_README.md",
         "tests/test_memory_vault.py", "tests/test_release_source_gate.py", "packaging/REVIEW_README.md",
     ))

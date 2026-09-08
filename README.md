@@ -8,15 +8,37 @@ protocol adoption. Neither owns the memory.**
 **Current development priority: global decentralized networking.** The
 [architecture and roadmap](docs/OPEN_NETWORK_ROADMAP.md) specify bounded
 multi-hop discovery, local consent, sharded resources and sender-independent
-replica maintenance. This is a design under review, not a claim that the
-released private-network preview already implements it.
+replica maintenance. The whole architecture passed its design review; the
+[first routing implementation](docs/OPEN_ROUTING_RUNTIME.md) now provides
+signed multi-hop contact discovery without a common authority. This is not a
+claim that the released private preview or this first slice completes the
+global communication and storage network.
 
 Use an existing endpoint through six operations: connect, remember, recall,
 discover, send and receive. You do not need to implement the protocol or install
 a plugin to use it. Independent implementers can use the same record, relation,
 provenance and exchange contract in their preferred language and storage.
 
-## 0.27.0-alpha.1: different entry points and automatic relay failover
+## 0.28.0-alpha.0: open contact discovery and bounded routing
+
+An explicitly configured Python open client can join from at most two signed
+introductions and discover an owner's signed contact through bounded multi-hop
+routing. It does not require a common authority, global roster or common relay
+pool. Independent endpoint challenges, finite contact leases and durable
+revision/revocation/conflict floors preserve the trust boundary. Late joins and
+periodic own-region refresh keep new contacts discoverable within fixed budgets.
+
+This is a **routing and contact-discovery preview**. Open `send` and `receive`
+remain unsupported; native TypeScript currently provides control, routing and
+state kernels, not the complete open Agent/HTTP runtime. The full
+`0.28.0-alpha.1` delivery/consent/repair milestone remains ahead. See
+[setup, measured evidence and remaining gates](docs/OPEN_ROUTING_RUNTIME.md).
+The source-pinned three-seed 100-node routing experiment passed both original
+thresholds, with 1,000/1,000 successful lookups in each phase of each seed.
+It uses logical signed transport, not 100 HTTP nodes, physical fault domains
+or actual AI instances.
+
+## Retained private profile: relay failover and encrypted exchange
 
 Endpoints can opt into a bounded pool from the existing issuer-signed node
 directory. Two endpoints with different bootstrap addresses can join the same
@@ -43,7 +65,7 @@ independent confirmations. Existing record bytes, IDs and signatures stay intact
 See [Experience Semantics](docs/EXPERIENCE_SEMANTICS.md) and
 [actual validation and limits](docs/EXPERIENCE_VALIDATION.md).
 
-The optional network retains signed invitations, endpoint encryption, durable
+The retained private network profile uses signed invitations, endpoint encryption, durable
 offline queues, bounded ciphertext relay selection, recipient-signed save
 receipts, and one native Python/NDJSON/HTTP interface. Existing personal memory,
 backup/restore, handoff packages, large packs and plugin APIs remain. Native
@@ -66,13 +88,13 @@ The pre-existing MCP memory interface remains for existing users.
 
 ## Download the current preview
 
-This source targets **[v0.27.0-alpha.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.27.0-alpha.1)**.
+This source targets **[v0.28.0-alpha.0](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0)**.
 Once published, use the matching release assets and its `SHA256SUMS`:
 
-- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.27.0-alpha.1/memory-vault-protocol-v0.27.0-alpha.1.zip):** specification, schemas and synthetic examples; no executable.
-- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.27.0-alpha.1/memory-vault-client-v0.27.0-alpha.1.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
-- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.27.0-alpha.1/memory-vault-review-v0.27.0-alpha.1.zip):** public source and synthetic tests; nothing runs automatically.
-- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.27.0-alpha.1/memory-vault-network-test-v0.27.0-alpha.1.zip):** no Docker or plugin; operator-provisioned endpoint template, with service trust unconfigured in this release.
+- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0/memory-vault-protocol-v0.28.0-alpha.0.zip):** specification, schemas and synthetic examples; no executable.
+- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0/memory-vault-client-v0.28.0-alpha.0.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
+- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0/memory-vault-review-v0.28.0-alpha.0.zip):** public source and synthetic tests; nothing runs automatically.
+- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0/memory-vault-network-test-v0.28.0-alpha.0.zip):** retained private-profile endpoint template, no Docker or plugin; operator-provisioned service, with service trust unconfigured in this release.
 - **Core source:** [`memory_vault.py`](memory_vault.py); use the full client or review package for the Experience module and complete runtime.
 
 Alpha.3 makes current records deterministically rank before superseded/resolved

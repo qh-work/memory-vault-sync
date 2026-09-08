@@ -1,12 +1,14 @@
-# Memory Vault v0.27.0-alpha.1 — authorized full client
+# Memory Vault v0.28.0-alpha.0 — authorized full client
 
-The 0.27.0-alpha.1 feature is an opt-in signed relay pool: different bootstrap
-entries can reach a common authorized set and sends can fall back between
-candidates. See [scope, setup and limits](plugins/memory-vault-client/docs/RELAY_POOL.md).
-The authority remains a single configured service; this is not open P2P or
-completion of the planned endurance and scale gates.
+The 0.28.0-alpha.0 preview adds signed open contact discovery and bounded
+multi-hop routing without a common authority or global roster. Python supports
+open connect/discover; native TypeScript provides control/routing/state kernels.
+Open messaging and the complete TypeScript open endpoint remain unsupported.
+See [setup, exact-source evidence and limits](plugins/memory-vault-client/docs/OPEN_ROUTING_RUNTIME.md).
+The full 0.28.0-alpha.1 consent, delivery and repair milestone remains ahead.
+The existing private network profile retains encrypted relay-pool exchange.
 
-This full-client package targets **v0.27.0-alpha.1 native-network source**,
+This full-client package targets **v0.28.0-alpha.0 native-network source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under
@@ -38,7 +40,8 @@ sources, environment and counterevidence. See
 [Hint v4](plugins/memory-vault-client/docs/NETWORK_HINTS_V4.md) and
 [local batch reads](plugins/memory-vault-client/docs/RECEIVED_BATCH_RECALL.md).
 
-This is a bounded private-network preview, not global P2P or unlimited capacity.
+This is a bounded routing preview with a separate retained private messaging profile.
+It is not a complete global communication network or unlimited-capacity claim.
 Current controls use Hint v4 and content/v2; old preview forms are not replayed
 or silently migrated. Extraction does not replace an installed plugin or
 private state. The separate no-Docker synthetic trial has unconfigured service

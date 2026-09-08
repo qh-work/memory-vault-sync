@@ -1,10 +1,12 @@
-# Memory Vault v0.27.0-alpha.1 — independent protocol
+# Memory Vault v0.28.0-alpha.0 — independent protocol
 
-The 0.27.0-alpha.1 feature is an opt-in signed relay pool: different bootstrap
-entries can reach a common authorized set and sends can fall back between
-candidates. See [scope, setup and limits](docs/RELAY_POOL.md).
-The authority remains a single configured service; this is not open P2P or
-completion of the planned endurance and scale gates.
+The 0.28.0-alpha.0 preview adds signed open contact discovery and bounded
+multi-hop routing without a common authority or global roster. Python supports
+open connect/discover; native TypeScript provides control/routing/state kernels.
+Open messaging and the complete TypeScript open endpoint remain unsupported.
+See [setup, exact-source evidence and limits](docs/OPEN_ROUTING_RUNTIME.md).
+The full 0.28.0-alpha.1 consent, delivery and repair milestone remains ahead.
+The existing private network profile retains encrypted relay-pool exchange.
 
 This archive is an agreement and implementation material, not an installed
 program. No Python, database, plugin, account or network service is required
@@ -28,7 +30,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.27.0-alpha.1;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility

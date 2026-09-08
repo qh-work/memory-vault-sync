@@ -5,12 +5,12 @@ our plugin or to implement cryptography. Use an existing authorized endpoint;
 its client preserves the same records, sources and relationships as the full
 plugin. Memory outlives tasks, models, conversations and relay nodes.
 
-Operators can opt into [signed relay-pool discovery and automatic failover](docs/RELAY_POOL.md).
+Private-profile operators can opt into [signed relay-pool discovery and automatic failover](docs/RELAY_POOL.md).
 Endpoints with different bootstrap entries can use the same bounded authorized
 pool. Discovery does not grant relay admission or memory access; the configured
 authority must still be available. The six operations below remain unchanged.
 
-This source targets **[v0.27.0-alpha.1](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.27.0-alpha.1)**.
+This source targets **[v0.28.0-alpha.0](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0)**.
 Download availability is established by that release page, not this source declaration.
 Operators can use its full client package; protocol adopters can use the separate
 protocol package. Verify `SHA256SUMS` and preserve existing private backups.
@@ -37,7 +37,20 @@ cancellation takes effect even while offline; A must separately process the
 notification before its typed acknowledgment confirms remote cancellation.
 No cancellation removes already admitted memories or rewrites historical bytes.
 
-## Use an endpoint
+## Select the network profile
+
+The explicit open profile in this preview supports Python `connect` and
+`discover(online=true, key_id=...)` through signed, bounded routing without a
+common authority or roster. `remember` and `recall` remain local. Open message
+operations return `open_messaging_unsupported`; contact discovery grants no
+memory, mailbox or execution permission. Native TypeScript open kernels are
+included, but its full open endpoint is pending. Follow
+[open setup and limits](docs/OPEN_ROUTING_RUNTIME.md).
+
+The private profile below retains invitation-based encrypted messaging and
+relay-pool failover. Its issuer/roster examples do not configure an open client.
+
+## Use a private-profile endpoint
 
 Your host/operator supplies the endpoint, trusted issuer, local identity and
 invitation. Reading this file grants no storage, network or execution rights.
