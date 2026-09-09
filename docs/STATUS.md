@@ -8,20 +8,28 @@ private-first sequence. The first executable open routing slice now has
 source-pinned implementation and cloud evidence; the full architecture remains
 a development target, not a global reliability claim.
 
-Current source candidate: **0.28.0-alpha.0.2**, explicit first-contact control
-over the existing open routing and HTTP runtime. Python and native TypeScript
-implement finite knock opt-in, fixed requests with a real dual-key challenge,
-explicit owner approval/rejection, and sender-pulled results bound to the
-original request, parties, resource, operation and expiry. Approval requires an
-actual finite delivery reservation. Local and node-side transaction accounting
-reserve later results before admitting new work. Both runtimes retain the same
-protected transport database; canonical Memory bytes, IDs and provenance are unchanged.
-See [the current candidate contract](OPEN_FIRST_CONTACT_V1.md).
+Current source target: **0.28.0-alpha.0.3**, an open encrypted-delivery preview.
+The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
+`send`, `receive`, durable local message reads, original-node storage receipts
+and separately verified recipient-save receipts. Selected original memories use
+the existing exporter/importer and trust/quarantine policy; ordinary chat stays
+in the inbox. The same Vault, signing identity and six Agent operations remain.
+The [open quickstart](OPEN_NETWORK_QUICKSTART.md) provides explicit setup using
+one or two real signed introductions and participant-operated nodes. No hosted
+project server, fixed seed, common issuer or global member roster is supplied.
 
-At candidate preparation, 6 Pro review, cloud CI, final archive checks and
-publication were pending. Their final status and test counts belong to the
-release evidence for the exact source commit, not this frozen status draft. Open encrypted messaging, receipts and sender-offline
-repair remain unsupported. The full 0.28.0-alpha.1 vertical milestone is pending.
+The native TypeScript client uses its own crypto, Vault and protected transport
+code without a Python subprocess. Delivery hosting currently uses the Python
+node implementation; the TypeScript node does not yet host delivery. Node migration, independent ACK
+repair and the full 0.28.0-alpha.1 vertical milestone remain pending. No new
+runtime tests were run for this addition; earlier review, CI and test counts
+retain their original source bindings. This source status does not establish
+upload availability, global reliability or public adoption.
+
+The prior **0.28.0-alpha.0.2** first-contact release added finite knock opt-in,
+real dual-key challenge, explicit approval/rejection and request-bound results
+with actual resource reservations. Its evidence applies to that source, not the
+new delivery runtime. See [the first-contact contract](OPEN_FIRST_CONTACT_V1.md).
 
 The prior native HTTP preview **0.28.0-alpha.0.1** is pinned to
 `0ddf0c5ac6aa8d12562c1df2a26ee25aeb851ed3`; its review, CI and publication evidence
@@ -74,9 +82,10 @@ full endpoint recovery, authenticated node migration and separately verified
 candidate archives. Current source also includes an independent TypeScript
 persistent endpoint and native six-operation facade with bounded retrieval and
 dynamic handoff. [Its scope](NETWORK_TYPESCRIPT.md) still excludes complete old
-graph/cloud-worker parity and scale certification. The current release target has
-an [explicit prerelease link](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2);
-its final publication and asset availability require source-pinned release evidence.
+graph/cloud-worker parity and scale certification. The earlier first-contact
+[prerelease](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)
+does not establish the new delivery preview's publication or asset availability;
+those require their own source-pinned release evidence.
 The current source also includes opt-in [deterministic v2 retrieval](RETRIEVAL_V2.md),
 bounded sender repair and aligned signed-storage-response validation; those
 features do not imply they have been installed locally. Actual package and local

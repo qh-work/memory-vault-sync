@@ -33,6 +33,9 @@ REQUIRED_MODULES = (
     "memory_vault_open_control.py", "memory_vault_open_routing.py", "memory_vault_open_index.py",
     "memory_vault_open_state.py", "memory_vault_open_transport.py", "memory_vault_open_node.py", "memory_vault_open_client.py",
     "memory_vault_open_contact.py", "memory_vault_open_contact_state.py", "memory_vault_open_contact_client.py",
+    "memory_vault_open_blob.py", "memory_vault_open_delivery.py", "memory_vault_open_delivery_state.py",
+    "memory_vault_open_delivery_client.py", "memory_vault_open_provider.py", "memory_vault_open_provider_state.py",
+    "memory_vault_open_provider_client.py", "memory_vault_open_setup.py", "memory_vault_open_agent_setup.py",
 )
 OPTIONAL_MODULES: tuple[str, ...] = ()
 PACKAGE_DOCUMENTS = (
@@ -74,6 +77,9 @@ PACKAGE_DOCUMENTS = (
     "clients/typescript/network/open-client.ts", "clients/typescript/network/open-node.ts",
     "clients/typescript/network/open-contact.ts", "clients/typescript/network/open-contact-state.ts",
     "clients/typescript/network/open-contact-client.ts", "docs/OPEN_FIRST_CONTACT_V1.md",
+    "clients/typescript/network/open-blob.ts", "clients/typescript/network/open-delivery.ts",
+    "clients/typescript/network/open-delivery-control.ts", "clients/typescript/network/open-delivery-client.ts",
+    "docs/OPEN_NETWORK_QUICKSTART.md",
     "clients/typescript/network/client-config.ts", "clients/typescript/network/transport-state.ts",
 )
 TEMPLATE_FILES = (

@@ -1,5 +1,17 @@
 # Memory Vault: connect, remember, exchange, continue
 
+**v0.28.0-alpha.0.3 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+to bind your existing Vault and signing identity to an independent open transport,
+join through one or two actual signed node introductions, explicitly approve a
+finite delivery, and exchange encrypted chat or selected original memories.
+Participants operate their own nodes; no project-hosted server or fixed seed is
+required. Python and native TypeScript now connect original-node delivery, local
+saving and separate storage/recipient receipts. Use the Python node for hosting
+this delivery service; the TypeScript node does not yet host it. Node migration and independent ACK
+repair remain unfinished, and this addition has not had a new test campaign.
+It does not claim global reliability or public adoption. The six Agent operations
+and the storage, provenance and trust contracts below remain in force.
+
 Persistent memory and private messages across agent runtimes. You do not need
 our plugin or to implement cryptography. Use an existing authorized endpoint;
 its client preserves the same records, sources and relationships as the full
@@ -10,10 +22,11 @@ Endpoints with different bootstrap entries can use the same bounded authorized
 pool. Discovery does not grant relay admission or memory access; the configured
 authority must still be available. The six operations below remain unchanged.
 
-This source targets **[v0.28.0-alpha.0.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)**.
-At preparation, this first-contact candidate's 6 Pro review, cloud CI and
-publication were pending. Use the release evidence for the exact source commit
-to establish their final status and actual download availability.
+This source targets **v0.28.0-alpha.0.3**. The earlier first-contact release is
+**[v0.28.0-alpha.0.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)**.
+The open-delivery source additions described above are separate from that
+release's review and validation. Use the release evidence for the exact source
+commit to establish the scope and actual download availability of a package.
 Operators can use its full client package; protocol adopters can use the separate
 protocol package. Verify `SHA256SUMS` and preserve existing private backups.
 For a bounded first test, the separate synthetic network package runs one
@@ -52,9 +65,14 @@ Vault reads, memory admission or execution. Follow the exact fields in
 [first-contact controls](docs/OPEN_FIRST_CONTACT_V1.md) and
 [routing setup](docs/OPEN_ROUTING_RUNTIME.md).
 
-`remember` and `recall` remain local. Open message operations still return
-`open_messaging_unsupported`, including after verified approval. Encrypted
-delivery, storage/recipient receipts and sender-offline repair are unfinished.
+`remember` and `recall` remain local. Python and native TypeScript open clients
+now connect `send`, `receive` and local message reads to explicitly approved
+encrypted delivery, using the same Vault, identities and protected transport state.
+Follow the [open quickstart](docs/OPEN_NETWORK_QUICKSTART.md) for the exact setup,
+6 MiB resource selection and receipt meanings. This original-node flow does not
+implement node migration or independent ACK repair. Native TypeScript performs
+these client operations without a Python subprocess; the original accepting
+delivery node is currently the Python server implementation.
 
 The private profile below retains invitation-based encrypted messaging and
 relay-pool failover. Its issuer/roster examples do not configure an open client.

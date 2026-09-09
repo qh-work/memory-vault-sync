@@ -1,17 +1,20 @@
-# Memory Vault v0.28.0-alpha.0.2 independent review kit
+# Memory Vault v0.28.0-alpha.0.3 independent review kit
 
-The 0.28.0-alpha.0.2 candidate adds explicit first-contact requests, approval
-and rejection in Python and native TypeScript. B signs opt-in backed by a finite
-knock lease before going offline. A proves both keys, submits a fixed request,
-and later pulls a result bound to the original request, parties, resource,
-operation and expiry. Approval requires a real finite delivery reservation.
-Open encrypted messaging, receipts and sender-offline repair remain unsupported;
-a grant does not create Vault access, author trust or execution authority.
-See [first-contact controls](docs/OPEN_FIRST_CONTACT_V1.md) and [routing setup and historical evidence](docs/OPEN_ROUTING_RUNTIME.md).
-At candidate preparation, 6 Pro review, cloud CI and publication were pending.
-Their final status requires the release evidence for the exact source commit.
-The full 0.28.0-alpha.1 delivery/receipt/repair milestone remains ahead. The existing
-private network profile retains its separate encrypted relay-pool exchange.
+The Python and native TypeScript open clients add encrypted messages and selected original
+memory sharing after explicit first-contact approval. Recipient-saved receipts
+follow local validation and durable save. Participants operate their own finite
+nodes and exchange signed introductions; no central service or project-operated
+public seed is supplied. Node and agent setup commands are included in the full
+client archive. Ordinary clients need no public listener.
+
+This preview uses the original approved delivery node. Replacement-node repair
+and independent receipt repair remain unfinished. Both clients share the same wire protocol and existing Vault. The supplied
+Python node serves delivery; the native TypeScript node serves routing and first
+contact. No runtime tests or new proof campaign were run for this
+version. Historical results retain their original source scope. Memory content
+never grants execution authority or automatically enrolls an author as trusted.
+
+[Open-network quickstart](docs/OPEN_NETWORK_QUICKSTART.md).
 
 This separate archive contains public source and synthetic tests, not private
 memory or a preconfigured installation. The [validation index](docs/VALIDATION.md)

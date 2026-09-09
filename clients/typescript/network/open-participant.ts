@@ -34,6 +34,7 @@ export class OpenParticipant{
   private readonly index?:OpenIndex;private readonly contact?:ContactState;
   private readonly pending=new Map<string,SignedNode>();
   private maintenanceCycle=0;private closed=false;private tail:Promise<unknown>=Promise.resolve();
+  private seedRefreshAfter=0;
   constructor(identity:SigningIdentityDocument,stateDirectory:string,options:ParticipantOptions){
     if(!Array.isArray(options.seeds)||options.seeds.length>2)fail('open_two_initial_introductions_maximum');
     this.identity=document(identity as unknown as DocumentInput,4096) as unknown as SigningIdentityDocument;
@@ -43,7 +44,11 @@ export class OpenParticipant{
     if(own&&(!same(own.signing_key,signer)||own.status!=='active'))fail('open_wrong_node');
     this.transport=new OpenHTTPTransport({allow_loopback:options.allow_loopback});
     this.seeds=options.seeds.map(seed=>document(seed as DocumentInput,4096) as unknown as SignedNode);
-    for(const seed of this.seeds){const raw=verifyNode(seed);endpoint(raw.base_url,this.transport.allow_loopback);}
+    for(const seed of this.seeds){
+      // Expired originals remain fixed-key hints, never active routing entries.
+      const raw=verifyNode(seed,{allow_expired:true});if(raw.status!=='active')fail('open_seed_inactive');
+      endpoint(raw.base_url,this.transport.allow_loopback);
+    }
     if(new Set(this.seeds.map(seed=>seed.payload.signing_key.key_id)).size!==this.seeds.length)fail('open_duplicate_seed');
     const policy=options.index_policy??{};
     if(typeof policy!=='object'||Array.isArray(policy)||Object.keys(policy).some(key=>
@@ -75,6 +80,27 @@ export class OpenParticipant{
       this.database.prepare('INSERT OR REPLACE INTO open_peer_cache VALUES(?,?,?)').run(node.payload.signing_key.key_id,canonicalBytes(node),now());
       this.database.exec('DELETE FROM open_peer_cache WHERE key_id NOT IN (SELECT key_id FROM open_peer_cache ORDER BY seen_at DESC,key_id LIMIT 32)');
     });
+  }
+  private async refreshSeedIntroductions(budget:LookupBudget,force=false):Promise<string[]>{
+    this.ready();const errors:string[]=[];
+    if(!force&&performance.now()/1000<this.seedRefreshAfter)return errors;
+    this.seedRefreshAfter=performance.now()/1000+30;
+    for(let index=0;index<this.seeds.length;index++){
+      const before=verifyNode(this.seeds[index],{allow_expired:true});
+      if(before.expires_at>now()+60)continue;
+      try{
+        budget.check();budget.chargeRequest();
+        const reply=await this.transport.requestNode(before.base_url,budget.deadline);
+        budget.chargeBytes(reply.wire_bytes);this.ready();
+        const after=verifyNode(reply.response);
+        if(after.status!=='active'||after.revision<=before.revision||
+          (['signing_key','storage_epoch','base_url','roles'] as const).some(name=>!same(after[name],before[name])))fail('open_seed_refresh_mismatch');
+        const node=document(reply.response as DocumentInput,4096) as unknown as SignedNode;
+        this.accept(node);this.cache(node);this.seeds[index]=node;
+        // A normal signed hello/challenge must still prove the endpoint.
+      }catch(error){errors.push(code(error));}
+    }
+    return errors;
   }
   private initial(target:string,view:OpenView):SignedNode[][]{
     this.ready();const candidates=[...this.seeds,...this.table.closest(target,view,16)];
@@ -110,11 +136,15 @@ export class OpenParticipant{
     if(observed)observed.socket=JSON.stringify([reply.observed_address,endpoint(node.payload.base_url,this.transport.allow_loopback).port]);
     return payload.body;
   }
-  private lookup(target:string,view:OpenView,budget:LookupBudget){return lookup(this.table,target,{view,budget,
-    rpc:(node,request,deadline)=>this.rpc(node,request,deadline),signRequest:(node,action,body)=>this.request(node,action,body),initialLanes:this.initial(target,view)});}
+  private async lookup(target:string,view:OpenView,budget:LookupBudget){
+    const errors=await this.refreshSeedIntroductions(budget);
+    const result=await lookup(this.table,target,{view,budget,rpc:(node,request,deadline)=>this.rpc(node,request,deadline),
+      signRequest:(node,action,body)=>this.request(node,action,body),initialLanes:this.initial(target,view)});
+    return {...result,partial:result.partial||errors.length>0};
+  }
   private metrics(budget:LookupBudget){return {requests:budget.requests,request_bytes:budget.request_bytes,response_bytes:budget.response_bytes};}
   join():Promise<Obj>{return this.serial(async()=>{
-    const budget=new LookupBudget(),errors:string[]=[];
+    const budget=new LookupBudget(),errors=await this.refreshSeedIntroductions(budget,true);
     const initial=this.initial(coordinate(this.keyId),'general'),known=new Map(initial.flat().map(node=>[node.payload.signing_key.key_id,node]));
     for(const configured of this.seeds){try{await this.call(known.get(configured.payload.signing_key.key_id)??configured,'hello',{node:this.descriptor},budget);}catch(error){errors.push(code(error));}}
     const result=await this.lookup(coordinate(this.keyId),'general',budget);
@@ -122,7 +152,7 @@ export class OpenParticipant{
     return {state:result.state,routing:this.table.stats(),metrics:this.metrics(budget),partial:errors.length>0||result.partial,errors,authority_required:false,discovery_grants_access:false};
   });}
   maintain():Promise<Obj>{return this.serial(async()=>{
-    const budget=new LookupBudget({maximum_requests:16,maximum_bytes:1024*1024,maximum_seconds:5}),errors:string[]=[];
+    const budget=new LookupBudget({maximum_requests:16,maximum_bytes:1024*1024,maximum_seconds:5}),errors=await this.refreshSeedIntroductions(budget);
     const pending=[...this.pending.entries()].slice(0,2);for(const [key] of pending)this.pending.delete(key);
     for(const [,peer] of pending){try{await this.call(peer,'hello',{node:null},budget);}catch(error){errors.push(code(error));}}
     const cycle=this.maintenanceCycle++,target=maintenanceTarget(this.keyId,cycle);

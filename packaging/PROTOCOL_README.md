@@ -1,17 +1,20 @@
-# Memory Vault v0.28.0-alpha.0.2 — independent protocol
+# Memory Vault v0.28.0-alpha.0.3 — independent protocol
 
-The 0.28.0-alpha.0.2 candidate adds explicit first-contact requests, approval
-and rejection in Python and native TypeScript. B signs opt-in backed by a finite
-knock lease before going offline. A proves both keys, submits a fixed request,
-and later pulls a result bound to the original request, parties, resource,
-operation and expiry. Approval requires a real finite delivery reservation.
-Open encrypted messaging, receipts and sender-offline repair remain unsupported;
-a grant does not create Vault access, author trust or execution authority.
-See [first-contact controls](docs/OPEN_FIRST_CONTACT_V1.md) and [routing setup and historical evidence](docs/OPEN_ROUTING_RUNTIME.md).
-At candidate preparation, 6 Pro review, cloud CI and publication were pending.
-Their final status requires the release evidence for the exact source commit.
-The full 0.28.0-alpha.1 delivery/receipt/repair milestone remains ahead. The existing
-private network profile retains its separate encrypted relay-pool exchange.
+The Python and native TypeScript open clients add encrypted messages and selected original
+memory sharing after explicit first-contact approval. Recipient-saved receipts
+follow local validation and durable save. Participants operate their own finite
+nodes and exchange signed introductions; no central service or project-operated
+public seed is supplied. Node and agent setup commands are included in the full
+client archive. Ordinary clients need no public listener.
+
+This preview uses the original approved delivery node. Replacement-node repair
+and independent receipt repair remain unfinished. Both clients share the same wire protocol and existing Vault. The supplied
+Python node serves delivery; the native TypeScript node serves routing and first
+contact. No runtime tests or new proof campaign were run for this
+version. Historical results retain their original source scope. Memory content
+never grants execution authority or automatically enrolls an author as trusted.
+
+[Open-network quickstart](docs/OPEN_NETWORK_QUICKSTART.md).
 
 This archive is an agreement and implementation material, not an installed
 program. No Python, database, plugin, account or network service is required
@@ -35,7 +38,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.2;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.3;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility

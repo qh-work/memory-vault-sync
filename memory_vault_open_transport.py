@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import http.client
 import ipaddress
+import math
 import queue
 import socket
 import ssl
@@ -19,9 +20,15 @@ from urllib.parse import urlsplit
 
 from memory_vault import MemoryError, canonical_bytes
 from memory_vault_network_crypto import document
+from memory_vault_open_blob import (
+    BLOB_PATH, BLOB_PREFIX_BYTES, MAX_BLOB_FRAME_BYTES,
+    encode_blob_frame, decode_blob_frame,
+)
 
 MAX_RPC_BYTES = 65536
 RPC_PATH = "/open/v1/rpc"
+NODE_PATH = "/open/v1/node"
+MAX_NODE_BYTES = 4096
 
 
 class _Resolver:
@@ -176,6 +183,52 @@ class TransportReply:
     wire_bytes: int
 
 
+@dataclass(frozen=True)
+class BlobReply:
+    header: Mapping[str, Any]
+    chunk: bytes
+    observed_address: str
+    wire_bytes: int
+
+
+@dataclass(frozen=True)
+class _RawReply:
+    raw: bytes
+    observed_address: str
+    wire_bytes: int
+
+
+class _BoundedHeaderReader:
+    def __init__(self, source):
+        self.source = source
+        self.remaining = 16384
+
+    def readline(self, limit=-1):
+        maximum = self.remaining + 1
+        if limit >= 0:
+            maximum = min(maximum, limit)
+        raw = self.source.readline(maximum)
+        self.remaining -= len(raw)
+        if self.remaining < 0:
+            raise MemoryError("open_response_headers_rejected")
+        return raw
+
+    def __getattr__(self, name):
+        return getattr(self.source, name)
+
+
+class _BoundedHTTPResponse(http.client.HTTPResponse):
+    def begin(self):
+        source = self.fp
+        bounded = _BoundedHeaderReader(source)
+        self.fp = bounded
+        try:
+            super().begin()
+        finally:
+            if self.fp is bounded:
+                self.fp = source
+
+
 class OpenHTTPTransport:
     def __init__(self, *, allow_loopback: bool = False):
         if type(allow_loopback) is not bool:
@@ -189,7 +242,28 @@ class OpenHTTPTransport:
 
     def request(self, base: str, value: Mapping[str, Any], *, deadline: float) -> TransportReply:
         raw = canonical_bytes(document(value, maximum=MAX_RPC_BYTES))
+        reply = self._exchange(base, raw, deadline=deadline, blob=False)
+        return TransportReply(document(reply.raw, maximum=MAX_RPC_BYTES), reply.observed_address, reply.wire_bytes)
+
+    def request_blob(self, base: str, header, chunk: bytes, *, deadline: float) -> BlobReply:
+        raw = encode_blob_frame(header, chunk)
+        reply = self._exchange(base, raw, deadline=deadline, blob=True)
+        frame = decode_blob_frame(reply.raw)
+        return BlobReply(frame.header, frame.chunk, reply.observed_address, reply.wire_bytes)
+
+    def request_node(self, base: str, *, deadline: float) -> TransportReply:
+        """Fixed public introduction GET; signature/bindings remain caller checks."""
+        reply = self._exchange(base, b"", deadline=deadline, blob=False, introduction=True)
+        node = document(reply.raw, maximum=MAX_NODE_BYTES)
+        if reply.raw != canonical_bytes(node):
+            raise MemoryError("open_node_response_noncanonical")
+        return TransportReply(node, reply.observed_address, reply.wire_bytes)
+
+    def _exchange(self, base: str, raw: bytes, *, deadline: float, blob: bool, introduction: bool = False) -> _RawReply:
         scheme, host, port = endpoint(base, allow_loopback=self.allow_loopback)
+        maximum = MAX_NODE_BYTES if introduction else MAX_BLOB_FRAME_BYTES if blob else MAX_RPC_BYTES
+        if type(deadline) not in (int, float) or not math.isfinite(deadline):
+            raise MemoryError("open_budget_exhausted", retryable=True)
         remaining = deadline - time.monotonic()
         if self._closed:
             raise MemoryError("open_transport_closed")
@@ -199,12 +273,16 @@ class OpenHTTPTransport:
         deadline_timer = None
         try:
             addresses = _resolve(host, port, self.allow_loopback, deadline)
+            if self._closed:
+                raise MemoryError("open_transport_closed")
             for address in addresses[:2]:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise MemoryError("open_budget_exhausted", retryable=True)
                 kind = _PinnedTLS if scheme == "https" else _PinnedHTTP
                 connection = kind(host, port, address, min(3, remaining))
+                if blob or introduction:
+                    connection.response_class = _BoundedHTTPResponse
                 try:
                     connection.connect()
                     break
@@ -213,6 +291,8 @@ class OpenHTTPTransport:
                     connection = None
             if connection is None or connection.sock is None:
                 raise MemoryError("open_network_unavailable", retryable=True)
+            if self._closed:
+                raise MemoryError("open_transport_closed")
             observed = connection.sock.getpeername()[0]
             if observed not in addresses or not permitted_address(observed, allow_loopback=self.allow_loopback):
                 raise MemoryError("open_destination_rejected")
@@ -222,8 +302,9 @@ class OpenHTTPTransport:
             deadline_timer = threading.Timer(max(0, deadline - time.monotonic()), _close_socket, (connection.sock,))
             deadline_timer.daemon = True
             deadline_timer.start()
-            connection.request("POST", RPC_PATH, body=raw, headers={
-                "Content-Type": "application/json", "Accept-Encoding": "identity", "Connection": "close"})
+            connection.request("GET" if introduction else "POST", NODE_PATH if introduction else BLOB_PATH if blob else RPC_PATH, body=raw, headers={
+                "Content-Type": "application/octet-stream" if blob else "application/json",
+                "Content-Length": str(len(raw)), "Accept-Encoding": "identity", "Connection": "close"})
             response = connection.getresponse()
             if response.status != 200:
                 # Unauthenticated HTTP errors cannot mutate identity/control state.
@@ -231,7 +312,18 @@ class OpenHTTPTransport:
             if response.getheader("Content-Encoding", "identity").lower().strip() != "identity":
                 raise MemoryError("open_response_encoding_rejected")
             length = response.getheader("Content-Length")
-            if length is not None and (not length.isascii() or not length.isdigit() or int(length) > MAX_RPC_BYTES):
+            if blob or introduction:
+                error_prefix = "open_node" if introduction else "open_blob"
+                names = [name.lower() for name, _ in response.getheaders()]
+                if (names.count("content-type") != 1 or names.count("content-length") != 1
+                        or response.getheader("Content-Type", "").lower() != ("application/json" if introduction else "application/octet-stream")
+                        or "content-encoding" in names or "transfer-encoding" in names):
+                    raise MemoryError(error_prefix + "_response_headers_rejected")
+                if (length is None or not length.isascii() or not length.isdigit()
+                        or len(length) > len(str(maximum))
+                        or length != str(int(length)) or not (1 if introduction else BLOB_PREFIX_BYTES + 1) <= int(length) <= maximum):
+                    raise MemoryError(error_prefix + "_response_length_rejected")
+            if length is not None and (not length.isascii() or not length.isdigit() or int(length) > maximum):
                 raise MemoryError("open_response_too_large")
             chunks = bytearray()
             while True:
@@ -240,15 +332,17 @@ class OpenHTTPTransport:
                     raise MemoryError("open_budget_exhausted", retryable=True)
                 if connection.sock is not None:
                     connection.sock.settimeout(min(3, remaining))
-                chunk = response.read1(min(4096, MAX_RPC_BYTES + 1 - len(chunks)))
+                chunk = response.read1(min(4096, maximum + 1 - len(chunks)))
                 if not chunk:
                     break
                 chunks.extend(chunk)
-                if len(chunks) > MAX_RPC_BYTES:
+                if len(chunks) > maximum:
                     raise MemoryError("open_response_too_large")
             if time.monotonic() >= deadline:
                 raise MemoryError("open_budget_exhausted", retryable=True)
-            return TransportReply(document(bytes(chunks), maximum=MAX_RPC_BYTES), observed, len(chunks))
+            if (blob or introduction) and len(chunks) != int(length):
+                raise MemoryError(error_prefix + "_response_length_rejected")
+            return _RawReply(bytes(chunks), observed, len(chunks))
         except (OSError, http.client.HTTPException):
             if time.monotonic() >= deadline:
                 raise MemoryError("open_budget_exhausted", retryable=True) from None

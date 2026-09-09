@@ -1,8 +1,8 @@
 """Explicit open profile for the same six-operation Agent facade.
 
-This first runtime supplies contact discovery, not open encrypted mailboxes.
-Unsupported message operations fail explicitly and never select a private
-authority or downgrade encryption. Remember/recall stay in the existing Vault.
+Contact discovery and explicitly approved encrypted delivery share the existing
+open participant. Remember/recall stay in the existing Vault; no private network
+authority or encryption downgrade is selected by a failed open operation.
 """
 from __future__ import annotations
 
@@ -60,10 +60,11 @@ class OpenNetworkClient:
             if not isinstance(invitation, dict) or invitation.get("schema_version") != CONNECT_SCHEMA:
                 raise MemoryError("open_private_invitation_unsupported")
             result = asyncio.run(OpenContactClient(self.participant, self.encryption).dispatch(invitation, request_id))
-            return {**result, "profile": "open-routing-v1", "network_accessed": True}
+            return {**result, "profile": "open-routing-v1", "network_accessed": True,
+                    "open_messaging_supported": True}
         result = asyncio.run(self.participant.join())
         return {**result, "profile": "open-routing-v1", "network_accessed": True,
-                "open_messaging_supported": False}
+                "open_messaging_supported": True}
 
     def discover(self, *, online=True, key_id=None):
         if online is not True:
@@ -82,13 +83,17 @@ class OpenNetworkClient:
         return {**result, "profile": "open-routing-v1", "network_accessed": True}
 
     def send(self, **arguments):
-        raise MemoryError("open_messaging_unsupported")
+        return asyncio.run(self._delivery().send(**arguments))
 
     def receive(self, **arguments):
-        raise MemoryError("open_messaging_unsupported")
+        return asyncio.run(self._delivery().receive(**arguments))
 
     def read_message(self, **arguments):
-        raise MemoryError("open_messaging_unsupported")
+        return self._delivery().read_message(**arguments)
+
+    def _delivery(self):
+        from memory_vault_open_delivery_client import OpenDeliveryClient
+        return OpenDeliveryClient(self.participant, self.encryption, self.client_config)
 
     def respond_to(self, *arguments):
-        raise MemoryError("open_messaging_unsupported")
+        raise MemoryError("open_hint_exchange_unsupported")

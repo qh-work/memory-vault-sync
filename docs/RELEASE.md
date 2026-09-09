@@ -6,34 +6,40 @@ The protocol is independent of language, storage, model, session, device and
 task. The authorized full client automates the same canonical record contract;
 an independent implementation is not required to install it or import Python.
 
-The current prerelease build target is **0.28.0-alpha.0.2**, a first-contact
-candidate extending the native open routing/HTTP preview. Python and native
-TypeScript add owner-enabled finite knock leases, strictly structured requests
-with real dual-key possession, explicit approval/rejection, and result pulls
-bound to the original request, parties, concrete resource, operation and expiry.
-An approval requires an actual finite resource reservation; it does not grant
-Vault access or execution authority. See [the candidate contract](OPEN_FIRST_CONTACT_V1.md).
-Open encrypted messaging, receipts and sender-offline ciphertext repair remain
-outside this preview. The retained private profile is separate.
-The 0.28.0-alpha.1 full vertical milestone remains pending.
-Publication must be independently verified at the
-[target release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2);
-at candidate preparation, 6 Pro review, cloud CI, final archive checks and
-publication were pending. Use the release evidence for the exact source commit
-for their final status. This source document is not proof of upload,
-installation or certification.
+The current prerelease build target is **0.28.0-alpha.0.3**, an open encrypted
+delivery preview. Python and native TypeScript six-operation Agents connect explicit first-contact
+approval to encrypted chat or selected original memories, durable local saving,
+original-node storage receipts and separate recipient-save receipts. Setup
+reuses the existing Vault and signing identity with independent transport state
+and an X25519 key. See the [executable open quickstart](OPEN_NETWORK_QUICKSTART.md).
+Participants publish their own real node introductions and operate their own
+nodes; no project-operated public server, common issuer or fixed seed is supplied.
+
+The first-contact controls remain available in Python and native TypeScript.
+Approval still requires a concrete finite resource reservation and grants no
+Vault read, trust or execution authority. Both clients use the same configured
+Vault and protected transport state; native TypeScript performs the client work
+without a Python subprocess. Hosting delivery currently uses the Python node,
+not the TypeScript node. Original-node delivery is implemented; node migration,
+independent ACK repair and the full 0.28.0-alpha.1 vertical milestone remain
+unfinished. The private profile keeps its separate authority and behavior.
+No new runtime tests were run for this addition. Earlier tests and reviews are
+historical evidence for their exact source, not validation of this preview.
+Use the source-bound release manifest and actual published assets to establish
+availability. This document is not proof of upload, installation, global
+reliability or public adoption.
 The older v0.25 reports below are historical evidence, not current download
 instructions or acceptance of this prerelease.
 
 The release builder produces:
 
-- `memory-vault-protocol-v0.28.0-alpha.0.2.zip`: specification, schemas, synthetic
+- `memory-vault-protocol-v0.28.0-alpha.0.3.zip`: specification, schemas, synthetic
   interchange examples and implementer guides, **no executable files**.
-- `memory-vault-client-v0.28.0-alpha.0.2.zip`: complete source-built runtime, plugin,
+- `memory-vault-client-v0.28.0-alpha.0.3.zip`: complete source-built runtime, plugin,
   local marketplace catalog and explicit setup instructions.
-- `memory-vault-review-v0.28.0-alpha.0.2.zip`: public synthetic tests and source/build
+- `memory-vault-review-v0.28.0-alpha.0.3.zip`: public synthetic tests and source/build
   material for reviewers to run only with their user's authorization.
-- `memory-vault-network-test-v0.28.0-alpha.0.2.zip`: synthetic endpoint template;
+- `memory-vault-network-test-v0.28.0-alpha.0.3.zip`: synthetic endpoint template;
   this release has unconfigured service trust and requires operator provisioning.
 - `memory_vault.py`: core source; Experience use also needs the companion module
   included in the client/review packages.
@@ -59,7 +65,9 @@ services; the source exposes explicit fail-closed boundaries.
 The prior **0.28.0-alpha.0.1** native HTTP preview is pinned to
 `0ddf0c5ac6aa8d12562c1df2a26ee25aeb851ed3`. Its review, cloud checks and asset
 verification remain historical evidence for that source. They do not establish
-a pass, final test count or publication for the first-contact candidate.
+a pass, final test count or publication for the delivery preview. The intervening
+0.28.0-alpha.0.2 first-contact release likewise keeps its own source-bound
+review and validation; those results do not transfer to this new runtime.
 
 The source-pinned routing experiment on `dc485334f8ad8629db68ef25c7c618a732f15c6c`
 passed all three original 99% healthy / 97% bootstrap-exit gates: seeds17/29/43

@@ -21,18 +21,21 @@ from typing import Any, Mapping
 
 from memory_vault import MemoryError, canonical_bytes
 from memory_vault_network import NetworkClient, _read_private
-from memory_vault_network_crypto import document, object_fields
+from memory_vault_network_crypto import document, document_sha256, integer, object_fields
 from memory_vault_open_control import (
     contact_key, coordinate, issue_node, sign_request, sign_response,
     verify_contact, verify_node, verify_response, verify_request,
+    MAX_DESCRIPTOR_BYTES, MAX_DESCRIPTOR_SECONDS,
 )
 from memory_vault_open_index import OpenIndex
 from memory_vault_open_routing import LookupBudget, RoutingTable, RpcReply, lookup, maintenance_target
 from memory_vault_open_state import OpenCheckpoints
 from memory_vault_open_transport import MAX_RPC_BYTES, RPC_PATH, OpenHTTPTransport, endpoint
-from memory_vault_trust import Identity
+from memory_vault_trust import Identity, _absolute_path, _atomic_write_private, _exclusive_store
 
 NODE_CONFIG = "memory-vault-open-node-config/v1"
+NODE_PATH = "/open/v1/node"
+RENEW_BEFORE_SECONDS = 300
 
 
 class _TransportState(NetworkClient):
@@ -46,10 +49,96 @@ class _TransportState(NetworkClient):
                          "storage_epoch": storage_epoch}
 
 
+class _NodePublication:
+    """One config lock owns renewal; each persisted signed revision is immutable.
+
+    The config is the durable local authority for restart. The public file is
+    replaced only after that config and the existing observation floor commit.
+    A crash at any intermediate point reuses the saved revision, not a fork.
+    """
+    def __init__(self, path, config, identity):
+        self.path = _absolute_path(path)
+        self.introduction_path = self.path.with_name("node-introduction.json")
+        self.config, self.identity = document(canonical_bytes(config)), identity
+        original = verify_node(config["node"], allow_expired=True)
+        if original["signing_key"] != identity.public_descriptor() or original["status"] != "active":
+            raise MemoryError("open_wrong_node")
+        endpoint(original["base_url"], allow_loopback=config["allow_loopback"])
+        self.binding = {name: original[name] for name in ("signing_key", "storage_epoch", "base_url", "roles")}
+        self.state = _TransportState(Path(config["state_directory"]), identity, original["storage_epoch"])
+        self.current = None
+
+    def _checked(self, descriptor, now):
+        raw = verify_node(descriptor, now=now, allow_expired=True)
+        if raw["status"] != "active":
+            raise MemoryError("open_control_revoked")
+        if any(raw[name] != value for name, value in self.binding.items()):
+            raise MemoryError("open_node_publication_binding_mismatch")
+        return raw
+
+    def refresh(self, accept=None):
+        now = int(time.time())
+        if self.current is not None and self.current["payload"]["expires_at"] - now > RENEW_BEFORE_SECONDS:
+            return self.current
+        stored = _read_private(self.path, MAX_RPC_BYTES)
+        config = document(stored, maximum=MAX_RPC_BYTES)
+        if {key: value for key, value in config.items() if key != "node"} != {
+                key: value for key, value in self.config.items() if key != "node"}:
+            raise MemoryError("open_node_configuration_changed")
+        candidates = [config["node"]]
+        introduction_bytes = _read_private(self.introduction_path, MAX_DESCRIPTOR_BYTES)
+        introduction = document(introduction_bytes, maximum=MAX_DESCRIPTOR_BYTES) if introduction_bytes is not None else None
+        if introduction is not None:
+            candidates.append(introduction)
+        with self.state.db() as db:
+            checkpoints = OpenCheckpoints(db)
+            checkpoints.initialize()
+            row = db.execute("SELECT revision,digest,record,status,second_record FROM open_control_floors WHERE kind='node' AND key_id=?",
+                             (self.identity.key_id,)).fetchone()
+            if row is not None:
+                if row["status"] == "conflict" or row["second_record"] is not None:
+                    raise MemoryError("open_control_conflict")
+                if row["status"] != "active":
+                    raise MemoryError("open_control_revoked")
+                record = document(bytes(row["record"]), maximum=MAX_DESCRIPTOR_BYTES)
+                recorded = self._checked(record, now)
+                if recorded["revision"] != row["revision"] or document_sha256(record) != row["digest"]:
+                    raise MemoryError("open_node_publication_corrupt")
+                candidates.append(record)
+        revisions = {}
+        for descriptor in candidates:
+            raw = self._checked(descriptor, now)
+            digest = document_sha256(descriptor)
+            previous = revisions.get(raw["revision"])
+            if previous is not None and previous != digest:
+                raise MemoryError("open_control_conflict")
+            revisions[raw["revision"]] = digest
+        latest = max(candidates, key=lambda item: item["payload"]["revision"])
+        raw = latest["payload"]
+        if raw["expires_at"] - now <= RENEW_BEFORE_SECONDS:
+            latest = issue_node(self.identity, base_url=raw["base_url"], storage_epoch=raw["storage_epoch"],
+                                roles=raw["roles"], revision=integer(raw["revision"] + 1, minimum=1),
+                                issued_at=now, expires_at=integer(now + MAX_DESCRIPTOR_SECONDS))
+        updated = {**config, "node": latest}
+        if canonical_bytes(config) != canonical_bytes(updated):
+            _atomic_write_private(self.path, canonical_bytes(updated) + b"\n")
+        if accept is not None:
+            accept(latest)
+        else:
+            with self.state.db() as db:
+                OpenCheckpoints(db).accept(latest, now=now)
+        if introduction is None or canonical_bytes(introduction) != canonical_bytes(latest):
+            _atomic_write_private(self.introduction_path, canonical_bytes(latest))
+        self.config, self.current = updated, document(canonical_bytes(latest), maximum=MAX_DESCRIPTOR_BYTES)
+        return self.current
+
+
 class OpenParticipant:
     def __init__(self, identity: Identity, state_directory: Path, *, seeds: list,
                  descriptor: Mapping[str, Any] | None = None, allow_loopback: bool = False,
-                 index_policy: Mapping[str, Any] | None = None, contact_policy: Mapping[str, Any] | None = None):
+                  index_policy: Mapping[str, Any] | None = None, contact_policy: Mapping[str, Any] | None = None,
+                  delivery_policy: Mapping[str, Any] | None = None, provider_policy: Mapping[str, Any] | None = None,
+                  encryption_identity=None):
         if not isinstance(seeds, list) or len(seeds) > 2:
             raise MemoryError("open_two_initial_introductions_maximum")
         self.identity = identity
@@ -60,21 +149,33 @@ class OpenParticipant:
         self.transport = OpenHTTPTransport(allow_loopback=allow_loopback)
         self.state = _TransportState(state_directory, identity, own["storage_epoch"] if own else None)
         self.table = RoutingTable(identity.key_id, directory=bool(own and "directory" in own["roles"]))
-        self.seeds = [document(seed, maximum=4096) for seed in seeds]
+        self.seeds = [document(canonical_bytes(document(seed, maximum=4096)), maximum=4096) for seed in seeds]
         for seed in self.seeds:
-            verify_node(seed)
+            # An expired original is only a fixed-key endpoint introduction.
+            # It cannot enter routing or authorize an RPC until refreshed.
+            checked = verify_node(seed, allow_expired=True)
+            if checked["status"] != "active":
+                raise MemoryError("open_seed_inactive")
             endpoint(seed["payload"]["base_url"], allow_loopback=allow_loopback)
-        if len({seed["payload"]["signing_key"]["key_id"] for seed in seeds}) != len(seeds):
+        if len({seed["payload"]["signing_key"]["key_id"] for seed in self.seeds}) != len(self.seeds):
             raise MemoryError("open_duplicate_seed")
         self.index_policy = dict(index_policy or {})
         self.contact_policy = dict(contact_policy or {})
+        self.delivery_policy = dict(delivery_policy or {})
+        self.provider_policy = dict(provider_policy or {})
+        self.encryption_identity = encryption_identity
+        if self.provider_policy and encryption_identity is None:
+            raise MemoryError("open_provider_encryption_identity_required")
         from memory_vault_open_contact_state import ContactState
         if set(self.index_policy) - {"enabled", "maximum_records", "maximum_bytes", "maximum_replays", "maximum_lease_seconds"}:
             raise MemoryError("open_invalid_index_policy")
         self._pending: OrderedDict[str, dict] = OrderedDict()
         self._pending_lock = threading.Lock()
         self._operation = threading.Lock()
+        self._descriptor_lock = threading.RLock()
+        self._publication = None
         self._maintenance_cycle = 0
+        self._seed_refresh_after = 0.0
         with self.state.db() as db:
             OpenCheckpoints(db).initialize()
             db.execute("CREATE TABLE IF NOT EXISTS open_peer_cache (key_id TEXT PRIMARY KEY,node BLOB NOT NULL,seen_at INTEGER NOT NULL)")
@@ -84,6 +185,13 @@ class OpenParticipant:
                 OpenCheckpoints(db).accept(self.descriptor)
                 OpenIndex(db, identity, self.descriptor, **self.index_policy).initialize()
                 ContactState(db, identity, self.descriptor, **self.contact_policy).initialize()
+                if self.delivery_policy:
+                    from memory_vault_open_delivery_state import DeliveryState
+                    DeliveryState(db, identity, self.descriptor, **self.delivery_policy).initialize()
+                if self.provider_policy:
+                    from memory_vault_open_provider_state import ProviderState
+                    ProviderState(db, identity, self.descriptor, encryption_identity=encryption_identity,
+                                  **self.provider_policy).initialize()
 
     def close(self):
         self.transport.close()
@@ -97,6 +205,51 @@ class OpenParticipant:
     def _accept(self, descriptor):
         with self.state.db() as db:
             return OpenCheckpoints(db).accept(descriptor)
+
+    def refresh_descriptor(self):
+        if self._publication is None:
+            return
+        with self._descriptor_lock:
+            self.descriptor = self._publication.refresh(self._accept)
+
+    def current_introduction(self):
+        """Read-only public snapshot; never include config or either private key."""
+        with self._descriptor_lock:
+            if self.descriptor is None:
+                raise MemoryError("open_node_not_configured")
+            descriptor = document(canonical_bytes(self.descriptor), maximum=MAX_DESCRIPTOR_BYTES)
+            verify_node(descriptor)
+            return descriptor
+
+    async def _refresh_seed_introductions(self, budget, *, force=False):
+        """At most the two configured origins, inside the existing lookup budget.
+
+        A fetched signature is still an introduction; normal hello/challenge
+        must prove the endpoint before it enters the routing table.
+        """
+        errors = []
+        if not force and time.monotonic() < self._seed_refresh_after:
+            return errors
+        self._seed_refresh_after = time.monotonic() + 30
+        for index, original in enumerate(self.seeds):
+            before = verify_node(original, allow_expired=True)
+            if before["expires_at"] > int(time.time()) + 60:
+                continue
+            try:
+                budget.check()
+                budget.charge_request()
+                reply = await asyncio.to_thread(self.transport.request_node, before["base_url"], deadline=budget.deadline)
+                budget.charge_bytes(reply.wire_bytes)
+                after = verify_node(reply.response)
+                if (after["status"] != "active" or after["revision"] <= before["revision"]
+                        or any(after[name] != before[name] for name in ("signing_key", "storage_epoch", "base_url", "roles"))):
+                    raise MemoryError("open_seed_refresh_mismatch")
+                self._accept(reply.response)
+                self._cache(reply.response)
+                self.seeds[index] = document(canonical_bytes(reply.response), maximum=MAX_DESCRIPTOR_BYTES)
+            except MemoryError as exc:
+                errors.append(exc.code)
+        return errors
 
     def _cache(self, node):
         """Small restart introductions; a cache hit is not a fresh endpoint proof."""
@@ -178,8 +331,13 @@ class OpenParticipant:
         return payload["body"]
 
     async def _lookup(self, target, view, budget):
-        return await lookup(self.table, target, view=view, rpc=self._rpc,
-                            sign_request=self._request, initial_lanes=self._initial(target, view), budget=budget)
+        # Discovery/send can be the first online operation of an existing
+        # client; seed renewal must not depend on an earlier explicit join.
+        refresh_errors = await self._refresh_seed_introductions(budget)
+        result = await lookup(self.table, target, view=view, rpc=self._rpc,
+                              sign_request=self._request, initial_lanes=self._initial(target, view), budget=budget)
+        result["partial"] = result["partial"] or bool(refresh_errors)
+        return result
 
     @staticmethod
     def _metrics(budget):
@@ -188,7 +346,7 @@ class OpenParticipant:
 
     async def join(self):
         budget = LookupBudget()
-        errors = []
+        errors = await self._refresh_seed_introductions(budget, force=True)
         # Rejoining may already have a newer verified incarnation in the
         # restart cache. Keep the same explicit seed keys, resolving their
         # current signed bytes through the bounded merge used by lookup.
@@ -215,12 +373,27 @@ class OpenParticipant:
 
     async def maintain(self):
         """One node-local turn, not an agent scheduler or a global refresh."""
+        self.refresh_descriptor()
+        cleanup_errors = []
+        if self.descriptor is not None:
+            try:
+                if self.delivery_policy.get("enabled") is True:
+                    from memory_vault_open_delivery_state import DeliveryState
+                    with self.state.db() as db:
+                        DeliveryState(db, self.identity, self.descriptor, **self.delivery_policy).collect_expired(limit=16)
+                if self.provider_policy.get("enabled") is True:
+                    from memory_vault_open_provider_state import ProviderState
+                    with self.state.db() as db:
+                        ProviderState(db, self.identity, self.descriptor, encryption_identity=self.encryption_identity,
+                                      **self.provider_policy).collect_expired(limit=16)
+            except (MemoryError, sqlite3.Error) as exc:
+                cleanup_errors.append(getattr(exc, "code", "open_storage_unavailable"))
         budget = LookupBudget(maximum_requests=16, maximum_bytes=1024 * 1024, maximum_seconds=5)
         pending = []
         with self._pending_lock:
             for _ in range(min(2, len(self._pending))):
                 pending.append(self._pending.popitem(last=False)[1])
-        errors = []
+        errors = cleanup_errors + await self._refresh_seed_introductions(budget)
         for peer in pending:
             try:
                 await self._call(peer, "hello", {"node": None}, budget)
@@ -325,6 +498,31 @@ class OpenParticipant:
             raise MemoryError("open_node_not_configured")
         from memory_vault_open_contact import PROFILE, verify_rpc, sign_response as contact_response
         payload = request.get("payload") if isinstance(request, Mapping) else None
+        if isinstance(payload, Mapping) and payload.get("schema_version") == "memory-vault-open-delivery-control/v1":
+            from memory_vault_open_delivery import verify_rpc as delivery_verify, sign_response as delivery_response
+            from memory_vault_open_delivery_state import DeliveryState
+            delivery_verify(request, node=self.descriptor)
+            try:
+                if not self.delivery_policy:
+                    raise MemoryError("open_delivery_closed")
+                with self.state.db() as db:
+                    result = DeliveryState(db, self.identity, self.descriptor, **self.delivery_policy).handle(request)
+            except MemoryError as exc:
+                result = {"error": {"code": exc.code, "retryable": bool(exc.retryable)}}
+            return delivery_response(self.identity, request=request, node=self.descriptor, body=result)
+        if isinstance(payload, Mapping) and payload.get("schema_version") == "memory-vault-open-provider/v1":
+            from memory_vault_open_provider import verify_rpc as provider_verify, sign_response as provider_response
+            from memory_vault_open_provider_state import ProviderState
+            provider_verify(request, node=self.descriptor)
+            try:
+                if not self.provider_policy:
+                    raise MemoryError("open_provider_closed")
+                with self.state.db() as db:
+                    result = ProviderState(db, self.identity, self.descriptor,
+                        encryption_identity=self.encryption_identity, **self.provider_policy).handle(request)
+            except MemoryError as exc:
+                result = {"error": {"code": exc.code, "retryable": bool(exc.retryable)}}
+            return provider_response(self.identity, request=request, node=self.descriptor, body=result)
         if isinstance(payload, Mapping) and payload.get("schema_version") == PROFILE:
             from memory_vault_open_contact_state import ContactState
             verify_rpc(request, node=self.descriptor)
@@ -364,6 +562,21 @@ class OpenParticipant:
             result = {"error": {"code": exc.code, "retryable": bool(exc.retryable)}}
         return sign_response(self.identity, request=request, node=self.descriptor, body=result,
                              issued_at=now, expires_at=min(now + 60, original["expires_at"]))
+
+    def handle_blob(self, request, chunk):
+        if self.descriptor is None:
+            raise MemoryError("open_node_not_configured")
+        from memory_vault_open_blob import verify_blob_request, sign_blob_response
+        from memory_vault_open_delivery_state import DeliveryState
+        verify_blob_request(request, node=self.descriptor)
+        try:
+            if not self.delivery_policy:
+                raise MemoryError("open_delivery_closed")
+            with self.state.db() as db:
+                body, output = DeliveryState(db, self.identity, self.descriptor, **self.delivery_policy).handle_blob(request, chunk)
+        except MemoryError as exc:
+            body, output = {"error": {"code": exc.code, "retryable": bool(exc.retryable)}}, b""
+        return sign_blob_response(self.identity, request=request, node=self.descriptor, body=body), output
 
 
 class OpenHTTPServer(ThreadingHTTPServer):
@@ -441,27 +654,64 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def do_GET(self):
+        self.close_connection = True
+        if not self.server.admitted(self.client_address[0]):
+            self.send_error(429)
+            return
+        if self.path != NODE_PATH:
+            self.send_error(404)
+            return
+        lengths = self.headers.get_all("Content-Length", [])
+        if ((lengths and lengths != ["0"]) or self.headers.get_all("Transfer-Encoding")
+                or self.headers.get_all("Content-Encoding")):
+            self.send_error(400)
+            return
+        try:
+            encoded = canonical_bytes(self.server.participant.current_introduction())
+            if len(encoded) > MAX_DESCRIPTOR_BYTES:
+                raise MemoryError("open_response_too_large")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(encoded)
+        except MemoryError:
+            self.send_error(503)
+
     def do_POST(self):
         self.close_connection = True
         if not self.server.admitted(self.client_address[0]):
             self.send_error(429)
             return
         try:
+            is_blob = self.path == "/open/v1/blob"
+            maximum = 270350 if is_blob else MAX_RPC_BYTES
             lengths = self.headers.get_all("Content-Length", [])
-            if (self.path != RPC_PATH or len(lengths) != 1 or not lengths[0].isascii()
-                    or not lengths[0].isdigit() or not 0 < int(lengths[0]) <= MAX_RPC_BYTES
+            if (self.path not in {RPC_PATH, "/open/v1/blob"} or len(lengths) != 1 or not lengths[0].isascii()
+                    or not lengths[0].isdigit() or not 0 < int(lengths[0]) <= maximum
                     or self.headers.get("Transfer-Encoding") or self.headers.get("Content-Encoding")):
+                raise MemoryError("open_invalid_http_request")
+            if is_blob and (lengths[0] != str(int(lengths[0])) or self.headers.get_all("Content-Type", []) != ["application/octet-stream"]):
                 raise MemoryError("open_invalid_http_request")
             size = int(lengths[0])
             raw = self.rfile.read(size)
             if len(raw) != size:
                 raise MemoryError("open_invalid_http_request")
-            response = self.server.participant.handle(document(raw, maximum=MAX_RPC_BYTES))
-            encoded = canonical_bytes(response)
-            if len(encoded) > MAX_RPC_BYTES:
+            if is_blob:
+                from memory_vault_open_blob import decode_blob_frame, encode_blob_frame
+                frame = decode_blob_frame(raw)
+                response, chunk = self.server.participant.handle_blob(frame.header, frame.chunk)
+                encoded = encode_blob_frame(response, chunk)
+            else:
+                response = self.server.participant.handle(document(raw, maximum=MAX_RPC_BYTES))
+                encoded = canonical_bytes(response)
+            if len(encoded) > maximum:
                 raise MemoryError("open_response_too_large")
             self.send_response(200)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", "application/octet-stream" if is_blob else "application/json")
             self.send_header("Content-Length", str(len(encoded)))
             self.send_header("Connection", "close")
             self.end_headers()
@@ -488,14 +738,12 @@ class _HeaderBudget:
         return getattr(self.stream, name)
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description="Run an owner-configured finite open routing node")
-    parser.add_argument("--config", required=True, type=Path)
-    args = parser.parse_args(argv)
-    raw = _read_private(args.config, MAX_RPC_BYTES)
+def _run_node(config_path):
+    raw = _read_private(config_path, MAX_RPC_BYTES)
     parsed = document(raw, maximum=MAX_RPC_BYTES)
+    optional = {"contact_policy", "delivery_policy", "provider_policy", "encryption_key_path"}
     config = object_fields(parsed,
-                           {"schema_version", "identity_path", "state_directory", "node", "seeds", "allow_loopback", "index_policy", "listen_host", "listen_port"} | ({"contact_policy"} if "contact_policy" in parsed else set()))
+                           {"schema_version", "identity_path", "state_directory", "node", "seeds", "allow_loopback", "index_policy", "listen_host", "listen_port"} | (optional & set(parsed)))
     if config["schema_version"] != NODE_CONFIG:
         raise MemoryError("open_invalid_node_config")
     if (config["listen_host"] != "127.0.0.1" or type(config["listen_port"]) is not int
@@ -503,21 +751,28 @@ def main(argv=None):
         raise MemoryError("open_invalid_listener")
     # Public HTTPS termination is owner-operated. This process never opens a
     # public listener, installs a service, obtains certificates or buys resources.
-    with OpenParticipant(Identity.load(Path(config["identity_path"])), Path(config["state_directory"]),
+    from memory_vault_network_crypto import EncryptionIdentity
+    encryption_identity = EncryptionIdentity.load(Path(config["encryption_key_path"])) if "encryption_key_path" in config else None
+    identity = Identity.load(Path(config["identity_path"]))
+    publication = _NodePublication(config_path, config, identity)
+    config = {**config, "node": publication.refresh()}
+    with OpenParticipant(identity, Path(config["state_directory"]),
                          seeds=config["seeds"], descriptor=config["node"],
                          allow_loopback=config["allow_loopback"], index_policy=config["index_policy"],
-                         contact_policy=config.get("contact_policy")) as participant:
+                         contact_policy=config.get("contact_policy"), delivery_policy=config.get("delivery_policy"),
+                         provider_policy=config.get("provider_policy"), encryption_identity=encryption_identity) as participant:
+        participant._publication = publication
         server = OpenHTTPServer((config["listen_host"], config["listen_port"]), participant)
         stop = threading.Event()
         def maintenance():
             try:
                 asyncio.run(participant.join())
-            except MemoryError:
+            except (MemoryError, OSError, sqlite3.Error):
                 pass
             while not stop.wait(2):
                 try:
                     asyncio.run(participant.maintain())
-                except MemoryError:
+                except (MemoryError, OSError, sqlite3.Error):
                     pass
         worker = threading.Thread(target=maintenance, daemon=True)
         worker.start()
@@ -526,6 +781,20 @@ def main(argv=None):
         finally:
             stop.set()
             server.server_close()
+            # Keep the publication lock until this process's last maintenance
+            # turn has ended, including any durable descriptor write.
+            worker.join()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Run an owner-configured finite open routing node")
+    parser.add_argument("--config", required=True, type=Path)
+    args = parser.parse_args(argv)
+    # A second process must not sign a different successor to the same saved
+    # revision. The existing cross-platform protected file lock is held for
+    # this node's lifetime; a crashed process releases the OS lock naturally.
+    with _exclusive_store(_absolute_path(args.config)):
+        _run_node(args.config)
 
 
 if __name__ == "__main__":

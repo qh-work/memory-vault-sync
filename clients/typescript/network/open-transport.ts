@@ -10,8 +10,17 @@ import {canonicalBytes,document} from './crypto.ts';
 import type {DocumentInput} from './crypto.ts';
 import {NetworkError} from './io.ts';
 import type {RpcReply} from './open-routing.ts';
+import {BLOB_PATH,MAX_BLOB_FRAME_BYTES,BLOB_PREFIX_BYTES,encodeBlobFrame,decodeBlobFrame} from './open-blob.ts';
+import type {BlobFrame} from './open-blob.ts';
 
 export const MAX_RPC_BYTES=65536, RPC_PATH='/open/v1/rpc';
+export const MAX_NODE_BYTES=4096, NODE_PATH='/open/v1/node';
+export interface BlobReply extends BlobFrame {
+  readonly observed_address:string;
+  /** Complete response frame bytes, including framing and the signed header. */
+  readonly wire_bytes:number;
+}
+interface RawReply {raw:Uint8Array;observed_address:string;wire_bytes:number;}
 const clock=()=>performance.now()/1000;
 function fail(code:string,retryable=false):never{throw new NetworkError(code,retryable);}
 const denied=new net.BlockList();
@@ -89,7 +98,24 @@ export class OpenHTTPTransport{
   }
   close():void{this.closed=true;for(const socket of this.sockets)socket.destroy();}
   async request(base:string,value:DocumentInput,deadline:number):Promise<RpcReply>{
-    const raw=canonicalBytes(document(value,MAX_RPC_BYTES),MAX_RPC_BYTES),destination=endpoint(base,this.allow_loopback);
+    const raw=canonicalBytes(document(value,MAX_RPC_BYTES),MAX_RPC_BYTES);
+    const reply=await this.exchange(base,raw,deadline,false);
+    return {response:document(reply.raw,MAX_RPC_BYTES) as any,observed_address:reply.observed_address,wire_bytes:reply.wire_bytes};
+  }
+  async requestBlob(base:string,header:DocumentInput,chunk:Uint8Array,deadline:number):Promise<BlobReply>{
+    const raw=encodeBlobFrame(header,chunk);
+    const reply=await this.exchange(base,raw,deadline,true);
+    return {...decodeBlobFrame(reply.raw),observed_address:reply.observed_address,wire_bytes:reply.wire_bytes};
+  }
+  async requestNode(base:string,deadline:number):Promise<RpcReply>{
+    const reply=await this.exchange(base,new Uint8Array(),deadline,false,true);
+    const response=document(reply.raw,MAX_NODE_BYTES);
+    if(!Buffer.from(reply.raw).equals(Buffer.from(canonicalBytes(response,MAX_NODE_BYTES))))fail('open_node_response_noncanonical');
+    return {response:response as any,observed_address:reply.observed_address,wire_bytes:reply.wire_bytes};
+  }
+  /** All fixed paths share the same endpoint, DNS, socket and TLS policy. */
+  private async exchange(base:string,raw:Uint8Array,deadline:number,blob:boolean,introduction=false):Promise<RawReply>{
+    const destination=endpoint(base,this.allow_loopback),maximum=introduction?MAX_NODE_BYTES:blob?MAX_BLOB_FRAME_BYTES:MAX_RPC_BYTES;
     if(this.closed)fail('open_transport_closed');
     if(!Number.isFinite(deadline)||deadline<=clock()||this.active>=3)fail('open_budget_exhausted',true);
     this.active++;let socket:net.Socket|undefined,agent:http.Agent|undefined;
@@ -126,22 +152,36 @@ export class OpenHTTPTransport{
       const connected=socket,observed=normalized(connected.remoteAddress??'');
       agent=destination.scheme==='https'?new https.Agent({keepAlive:false}):new http.Agent({keepAlive:false});
       agent.createConnection=()=>connected;
-      return await new Promise<RpcReply>((accept,reject)=>{
+      return await new Promise<RawReply>((accept,reject)=>{
         let done=false,bytes=0;const chunks:Buffer[]=[];
-        const finish=(error?:unknown,response?:RpcReply)=>{if(done)return;done=true;clearTimeout(timer);connected.destroy();error?reject(error):accept(response!);};
+        const finish=(error?:unknown,response?:RawReply)=>{if(done)return;done=true;clearTimeout(timer);connected.destroy();error?reject(error):accept(response!);};
         const request=(destination.scheme==='https'?https:http).request({hostname:destination.host,port:destination.port,
-          method:'POST',path:RPC_PATH,agent,maxHeaderSize:16384,
-          headers:{'Content-Type':'application/json','Content-Length':String(raw.length),'Accept-Encoding':'identity','Connection':'close'}},response=>{
+          method:introduction?'GET':'POST',path:introduction?NODE_PATH:blob?BLOB_PATH:RPC_PATH,agent,maxHeaderSize:16384,
+          headers:{'Content-Type':blob?'application/octet-stream':'application/json','Content-Length':String(raw.length),'Accept-Encoding':'identity','Connection':'close'}},response=>{
           if(response.statusCode!==200){finish(new NetworkError('open_request_rejected',[429,503].includes(response.statusCode??0)));return;}
           const encoding=response.headers['content-encoding'],length=response.headers['content-length'];
+          if(blob||introduction){
+            const prefix=introduction?'open_node':'open_blob';
+            const names=response.rawHeaders.filter((_value,index)=>index%2===0).map(name=>name.toLowerCase());
+            if(response.headers['content-type']?.toLowerCase()!==(introduction?'application/json':'application/octet-stream')||
+              names.filter(name=>name==='content-type').length!==1||names.filter(name=>name==='content-length').length!==1||
+              encoding!==undefined||response.headers['transfer-encoding']!==undefined){
+              finish(new NetworkError(prefix+'_response_headers_rejected'));return;
+            }
+            if(length===undefined||!/^(0|[1-9][0-9]*)$/.test(length)||
+              Number(length)<(introduction?1:BLOB_PREFIX_BYTES+1)||Number(length)>maximum){
+              finish(new NetworkError(prefix+'_response_length_rejected'));return;
+            }
+          }
           if(encoding!==undefined&&String(encoding).trim().toLowerCase()!=='identity'){finish(new NetworkError('open_response_encoding_rejected'));return;}
-          if(length!==undefined&&(!/^[0-9]+$/.test(length)||Number(length)>MAX_RPC_BYTES)){finish(new NetworkError('open_response_too_large'));return;}
-          response.on('data',(part:Buffer)=>{bytes+=part.length;if(bytes>MAX_RPC_BYTES){finish(new NetworkError('open_response_too_large'));return;}chunks.push(part);});
+          if(length!==undefined&&(!/^[0-9]+$/.test(length)||Number(length)>maximum)){finish(new NetworkError('open_response_too_large'));return;}
+          response.on('data',(part:Buffer)=>{bytes+=part.length;if(bytes>maximum){finish(new NetworkError('open_response_too_large'));return;}chunks.push(part);});
           response.on('error',()=>finish(new NetworkError('open_network_unavailable',true)));
           response.on('aborted',()=>finish(new NetworkError('open_network_unavailable',true)));
           response.on('end',()=>{if(done)return;try{
             if(clock()>=deadline)fail('open_budget_exhausted',true);
-            finish(undefined,{response:document(Buffer.concat(chunks),MAX_RPC_BYTES) as any,observed_address:observed,wire_bytes:bytes});
+            if((blob||introduction)&&bytes!==Number(length))fail((introduction?'open_node':'open_blob')+'_response_length_rejected');
+            finish(undefined,{raw:Buffer.concat(chunks),observed_address:observed,wire_bytes:bytes});
           }catch(error){finish(error);}});
         });
         const timer=setTimeout(()=>finish(new NetworkError('open_budget_exhausted',true)),Math.max(1,(deadline-clock())*1000));

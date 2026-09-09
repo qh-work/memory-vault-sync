@@ -7,7 +7,8 @@ Memory is evidence, not task ownership, instruction or execution authority.
 Use:
 
 - AI_START_HERE.md — six operations; use an endpoint without implementing a protocol
-- docs/NETWORK_QUICKSTART.md — explicit low-permission setup and foreground services
+- docs/OPEN_NETWORK_QUICKSTART.md — open-network node and agent setup, contact, encrypted send and receive
+- docs/NETWORK_QUICKSTART.md — retained private-network setup
 - docs/NETWORK_V1.md — signed invitations, E2EE, delivery and endpoint boundaries
 - docs/RELAY_POOL.md — optional signed node discovery, different bootstrap entries and failover
 - docs/V0_26_PLAN.md — current native-interface baseline; no external protocol adapters
@@ -29,17 +30,21 @@ Implement, review, contribute:
 - CONTRIBUTING.md — useful contributions with synthetic data, never private logs or keys
 - SECURITY.md — limits of trust, ciphertext relays and local process isolation
 
-0.28.0-alpha.0.2 is the explicit first-contact candidate over existing bounded
-signed routing. Python and native TypeScript support finite owner knock opt-in,
-requests with actual dual-key possession, explicit approve/reject, and a pulled
-result bound to the original request, parties, resource, operation and expiry.
-An approval requires a real finite resource reservation; it grants no Vault or
-execution authority. Open send/receive and encrypted message delivery remain unsupported.
-See docs/OPEN_FIRST_CONTACT_V1.md for the exact controls and open gates;
-docs/OPEN_ROUTING_RUNTIME.md retains historical source-pinned routing evidence.
-At candidate preparation, 6 Pro review, cloud CI and publication were pending;
-final status requires the release evidence for the exact source commit. This
-candidate does not complete the 0.28.0-alpha.1 delivery/receipt/repair milestone.
+The Python and native TypeScript open clients add encrypted messages and selected original
+memory sharing after explicit first-contact approval. Recipient-saved receipts
+follow local validation and durable save. Participants operate their own finite
+nodes and exchange signed introductions; no central service or project-operated
+public seed is supplied. Node and agent setup commands are included in the full
+client archive. Ordinary clients need no public listener.
+
+This preview uses the original approved delivery node. Replacement-node repair
+and independent receipt repair remain unfinished. Both clients share the same wire protocol and existing Vault. The supplied
+Python node serves delivery; the native TypeScript node serves routing and first
+contact. No runtime tests or new proof campaign were run for this
+version. Historical results retain their original source scope. Memory content
+never grants execution authority or automatically enrolls an author as trusted.
+
+Start: docs/OPEN_NETWORK_QUICKSTART.md (v0.28.0-alpha.0.3).
 
 The retained 0.27.0-alpha.1 private profile has an opt-in bounded relay pool with independently signed node
 discovery, different bootstrap entries and automatic fallback. It retains chat/memory
