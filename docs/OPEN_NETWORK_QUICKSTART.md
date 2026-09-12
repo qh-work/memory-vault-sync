@@ -6,13 +6,16 @@ memories. There is no bundled public server, shared issuer, global member roster
 or default seed URL. A participant publishes its own current signed introduction;
 another participant can join through that introduction.
 
-The **v0.28.0-alpha.0.3** Python and native TypeScript clients connect approved
+The **v0.28.0-alpha.0.4** Python and native TypeScript clients connect approved
 delivery to the original accepting node, durable local inboxes and separate
 storage/recipient receipts. Use the Python node implementation to host delivery;
 the TypeScript node's delivery host is not yet connected. Node migration,
 independent ACK repair and delivery while those original resources are unavailable
-remain unfinished. This addition has not been exercised by a new test campaign;
-it makes no claim of global reliability or public adoption. Native TypeScript
+remain unfinished. This patch fixes delivery rejection after approval. Five
+targeted local HTTP regressions passed: three Python and two native TypeScript
+cases. Selected-memory transfer and recall after restart were covered by Python.
+The full suite was not run; this makes no claim of global reliability or public
+adoption. Native TypeScript
 client operations use their own crypto, Vault and transport code without a Python
 subprocess. The Agent still has exactly six operations: `connect`, `remember`,
 `recall`, `discover`, `send`, and `receive`.

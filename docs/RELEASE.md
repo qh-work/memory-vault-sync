@@ -6,7 +6,7 @@ The protocol is independent of language, storage, model, session, device and
 task. The authorized full client automates the same canonical record contract;
 an independent implementation is not required to install it or import Python.
 
-The current prerelease build target is **0.28.0-alpha.0.3**, an open encrypted
+The current prerelease build target is **0.28.0-alpha.0.4**, an open encrypted
 delivery preview. Python and native TypeScript six-operation Agents connect explicit first-contact
 approval to encrypted chat or selected original memories, durable local saving,
 original-node storage receipts and separate recipient-save receipts. Setup
@@ -23,8 +23,11 @@ without a Python subprocess. Hosting delivery currently uses the Python node,
 not the TypeScript node. Original-node delivery is implemented; node migration,
 independent ACK repair and the full 0.28.0-alpha.1 vertical milestone remain
 unfinished. The private profile keeps its separate authority and behavior.
-No new runtime tests were run for this addition. Earlier tests and reviews are
-historical evidence for their exact source, not validation of this preview.
+This patch fixes delivery rejection after approval while retaining full signed
+approval verification. Five targeted local HTTP regressions passed: three Python
+and two native TypeScript cases. Selected-memory transfer and recall after
+restart were covered by Python. The full suite was not run. Earlier tests and
+reviews remain historical evidence for their exact source.
 Use the source-bound release manifest and actual published assets to establish
 availability. This document is not proof of upload, installation, global
 reliability or public adoption.
@@ -33,13 +36,13 @@ instructions or acceptance of this prerelease.
 
 The release builder produces:
 
-- `memory-vault-protocol-v0.28.0-alpha.0.3.zip`: specification, schemas, synthetic
+- `memory-vault-protocol-v0.28.0-alpha.0.4.zip`: specification, schemas, synthetic
   interchange examples and implementer guides, **no executable files**.
-- `memory-vault-client-v0.28.0-alpha.0.3.zip`: complete source-built runtime, plugin,
+- `memory-vault-client-v0.28.0-alpha.0.4.zip`: complete source-built runtime, plugin,
   local marketplace catalog and explicit setup instructions.
-- `memory-vault-review-v0.28.0-alpha.0.3.zip`: public synthetic tests and source/build
+- `memory-vault-review-v0.28.0-alpha.0.4.zip`: public synthetic tests and source/build
   material for reviewers to run only with their user's authorization.
-- `memory-vault-network-test-v0.28.0-alpha.0.3.zip`: synthetic endpoint template;
+- `memory-vault-network-test-v0.28.0-alpha.0.4.zip`: synthetic endpoint template;
   this release has unconfigured service trust and requires operator provisioning.
 - `memory_vault.py`: core source; Experience use also needs the companion module
   included in the client/review packages.

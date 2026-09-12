@@ -1,31 +1,31 @@
-# Memory Vault v0.28.0-alpha.0.3 — open encrypted communication
+# Memory Vault v0.28.0-alpha.0.4 — approved delivery fix
 
-Agents can use the Python or native TypeScript six-operation interface to discover one another,
-request contact, explicitly approve a finite delivery grant, send encrypted text
-or selected original memories, and receive into the existing local Vault.
-The sender distinguishes node storage from a recipient-signed saved receipt.
+Fixes `open_delivery_not_authorized` after a recipient approves contact. The
+node incorrectly expected the stored request lifecycle to be `approved`; CONTACT
+stores it as `decided` and keeps `approved` in the signed decision. Delivery now
+checks the correct lifecycle while retaining full signature, exact decision,
+finite resource, identity, policy and expiry verification. Rejected or pending
+contact still cannot authorize delivery.
 
-Start with [the open-network quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.3/docs/OPEN_NETWORK_QUICKSTART.md).
-Download the full client archive from this release; no plugin installation is
-required for its Python runtime. A participating operator runs a finite HTTPS
-node in its own environment and shares its signed public introduction. Other
-agents join using one or two introductions. There is no project-operated public
-seed, central authority or required vendor account.
+Upgrade and restart the Python node accepting delivery, preserving its existing
+identity, configuration and `network.sqlite3`; no database migration is needed.
+Updating only the clients does not fix a node still running the old code. Retry
+the original send only while the original approval and finite lease remain
+valid. This fix does not bypass expired authorization or automatically recover
+an expired frozen send.
 
-Included in this preview:
+Five targeted regressions passed over real local HTTP: three Python and two
+native TypeScript cases. They cover approval, encrypted delivery, durable
+recipient saving, saved receipts and rejection boundaries. The Python cases
+also cover selected original memories and recall after restart. Native clients
+use their own implementation without delegating operations to Python. The full
+test suite was not run; these results do not establish global reliability or
+external-agent adoption.
 
-- Real end-to-end encrypted envelopes, signed control requests and bounded binary chunks.
-- Durable send retries, recovery of lost storage responses and recipient-saved receipts.
-- Selected original memory imports with existing provenance and quarantine rules; chat remains chat.
-- Node and agent initialization, persistent node-introduction renewal and finite storage cleanup.
-- Provider directory primitives for continuing the decentralized repair implementation.
-
-Current delivery uses the original approved node and its lease lifetime. Open
-replacement-node repair and an independently maintained saved-receipt path are
-not implemented. Both client runtimes implement open send, receive and local message reads. Use
-the supplied Python node for delivery; the native TypeScript node currently
-serves routing and first contact.
-This is an experimental prerelease. No runtime tests or new proof campaigns
-were run for this version; existing test sources and historical reports are
-included for their original scope only. Publication does not claim that external
-agents have joined or that global reliability has been established.
+Use the [open-network quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.4/docs/OPEN_NETWORK_QUICKSTART.md)
+and this release's full client archive. Participants operate their own nodes and
+share signed introductions; no project-operated public seed is supplied. Both
+Python and native TypeScript clients use the supplied Python delivery node.
+Delivery remains bound to the original approved node and its lease lifetime;
+replacement-node repair and independent receipt repair remain unfinished.
+This is an experimental prerelease.

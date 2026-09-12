@@ -8,7 +8,7 @@ private-first sequence. The first executable open routing slice now has
 source-pinned implementation and cloud evidence; the full architecture remains
 a development target, not a global reliability claim.
 
-Current source target: **0.28.0-alpha.0.3**, an open encrypted-delivery preview.
+Current source target: **0.28.0-alpha.0.4**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use
@@ -21,10 +21,13 @@ project server, fixed seed, common issuer or global member roster is supplied.
 The native TypeScript client uses its own crypto, Vault and protected transport
 code without a Python subprocess. Delivery hosting currently uses the Python
 node implementation; the TypeScript node does not yet host delivery. Node migration, independent ACK
-repair and the full 0.28.0-alpha.1 vertical milestone remain pending. No new
-runtime tests were run for this addition; earlier review, CI and test counts
-retain their original source bindings. This source status does not establish
-upload availability, global reliability or public adoption.
+repair and the full 0.28.0-alpha.1 vertical milestone remain pending. This patch
+fixes delivery rejection after approval. Five targeted local HTTP regressions
+passed: three Python and two native TypeScript cases. Selected-memory transfer
+and recall after restart were covered by Python. The full suite was not run;
+earlier review, CI and test counts retain their original source bindings. This
+source status does not establish upload availability, global reliability or
+public adoption.
 
 The prior **0.28.0-alpha.0.2** first-contact release added finite knock opt-in,
 real dual-key challenge, explicit approval/rejection and request-bound results

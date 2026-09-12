@@ -134,7 +134,11 @@ class DeliveryState:
             self._fail("authority_mismatch")
         known = self.db.execute("SELECT state,decision FROM open_contact_requests WHERE sender=? AND request_id=?",
             (request["signing_key"]["key_id"], request["request_id"])).fetchone()
-        if known is None or known["state"] != "approved" or bytes(known["decision"]) != canonical_bytes(authority["decision"]):
+        # CONTACT stores the request lifecycle as pending/decided. Approval
+        # belongs to the signed decision verified by verify_upload_intent;
+        # the persisted decision must still be that exact authorized document.
+        if (known is None or known["state"] != "decided" or known["decision"] is None
+                or bytes(known["decision"]) != canonical_bytes(authority["decision"])):
             self._fail("not_authorized")
         policy = self.db.execute("SELECT status,digest FROM open_contact_policies WHERE owner=?", (lease["owner"],)).fetchone()
         if policy is None or policy["status"] != "active" or policy["digest"] != raw_sha256(authority["policy"]):

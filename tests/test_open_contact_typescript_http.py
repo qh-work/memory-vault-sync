@@ -75,11 +75,12 @@ class ContactTypeScriptHTTPTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root=Path(temporary.name).resolve()
 
-    def host(self,count,native):
+    def host(self,count,native,*,delivery=False):
         host=MixedNodes(self.root,count,self.node,self.fixture,native)
         self.addCleanup(host.close)
         host.stop(count-1)
         config=json.loads(host.configs[-1].read_bytes());config['contact_policy']={'enabled':True}
+        if delivery:config['delivery_policy']={'enabled':True}
         atomic_write(host.configs[-1],canonical_bytes(config),replace=True);host.start(count-1)
         return host
 
@@ -342,7 +343,7 @@ class ContactTypeScriptHTTPTests(unittest.TestCase):
         return result['results']
 
     def test_native_agent_explicit_connect_rejection_and_fixed_privacy_boundary(self):
-        host=self.host(1,{0});b,be=self.identity('owner');owner=self.agent_config('owner',host.nodes)
+        host=self.host(1,set(),delivery=True);b,be=self.identity('owner');owner=self.agent_config('owner',host.nodes)
         def connect(action,**values):return {'op':'connect','invitation':{'schema_version':CONNECT_SCHEMA,'action':action,**values}}
         enabled=self.agent(owner,[connect('enable',node=host.nodes[0],allocation_id='synthetic_knock',max_pending=1,lease_seconds=600,revision=1)])[0]
         self.assertTrue(enabled['ok'],enabled);lease=enabled['result']['lease_id']
@@ -357,12 +358,81 @@ class ContactTypeScriptHTTPTests(unittest.TestCase):
         rejected=self.agent(owner,[connect('decide',request_ref=ref,decision='rejected',max_items=1,max_bytes=1024)])[0]
         self.assertTrue(rejected['ok'],rejected)
         completed=self.agent(sender,[connect('result',request_id='req_synthetic_contact'),
-            {'op':'send','request_id':'req_synthetic_unsupported','recipients':[b.key_id],'text':'synthetic'}, {'op':'receive'}])
+            {'op':'send','request_id':'req_synthetic_rejected','recipients':[b.key_id],'text':'synthetic'}, {'op':'receive'}])
         self.assertEqual(completed[0]['result']['state'],'rejected');self.assertIsNone(completed[0]['result']['grant'])
-        self.assertEqual([row['error']['code'] for row in completed[1:]],['open_messaging_unsupported']*2)
+        self.assertFalse(completed[1]['ok']);self.assertEqual(completed[1]['error']['code'],'open_contact_approval_required')
+        self.assertTrue(completed[2]['ok'],completed[2]);self.assertEqual(completed[2]['result']['messages'],[])
+        self.assertEqual(completed[2]['result']['errors'],[])
+        received=self.agent(owner,[{'op':'receive'}])[0]
+        self.assertTrue(received['ok'],received);self.assertEqual(received['result']['messages'],[])
+        self.assertEqual(received['result']['errors'],[])
+        with sqlite3.connect(self.root/'node_0/transport/network.sqlite3') as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM open_contact_resource_leases WHERE purpose='delivery'").fetchone()[0],0)
+            self.assertEqual(db.execute('SELECT count(*) FROM open_delivery_messages').fetchone()[0],0)
+            self.assertEqual(db.execute('SELECT count(*) FROM open_delivery_handles').fetchone()[0],0)
+            self.assertEqual(db.execute('SELECT count(*) FROM open_delivery_receipts').fetchone()[0],0)
         for name in ['owner','sender']:
             self.assertEqual((self.root/name/'identity.json').read_bytes(),identity_before[name])
             self.assertFalse((self.root/name/'vault.sqlite3').exists());self.assertFalse((self.root/name/'trust.json').exists())
+
+    def test_native_agent_approved_delivery_saved_receipt_over_python_http_node(self):
+        host=self.host(1,set(),delivery=True)
+        b,be=self.identity('owner');self.identity('sender')
+        owner=self.agent_config('owner',host.nodes);sender=self.agent_config('sender',host.nodes)
+        def connect(action,**values):return {'op':'connect','invitation':{'schema_version':CONNECT_SCHEMA,'action':action,**values}}
+        enabled=self.agent(owner,[connect('enable',node=host.nodes[0],allocation_id='synthetic_delivery_knock',
+            max_pending=1,lease_seconds=600,revision=1)])[0]
+        self.assertTrue(enabled['ok'],enabled)
+        request=connect('request',recipient_key_id=b.key_id);request['request_id']='req_synthetic_approved_contact'
+        queued=self.agent(sender,[request])[0]
+        self.assertTrue(queued['ok'],queued);self.assertEqual(queued['result']['state'],'contact_queued')
+        poll=self.agent(owner,[connect('poll',lease_id=enabled['result']['lease_id'])])[0]
+        self.assertTrue(poll['ok'],poll);self.assertEqual(len(poll['result']['requests']),1)
+        decision=self.agent(owner,[connect('decide',request_ref=poll['result']['requests'][0]['request_ref'],
+            decision='approved',max_items=1,max_bytes=65536)])[0]
+        self.assertTrue(decision['ok'],decision);self.assertEqual(decision['result']['state'],'decided')
+        approved=self.agent(sender,[connect('result',request_id=request['request_id'])])[0]
+        self.assertTrue(approved['ok'],approved);self.assertEqual(approved['result']['state'],'approved')
+        # The lifecycle is decided, while the independent signed verdict is approved.
+        remote=self.root/'node_0/transport/network.sqlite3'
+        with sqlite3.connect(remote) as db:
+            state,stored_decision=db.execute('SELECT state,decision FROM open_contact_requests').fetchone()
+        self.assertEqual(state,'decided');self.assertEqual(json.loads(stored_decision)['payload']['decision'],'approved')
+        text='Synthetic native delivery after explicit approval.'
+        send={'op':'send','request_id':'req_synthetic_approved_delivery','recipients':[b.key_id],'text':text}
+        sent=self.agent(sender,[send])[0]
+        self.assertTrue(sent['ok'],sent);self.assertEqual(sent['result']['state'],'storage_accepted')
+        self.assertTrue(sent['result']['storage_accepted']);self.assertFalse(sent['result']['endpoint_validated'])
+        self.assertTrue(sent['result']['acknowledgement_pending']);message_id=sent['result']['message_id']
+        with sqlite3.connect(remote) as db:
+            original=bytes(db.execute('SELECT envelope FROM open_delivery_messages WHERE message_id=?',(message_id,)).fetchone()[0])
+            self.assertEqual(db.execute('SELECT count(*) FROM open_delivery_receipts').fetchone()[0],0)
+        self.assertNotIn(text.encode(),original)
+        # Each Agent call uses a fresh native process and must reopen real durable state.
+        received=self.agent(owner,[{'op':'receive'}])[0]
+        self.assertTrue(received['ok'],received);self.assertEqual(received['result']['errors'],[])
+        self.assertEqual(len(received['result']['messages']),1)
+        message=received['result']['messages'][0]
+        self.assertEqual(message['message_id'],message_id);self.assertEqual(message['text'],text)
+        self.assertEqual(message['state'],'validated_saved');self.assertIsNone(message['text_memory_id'])
+        with sqlite3.connect(self.root/'owner/transport/network.sqlite3') as db:
+            saved=db.execute('SELECT phase,envelope,receipt,receipt_sent FROM open_delivery_inbox WHERE message_id=?',(message_id,)).fetchone()
+        self.assertEqual(saved[0],'saved');self.assertEqual(bytes(saved[1]),original)
+        self.assertIsNotNone(saved[2]);self.assertEqual(saved[3],1)
+        confirmed=self.agent(sender,[send])[0]
+        self.assertTrue(confirmed['ok'],confirmed);self.assertEqual(confirmed['result']['state'],'validated_saved')
+        self.assertEqual(confirmed['result']['message_id'],message_id)
+        self.assertTrue(confirmed['result']['endpoint_validated']);self.assertFalse(confirmed['result']['acknowledgement_pending'])
+        with sqlite3.connect(remote) as db:
+            messages=db.execute('SELECT message_id,envelope FROM open_delivery_messages').fetchall()
+            receipts=db.execute('SELECT receipt FROM open_delivery_receipts').fetchall()
+        self.assertEqual(messages,[(message_id,original)]);self.assertEqual(receipts,[(saved[2],)])
+        empty=self.agent(owner,[{'op':'receive'}])[0]
+        self.assertTrue(empty['ok'],empty);self.assertEqual(empty['result']['messages'],[])
+        self.assertEqual(empty['result']['errors'],[])
+        for name in ['owner','sender']:
+            self.assertFalse((self.root/name/'vault.sqlite3').exists())
+            self.assertFalse((self.root/name/'trust.json').exists())
 
 
 if __name__=='__main__':unittest.main()

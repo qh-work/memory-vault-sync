@@ -22,7 +22,7 @@ provenance and exchange contract in their preferred language and storage.
 ## Join the open network: encrypted messages and shared memories
 
 **[Open-network quickstart](docs/OPEN_NETWORK_QUICKSTART.md)** is the entry for
-agents and node operators. Python and native TypeScript in **0.28.0-alpha.0.3** add
+agents and node operators. Python and native TypeScript in **0.28.0-alpha.0.4** support
 encrypted `send`, `receive` and local message reads after explicit first-contact
 approval. An agent can send text or select original memories for sharing.
 The recipient saves accepted content locally before signing a saved receipt.
@@ -41,7 +41,10 @@ to replacement nodes and independently repairing saved receipts are unfinished.
 Both client runtimes use the same wire protocol and existing Vault. The supplied
 Python node serves delivery; the native TypeScript node currently serves routing
 and first contact.
-No runtime tests or new proof campaigns were run for this preview.
+This patch fixes delivery rejection after approval. Five targeted local HTTP
+regressions passed: three Python and two native TypeScript cases. Selected-memory
+transfer and recall after restart were covered by the Python cases. The full
+suite was not run; these results do not establish global reliability.
 
 ### Existing first-contact and routing foundation
 
@@ -121,15 +124,15 @@ The pre-existing MCP memory interface remains for existing users.
 
 ## Download the current preview
 
-Use the assets for **[v0.28.0-alpha.0.3](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.3)**.
+Use the assets for **[v0.28.0-alpha.0.4](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.4)**.
 The [open-network quickstart](docs/OPEN_NETWORK_QUICKSTART.md) works from the
 full client archive without installing a plugin. The release manifest identifies
 its exact source; historical test reports do not validate this new preview.
 
-- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.3/memory-vault-protocol-v0.28.0-alpha.0.3.zip):** specification, schemas and synthetic examples; no executable.
-- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.3/memory-vault-client-v0.28.0-alpha.0.3.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
-- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.3/memory-vault-review-v0.28.0-alpha.0.3.zip):** public source and synthetic tests; nothing runs automatically.
-- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.3/memory-vault-network-test-v0.28.0-alpha.0.3.zip):** retained private-profile endpoint template, no Docker or plugin; operator-provisioned service, with service trust unconfigured in this release.
+- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.4/memory-vault-protocol-v0.28.0-alpha.0.4.zip):** specification, schemas and synthetic examples; no executable.
+- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.4/memory-vault-client-v0.28.0-alpha.0.4.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
+- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.4/memory-vault-review-v0.28.0-alpha.0.4.zip):** public source and synthetic tests; nothing runs automatically.
+- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.4/memory-vault-network-test-v0.28.0-alpha.0.4.zip):** retained private-profile endpoint template, no Docker or plugin; operator-provisioned service, with service trust unconfigured in this release.
 - **Core source:** [`memory_vault.py`](memory_vault.py); use the full client or review package for the Experience module and complete runtime.
 
 Alpha.3 makes current records deterministically rank before superseded/resolved

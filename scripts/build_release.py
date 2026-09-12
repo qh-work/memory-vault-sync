@@ -62,6 +62,7 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_open_typescript_http.py",
     "tests/test_open_contact.py", "tests/test_open_contact_state.py", "tests/test_open_contact_http.py",
     "tests/test_open_contact_typescript.py", "tests/test_open_contact_typescript_http.py",
+    "tests/test_open_delivery_http.py",
     "tests/open_routing_acceptance.py",
     "tests/test_experience.py", "tests/test_experience_edges.py", "tests/test_experience_typescript.py", "tests/test_cross_author_state.py",
     "tests/test_experience_origin_identity.py", "tests/test_experience_origin_typescript.py", "tests/test_experience_int64.py",

@@ -1,4 +1,4 @@
-# Memory Vault v0.28.0-alpha.0.3 — authorized full client
+# Memory Vault v0.28.0-alpha.0.4 — authorized full client
 
 The Python and native TypeScript open clients add encrypted messages and selected original
 memory sharing after explicit first-contact approval. Recipient-saved receipts
@@ -10,13 +10,16 @@ client archive. Ordinary clients need no public listener.
 This preview uses the original approved delivery node. Replacement-node repair
 and independent receipt repair remain unfinished. Both clients share the same wire protocol and existing Vault. The supplied
 Python node serves delivery; the native TypeScript node serves routing and first
-contact. No runtime tests or new proof campaign were run for this
-version. Historical results retain their original source scope. Memory content
-never grants execution authority or automatically enrolls an author as trusted.
+contact. This patch fixes delivery rejection after approval. Five targeted
+local HTTP regressions passed: three Python and two native TypeScript cases.
+Selected-memory transfer and recall after restart were covered by Python.
+The full suite was not run; historical results retain their original source
+scope. Memory content never grants execution authority or automatically
+enrolls an author as trusted.
 
 [Open-network quickstart](plugins/memory-vault-client/docs/OPEN_NETWORK_QUICKSTART.md).
 
-This full-client package targets **v0.28.0-alpha.0.3 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.4 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under
