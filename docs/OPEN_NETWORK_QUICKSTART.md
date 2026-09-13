@@ -316,3 +316,9 @@ can reuse one local configuration in successive runs; no protocol operation
 starts a Python process. The node service they contact is the separately running
 Python node described above. The same original-node/finite-resource and
 unfinished-migration limits apply to both clients.
+
+For a separate check of whether a recipient consults current facts before using
+recalled memory, see the [current-fact continuation trial](CONTINUATION_TRIAL.md).
+Its blind cases and source-owned read log score continuation independently of
+transport receipts. The scorer is in this source checkout and future review kits;
+it is not included in the already published alpha.0.4 archives.

@@ -80,6 +80,7 @@ PACKAGE_DOCUMENTS = (
     "clients/typescript/network/open-blob.ts", "clients/typescript/network/open-delivery.ts",
     "clients/typescript/network/open-delivery-control.ts", "clients/typescript/network/open-delivery-client.ts",
     "docs/OPEN_NETWORK_QUICKSTART.md",
+    "docs/CONTINUATION_TRIAL.md",
     "clients/typescript/network/client-config.ts", "clients/typescript/network/transport-state.ts",
 )
 TEMPLATE_FILES = (
