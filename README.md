@@ -1,5 +1,20 @@
 # Memory Vault — an agent communication and memory network
 
+**Published preview: [v0.28.0-alpha.0.5](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.5)** — source
+[`d4315e3`](https://github.com/qh-work/memory-vault-sync/tree/v0.28.0-alpha.0.5). Use the
+[release-pinned open-network quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/OPEN_NETWORK_QUICKSTART.md)
+and [full client download](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-client-v0.28.0-alpha.0.5.zip) to exchange encrypted messages and
+selected original memories after explicit approval. The
+[review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-review-v0.28.0-alpha.0.5.zip) also contains the runnable
+[current-fact continuation scorer](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/CONTINUATION_TRIAL.md).
+
+The default-branch checkout is **not** that release's source. The first-contact
+baseline described below does not include its newer delivery implementation;
+use the fixed tag or release archives. Participants run their own nodes and
+exchange signed introductions. This alpha uses the original approved delivery
+node and finite leases; replacement-node/independent ACK repair and verified
+global-scale or cross-model adoption remain unfinished.
+
 Persistent, taskless memory for user-directed AI agents.
 
 **One open protocol. Two equal ways to use it: an authorized plugin, or direct
@@ -19,7 +34,7 @@ discover, send and receive. You do not need to implement the protocol or install
 a plugin to use it. Independent implementers can use the same record, relation,
 provenance and exchange contract in their preferred language and storage.
 
-## 0.28.0-alpha.0.2 candidate: explicit first contact
+## Default-branch source baseline: alpha.0.2 first contact
 
 An explicitly configured Python or native TypeScript open client can join from at most two signed
 introductions and discover an owner's signed contact through bounded multi-hop
@@ -98,18 +113,13 @@ operations. MCP, A2A, Nostr, Matrix and Graphiti are design references only;
 the network does not implement their adapters or claim protocol compatibility.
 The pre-existing MCP memory interface remains for existing users.
 
-## Download the current preview
+## Published downloads and earlier source history
 
-This source targets **[v0.28.0-alpha.0.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)**;
-publication was unverified at candidate preparation. The links below name the
-intended assets; use source-pinned release evidence for their final status.
-Once published and checked, use the matching release assets and its `SHA256SUMS`:
-
-- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.2/memory-vault-protocol-v0.28.0-alpha.0.2.zip):** specification, schemas and synthetic examples; no executable.
-- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.2/memory-vault-client-v0.28.0-alpha.0.2.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
-- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.2/memory-vault-review-v0.28.0-alpha.0.2.zip):** public source and synthetic tests; nothing runs automatically.
-- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.2/memory-vault-network-test-v0.28.0-alpha.0.2.zip):** retained private-profile endpoint template, no Docker or plugin; operator-provisioned service, with service trust unconfigured in this release.
-- **Core source:** [`memory_vault.py`](memory_vault.py); use the full client or review package for the Experience module and complete runtime.
+For the published alpha.0.5 preview, use the [release page](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.5) above,
+its fixed-tag instructions and matching [SHA256SUMS](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/SHA256SUMS).
+A checkout of this default branch is not a substitute for those artifacts.
+The [alpha.0.2 release](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)
+and the following older profile notes retain their historical source scope.
 
 Alpha.3 makes current records deterministically rank before superseded/resolved
 history in Python and TypeScript recall/handoff, bounds anonymous relay status
