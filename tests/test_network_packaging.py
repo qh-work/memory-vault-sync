@@ -95,6 +95,7 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertTrue({"tests/test_open_delivery_http.py", "tests/test_open_provider_typescript.py",
                          "tests/test_open_provider_typescript_http.py", "tests/test_continuation_trial.py",
                          "tests/test_open_repair_wire.py", "tests/test_open_repair_typescript.py",
+                         "tests/test_open_repair_pack.py", "tests/test_open_repair_pack_typescript.py",
                          "tests/test_open_provider_status.py", "tests/test_open_provider_status_typescript.py"} <= set(review))
         for name in ("docs/NATIVE_OPEN_PROVIDER.md", "docs/CONTINUATION_TRIAL.md", "docs/OPEN_NETWORK_QUICKSTART.md"):
             self.assertIn(name, documents)

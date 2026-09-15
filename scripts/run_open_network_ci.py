@@ -32,7 +32,7 @@ MODULES = tuple("tests.test_open_" + name for name in (
     "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "typescript", "typescript_state", "typescript_http", "network_ci",
     "contact", "contact_state", "contact_http", "contact_typescript", "contact_typescript_http",
     "delivery_http", "provider_typescript", "provider_typescript_http", "provider_status", "provider_status_typescript",
-    "repair_wire", "repair_typescript")) + (
+    "repair_wire", "repair_typescript", "repair_pack", "repair_pack_typescript")) + (
     "tests.test_continuation_trial", "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {
     "schema_version": "memory-vault-open-routing-acceptance/v2", "logical_nodes": 100,

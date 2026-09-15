@@ -94,9 +94,10 @@ class RepairBudget:
     """One cumulative meter. Failed work is not refunded or silently reset.
 
     input_bytes counts buffers admitted for inspection; output_bytes counts
-    actual canonical output. nodes/string_bytes include the second canonical
-    traversal. retained_bytes/entries describe only this resolver's holdings,
-    not all interpreter heap allocations. No signature verifier is called.
+    actual canonical/pack output and output copies. nodes/string_bytes include
+    the second canonical traversal; nodes also counts decoded pack headers.
+    retained_bytes/entries describe resolver and pack/index holdings, not all
+    interpreter heap allocations. No signature verifier is called.
     One private reentrant lock serializes whole public operations sharing this
     budget, including resolver holdings. This is not a database writer lock.
     """
@@ -508,3 +509,206 @@ class LocalRawResolver:
             return original
 
     get = resolve
+
+
+PACK_MAGIC = b"MVRP1\x00"
+_PACK_PREFIX = 10
+_PACK_HEADER = 40
+_U32_MAX = 4294967295
+
+
+@dataclass(frozen=True)
+class PackEntry:
+    raw_sha256: str
+    size: int
+    offset: int
+
+
+@dataclass(frozen=True)
+class DraftPack:
+    """Local byte integrity only; no historical closure or disclosure verdict.
+
+    Offsets are derived by the parser/builder. Raw bytes and index are immutable.
+    Extracting an entry preserves its separately supplied opaque parent locator;
+    matching bytes alone do not prove ownership of that locator.
+    """
+
+    ref: RawRef
+    raw: bytes
+    entries: tuple[PackEntry, ...]
+    _budget: RepairBudget
+
+    def entry(self, index: int, document_ref: RawRef | dict) -> RawOriginal:
+        with self._budget._lock:
+            index = u53(index)
+            if index >= len(self.entries):
+                _fail("repair_invalid_pack")
+            reference = raw_ref(document_ref)
+            selected = self.entries[index]
+            if (reference.size != selected.size
+                    or reference.raw_sha256 != selected.raw_sha256):
+                _fail("repair_ref_mismatch")
+            # Charge before the physical output slice; no JSON reserialization.
+            self._budget._bytes("output_bytes", selected.size)
+            body = self.raw[selected.offset:selected.offset + selected.size]
+            digest = self._budget._hash(body)
+            if len(body) != reference.size or not hmac.compare_digest(digest, reference.raw_sha256):
+                _fail("repair_ref_mismatch")
+            return RawOriginal(reference, body)
+
+
+def _pack_capacity(budget: RepairBudget, size: int, count: int):
+    # A pack plus count derived index records share the resolver's holding cap.
+    # Forty bytes per record is the fixed wire/index representation, not Python
+    # heap size. Temporary buffers are additionally charged as input/output work.
+    if not 1 <= count <= _U32_MAX:
+        _fail("repair_invalid_pack")
+    if size > budget.policy.max_document_bytes:
+        _fail("repair_over_budget")
+    budget._fits("entries", count + 1, budget.policy.max_entries)
+    budget._fits("retained_bytes", size + _PACK_HEADER * count,
+                 budget.policy.max_retained_bytes)
+
+
+def _pack_hold(budget: RepairBudget, size: int, count: int):
+    _pack_capacity(budget, size, count)
+    budget._usage["entries"] += count + 1
+    budget._usage["retained_bytes"] += size + _PACK_HEADER * count
+
+
+def _pack_size(total: int, amount: int, policy: RepairPolicy) -> int:
+    if amount > U53_MAX - total or amount > policy.max_document_bytes - total:
+        _fail("repair_over_budget")
+    return total + amount
+
+
+def parse_raw_pack(raw: bytes, expected_pack_ref: RawRef | dict,
+                   policy: RepairPolicy, budget: RepairBudget) -> DraftPack:
+    """Validate full MVRP1 framing, actual hashes and derived index, locally.
+
+    Legacy Signed and int64 bytes are deliberately not parsed here. New metadata
+    still needs its own canonical/schema checks, followed by full authority and
+    complete manifest-closure validation by the eventual repair consumer.
+    """
+    _context(policy, budget)
+    with budget._lock:
+        reference = raw_ref(expected_pack_ref)
+        if reference.namespace != "meta" or reference.key != reference.raw_sha256:
+            _fail("repair_ref_mismatch")
+        if _raw_size(raw, policy) != reference.size:
+            _fail("repair_ref_mismatch")
+        # Inspect only the fixed header through a borrowed byte view before any
+        # full snapshot or hash. Repeat against the frozen copy below.
+        try:
+            with memoryview(raw) as source, source.cast("B") as view:
+                if len(view) < _PACK_PREFIX or view[:6] != PACK_MAGIC:
+                    _fail("repair_invalid_pack")
+                initial_count = int.from_bytes(view[6:10], "big")
+                _pack_capacity(budget, len(view), initial_count)
+                if initial_count > (len(view) - _PACK_PREFIX) // (_PACK_HEADER + 1):
+                    _fail("repair_invalid_pack")
+        except (TypeError, ValueError, BufferError) as error:
+            if isinstance(error, RepairWireError):
+                raise
+            _fail("repair_invalid_bytes")
+        original = _snapshot(raw, policy, budget)
+        if len(original) != reference.size:
+            _fail("repair_ref_mismatch")
+        if len(original) < _PACK_PREFIX or original[:6] != PACK_MAGIC:
+            _fail("repair_invalid_pack")
+        count = int.from_bytes(original[6:10], "big")
+        _pack_capacity(budget, len(original), count)
+        # Every positive entry needs a complete header and at least one byte.
+        if count > (len(original) - _PACK_PREFIX) // (_PACK_HEADER + 1):
+            _fail("repair_invalid_pack")
+        entries, offset, previous = [], _PACK_PREFIX, None
+        for _ in range(count):
+            budget._node(1)  # Before allocating each decoded index record.
+            if len(original) - offset < _PACK_HEADER:
+                _fail("repair_invalid_pack")
+            size = int.from_bytes(original[offset:offset + 8], "big")
+            digest = original[offset + 8:offset + _PACK_HEADER]
+            offset += _PACK_HEADER
+            if not 1 <= size <= U53_MAX or size > len(original) - offset:
+                _fail("repair_invalid_pack")
+            identity = (digest, size)
+            if previous is not None and identity <= previous:
+                _fail("repair_invalid_pack")
+            if original[offset:offset + min(size, len(PACK_MAGIC))] == PACK_MAGIC:
+                _fail("repair_invalid_pack")
+            # A view avoids a second retained body copy while actually hashing.
+            body = memoryview(original)[offset:offset + size]
+            if not hmac.compare_digest(budget._hash(body), digest.hex()):
+                _fail("repair_ref_mismatch")
+            entries.append(PackEntry(digest.hex(), size, offset))
+            offset += size
+            previous = identity
+        if offset != len(original):
+            _fail("repair_invalid_pack")
+        if not hmac.compare_digest(budget._hash(original), reference.raw_sha256):
+            _fail("repair_ref_mismatch")
+        _pack_hold(budget, len(original), count)
+        return DraftPack(reference, original, tuple(entries), budget)
+
+
+def build_raw_pack(raws: list[bytes] | tuple[bytes, ...], policy: RepairPolicy,
+                   budget: RepairBudget) -> DraftPack:
+    """Freeze originals and build the canonical byte pack without granting trust.
+
+    Repeated identical inputs share one stored entry. Reading and hashing each
+    input still consumes the same cumulative budget, including rejected work.
+    """
+    _context(policy, budget)
+    with budget._lock:
+        if type(raws) not in (list, tuple) or not 1 <= len(raws) <= _U32_MAX:
+            _fail("repair_invalid_pack")
+        count = len(raws)
+        # Check count before copying the caller's list or creating an index.
+        _pack_capacity(budget, _PACK_PREFIX, count)
+        inputs = tuple(raws[:count])  # Bounded even if another thread appends.
+        if len(inputs) != count or len(raws) != count:
+            _fail("repair_invalid_pack")
+        total = _PACK_PREFIX
+        for raw in inputs:
+            size = _raw_size(raw, policy)
+            if size == 0:
+                _fail("repair_invalid_pack")
+            total = _pack_size(total, _PACK_HEADER + size, policy)
+        _pack_capacity(budget, total, count)
+        # Freeze the finite container before hashing; mutable byte inputs are
+        # copied by _snapshot under their exported buffer and charged first.
+        unique = {}
+        for raw in inputs:
+            budget._node(1)
+            original = _snapshot(raw, policy, budget)
+            if not original or original.startswith(PACK_MAGIC):
+                _fail("repair_invalid_pack")
+            digest = budget._hash(original)
+            identity = (digest, len(original))
+            prior = unique.get(identity)
+            if prior is not None and not hmac.compare_digest(prior, original):
+                _fail("repair_ref_conflict")
+            unique[identity] = original
+        total = _PACK_PREFIX
+        for original in unique.values():
+            total = _pack_size(total, _PACK_HEADER + len(original), policy)
+        _pack_capacity(budget, total, len(unique))
+        # Charge the allocated construction buffer and its final immutable copy.
+        budget._bytes("output_bytes", total)
+        output = bytearray(total)
+        output[:6] = PACK_MAGIC
+        output[6:10] = len(unique).to_bytes(4, "big")
+        entries, offset = [], _PACK_PREFIX
+        for (digest, size), original in sorted(unique.items()):
+            output[offset:offset + 8] = size.to_bytes(8, "big")
+            output[offset + 8:offset + _PACK_HEADER] = bytes.fromhex(digest)
+            offset += _PACK_HEADER
+            output[offset:offset + size] = original
+            entries.append(PackEntry(digest, size, offset))
+            offset += size
+        budget._bytes("output_bytes", total)
+        packed = bytes(output)
+        digest = budget._hash(packed)
+        reference = RawRef("meta", digest, digest, total)
+        _pack_hold(budget, total, len(entries))
+        return DraftPack(reference, packed, tuple(entries), budget)

@@ -69,6 +69,7 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_open_provider_typescript.py",
     "tests/test_open_provider_status.py", "tests/test_open_provider_status_typescript.py",
     "tests/test_open_repair_wire.py", "tests/test_open_repair_typescript.py",
+    "tests/test_open_repair_pack.py", "tests/test_open_repair_pack_typescript.py",
     "tests/test_continuation_trial.py",
     "tests/open_routing_acceptance.py",
     "tests/test_experience.py", "tests/test_experience_edges.py", "tests/test_experience_typescript.py", "tests/test_cross_author_state.py",

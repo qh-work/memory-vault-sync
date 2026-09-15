@@ -477,7 +477,8 @@ preserve their original canonical bytes and acquire authority only from their
 validated typed signed parents. A pack is a finite ordered raw-byte container,
 not an authority; no pack contains this referring manifest. Exact duplicate
 bytes may share storage only after byte identity and fixed entry position are
-proven. Otherwise both copies are charged.
+proven. Otherwise both copies are charged. Sections 7.1–7.2 fix the candidate
+role registry, repetition rules and exact pack representation used here.
 
 | variant | Exact additional fields | Required originals, signer and temporal boundary |
 |---|---|---|
@@ -548,6 +549,273 @@ and cold A does so through ack_owner. Source ACK metadata is disclosed only
 under its own original signer permissions. An A-signed pointer cannot stand in
 for that later service check. Each historical branch retains its own explicit
 bootstrap grants/statuses; no phase is filled with dummy or future documents.
+
+### 7.1 Candidate closed role registry
+
+The following registry and pack format are an explicit subsequent candidate
+choice, not a claim that this increment has been reviewed or frozen. They fix
+representation and phase dependencies without changing admission, disclosure,
+preflight or snapshot authority. A constructor uses this registry, never a
+caller-selected allowlist. Shape, byte identity and an acyclic local graph are
+not signature, historical authority, current permission or custody acceptance.
+
+Schema abbreviations below are exact: **Q** = memory-vault-open-repair/v1;
+**C** = memory-vault-open-contact-control/v1; **D** =
+memory-vault-open-delivery-control/v1; **N** = memory-vault-open-control/v1;
+**T** = memory-vault-open-authority/v1. Except rows marked unsigned/JWE, an
+entry is the complete original Signed object with the indicated payload schema
+and kind. A means the exact message sender/ACK owner, B its recipient/mailbox
+owner, R the node/epoch selected by the corresponding original resource or
+SlotKey, and M/P the exact existing assignment issuer/target. These are derived
+from original typed parents, never from the entry's self-provided signing key.
+
+The existing mailbox_member role names above remain unchanged. Their exact
+schema/kind mapping, plus the additional registered names, is closed here:
+
+| Role names (each listed name is literal) | Exact schema / kind | Expected signer and logical scope |
+|---|---|---|
+| contact.request, contact.policy, contact.decision | C / same kind as role | A request; B policy/decision; exact attempt's original contact chain |
+| contact.store_grant | C / contact.grant | B; exact decision.payload.grant, no substituted grant |
+| contact.knock_lease, contact.delivery_lease | C / resource.lease | Original contact R; purpose knock/delivery respectively; delivery lease is exact grant.payload.resource_lease |
+| delivery.destination, delivery.attempt, message.disclosure | Q / same kind as role | B destination; A attempt/disclosure; exact SlotKey/message/E |
+| mailbox.root_authority, mailbox.root_read_grant, mailbox.catalog | Q / same kind as role | B; exact root/catalog version named by this manifest |
+| mailbox.slot, mailbox.read_grant, mailbox.maintenance_root | Q / same kind as role | B; exact selected slot, or each exact catalog slot for mailbox_root |
+| bootstrap.mailbox_root, bootstrap.mailbox_feed | Q / bootstrap.grant | B; consumer mailbox_root/mailbox_feed and exact corresponding root/read or slot/maintenance/read originals |
+| ack.root_authority, ack.read_grant, ack.write_grant | Q / same kind as role | A; exact AckSlot and existing root/read/write binding |
+| bootstrap.ack_owner, bootstrap.ack_offer | Q / bootstrap.grant | A; exact ack_owner/ack_offer consumer and its parent/caller originals |
+| resource.anchor_allocate, resource.data_allocate, resource.metadata_allocate, resource.ack_allocate | Q / resource.allocate | B for anchor_catalog/mailbox_data/feed_metadata; A for ack_slot; exact original owner_intent |
+| resource.anchor_offer, resource.data_offer, resource.metadata_offer, resource.ack_offer | Q / resource.offer | Corresponding original R/epoch; exact allocate request and purpose above |
+| resource.anchor_activation, resource.slot_activation, resource.ack_activation | Q / resource.activation | B anchor or selected slot; A ack_unbound; exact section 4 activation scope and offers |
+| resource.anchor_active, resource.data_active, resource.metadata_active, resource.ack_active | Q / resource.active | Corresponding original R/epoch; exact offer/activation/resource/purpose |
+| source.descriptor | N / node | Required original R/epoch; the actual descriptor observation for the input event |
+| genesis.head, genesis.checkpoint | Q / mailbox.feed_head, mailbox.checkpoint respectively | Each catalog slot's original R; count zero, exact head→checkpoint |
+| feed.head, feed.checkpoint | Q / mailbox.feed_head, mailbox.checkpoint respectively | Exact SlotKey R; manifest.feed_head_ref and its checkpoint |
+| history.member | Q / historical.manifest, unsigned, variant mailbox_member | Exactly members[i].historical_manifest_ref; derived scope is that member's SlotKey/sequence/message/E |
+| member.core, member.link, member.custody | Q / admission.core, admission.link, message.custody respectively | Exact SlotKey R; each members[i]'s three explicit refs |
+| member.checkpoint, member.head | Q / mailbox.checkpoint, mailbox.feed_head respectively | Original R; exact existing checkpoint/head referenced by that member's link/custody |
+| range.index, range.repair_page | Q / range.index, range.repair_page respectively, unsigned | Exact authenticated current subtree/parent path or covered page; no independent signer |
+| member.sealed_core, range.sealed_page | Existing byte-JWE profile described below; no outer Q kind/signature | Exact link.sealed_core_ref or repair_page.sealed_page_ref; recipient only B, authority comes from original typed signed parents |
+| history.ack_unbound, history.ack_empty | Q / historical.manifest, unsigned, variant ack_unbound/ack_empty respectively | Exact predecessor manifest referenced by the corresponding original slot custody |
+| ack.unbound_custody, ack.empty_custody | Q / ack.slot_custody | Original allocator R; exact state unbound/empty and AckSlot |
+| ack.binding | Q / ack.binding | Original binding R; exact AckSlot/root/grant/resource |
+| recipient.receipt | D / recipient.receipt | Exact B; unchanged validated_saved receipt bound to A/B/message/E |
+| ack.disclosure, ack.put | Q / same kind as role | Exact B; manifest receipt/grant/binding and disclosure refs |
+| admission.assignment, admission.allocate, admission.offer | Q / maintenance.assignment, resource.allocate, resource.offer respectively | M assignment/request; exact P offer; already committed empty replica's target/resource and ACK-admit scope |
+| admission.empty_replica_manifest, admission.empty_replica_custody | Q / replica.manifest unsigned, replica.custody Signed respectively | Existing ack_empty replica; manifest is bound by exact P custody; not an occupied result |
+| admission.descriptor | N / node | Exact P/epoch that will receive this first ACK |
+
+All historical status roles map to **T / authority.status**, with complete
+original Signed wire. The following names and target scopes are the complete
+status registry; there is no wildcard historical.status.* role:
+
+| Literal roles | Exact required scope / issuer |
+|---|---|
+| historical.status.disclosure | Authority scope of the exact message.disclosure / A |
+| historical.status.slot | Stable SlotKey mailbox_slot scope / B |
+| historical.status.destination, historical.status.read, historical.status.maintenance, historical.status.bootstrap | Authority scope of exact destination, selected read grant, maintenance root, mailbox_feed bootstrap respectively / B |
+| historical.status.root, historical.status.root_read, historical.status.root_bootstrap | Authority scope of exact mailbox root, root read, mailbox_root bootstrap / B |
+| historical.status.catalog | Catalog scope of this RootKey / B |
+| historical.status.data_resource, historical.status.metadata_resource, historical.status.anchor_resource | RootKey + exact corresponding ResourceRef / that resource's original R |
+| historical.status.ack_root, historical.status.ack_read, historical.status.ack_write, historical.status.ack_owner_bootstrap, historical.status.ack_offer_bootstrap | Authority scope of exact A ACK root/read/write/owner-bootstrap/offer-bootstrap respectively / A |
+| historical.status.ack_slot | Stable AckSlot scope / A |
+| historical.status.ack_resource | RootKey + original ack_slot ResourceRef / original R |
+| historical.status.ack_disclosure | Authority scope of this exact B ack.disclosure / B |
+| historical.status.admission_assignment | Immutable scope of exact M admission.assignment / M |
+| historical.status.admission_resource | RootKey + actual admission_resource / its R or P issuer |
+
+An authority scope is computed from the authority's exact kind and full wire
+digest using section 3; a role alias is never used instead of the real kind.
+Each required observation is the one used at its enclosing source event's
+historical time. Nested predecessor manifests retain their own earlier event
+observations; they are not flattened into the outer event or refreshed by it.
+Resource offer/activation inputs are checked at their original event times,
+not all at the outer event's time. Current operations still use the separate
+current-status chain. Whole multi-entry status documents require every original
+disclosure permission; matching one entry never authorizes exposing the rest.
+
+The finite bundles below are notation expanded by implementations, not wire
+roles. No bundle name appears in a roles entry:
+
+- **SLOT_INPUT(slot)**: mailbox.slot, mailbox.read_grant,
+  mailbox.maintenance_root, bootstrap.mailbox_feed; resource.data_allocate,
+  resource.metadata_allocate, resource.data_offer, resource.metadata_offer,
+  resource.slot_activation, resource.data_active, resource.metadata_active;
+  source.descriptor for each actual original node/epoch required by these inputs.
+- **SLOT_OWNER_OBS(slot)**: historical.status.slot, historical.status.read,
+  historical.status.maintenance, historical.status.bootstrap.
+- **ACK_OWNER_OBS(slot)**: historical.status.ack_root,
+  historical.status.ack_read, historical.status.ack_owner_bootstrap,
+  historical.status.ack_slot.
+- **ACK_BOUND_OBS(slot)**: ACK_OWNER_OBS plus historical.status.ack_write and
+  historical.status.ack_offer_bootstrap.
+
+These six direct role sets are exhaustive. A nested history role recursively
+uses its own same fixed variant table, with the same aggregate budget; it does
+not import arbitrary outer roles. Referenced source events and their historical
+manifests must agree byte-for-byte on every common binding.
+
+| Variant | Required direct entries and exact repetition scope |
+|---|---|
+| mailbox_root | One each mailbox.root_authority, mailbox.root_read_grant, mailbox.catalog, bootstrap.mailbox_root; resource.anchor_allocate/offer/activation/active; historical.status.root/root_read/root_bootstrap/catalog/anchor_resource; source.descriptor for the anchor. For each distinct catalog.slot_ref, exactly SLOT_INPUT + SLOT_OWNER_OBS + historical.status.data_resource/metadata_resource + genesis.head/checkpoint for that slot. genesis_head_refs must identify exactly this head set; no nonzero head. |
+| mailbox_member | Exactly the unchanged mailbox_member role table above, once per this message/selected slot/resource scope. If and only if attempt.ack_grant_ref is non-null, additionally ack.root_authority, ack.write_grant, bootstrap.ack_offer, historical.status.ack_root/ack_write/ack_offer_bootstrap for its exact A-owned configuration. No ACK read/resource/binding/custody role enters this variant. |
+| mailbox_feed | Exactly SLOT_INPUT + SLOT_OWNER_OBS, historical.status.metadata_resource, feed.head/checkpoint. For each members entry: history.member, member.core/link/custody, member.checkpoint/head/sealed_core, and historical.status.disclosure for that member's original A consent at this feed source event. Include range.index for precisely the current covered subtree plus authenticated parent_path_refs, range.repair_page for every represented page, and range.sealed_page for each such page. Old member checkpoints/heads establish those existing member events; their outside-prefix children add no claimed range or permission. Original data-resource observations remain in history.member; no current old-R data lease is invented for a metadata-only feed promise. |
+| ack_unbound | One each ack.root_authority, ack.read_grant, bootstrap.ack_owner; resource.ack_allocate/offer/activation/active; source.descriptor; ACK_OWNER_OBS and historical.status.ack_resource for the actual pre-E slot. |
+| ack_empty | One each history.ack_unbound, ack.unbound_custody, ack.write_grant, bootstrap.ack_offer, ack.binding; ACK_BOUND_OBS and historical.status.ack_resource. Root/read/resource originals are reached through the exact predecessor; do not duplicate them as extra direct roles. |
+| ack_occupied_inputs | One each history.ack_empty, ack.empty_custody, recipient.receipt, ack.disclosure, ack.put; ACK_BOUND_OBS, historical.status.ack_disclosure, historical.status.admission_resource. If admission_resource equals the original empty custody resource, the receiver is that R and all admission.* entries are forbidden. Otherwise require exactly admission.assignment/allocate/offer/empty_replica_manifest/empty_replica_custody/descriptor plus historical.status.admission_assignment; all must refer to the same already committed P empty replica and actual admission_resource. No future occupied commit/head is an input. |
+
+For the P ACK branch, its original replica.manifest must cover exactly the
+referenced original ack_empty closure and source event under section 4. All of
+its physical_objects/edges are recomputed from those typed originals and the
+same existing assignment/offer; no extra job, scope or body is permitted. It is
+not a second role registry or a way to carry an unlisted occupied input. Its
+replica.custody and assignment precede the new B receipt admission; assignment
+must include the original root's exact ACK-only ADMIT/READ and earlier bootstrap
+grants. A P resource receipt never substitutes for A/B/M originals.
+
+Cardinality is per **logical obligation** in the table, derived from the
+manifest fields and the complete original typed parents: a specific catalog
+slot, member sequence, immutable authority digest, ResourceRef/node epoch or
+page/path ref. Each obligation resolves to exactly one original observation,
+not a list of alternative candidates. A single original may satisfy several
+obligations only when every binding and historical observation matches. Emit
+one roles entry per distinct `(role,document_ref)`; the same document may occur
+under different required role names or scope obligations, but not twice under
+the same role. No caller-supplied scope label or count overrides this derivation.
+
+Order roles by `(role,document_ref.namespace,document_ref.key,
+document_ref.raw_sha256,document_ref.size)` using Unicode code-point string
+order and numeric size order. Order otherwise unordered RawRef sets, including
+genesis_head_refs, by the same ref tuple without role. members remains ascending
+sequence; parent_path_refs remains the range algorithm's root-to-subtree path
+order, not hash order. Every referenced subtree/page must account for exactly
+its covered entries; siblings present only as path commitments are not fetched
+or authorized as members. Duplicate mappings, missing obligations, unsupported
+roles/kinds or unresolved referenced raw originals are explicit refusal/pending
+outcomes, never a complete accepted historical closure.
+
+To remove unsigned-kind ambiguity, this candidate names the existing range
+node kind `range.index`, and the existing B-private page plaintext kind
+`range.private_page`, without changing their section 7 fields or range rules.
+member.sealed_core and range.sealed_page are the unchanged General JSON byte-JWE
+format of memory_vault_network_crypto: exact outer fields protected, recipients,
+aad, iv, ciphertext, tag; protected typ memory-vault-network-bytes/v1 and enc
+A256GCM; existing ECDH-ES+A256KW recipient framing and byte plaintext wrapper,
+with exactly B's existing encryption key as recipient. They are not new Q
+Signed documents or a new cryptographic profile. All existing sealer limits
+and exact JWE validation remain in force.
+
+The concrete context choice for the previously unnamed core seal is canonical
+`{schema_version:Q,kind:admission.sealed_core,slot_key,sequence,
+plaintext_sha256,plaintext_size}`, where plaintext is the already existing
+full original Signed admission.core. For the page, the already specified AAD
+fields use kind=range.sealed_page and hash/size of the canonical private page
+plaintext; its start/end/slot must equal the exact repair page. These are
+candidate context/kind assignments for new repair metadata only, never a
+rewrite or upgrade of existing signed/encrypted artifacts. B later decrypts
+and validates the original plaintext; an M/P parser checks the original JWE,
+its parent ref/recipient/context and bytes without claiming decryption success.
+
+### 7.2 Candidate original-byte pack framing
+
+A pack has no signature, authority, compression, URLs, dictionary references
+or mutable index. Its exact binary format is:
+
+```text
+ASCII "MVRP1" + 0x00                       (6 bytes)
+entry_count                               (4 bytes, unsigned big-endian)
+repeat entry_count times:
+    raw_size                              (8 bytes, unsigned big-endian)
+    raw_sha256                            (32 digest bytes)
+    raw                                   (exactly raw_size bytes)
+```
+
+entry_count is positive and at most the uint32 representation bound and the
+explicit finite enabled policy limit. Each raw_size is positive U53 and within
+the explicit finite per-entry limit. Total pack size, entry count, decoded
+metadata and aggregate work are checked against explicit policy **before**
+allocation, buffering or hashing that work; these integer widths are format
+bounds, not a claim that their maxima are feasible live policies. There is no
+padding, trailing byte, optional field or alternate format. Validate the whole
+frame length as `10 + sum(40 + raw_size)` using checked arithmetic. Native code
+reads the uint64 length exactly and rejects values above U53 before conversion
+to Number or allocation; rounding a length to fit is forbidden.
+
+Entries are strictly ordered by `(raw_sha256 bytes,raw_size numeric)` and unique
+by that pair. Identical original bytes occur once in a pack and may satisfy
+several registered roles; differing bytes claiming the same digest/size are
+rejected. Every entry in a pack presented for a manifest must be used by that
+manifest's fixed direct or allowed transitive historical closure; no unrelated
+entry is allowed. A request for one role grants no read of its entire pack:
+full-pack transfer requires the original signers' permissions for every entry
+under the actual consumer. A service-proof consumer may return permitted
+individual original bytes from a locally verified pack; this does not certify
+pack membership or historical closure without their later complete validation.
+entry_index is zero-based and less than entry_count; offsets are derived by
+checked accumulation of the preceding lengths, never taken from a caller's
+untrusted offset table. Entry headers and their body bytes participate in the
+full pack hash. The MVRP1 prefix is reserved: no entry body may start with
+`MVRP1\0`, including an embedded pack.
+
+pack_ref has namespace=meta, key=raw_sha256 of the **whole pack**, and its exact
+full size/hash. Resolve and verify that whole pack, then the selected entry's
+actual SHA-256/length against both its entry header and document_ref. The
+original document_ref namespace/key remain exactly those named by the typed
+parent; they are not silently replaced by the pack address or content hash.
+A pack proves neither ownership of an opaque locator nor authorization to read
+it. Distinct original refs sharing identical body bytes may point to the same
+entry only after each independent parent/ref binding has been checked.
+
+New Q unsigned/Signed metadata entries must retain their original canonical
+wire. Old C/D/N/T originals retain their actual complete original bytes and
+original schema validation; do not normalize, reinterpret int64 content as
+U53, strip proof fields or reserialize nested originals. contact.store_grant
+must equal the losslessly located original Signed object at decision.payload.grant;
+contact.delivery_lease must likewise equal grant.payload.resource_lease. A
+parsed projection or freshly serialized equivalent is insufficient. Parent and
+nested bytes count as separate physical copies when both are in the pack.
+
+All document bytes are frozen before the containing pack; all packs are frozen
+before the referring historical.manifest; the source commit is later still.
+A nested predecessor historical.manifest may be packed only after its own
+packs exist, under the exact allowed earlier-phase role above. It cannot
+reference this containing pack, itself or the outer/future manifest/commit.
+Resolve typed references with a bounded active-path cycle check and one shared
+visited/work ledger; aliases with the same full raw hash/size cannot evade a
+cycle check by changing their opaque key. Existence in a caller's list or a
+self-asserted timestamp does not establish original historical validity.
+
+Charge every full original and every duplicate physical copy, pack header and
+entry header, each actual entry hash and full-pack hash, encoded/decoded metadata,
+index construction, temporary buffering/parse overlap and retained pins to the
+same section 11 aggregate budget. Nested packs through historical references,
+repeated roles and retries never reset it. Deduplication avoids only a physical
+copy that is actually shared; it cannot erase independent obligations or
+unperformed cryptographic work. No successful parse/pack construction issues
+AcceptedAuthority, a resource promise, a snapshot handle or a custody result.
+
+The local `build_raw_pack` / `buildRawPack` and `parse_raw_pack` /
+`parseRawPack` implement this byte framing and derived index in the existing
+draft wire modules. They return DraftPack only. They do not yet derive the six
+variant obligations, inspect nested Signed/schema/phase references, enforce
+complete role usage or graph acyclicity, verify signatures, or authorize any
+network read. These checks remain required at the later manifest consumer.
+Original node descriptors supply signing identity and epoch; the separate
+encryption-key source and possession proof remain required for dual identity.
+The old provider authority-kind allowlist does not accept the new Q kinds.
+
+Their explicit local policy bounds the whole pack by max_document_bytes.
+Each held pack and each derived index entry consume max_entries from the same
+budget as the local resolver; retained_bytes accounts for pack bytes plus the
+fixed 40-byte-per-entry index representation, not actual interpreter heap.
+Builder inputs are conservatively checked before deduplication, every input
+is read/hashed, and only byte-identical duplicates share final storage. Pack
+index decoding consumes nodes. Input snapshots, construction buffers and actual
+defensive/final output copies consume the shared cumulative input/output work
+budget; language-specific physical copies are charged when they occur. Failed
+work is not refunded; retained counters increase only for successful holdings.
+This local meter does not claim to measure signature, disk/WAL, HTTP, allocator
+overhead or the complete legal graph; enabled live policy still requires those
+measurements and the full authority consumer.
 
 Input/event/copy order is consequently:
 
@@ -1443,7 +1711,13 @@ Then freeze mutually consistent finite policy maxima and refusal codes. Include
 all six historical variants and four preflight profiles, whole-interval histories,
 scoped consent/bootstrap/assignment/resource statuses, full original allocation
 and activation inputs, Signed child requests, inline and staged wrappers, and
-failed challenge/expired stage overlap. Snapshot vectors must include the
+failed challenge/expired stage overlap. Pack vectors additionally measure the
+MVRP1 prefix/count and every length/digest header, exact nested Signed duplicates,
+actual entry and full-pack hashes, multiple roles sharing one entry, nested
+historical packs and temporary parse/index overlap. Reject wrong entry_index,
+unknown role, missing scope obligation, out-of-order/duplicate entries, invalid
+uint64/U53 lengths, digest/size mismatches, trailing data and indirect cycles
+before an accepted closure. Snapshot vectors must include the
 complete encoded snapshot.response, decoded original Signed handle and manifest,
 all Signed child request/response headers, existing frame prefixes, aligned
 full/final chunks, per-child assembly and full-ref validation, and simultaneous

@@ -74,7 +74,8 @@ function policyCopy(value: RepairPolicy): RepairPolicy {
 }
 
 /** Counters describe this module's work, not total heap/CPU or live capacity.
- * retained_bytes counts resolver entries only. Public byte copies count as
+ * retained_bytes counts resolver bytes and pack bytes/fixed index records.
+ * It does not describe host object overhead. Public byte copies count as
  * output_bytes. Refused work is not performed/charged; earlier work remains.
  */
 export class RepairBudget {
@@ -122,13 +123,13 @@ export class RepairBudget {
     this.#work.hashes++;
     return createHash('sha256').update(raw).digest('hex');
   }
-  canRetain(length: number): void {
-    this.#fits(this.#work.entries, 1, this.#policy.max_entries);
+  canRetain(length: number, count = 1): void {
+    this.#fits(this.#work.entries, count, this.#policy.max_entries);
     this.#fits(this.#work.retained_bytes, length, this.#policy.max_retained_bytes);
   }
-  retain(length: number): void {
-    this.canRetain(length);
-    this.#work.entries++;
+  retain(length: number, count = 1): void {
+    this.canRetain(length, count);
+    this.#work.entries += count;
     this.#work.retained_bytes += length;
   }
 }
@@ -394,4 +395,160 @@ export class LocalRawResolver {
     return entry.original;
   }
   get(value: unknown): RawOriginal {return this.resolve(value);}
+}
+
+const PACK_MAGIC = Buffer.from('MVRP1\0', 'ascii');
+const PACK_PREFIX = 10, PACK_HEADER = 40, U32_MAX = 0xffffffff;
+export interface PackEntry {
+  readonly raw_sha256: string; readonly size: number; readonly offset: number;
+}
+/** Local byte integrity only; no historical closure or disclosure verdict. */
+export interface DraftPack {
+  readonly ref: RawRef; readonly raw: Uint8Array;
+  readonly entries: readonly PackEntry[];
+  entry(index: number, documentRef: RawRef): RawOriginal;
+}
+function packSize(total: number, amount: number, policy: RepairPolicy): number {
+  if (amount > Number.MAX_SAFE_INTEGER - total || amount > policy.max_document_bytes - total)
+    fail('repair_over_budget');
+  return total + amount;
+}
+function packCapacity(size: number, count: number, budget: RepairBudget): number {
+  if (!Number.isInteger(count) || count < 1 || count > U32_MAX) fail('repair_invalid_pack');
+  if (size > budget.policy.max_document_bytes) fail('repair_over_budget');
+  const indexBytes = PACK_HEADER * count;
+  if (indexBytes > Number.MAX_SAFE_INTEGER - size) fail('repair_over_budget');
+  const retained = size + indexBytes;
+  budget.canRetain(retained, count + 1);
+  return retained;
+}
+function startsPack(raw: Uint8Array): boolean {
+  return raw.length >= PACK_MAGIC.length && PACK_MAGIC.every((byte, index) => raw[index] === byte);
+}
+function byteView(raw: Uint8Array): Uint8Array {
+  const size = rawSize(raw);
+  try {return new Uint8Array(bufferOf.call(raw), byteOffsetOf.call(raw), size);}
+  catch {fail('repair_invalid_bytes');}
+}
+function packCount(bytes: Uint8Array): number {
+  if (bytes.length < PACK_PREFIX || !startsPack(bytes)) fail('repair_invalid_pack');
+  return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(6, false);
+}
+function checkPackCount(size: number, count: number, budget: RepairBudget): void {
+  packCapacity(size, count, budget);
+  if (count > Math.floor((size - PACK_PREFIX) / (PACK_HEADER + 1))) fail('repair_invalid_pack');
+}
+function draftPack(bytes: Buffer, ref: RawRef, records: PackEntry[], budget: RepairBudget): DraftPack {
+  const entries = Object.freeze(records);
+  const result: DraftPack = {
+    ref, entries,
+    get raw(): Uint8Array {return copyOutput(bytes, budget);},
+    entry(index: number, documentRef: RawRef): RawOriginal {
+      u53(index);
+      if (index >= entries.length) fail('repair_invalid_pack');
+      const reference = rawRef(documentRef), selected = entries[index];
+      if (reference.size !== selected.size || reference.raw_sha256 !== selected.raw_sha256)
+        fail('repair_ref_mismatch');
+      // A private view avoids allocating body bytes merely to hash them.
+      const body = bytes.subarray(selected.offset, selected.offset + selected.size);
+      if (body.length !== reference.size || budget.hash(body) !== reference.raw_sha256)
+        fail('repair_ref_mismatch');
+      return Object.freeze({ref: reference, get raw(): Uint8Array {return copyOutput(body, budget);}});
+    },
+  };
+  return Object.freeze(result);
+}
+
+/** Parse exact binary originals, without applying a JSON/authority schema. */
+export function parseRawPack(raw: Uint8Array, expectedPackRef: RawRef,
+                             policy: RepairPolicy, budget: RepairBudget): DraftPack {
+  checkBudget(policy, budget); policy = budget.policy;
+  const reference = rawRef(expectedPackRef);
+  if (reference.namespace !== 'meta' || reference.key !== reference.raw_sha256)
+    fail('repair_ref_mismatch');
+  const size = rawSize(raw);
+  if (size > policy.max_document_bytes) fail('repair_over_budget');
+  if (size !== reference.size) fail('repair_ref_mismatch');
+  // Inspect only the fixed prefix before any byte copy, hash or index allocation.
+  const view = byteView(raw);
+  if (view.length !== size) fail('repair_invalid_pack');
+  const count = packCount(view);
+  checkPackCount(size, count, budget);
+  const bytes = snapshotInput(view, budget);
+  // Concurrently mutable backing stores cannot change the checked count/size.
+  if (bytes.length !== size || packCount(bytes) !== count) fail('repair_invalid_pack');
+  const entries: PackEntry[] = [];
+  let offset = PACK_PREFIX, previousDigest = '', previousSize = 0;
+  for (let index = 0; index < count; index++) {
+    budget.node(1);
+    if (bytes.length - offset < PACK_HEADER) fail('repair_invalid_pack');
+    const exactSize = bytes.readBigUInt64BE(offset);
+    if (exactSize < 1n || exactSize > BigInt(Number.MAX_SAFE_INTEGER)) fail('repair_invalid_pack');
+    const length = Number(exactSize), digest = bytes.toString('hex', offset + 8, offset + PACK_HEADER);
+    offset += PACK_HEADER;
+    if (length > bytes.length - offset) fail('repair_invalid_pack');
+    if (index > 0 && (digest < previousDigest || (digest === previousDigest && length <= previousSize)))
+      fail('repair_invalid_pack');
+    const body = bytes.subarray(offset, offset + length);
+    if (startsPack(body)) fail('repair_invalid_pack');
+    if (budget.hash(body) !== digest) fail('repair_ref_mismatch');
+    entries.push(Object.freeze({raw_sha256: digest, size: length, offset}));
+    offset += length; previousDigest = digest; previousSize = length;
+  }
+  if (offset !== bytes.length) fail('repair_invalid_pack');
+  if (budget.hash(bytes) !== reference.raw_sha256) fail('repair_ref_mismatch');
+  budget.retain(packCapacity(size, count, budget), count + 1);
+  return draftPack(bytes, reference, entries, budget);
+}
+
+/** Snapshot each original and build its canonical binary pack. No trust verdict. */
+export function buildRawPack(raws: readonly Uint8Array[], policy: RepairPolicy,
+                             budget: RepairBudget): DraftPack {
+  checkBudget(policy, budget); policy = budget.policy;
+  if (!Array.isArray(raws) || isProxy(raws)) fail('repair_invalid_pack');
+  const count = Object.getOwnPropertyDescriptor(raws, 'length')!.value as number;
+  packCapacity(PACK_PREFIX, count, budget); // Before making any count-sized list.
+  const inputs: Uint8Array[] = [];
+  let total = PACK_PREFIX;
+  for (let index = 0; index < count; index++) {
+    const property = Object.getOwnPropertyDescriptor(raws, String(index));
+    if (!property || !Object.hasOwn(property, 'value')) fail('repair_invalid_pack');
+    // Fixed-length intrinsic views keep a growable backing store from expanding
+    // the already checked snapshot allocation; this does not copy body bytes.
+    const input = byteView(property.value as Uint8Array), size = rawSize(input);
+    if (size === 0) fail('repair_invalid_pack');
+    total = packSize(total, PACK_HEADER + size, policy);
+    inputs.push(input);
+  }
+  // Conservative before deduplication: no snapshot/hash precedes holding caps.
+  packCapacity(total, count, budget);
+  const unique = new Map<string, {digest: string; bytes: Buffer}>();
+  for (const input of inputs) {
+    budget.node(1);
+    const bytes = snapshotInput(input, budget);
+    if (bytes.length === 0 || startsPack(bytes)) fail('repair_invalid_pack');
+    const digest = budget.hash(bytes), identity = digest + ':' + bytes.length, prior = unique.get(identity);
+    if (prior && !prior.bytes.equals(bytes)) fail('repair_ref_conflict');
+    if (!prior) unique.set(identity, {digest, bytes});
+  }
+  total = PACK_PREFIX;
+  for (const {bytes} of unique.values()) total = packSize(total, PACK_HEADER + bytes.length, policy);
+  const retained = packCapacity(total, unique.size, budget);
+  const ordered = [...unique.values()].sort((left, right) =>
+    left.digest < right.digest ? -1 : left.digest > right.digest ? 1 : left.bytes.length - right.bytes.length);
+  budget.output(total); // The sole private construction buffer, before allocation.
+  const bytes = Buffer.alloc(total), entries: PackEntry[] = [];
+  PACK_MAGIC.copy(bytes); bytes.writeUInt32BE(ordered.length, 6);
+  let offset = PACK_PREFIX;
+  for (const {digest, bytes: body} of ordered) {
+    bytes.writeBigUInt64BE(BigInt(body.length), offset);
+    bytes.write(digest, offset + 8, 32, 'hex'); offset += PACK_HEADER;
+    body.copy(bytes, offset);
+    entries.push(Object.freeze({raw_sha256: digest, size: body.length, offset}));
+    offset += body.length;
+  }
+  const digest = budget.hash(bytes);
+  const reference = Object.freeze({namespace: 'meta' as const, key: digest, raw_sha256: digest, size: total});
+  budget.retain(retained, entries.length + 1);
+  return draftPack(bytes, reference, entries, budget);
 }
