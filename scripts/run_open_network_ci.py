@@ -209,6 +209,8 @@ def initialize(reports, mode, seed):
             "open-transport.ts", "open-participant.ts", "open-node.ts", "open-client.ts",
             "open-control.ts", "open-routing.ts", "open-state.ts", "client-config.ts", "transport-state.ts",
             "open-contact.ts", "open-contact-state.ts", "open-contact-client.ts",
+            "open-provider.ts", "open-provider-client.ts", "open-blob.ts",
+            "open-delivery.ts", "open-delivery-control.ts", "open-delivery-client.ts",
             "agent.ts", "peer.ts", "io.ts", "crypto.ts")]
         sources += ["requirements-network-server-lock.txt", "tests/test_open_typescript.py", "tests/test_open_typescript_http.py", "tests/test_open_typescript_state.py",
                     "memory_vault_open_contact.py", "memory_vault_open_contact_state.py", "memory_vault_open_contact_client.py",
@@ -216,6 +218,14 @@ def initialize(reports, mode, seed):
                     "tests/test_open_contact.py", "tests/test_open_contact_state.py", "tests/test_open_contact_http.py",
                     "tests/test_open_contact_typescript.py", "tests/test_open_contact_typescript_http.py",
                     "tests/test_network_typescript_agent_network.py", "tests/test_network_packaging.py"]
+        sources += ["memory_vault_open_provider.py", "memory_vault_open_provider_client.py", "memory_vault_open_provider_state.py",
+                    "memory_vault_open_blob.py", "memory_vault_open_delivery.py", "memory_vault_open_delivery_client.py",
+                    "memory_vault_open_delivery_state.py", "scripts/continuation_trial.py",
+                    "scripts/build_client_plugin.py", "scripts/build_release.py", "clients/typescript/network/package.json"]
+        # The executed module inventory is also the test-source inventory. New
+        # test modules must not silently lack a pre-run byte fingerprint.
+        sources += [name.replace(".", "/") + ".py" for name in MODULES]
+    sources = sorted(set(sources))
     settings = {"schema_version":"memory-vault-open-ci-settings/v1", "commit_sha":sha, "mode":mode,
         "seed":seed if mode == "scale" else None, "source_sha256":{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in sources},
         "bootstrap_python":sys.version.split()[0], "expected_node":"22.19.0" if mode=="light" else None,

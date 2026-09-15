@@ -62,7 +62,7 @@ class OpenAgentTests(unittest.TestCase):
                 self.assertTrue(connected["ok"], connected)
                 self.assertEqual(connected["result"]["profile"], "open-routing-v1")
                 self.assertFalse(connected["result"]["authority_required"])
-                self.assertFalse(connected["result"]["open_messaging_supported"])
+                self.assertTrue(connected["result"]["open_messaging_supported"])
                 discovered = agent.handle({"op": "discover", "online": True, "key_id": remote.key_id})
                 self.assertTrue(discovered["ok"], discovered)
                 self.assertEqual(discovered["result"]["state"], "found", discovered)
@@ -108,29 +108,43 @@ class OpenAgentTests(unittest.TestCase):
                         direct.discover(online=False, key_id=identity.key_id)
                 http.assert_not_called()
 
-    def test_unimplemented_mail_and_private_invitation_explicitly_refuse_without_http_or_fallback(self):
+    def test_unapproved_mail_and_private_invitation_preserve_local_boundaries_without_http_or_fallback(self):
         with nodes(1) as host:
             agent, identity, encryption, encryption_path = configured_agent(host)
             host.stop(0)
             requests = [
-                ({"op": "send", "request_id": "req_open_unsupported_send", "recipients": [identity.key_id],
-                  "text": "Synthetic unopened message."}, "open_messaging_unsupported"),
-                ({"op": "receive", "limit": 1}, "open_messaging_unsupported"),
-                ({"op": "receive", "message_id": "msg_" + "a" * 64, "offset": 0}, "open_messaging_unsupported"),
-                ({"op": "receive", "respond_to": "msg_" + "b" * 64}, "open_messaging_unsupported"),
+                ({"op": "send", "request_id": "req_open_unapproved_send", "recipients": [identity.key_id],
+                  "text": "Synthetic unopened message."}, "open_contact_approval_required"),
+                ({"op": "receive", "limit": 1}, None),
+                ({"op": "receive", "message_id": "msg_" + "a" * 64, "offset": 0}, "network_message_not_found"),
+                ({"op": "receive", "respond_to": "msg_" + "b" * 64}, "open_hint_exchange_unsupported"),
                 ({"op": "connect", "invitation": {"schema_version": "synthetic-private-invitation"}}, "open_private_invitation_unsupported"),
             ]
-            with patch.object(OpenHTTPTransport, "request", side_effect=AssertionError("unsupported operation made HTTP request")) as http, \
+            config = ClientConfig.load(agent.client_config)
+            before = {path: path.read_bytes() for path in (config.path, agent.network_config,
+                config.identity_path, config.trust_path, encryption_path)}
+            with patch.object(OpenHTTPTransport, "request", side_effect=AssertionError("local boundary made HTTP request")) as http, \
+                 patch.object(OpenHTTPTransport, "request_blob", side_effect=AssertionError("local boundary transferred blob")) as blob, \
                  patch.object(NetworkClient, "__init__", side_effect=AssertionError("unexpected private profile fallback")), \
                  patch.object(Identity, "generate", side_effect=AssertionError("unexpected signing identity")), \
                  patch.object(EncryptionIdentity, "generate", side_effect=AssertionError("unexpected encryption identity")):
                 for request, code in requests:
                     with self.subTest(request=request["op"], code=code):
                         result = agent.handle(request)
-                        self.assertFalse(result["ok"], result)
-                        self.assertEqual(result["error"]["code"], code)
+                        if code is None:
+                            self.assertTrue(result["ok"], result)
+                            self.assertEqual(result["result"]["messages"], [])
+                            self.assertEqual(result["result"]["errors"], [])
+                            self.assertFalse(result["result"]["network_accessed"])
+                        else:
+                            self.assertFalse(result["ok"], result)
+                            self.assertEqual(result["error"]["code"], code)
+                        self.assertFalse(result["authority"]["authorization_eligible"])
+                        self.assertFalse(result["authority"]["execution_eligible"])
                 http.assert_not_called()
-            self.assertFalse(ClientConfig.load(agent.client_config).vault_path.exists())
+                blob.assert_not_called()
+            self.assertEqual({path: path.read_bytes() for path in before}, before)
+            self.assertFalse(config.vault_path.exists())
 
     def test_actual_slow_incoming_header_is_closed_and_slot_reusable(self):
         with nodes(1) as host:
