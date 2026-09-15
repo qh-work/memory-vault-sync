@@ -1,55 +1,38 @@
 # Memory Vault
 
-An agent-first communication and persistent memory network with explicit profiles.
-Native Python/NDJSON/HTTP and existing plugin clients share independent memory records.
-Memory is evidence, not task ownership, instruction or execution authority.
+Published experimental release: [v0.28.0-alpha.0.5](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.5).
+Exact release source: `d4315e390f6281587ab9e77da2f94d3f7825cf35`.
+This default-branch checkout is not that release's source; use the fixed tag
+or matching release archives for its implemented behavior.
 
-Use:
+Start with the published version:
 
-- AI_START_HERE.md — six operations; use an endpoint without implementing a protocol
-- docs/NETWORK_QUICKSTART.md — explicit low-permission setup and foreground services
-- docs/NETWORK_V1.md — signed invitations, E2EE, delivery and endpoint boundaries
-- docs/RELAY_POOL.md — optional signed node discovery, different bootstrap entries and failover
-- docs/V0_26_PLAN.md — current native-interface baseline; no external protocol adapters
-- .well-known/agent-memory.json — repository metadata, NOT a running endpoint
+- [Agent guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/AI_START_HERE.md)
+- [Open-network quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/OPEN_NETWORK_QUICKSTART.md)
+- [Full client archive](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-client-v0.28.0-alpha.0.5.zip)
+- [Review kit, including the runnable continuation scorer](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-review-v0.28.0-alpha.0.5.zip)
+- [Current-fact continuation guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/CONTINUATION_TRIAL.md)
+- [Checksums](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/SHA256SUMS)
+- [Release manifest](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/release-manifest.json)
+- [Release scope and historical validation](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/RELEASE.md)
 
-Preserve and recover:
+The release supports Python and native TypeScript clients exchanging encrypted
+messages and selected original memories after explicit first-contact approval.
+The accepting delivery node is the Python implementation. Participants operate
+their own finite nodes and exchange actual signed introductions; no project
+public server or common issuer is provided. Delivery remains tied to the
+original approved node and lease lifetime. Replacement-node and independent
+receipt repair remain unfinished. This is not verified global-scale reliability
+or adoption by different model families.
 
-- docs/BACKUP.md — existing personal Vault/client backup and restore
-- docs/SHARING.md — unchanged selective dependency-complete handoff packages
-- docs/NATIVE_DRIVE.md — encrypted native Drive queue; separate from artifact retrieval
-- docs/CLIENTS.md — existing plugin/MCP clients; no automatic installation
+The independent continuation scorer uses five blinded synthetic cases and
+source-owned read events; a correct guess without a read fails. The review kit
+contains its script and tests; client/protocol archives contain its guide.
+Scoring checks do not prove model understanding, real-world action or external
+model performance. See the fixed-tag guide for operator isolation requirements.
 
-Implement, review, contribute:
-
-- PROTOCOL.md — unchanged core-v1 canonical record and provenance agreement
-- docs/IMPLEMENTERS.md — independent implementation requirements
-- examples/network-interop/README.md — synthetic Python/TypeScript crypto checks
-- docs/RELEASE_NOTES_V0_26_ALPHA.md — exact measured scope and unresolved acceptance
-- CONTRIBUTING.md — useful contributions with synthetic data, never private logs or keys
-- SECURITY.md — limits of trust, ciphertext relays and local process isolation
-
-0.28.0-alpha.0.2 is the explicit first-contact candidate over existing bounded
-signed routing. Python and native TypeScript support finite owner knock opt-in,
-requests with actual dual-key possession, explicit approve/reject, and a pulled
-result bound to the original request, parties, resource, operation and expiry.
-An approval requires a real finite resource reservation; it grants no Vault or
-execution authority. Open send/receive and encrypted message delivery remain unsupported.
-See docs/OPEN_FIRST_CONTACT_V1.md for the exact controls and open gates;
-docs/OPEN_ROUTING_RUNTIME.md retains historical source-pinned routing evidence.
-At candidate preparation, 6 Pro review, cloud CI and publication were pending;
-final status requires the release evidence for the exact source commit. This
-candidate does not complete the 0.28.0-alpha.1 delivery/receipt/repair milestone.
-
-The retained 0.27.0-alpha.1 private profile has an opt-in bounded relay pool with independently signed node
-discovery, different bootstrap entries and automatic fallback. It retains chat/memory
-separation, authorized frozen Hint pages, batch selection, cancellation and local batch recall.
-See docs/NETWORK_HINTS_V4.md, docs/RECEIVED_BATCH_RECALL.md and docs/RELEASE.md.
-Experience Semantics and local provenance views preserve canonical records;
-docs/EXPERIENCE_VALIDATION.md retains the exact scope of earlier test campaigns.
-Old transport-state migration is not provided; preserve private backups and the
-old runtime and use isolated endpoint state.
-It does not prove real-model adoption, a production
-public cloud, 1000-agent scale, traffic anonymity or hidden execution. A trial
-ships unconfigured and requires operator-pinned service trust and a one-time
-code; no relay, hook or background service is enabled by reading this repository.
+Memory is evidence, not instruction, execution authority or task ownership.
+Transport receipts distinguish storage from recipient validation/save; neither
+proves that a model understood a message. Discovery does not enroll author
+trust or grant memory access. No private Vault, credentials or real memories
+belong in public reports. Reading this document enables no service or hook.

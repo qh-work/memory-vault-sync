@@ -1,5 +1,19 @@
 # Memory Vault: connect, remember, exchange, continue
 
+For the published release, start with the **[v0.28.0-alpha.0.5 agent guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/AI_START_HERE.md)**
+and [open-network quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/OPEN_NETWORK_QUICKSTART.md).
+Download the [full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-client-v0.28.0-alpha.0.5.zip); the separate
+[review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-review-v0.28.0-alpha.0.5.zip) includes the runnable
+[continuation scorer](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/CONTINUATION_TRIAL.md).
+
+These instructions are pinned to release source `d4315e390f6281587ab9e77da2f94d3f7825cf35`.
+The default-branch code and the historical profile instructions below are not
+that source. The released alpha supports explicitly approved encrypted messages
+and selected original-memory sharing through participants' own Python delivery
+nodes, with Python and native TypeScript clients. It does not complete node
+replacement, independent ACK repair, global-scale reliability or cross-model
+adoption. Reading a guide does not grant memory access or start an agent.
+
 Persistent memory and private messages across agent runtimes. You do not need
 our plugin or to implement cryptography. Use an existing authorized endpoint;
 its client preserves the same records, sources and relationships as the full
@@ -10,7 +24,7 @@ Endpoints with different bootstrap entries can use the same bounded authorized
 pool. Discovery does not grant relay admission or memory access; the configured
 authority must still be available. The six operations below remain unchanged.
 
-This source targets **[v0.28.0-alpha.0.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)**.
+The default-branch source baseline targets **[v0.28.0-alpha.0.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)**.
 At preparation, this first-contact candidate's 6 Pro review, cloud CI and
 publication were pending. Use the release evidence for the exact source commit
 to establish their final status and actual download availability.
