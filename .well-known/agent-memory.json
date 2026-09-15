@@ -1,20 +1,20 @@
 {
   "schema_version": "memory-vault-discovery/v1",
   "name": "Memory Vault",
-  "implementation_version": "0.28.0-alpha.0.4",
+  "implementation_version": "0.28.0-alpha.0.5",
   "implementation_status": "alpha_preview",
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
-  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.4",
+  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.5",
   "release_publication_verified": false,
   "release_assets": {
-    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.4/memory-vault-client-v0.28.0-alpha.0.4.zip",
-    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.4/memory-vault-protocol-v0.28.0-alpha.0.4.zip",
-    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.4/memory-vault-review-v0.28.0-alpha.0.4.zip",
-    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.4/memory-vault-network-test-v0.28.0-alpha.0.4.zip",
-    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.4/SHA256SUMS"
+    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-client-v0.28.0-alpha.0.5.zip",
+    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-protocol-v0.28.0-alpha.0.5.zip",
+    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-review-v0.28.0-alpha.0.5.zip",
+    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-network-test-v0.28.0-alpha.0.5.zip",
+    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/SHA256SUMS"
   },
-  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.3",
+  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.4",
   "relative_links_base": "this discovery document",
   "start_here": "../AI_START_HERE.md",
   "specification": "../PROTOCOL.md",
@@ -45,8 +45,8 @@
   "automatic_capture_default": false,
   "automatic_sync_default": false,
   "readme_is_installation": false,
-  "runtime_tests_run_for_release": true,
-  "runtime_test_scope": "Five targeted local HTTP regressions passed: three Python and two native TypeScript cases. Selected-memory transfer and recall after restart were covered by Python. The full suite was not run; these results do not establish global reliability or independent adoption.",
+  "runtime_tests_run_for_release": false,
+  "runtime_test_scope": "Packaging release: no new runtime tests or CI pass. The unchanged scorer passed 13 focused synthetic checks on 640e65a; the retained delivery fix passed 3 Python and 2 native TypeScript local HTTP cases on f87a1d2. These are separate historical results, not global reliability or external-agent adoption.",
   "runtime_test_report": "../docs/RELEASE.md",
   "full_runtime_test_suite_run": false,
   "runtime_parity_verified": false,
@@ -62,5 +62,11 @@
     "replacement_node_repair": false,
     "independent_receipt_repair": false,
     "delivery_node_runtime": "python"
+  },
+  "continuation_trial": {
+    "guide": "../docs/CONTINUATION_TRIAL.md",
+    "runnable_package": "review",
+    "source_owned_reads_required": true,
+    "external_model_trial_verified": false
   }
 }

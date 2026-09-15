@@ -1,5 +1,12 @@
 # Memory Vault development status
 
+This alpha.0.5 release adds an operator-run current-fact continuation scorer
+in the review kit, with documentation in the client and protocol packages.
+Thirteen focused scoring checks passed on source `640e65a`; the scorer is
+unchanged here. The delivery HTTP results below are from alpha.0.4.
+No new runtime suite, CI pass, model trial or 6 Pro review is claimed
+for this packaging release.
+
 **Current development priority:** a globally decentralized network with bounded
 local routing and sharded resource growth, not a larger private relay pool.
 The [open-network roadmap](OPEN_NETWORK_ROADMAP.md) and its architecture,
@@ -8,7 +15,7 @@ private-first sequence. The first executable open routing slice now has
 source-pinned implementation and cloud evidence; the full architecture remains
 a development target, not a global reliability claim.
 
-Current source target: **0.28.0-alpha.0.4**, an open encrypted-delivery preview.
+Current source target: **0.28.0-alpha.0.5**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use
@@ -21,8 +28,8 @@ project server, fixed seed, common issuer or global member roster is supplied.
 The native TypeScript client uses its own crypto, Vault and protected transport
 code without a Python subprocess. Delivery hosting currently uses the Python
 node implementation; the TypeScript node does not yet host delivery. Node migration, independent ACK
-repair and the full 0.28.0-alpha.1 vertical milestone remain pending. This patch
-fixes delivery rejection after approval. Five targeted local HTTP regressions
+repair and the full 0.28.0-alpha.1 vertical milestone remain pending. The alpha.0.4
+delivery-approval fix is retained. Five targeted local HTTP regressions
 passed: three Python and two native TypeScript cases. Selected-memory transfer
 and recall after restart were covered by Python. The full suite was not run;
 earlier review, CI and test counts retain their original source bindings. This

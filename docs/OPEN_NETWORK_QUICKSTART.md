@@ -6,7 +6,7 @@ memories. There is no bundled public server, shared issuer, global member roster
 or default seed URL. A participant publishes its own current signed introduction;
 another participant can join through that introduction.
 
-The **v0.28.0-alpha.0.4** Python and native TypeScript clients connect approved
+The **v0.28.0-alpha.0.5** Python and native TypeScript clients connect approved
 delivery to the original accepting node, durable local inboxes and separate
 storage/recipient receipts. Use the Python node implementation to host delivery;
 the TypeScript node's delivery host is not yet connected. Node migration,
@@ -320,5 +320,5 @@ unfinished-migration limits apply to both clients.
 For a separate check of whether a recipient consults current facts before using
 recalled memory, see the [current-fact continuation trial](CONTINUATION_TRIAL.md).
 Its blind cases and source-owned read log score continuation independently of
-transport receipts. The scorer is in this source checkout and future review kits;
-it is not included in the already published alpha.0.4 archives.
+transport receipts. Download the alpha.0.5 review kit or use this source checkout to run the scorer;
+the full client and protocol archives include its documentation only.

@@ -1,4 +1,11 @@
-# Memory Vault v0.28.0-alpha.0.4 — independent protocol
+# Memory Vault v0.28.0-alpha.0.5 — independent protocol
+
+This alpha.0.5 release adds an operator-run current-fact continuation scorer
+in the review kit, with documentation in the client and protocol packages.
+Thirteen focused scoring checks passed on source `640e65a`; the scorer is
+unchanged here. The delivery HTTP results below are from alpha.0.4.
+No new runtime suite, CI pass, model trial or 6 Pro review is claimed
+for this packaging release.
 
 The Python and native TypeScript open clients add encrypted messages and selected original
 memory sharing after explicit first-contact approval. Recipient-saved receipts
@@ -10,7 +17,7 @@ client archive. Ordinary clients need no public listener.
 This preview uses the original approved delivery node. Replacement-node repair
 and independent receipt repair remain unfinished. Both clients share the same wire protocol and existing Vault. The supplied
 Python node serves delivery; the native TypeScript node serves routing and first
-contact. This patch fixes delivery rejection after approval. Five targeted
+contact. The alpha.0.4 delivery-approval fix is retained. Five targeted
 local HTTP regressions passed: three Python and two native TypeScript cases.
 Selected-memory transfer and recall after restart were covered by Python.
 The full suite was not run; historical results retain their original source
@@ -41,7 +48,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.4;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.5;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility
