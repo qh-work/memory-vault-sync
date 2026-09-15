@@ -929,17 +929,24 @@ service resource events, not all documents in a storage pack. Node-created
 resource.offer/active/binding/custody and exact scoped resource statuses may be
 returned only under their original signer's explicit service permission, not
 a replacement P's assertion about what an offline R would have permitted.
-Signing root.custody, message.custody or ack.slot_custody explicitly permits
-return of that source's own complete resource.offer, resource.active, exact
-ack.binding where applicable, source descriptor, source custody and narrowly
-scoped resource authority.status under the subject/profile of the **earlier**
+Signing root.custody, message.custody, ack.slot_custody or ack.commit explicitly
+permits return of that original signer's own complete resource.offer,
+resource.active, exact ack.binding where applicable, source descriptor, source
+custody/ack.commit, same-scope already-referenced mailbox.feed_head,
+mailbox.checkpoint or ack.head where present, and narrowly scoped resource
+authority.status under the subject/profile of the **earlier**
 bootstrap grants in its exact historical closure. message.custody obtains that
 closure through core/link→mailbox_member; it never points to a future feed
 manifest. feed.custody makes the same commitment for its covered interval
 without extending an earlier signer's permission. Empty ACK custody can name
 its already existing ack_offer grant; unbound custody cannot authorize a
 future grant. These signatures permit return of the event itself without
-embedding a future self hash.
+embedding a future self hash. The permission for referenced heads/checkpoints
+covers only existing same-scope originals signed by that same issuer and
+already included in the commitment's closure; it cannot point to a future head
+or authorize another signer's bytes. An ack.commit's original issuer may be P
+when P received the first receipt. A later P never grants permission on behalf
+of an offline R or any other original issuer.
 
 A replica.custody preserves those original finite permissions and permits its
 own offer/custody/resource-status evidence only to the exact earlier grants
@@ -1231,8 +1238,10 @@ proof survives stage cleanup under its real resource pins.
 
 A snapshot manifest is an unsigned closed object with
 `schema_version,kind,root_key,selector,generation,state,children`;
-each child is `{index,role,ref}`. It references no handle or future proof. The
-server signs a fresh challenge binding the complete intent raw hash, subject,
+each child is `{index,role,ref}` in contiguous index order starting at zero.
+Its children cannot include this manifest itself, any future handle or future
+proof. Only the exact purpose/state's closed role set and existing original
+bytes are permitted. The manifest is frozen before the challenge. The server signs a fresh challenge binding the complete intent raw hash, subject,
 target keys/epoch, purpose, snapshot raw ref and a fresh encrypted nonce. The
 subject signs the answer to that exact challenge. This challenge domain is
 distinct from contact submit/result and ordinary delivery/blob challenges.
@@ -1251,15 +1260,86 @@ intent, current read scope, snapshot pin and node's finite challenge policy.
 An answer cannot extend any of them. No future final RPC hash appears in its
 own challenge.
 
-After proof of both caller keys, recheck the pinned generation, current
-authority and quota; return `snapshot.handle` with
-`issued_at,expires_at,handle_id,intent_ref,subject:DualID,target_node_key_id,
-target_storage_epoch,purpose,root_key,selector,generation,snapshot_ref,
-child_count`. The handle is not a bearer capability. Every chunk needs fresh
-subject authentication and exact handle/child/offset binding; only declared
-typed children are readable. Changed/missing bytes invalidate that snapshot,
-not transparently switch to another generation. Read concurrency and pins have
-finite node/subject bounds and a shared parent deadline.
+After accepting the exact one-use snapshot.answer, recheck the pinned
+generation, current authority/floors, read pins and quota. The target signs
+`snapshot.handle` with exact additional fields
+`issued_at,expires_at,handle_id,intent_ref,bootstrap_use_ref,subject:DualID,
+target_node_key_id,target_storage_epoch,purpose,root_key,selector,generation,
+snapshot_ref,child_count`. bootstrap_use_ref is the already verified head.read
+use from section 9.5, not a new permission or a future request reference.
+
+Success returns the unsigned canonical control object
+`snapshot.response={schema_version,kind,handle_raw_base64url,
+snapshot_manifest_raw_base64url}`. Both fields contain **all original bytes**:
+the exact target Signed handle and the already frozen canonical snapshot
+manifest, inline in the same authenticated response. A handle alone or a
+manifest hash alone is not success and cannot require an undisclosed locator
+or a preliminary child read. The full encoded response, decoded originals and
+retained response/pin overlap must fit the existing control limit and the same
+enabled cold-run budget. If they do not fit, refuse **before issuing a usable
+handle**; no usable partial response, silent cap increase or upload-first
+fallback is allowed.
+
+C first bounds and strictly decodes both byte strings, verifies canonical
+closed schemas and the expected target's full handle signature, then checks
+intent_ref, bootstrap_use_ref, subject, target/epoch, purpose, root/selector,
+generation, windows and the exact snapshot_ref against its accepted challenge
+and preflight/head context. Verify manifest full original size/SHA-256 against
+snapshot_ref, its own root/selector/generation/state, contiguous child indexes,
+child_count and the complete closed role set before using any child identifier.
+Check original-signer disclosure permission for each role. A manifest entry
+only names a child; it does not validate the child's contents or expand read
+scope. In particular, an unknown E, ACK commit or receipt ref is learned here
+only through this validated response and later authorized typed children.
+
+Each chunk read uses a fresh caller Signed `snapshot.child_request` with exact
+additional fields
+`issued_at,expires_at,request_id,subject:DualID,target_node_key_id,
+target_storage_epoch,purpose,intent_ref,bootstrap_use_ref,handle_ref:RawRef,
+snapshot_ref:RawRef,generation,child_index,offset,requested_bytes`.
+The purpose is the same one of the four head purposes, never a general blob
+read. handle_ref binds the complete original Signed handle bytes, not just its
+handle_id. For locally constructed references to this handle or a child request,
+use namespace=meta, key=raw_sha256 of its complete original wire and the exact
+size; this content binding grants no network lookup permission. snapshot_ref
+is the exact ref already authenticated by the handle, not a guessed hash.
+The request's subject signature, all identities, intent/use/handle/snapshot refs
+and generation must match the retained context. No request, handle or result
+can be reused with another preflight, even if its root and target are unchanged.
+
+Use the existing MVOB1 binary frame envelope from memory_vault_open_blob.py
+and open-blob.ts: magic bytes, two big-endian uint32 lengths, full canonical
+Signed header bytes and the exact raw chunk. A snapshot.child_request frame
+has its Signed request as header and an empty chunk. This new repair-schema
+consumer must explicitly validate these kinds; the old blob.request/response
+verifier does not thereby accept them. Keep the existing prefix, header and
+chunk bounds and fixed aligned download ranges: offset is U53, less than the
+selected child size and a multiple of MAX_BLOB_CHUNK_BYTES; requested_bytes is
+positive and exactly min(MAX_BLOB_CHUNK_BYTES, child.size-offset). This selects
+one existing frame/range convention without widening the old transport limits.
+
+The target's response frame has a Signed `snapshot.child_response` header with
+exact additional fields
+`issued_at,expires_at,request_ref:RawRef,subject:DualID,target_node_key_id,
+target_storage_epoch,purpose,bootstrap_use_ref,handle_ref:RawRef,
+snapshot_ref:RawRef,generation,child_index,child_ref:RawRef,offset,length,
+chunk_sha256:H`, followed by exactly length raw bytes. request_ref binds the
+entire fresh Signed request; child_ref equals the selected manifest entry;
+length equals requested_bytes. Response expiry cannot exceed the request,
+handle, preflight/read or pin window. C verifies the expected target signature,
+all request/context/child/range bindings and actual chunk length/SHA-256 before
+accepting bytes, and verifies the full child's RawRef when assembly completes.
+Neither a valid frame nor a chunk hash substitutes for the child's original
+signatures and semantic authority checks.
+
+Before **every** read, the server rechecks current authority/floors, exact
+preflight/use binding, target epoch, generation, read pins, declared role/range,
+request replay state and shared remaining budget. Changed or missing bytes
+invalidate that snapshot; do not silently switch generations. Requests,
+responses, encoded/decoded control copies, both frame headers/prefixes, actual
+chunk bytes, work and response/pin overlap all charge the original cold-run
+budget with finite node/subject concurrency and one parent deadline. A chunk,
+retry or internal consumer never resets that budget.
 
 At the reader, downloaded refs must match exact size/hash, expected signatures,
 root/scope/time/resource chain and verified parent membership before gaining
@@ -1339,7 +1419,7 @@ dummy documents:
 | occupied ACK | exact A root/read/grant/binding, B receipt/put/disclosure, original ACK commit/manifest/resource/status and complete current serving chain |
 | mailbox feed interval | H(mailbox_feed), every covered H(mailbox_member)/core/link/custody and original roles, complete exact head/range/path/page closure, independent feed.custody, actual live dependency resources and member consents |
 | service preflight (each of four profiles) | locally held owner bootstrap/parent/caller/status chain; full allowed current owner/consent/M/node service closure; mutual nonce objects, proof manifest/handle/requests and original status return permissions; no uploaded private originals before completion |
-| cold read | actual inline/staged preheld originals after preflight, complete target-local proof, bound bootstrap.use and stage results, snapshot, children and decoded metadata, with duplicate physical copies accounted |
+| cold read | actual inline/staged preheld originals after preflight, complete target-local proof, bound bootstrap.use and stage results, snapshot.response with full original handle/manifest inline, Signed snapshot.child_request/response frames, assembled children and decoded metadata, with all encoded/decoded copies and pins accounted |
 
 The role registry must distinguish historical and current status, original and
 replacement resource, message and ACK roots, checkpoint and feed_head, repair
@@ -1363,8 +1443,17 @@ Then freeze mutually consistent finite policy maxima and refusal codes. Include
 all six historical variants and four preflight profiles, whole-interval histories,
 scoped consent/bootstrap/assignment/resource statuses, full original allocation
 and activation inputs, Signed child requests, inline and staged wrappers, and
-failed challenge/expired stage overlap. Bootstrap handles, stages and semantic
-consumers share the original job/cold-run budget: no phase or retry resets it.
+failed challenge/expired stage overlap. Snapshot vectors must include the
+complete encoded snapshot.response, decoded original Signed handle and manifest,
+all Signed child request/response headers, existing frame prefixes, aligned
+full/final chunks, per-child assembly and full-ref validation, and simultaneous
+snapshot response/read pins. Measure largest legal inline manifest responses
+for every head state; a one-over response must refuse before a usable handle.
+Include wrong full handle/request refs, missing manifest bytes, wrong role/index/
+child_count, self/future manifest children, signature or chunk-size/hash mismatch,
+and cross-preflight/epoch/generation reuse. Bootstrap handles, snapshots, stages
+and semantic consumers share the original job/cold-run budget: no phase or retry
+resets it.
 
 Before that measurement/review, local strict parsers, serializers, DAG builders,
 role/dependency planners, signature/nonce primitives and real byte/work counters
@@ -1411,8 +1500,16 @@ real parts of the final chain without claiming the whole chain complete:
    with durable local grants/floors and no future object IDs.
 3. Implement the four preflight profiles and their full original-signer return
    permissions, two-way possession, protected Signed proof-child reads, and
-   inline/staged bootstrap.use binding. Keep unsupported permission closures
-   disabled; original owner offline is not an excuse to request upload first.
+   inline/staged bootstrap.use binding. Implement snapshot.response's complete
+   inline original handle/manifest and the exact Signed snapshot.child_request/
+   response MVOB1 frames before enabling cold snapshots. The minimal positive
+   vector starts only from frozen cold inputs and actual protocol responses:
+   snapshot.answer → snapshot.response → validated manifest children → fresh
+   child request → bound response frame → validated original child. It must
+   not inject unknown child refs, server files or future handle refs from a
+   driver. This is an implementation requirement, not a run performed by this
+   document. Keep unsupported permission closures disabled; original owner
+   offline is not an excuse to request upload first.
 4. Mailbox admission core/checkpoint/link, private and repair pages, range
    index and separate feed_head; exact original closure and atomic source
    result. Form complete interval H(mailbox_feed) only after member histories
