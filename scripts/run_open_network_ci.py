@@ -31,7 +31,8 @@ MAX_REPORT_BYTES = 900_000  # All explicitly uploadable files together, <1 MiB.
 MODULES = tuple("tests.test_open_" + name for name in (
     "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "typescript", "typescript_state", "typescript_http", "network_ci",
     "contact", "contact_state", "contact_http", "contact_typescript", "contact_typescript_http",
-    "delivery_http", "provider_typescript", "provider_typescript_http")) + (
+    "delivery_http", "provider_typescript", "provider_typescript_http",
+    "repair_wire", "repair_typescript")) + (
     "tests.test_continuation_trial", "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {
     "schema_version": "memory-vault-open-routing-acceptance/v2", "logical_nodes": 100,
@@ -209,7 +210,7 @@ def initialize(reports, mode, seed):
             "open-transport.ts", "open-participant.ts", "open-node.ts", "open-client.ts",
             "open-control.ts", "open-routing.ts", "open-state.ts", "client-config.ts", "transport-state.ts",
             "open-contact.ts", "open-contact-state.ts", "open-contact-client.ts",
-            "open-provider.ts", "open-provider-client.ts", "open-blob.ts",
+            "open-provider.ts", "open-provider-client.ts", "open-blob.ts", "open-repair-wire.ts",
             "open-delivery.ts", "open-delivery-control.ts", "open-delivery-client.ts",
             "agent.ts", "peer.ts", "io.ts", "crypto.ts")]
         sources += ["requirements-network-server-lock.txt", "tests/test_open_typescript.py", "tests/test_open_typescript_http.py", "tests/test_open_typescript_state.py",
@@ -219,6 +220,7 @@ def initialize(reports, mode, seed):
                     "tests/test_open_contact_typescript.py", "tests/test_open_contact_typescript_http.py",
                     "tests/test_network_typescript_agent_network.py", "tests/test_network_packaging.py"]
         sources += ["memory_vault_open_provider.py", "memory_vault_open_provider_client.py", "memory_vault_open_provider_state.py",
+                    "memory_vault_open_repair_wire.py", "examples/protocol/open-repair-wire-v1.json",
                     "memory_vault_open_blob.py", "memory_vault_open_delivery.py", "memory_vault_open_delivery_client.py",
                     "memory_vault_open_delivery_state.py", "scripts/continuation_trial.py",
                     "scripts/build_client_plugin.py", "scripts/build_release.py", "clients/typescript/network/package.json"]

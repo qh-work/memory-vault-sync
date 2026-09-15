@@ -67,6 +67,7 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_open_delivery_http.py",
     "tests/test_open_provider_typescript_http.py",
     "tests/test_open_provider_typescript.py",
+    "tests/test_open_repair_wire.py", "tests/test_open_repair_typescript.py",
     "tests/test_continuation_trial.py",
     "tests/open_routing_acceptance.py",
     "tests/test_experience.py", "tests/test_experience_edges.py", "tests/test_experience_typescript.py", "tests/test_cross_author_state.py",
@@ -98,6 +99,12 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_network_trial.py",
     "tests/test_network_trial_coordinator.py",
     "tests/test_network_trial_packaging.py",
+)
+# Local draft repair primitives have no live caller yet. Include their exact
+# sources for review without enrolling them in the client runtime allowlist.
+LOCAL_REPAIR_REVIEW_SOURCES = (
+    "memory_vault_open_repair_wire.py",
+    "clients/typescript/network/open-repair-wire.ts",
 )
 TRIAL_EXTRA_MODULES = ("memory_vault_trial.py",)
 TRIAL_RUNTIME_MODULES = REQUIRED_MODULES + TRIAL_EXTRA_MODULES
@@ -175,6 +182,7 @@ def review_sources(material: list[Path], source_tree: ReleaseSource) -> list[Pat
     ))
     paths.extend(sorted((ROOT / "tests").glob("test_v025_*.py")))
     paths.extend(ROOT / name for name in NETWORK_REVIEW_TESTS)
+    paths.extend(ROOT / name for name in LOCAL_REPAIR_REVIEW_SOURCES)
     paths.extend(ROOT / source for _, source in TRIAL_PACKAGE_SOURCES)
     paths.extend(ROOT / name for name in TRIAL_RUNTIME_MODULES)
     paths.extend(ROOT / name for name in TRIAL_REVIEW_SERVER_MODULES)

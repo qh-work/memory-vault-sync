@@ -1,0 +1,366 @@
+{
+  "schema_version": "memory-vault-open-repair-wire-fixtures/v1",
+  "synthetic_only": true,
+  "status": "local-draft-parser-vectors-not-a-live-policy-or-repair-acceptance",
+  "cases": [
+    {
+      "id": "synthetic_empty_object",
+      "mode": "canonical",
+      "raw_base64": "e30=",
+      "expected": {
+        "ok": true,
+        "value": {}
+      }
+    },
+    {
+      "id": "synthetic_bool_is_json_not_u53",
+      "mode": "canonical",
+      "raw_base64": "dHJ1ZQ==",
+      "expected": {
+        "ok": true,
+        "value": true
+      }
+    },
+    {
+      "id": "synthetic_null",
+      "mode": "canonical",
+      "raw_base64": "bnVsbA==",
+      "expected": {
+        "ok": true,
+        "value": null
+      }
+    },
+    {
+      "id": "synthetic_u53_max",
+      "mode": "canonical",
+      "raw_base64": "OTAwNzE5OTI1NDc0MDk5MQ==",
+      "expected": {
+        "ok": true,
+        "value": 9007199254740991
+      }
+    },
+    {
+      "id": "synthetic_nested_values",
+      "mode": "canonical",
+      "raw_base64": "eyJhIjpbbnVsbCxmYWxzZSwwLDkwMDcxOTkyNTQ3NDA5OTFdLCJiIjp7Im5hbWUiOiJzeW50aGV0aWMifX0=",
+      "expected": {
+        "ok": true,
+        "value": {
+          "a": [
+            null,
+            false,
+            0,
+            9007199254740991
+          ],
+          "b": {
+            "name": "synthetic"
+          }
+        }
+      }
+    },
+    {
+      "id": "synthetic_unicode_scalar_key_order",
+      "mode": "canonical",
+      "raw_base64": "eyLugIAiOiJmaXJzdCIsIvCQgIAiOiJzZWNvbmQifQ==",
+      "expected": {
+        "ok": true,
+        "value": {
+          "": "first",
+          "𐀀": "second"
+        }
+      }
+    },
+    {
+      "id": "synthetic_numeric_key_order",
+      "mode": "canonical",
+      "raw_base64": "eyIxMCI6InRlbiIsIjIiOiJ0d28ifQ==",
+      "expected": {
+        "ok": true,
+        "value": {
+          "2": "two",
+          "10": "ten"
+        }
+      }
+    },
+    {
+      "id": "synthetic_control_and_unicode",
+      "mode": "canonical",
+      "raw_base64": "eyJ0ZXh0IjoiXGJcdFxuXGZcclx1MDAwMC9cIlxcIOWQiOaIkCDwn6eqIn0=",
+      "expected": {
+        "ok": true,
+        "value": {
+          "text": "\b\t\n\f\r\u0000/\"\\ 合成 🧪"
+        }
+      }
+    },
+    {
+      "id": "synthetic_prototype_names_are_data",
+      "mode": "canonical",
+      "raw_base64": "eyJfX3Byb3RvX18iOnsic3ludGhldGljIjp0cnVlfSwiY29uc3RydWN0b3IiOiJzeW50aGV0aWMiLCJwcm90b3R5cGUiOm51bGx9",
+      "expected": {
+        "ok": true,
+        "value": {
+          "__proto__": {
+            "synthetic": true
+          },
+          "constructor": "synthetic",
+          "prototype": null
+        }
+      }
+    },
+    {
+      "id": "duplicate_plain_key",
+      "mode": "canonical",
+      "raw_base64": "eyJhIjoxLCJhIjoyfQ==",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_json"
+      }
+    },
+    {
+      "id": "duplicate_escaped_key",
+      "mode": "canonical",
+      "raw_base64": "eyJhIjoxLCJcdTAwNjEiOjJ9",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_json"
+      }
+    },
+    {
+      "id": "invalid_number_negative",
+      "mode": "canonical",
+      "raw_base64": "LTE=",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_json"
+      }
+    },
+    {
+      "id": "invalid_number_negative_zero",
+      "mode": "canonical",
+      "raw_base64": "LTA=",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_json"
+      }
+    },
+    {
+      "id": "invalid_number_decimal",
+      "mode": "canonical",
+      "raw_base64": "MS4w",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_json"
+      }
+    },
+    {
+      "id": "invalid_number_exponent",
+      "mode": "canonical",
+      "raw_base64": "MWUw",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_json"
+      }
+    },
+    {
+      "id": "invalid_number_leading_plus",
+      "mode": "canonical",
+      "raw_base64": "KzE=",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_json"
+      }
+    },
+    {
+      "id": "invalid_number_leading_zero",
+      "mode": "canonical",
+      "raw_base64": "MDE=",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_json"
+      }
+    },
+    {
+      "id": "invalid_number_nan",
+      "mode": "canonical",
+      "raw_base64": "TmFO",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_json"
+      }
+    },
+    {
+      "id": "invalid_number_infinity",
+      "mode": "canonical",
+      "raw_base64": "SW5maW5pdHk=",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_json"
+      }
+    },
+    {
+      "id": "integer_over_u53",
+      "mode": "canonical",
+      "raw_base64": "OTAwNzE5OTI1NDc0MDk5Mg==",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_integer"
+      }
+    },
+    {
+      "id": "unpaired_high_surrogate",
+      "mode": "canonical",
+      "raw_base64": "Ilx1ZDgwMCI=",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_unicode"
+      }
+    },
+    {
+      "id": "unpaired_low_surrogate",
+      "mode": "canonical",
+      "raw_base64": "Ilx1ZGZmZiI=",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_unicode"
+      }
+    },
+    {
+      "id": "unpaired_surrogate_key",
+      "mode": "canonical",
+      "raw_base64": "eyJcdWQ4MDAiOjB9",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_unicode"
+      }
+    },
+    {
+      "id": "invalid_utf8_truncated",
+      "mode": "canonical",
+      "raw_base64": "IuS4Ig==",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_utf8"
+      }
+    },
+    {
+      "id": "invalid_utf8_overlong",
+      "mode": "canonical",
+      "raw_base64": "IsCvIg==",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_utf8"
+      }
+    },
+    {
+      "id": "invalid_utf8_surrogate",
+      "mode": "canonical",
+      "raw_base64": "Iu2ggCI=",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_utf8"
+      }
+    },
+    {
+      "id": "invalid_utf8_non_scalar",
+      "mode": "canonical",
+      "raw_base64": "IvSQgIAi",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_utf8"
+      }
+    },
+    {
+      "id": "noncanonical_key_order",
+      "mode": "canonical",
+      "raw_base64": "eyJiIjoxLCJhIjoyfQ==",
+      "expected": {
+        "ok": false,
+        "code": "repair_noncanonical_json"
+      }
+    },
+    {
+      "id": "noncanonical_leading_space",
+      "mode": "canonical",
+      "raw_base64": "IHt9",
+      "expected": {
+        "ok": false,
+        "code": "repair_noncanonical_json"
+      }
+    },
+    {
+      "id": "noncanonical_trailing_newline",
+      "mode": "canonical",
+      "raw_base64": "e30K",
+      "expected": {
+        "ok": false,
+        "code": "repair_noncanonical_json"
+      }
+    },
+    {
+      "id": "noncanonical_escaped_ascii",
+      "mode": "canonical",
+      "raw_base64": "Ilx1MDA2MSI=",
+      "expected": {
+        "ok": false,
+        "code": "repair_noncanonical_json"
+      }
+    },
+    {
+      "id": "noncanonical_escaped_unicode",
+      "mode": "canonical",
+      "raw_base64": "Ilx1NTQwOFx1NjIxMCI=",
+      "expected": {
+        "ok": false,
+        "code": "repair_noncanonical_json"
+      }
+    },
+    {
+      "id": "noncanonical_escaped_slash",
+      "mode": "canonical",
+      "raw_base64": "IlwvIg==",
+      "expected": {
+        "ok": false,
+        "code": "repair_noncanonical_json"
+      }
+    },
+    {
+      "id": "noncanonical_escaped_pair",
+      "mode": "canonical",
+      "raw_base64": "Ilx1ZDgzZVx1ZGRlYSI=",
+      "expected": {
+        "ok": false,
+        "code": "repair_noncanonical_json"
+      }
+    },
+    {
+      "id": "strict_whitespace_retains_raw",
+      "mode": "strict",
+      "raw_base64": "IHsgInN5bnRoZXRpYyI6IHRydWUgfQo=",
+      "expected": {
+        "ok": true,
+        "value": {
+          "synthetic": true
+        }
+      }
+    },
+    {
+      "id": "strict_paired_surrogate_retains_raw",
+      "mode": "strict",
+      "raw_base64": "Ilx1ZDgzZVx1ZGRlYSI=",
+      "expected": {
+        "ok": true,
+        "value": "🧪"
+      }
+    },
+    {
+      "id": "utf8_bom_not_json",
+      "mode": "canonical",
+      "raw_base64": "77u/e30=",
+      "expected": {
+        "ok": false,
+        "code": "repair_invalid_json"
+      }
+    }
+  ]
+}
