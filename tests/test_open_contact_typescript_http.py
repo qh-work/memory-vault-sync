@@ -300,6 +300,68 @@ class ContactTypeScriptHTTPTests(unittest.TestCase):
             saved=json.loads(bytes(db.execute("SELECT body FROM open_contact_local WHERE category='result' AND reference='synthetic_at_capacity'").fetchone()[0]))
         self.assertEqual(saved['decision']['payload']['grant'],completed['grant'])
 
+    def test_native_enable_directory_expiry_is_null_without_confirmed_publication(self):
+        host=self.host(1,set());self.identity('directory-owner')
+        host.stop(0)
+        config=json.loads(host.configs[0].read_bytes());config['index_policy']={'enabled':False}
+        atomic_write(host.configs[0],canonical_bytes(config),replace=True);host.start(0)
+        result=self.native('directory-owner',host.nodes,[{'op':'enable','node':host.nodes[0],
+            'options':{'allocation_id':'synthetic_closed_directory','lease_seconds':600}}])
+        enabled=self.values(result)[0]
+        self.assertEqual(enabled['state'],'active');self.assertEqual(enabled['directory_state'],'degraded')
+        self.assertEqual(enabled['confirmed_index_leases'],0)
+        self.assertIsNone(enabled['directory_expires_at'])
+        calls=[call for call in result['calls'] if call['request']['payload']['action']=='put']
+        self.assertTrue(calls)
+        for call in calls:
+            body=verify_response(call['response'],request=call['request'],node=host.nodes[0])['body']
+            self.assertEqual(body['error']['code'],'open_index_closed')
+        with sqlite3.connect(self.root/'node_0/transport/network.sqlite3') as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM open_contacts').fetchone()[0],0)
+            self.assertEqual(db.execute('SELECT expires_at FROM open_contact_resource_leases').fetchone()[0],enabled['expires_at'])
+
+    def test_native_enable_reports_actual_short_directory_lease_and_preserves_exact_retry(self):
+        host=self.host(1,set());owner,_=self.identity('directory-owner')
+        operation={'op':'enable','node':host.nodes[0],
+            'options':{'allocation_id':'synthetic_short_directory','lease_seconds':30}}
+        local=self.root/'directory-owner/transport/network.sqlite3'
+        remote=self.root/'node_0/transport/network.sqlite3'
+        def snapshot():
+            with sqlite3.connect(local) as db:
+                policies=db.execute("SELECT body FROM open_contact_local WHERE category='policy'").fetchall()
+            with sqlite3.connect(remote) as db:
+                resources=db.execute('SELECT * FROM open_contact_resource_leases').fetchall()
+            return policies,resources
+        def confirmed(result):
+            leases=[]
+            for call in result['calls']:
+                if call['request']['payload']['action']!='put':continue
+                body=verify_response(call['response'],request=call['request'],node=host.nodes[0])['body']
+                if 'lease' in body:leases.append(body['lease'])
+            self.assertEqual(len(leases),1)
+            enabled=self.values(result)[0]
+            self.assertEqual(enabled['confirmed_index_leases'],len(leases))
+            self.assertEqual(enabled['directory_expires_at'],min(lease['payload']['expires_at'] for lease in leases))
+            with sqlite3.connect(remote) as db:
+                stored=bytes(db.execute('SELECT lease FROM open_contacts WHERE owner=?',(owner.key_id,)).fetchone()[0])
+            self.assertEqual(stored,canonical_bytes(leases[0]))
+            return enabled,leases[0]
+        first,first_lease=confirmed(self.native('directory-owner',host.nodes,[operation]))
+        self.assertLessEqual(first_lease['payload']['expires_at']-first_lease['payload']['issued_at'],30)
+        before=snapshot();self.assertEqual(len(before[0]),1);self.assertEqual(len(before[1]),1)
+        session=json.loads(bytes(before[0][0][0]))
+        self.assertEqual(first['expires_at'],session['lease']['payload']['expires_at'])
+        self.assertEqual(session['policy']['payload']['lease_sha256'],document_sha256(session['lease']))
+        repeated=self.native('directory-owner',host.nodes,[operation]);again,again_lease=confirmed(repeated)
+        self.assertEqual(again['lease_id'],first['lease_id']);self.assertEqual(again['expires_at'],first['expires_at'])
+        self.assertNotEqual(again_lease['payload']['lease_id'],first_lease['payload']['lease_id'])
+        self.assertFalse(any(call['request']['payload']['action']=='lease' for call in repeated['calls']))
+        policy_calls=[call for call in repeated['calls'] if call['request']['payload']['action']=='policy.put']
+        self.assertEqual(len(policy_calls),1)
+        self.assertEqual(canonical_bytes(policy_calls[0]['request']['payload']['body']),
+            canonical_bytes({'lease':session['lease'],'policy':session['policy']}))
+        self.assertEqual(snapshot(),before)
+
     def test_native_enable_reserves_local_handle_and_validates_before_remote_opt_in(self):
         host=self.host(1,{0});self.identity('owner');self.values(self.native('owner',host.nodes,[]))
         local=self.root/'owner/transport/network.sqlite3';remote=self.root/'node_0/transport/network.sqlite3'

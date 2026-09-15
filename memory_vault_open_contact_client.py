@@ -185,8 +185,10 @@ class OpenContactClient:
             "base_url": node["payload"]["base_url"], "storage_epoch": raw["storage_epoch"]}],
             issued_at=now, expires_at=min(now + 3600, raw["expires_at"]))
         published = await self.participant.publish_contact(contact, lease_seconds=min(300, lease_seconds))
+        directory_expires_at = min((confirmed["payload"]["expires_at"] for confirmed in published["leases"]), default=None)
         return {"state": "active", "lease_id": raw["lease_id"], "expires_at": raw["expires_at"],
                 "directory_state": published["state"], "confirmed_index_leases": published["confirmed_leases"],
+                "directory_expires_at": directory_expires_at,
                 "open_messaging_supported": False}
 
     async def request(self, recipient_key_id, *, request_id):

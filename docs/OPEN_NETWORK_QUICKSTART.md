@@ -190,10 +190,29 @@ PY
 
 Keep B's returned `lease_id` and `expires_at`. `directory_state` and
 `confirmed_index_leases` describe actual publication; a degraded count is not
-three independent replicas. A needs a discoverable B contact. Finish within the
-reported finite lease/contact windows; an expired approval is not renewed by
-repeating `send`. Repeating this exact enable request can republish its still-live
-contact. Do not silently change an existing allocation's revision or limits.
+three independent replicas. **Development source adds `directory_expires_at`;
+the published alpha.0.5 download packages do not contain this field.** In this
+source, `directory_expires_at` is the earliest expiry among
+the actual confirmed signed directory leases, in Unix seconds; it is `null` when
+none was confirmed. This conservative deadline is separate from `expires_at`,
+which remains the original knock lease's expiry.
+
+A needs a discoverable B contact. Directory registration lasts at most 300
+seconds, and the accepting node or remaining contact lifetime can make it
+shorter. Before `directory_expires_at`, B should repeat the same valid `enable`
+request to refresh its directory registration, then use the newly returned
+deadline. With no confirmed registration, A may not discover B; B must obtain
+successful publication first. There is no automatic background renewal.
+Repeating `enable` preserves the original policy and knock lease; it does not
+extend an expired knock lease or contact. Finish within those original windows,
+and do not change an existing allocation's revision or limits to retry. An
+expired approval is not renewed by repeating `send`.
+
+For an alpha.0.5 download, B should repeat the same still-valid `enable` just
+before A's first contact request. If A receives `contact_unavailable`, B can
+republish successfully with that same request and A can retry. Both steps remain
+subject to the original knock lease and contact lifetime; waiting less than
+300 seconds alone does not guarantee discoverability.
 
 A sends a metadata-only first-contact request. Its `request_id` is outside
 `invitation`:

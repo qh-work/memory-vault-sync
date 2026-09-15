@@ -130,6 +130,7 @@ export class OpenContactClient{
       issued_at:raw.issued_at,expires_at:Math.min(raw.issued_at+3600,raw.expires_at)});
     const published=await this.participant.publishContact(contact,Math.min(300,leaseSeconds));
     return {state:'active',lease_id:raw.lease_id,expires_at:raw.expires_at,directory_state:published.state,
+      directory_expires_at:published.leases.length?Math.min(...published.leases.map((lease:Obj)=>lease.payload.expires_at)):null,
       confirmed_index_leases:published.confirmed_leases,open_messaging_supported:false};
   }
   async request(recipientKeyId:string,options:{request_id:string}):Promise<Obj>{
