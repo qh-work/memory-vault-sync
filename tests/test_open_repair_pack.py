@@ -2,8 +2,9 @@
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
 import hashlib
-from threading import Barrier
+from threading import Barrier, Event, Thread
 import unittest
+from unittest.mock import patch
 
 import memory_vault_open_repair_wire as wire
 from tests.test_open_repair_wire import policy
@@ -72,6 +73,84 @@ class OpenRepairPackTests(unittest.TestCase):
         self.assertCode("repair_invalid_pack", wire.build_raw_pack, [], local, budget)
         self.assertCode("repair_invalid_pack", wire.build_raw_pack, [b""], local, budget)
         self.assertCode("repair_invalid_pack", wire.build_raw_pack, [built.raw], local, budget)
+
+    def test_builder_holds_all_input_exports_across_real_hash_and_thread_resize(self):
+        local = policy(max_document_bytes=256, max_retained_bytes=180, max_entries=3,
+                       max_total_bytes=4096, max_hash_bytes=4096, max_hashes=16)
+        later = bytearray(b"x")
+        budget = wire.RepairBudget(local)
+        start, finished = Event(), Event()
+        outcome, hashed_sizes = [], []
+        real_sha256 = hashlib.sha256
+
+        def resize_later():
+            if not start.wait(timeout=3):
+                outcome.append("timeout")
+            else:
+                try:
+                    later.extend(b"x" * 99)
+                    outcome.append("resized")
+                except BufferError:
+                    outcome.append("export_held")
+            finished.set()
+
+        def observed_hash(raw):
+            result = real_sha256(raw)  # All recorded hashes are actually executed.
+            hashed_sizes.append(len(raw))
+            if len(hashed_sizes) == 1:
+                start.set()
+                self.assertTrue(finished.wait(timeout=3), "resize worker did not finish")
+            return result
+
+        worker = Thread(target=resize_later)
+        worker.start()
+        try:
+            with patch.object(wire.hashlib, "sha256", side_effect=observed_hash):
+                built = wire.build_raw_pack([b"a", later], local, budget)
+        finally:
+            start.set()
+            worker.join(timeout=3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(outcome, ["export_held"])
+        self.assertEqual(built.raw, frame([b"a", b"x"]))
+        self.assertEqual(hashed_sizes, [1, 1, len(built.raw)])
+        self.assertEqual(budget.snapshot()["input_bytes"], 2)
+        self.assertEqual(budget.snapshot()["hashes"], 3)
+        later.extend(b"released")  # This operation's exports have all closed.
+
+    def test_builder_fixed_length_changes_deduplicate_and_release_on_every_exit(self):
+        later = bytearray(b"x")
+        local = policy()
+        budget = wire.RepairBudget(local)
+        real_sha256 = hashlib.sha256
+        hashes = []
+
+        def mutate_content(raw):
+            result = real_sha256(raw)
+            hashes.append(len(raw))
+            if len(hashes) == 1:
+                later[:] = b"a"  # Fixed-length writes remain allowed by exports.
+            return result
+
+        with patch.object(wire.hashlib, "sha256", side_effect=mutate_content):
+            built = wire.build_raw_pack([b"a", later], local, budget)
+        self.assertEqual(built.raw, frame([b"a"]))
+        self.assertEqual(hashes, [1, 1, len(built.raw)])
+        self.assertEqual(budget.snapshot()["input_bytes"], 2)
+        self.assertEqual(budget.snapshot()["entries"], 2)
+        later.extend(b"released")
+        for kind in ("preflight", "later_hash", "nested", "invalid_second"):
+            with self.subTest(kind=kind):
+                raw = bytearray(b"x" if kind != "nested" else b"MVRP1\0")
+                local = policy(**({"max_retained_bytes": 50} if kind == "preflight"
+                                  else {"max_hashes": 1} if kind == "later_hash" else {}))
+                budget = wire.RepairBudget(local)
+                inputs = [raw, object()] if kind == "invalid_second" else [raw]
+                code = ("repair_over_budget" if kind in ("preflight", "later_hash")
+                        else "repair_invalid_pack" if kind == "nested" else "repair_invalid_bytes")
+                self.assertCode(code, wire.build_raw_pack, inputs, local, budget)
+                raw.extend(b"released")
+                self.assertEqual(budget.snapshot()["entries"], 0)
 
     def test_strict_framing_length_order_duplicates_and_nesting(self):
         one = frame([b"x"])

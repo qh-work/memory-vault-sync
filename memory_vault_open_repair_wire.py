@@ -7,11 +7,13 @@ byte resolver, never the new JSON parser or a canonical reserialization.
 """
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import dataclass, fields as dataclass_fields
 import hashlib
 import hmac
 import re
 from threading import RLock
+from types import MappingProxyType
 from typing import Any, Iterable
 
 
@@ -69,7 +71,7 @@ def object_fields(value: Any, expected: Iterable[str]) -> dict:
     return value
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RepairPolicy:
     """Caller-chosen finite local limits; none are a deployed protocol policy."""
 
@@ -102,59 +104,89 @@ class RepairBudget:
     budget, including resolver holdings. This is not a database writer lock.
     """
 
+    __slots__ = ("__policy", "__lock", "__usage")
+
     def __init__(self, policy: RepairPolicy):
-        if type(policy) is not RepairPolicy:
+        if type(policy) is not RepairPolicy or hasattr(self, "_RepairBudget__usage"):
             _fail("repair_invalid_policy")
-        self._policy = policy
-        self._lock = RLock()
-        self._usage = dict(input_bytes=0, output_bytes=0, nodes=0,
-                           string_bytes=0, max_depth=0, hash_bytes=0, hashes=0,
-                           entries=0, retained_bytes=0, signature_checks=0)
+        object.__setattr__(self, "_RepairBudget__policy", policy)
+        object.__setattr__(self, "_RepairBudget__lock", RLock())
+        object.__setattr__(self, "_RepairBudget__usage", dict(
+            input_bytes=0, output_bytes=0, nodes=0, string_bytes=0, max_depth=0,
+            hash_bytes=0, hashes=0, entries=0, retained_bytes=0, signature_checks=0))
+
+    def __setattr__(self, name, value):
+        raise AttributeError("repair_budget_immutable")
+
+    def __delattr__(self, name):
+        raise AttributeError("repair_budget_immutable")
+
+    @property
+    def _lock(self):
+        return self.__lock
+
+    @property
+    def _usage(self):
+        # Module readers may inspect the ledger; retained charges go through
+        # _retain. Ordinary instance writes cannot reset this live dictionary.
+        return MappingProxyType(self.__usage)
 
     def snapshot(self) -> dict[str, int]:
         with self._lock:
-            return self._usage.copy()
+            return self.__usage.copy()
 
     @property
     def policy(self) -> RepairPolicy:
-        return self._policy
+        return self.__policy
 
     def _fits(self, field: str, amount: int, limit: int):
-        if amount > limit - self._usage[field]:
+        if amount > limit - self.__usage[field]:
             _fail("repair_over_budget")
 
     def _bytes(self, field: str, amount: int):
-        total = self._usage["input_bytes"] + self._usage["output_bytes"]
+        total = self.__usage["input_bytes"] + self.__usage["output_bytes"]
         if amount > self.policy.max_total_bytes - total:
             _fail("repair_over_budget")
-        self._usage[field] += amount
+        self.__usage[field] += amount
 
     def _node(self, depth: int):
         if depth > self.policy.max_depth:
             _fail("repair_over_budget")
         self._fits("nodes", 1, self.policy.max_nodes)
-        self._usage["nodes"] += 1
-        self._usage["max_depth"] = max(self._usage["max_depth"], depth)
+        self.__usage["nodes"] += 1
+        self.__usage["max_depth"] = max(self.__usage["max_depth"], depth)
 
     def _string(self, size: int):
         if size > self.policy.max_string_bytes:
             _fail("repair_over_budget")
-        if size > U53_MAX - self._usage["string_bytes"]:
+        if size > U53_MAX - self.__usage["string_bytes"]:
             _fail("repair_over_budget")
-        self._usage["string_bytes"] += size
+        self.__usage["string_bytes"] += size
 
     def _hash(self, raw: bytes) -> str:
         self._fits("hashes", 1, self.policy.max_hashes)
         self._fits("hash_bytes", len(raw), self.policy.max_hash_bytes)
         result = hashlib.sha256(raw).hexdigest()
-        self._usage["hashes"] += 1
-        self._usage["hash_bytes"] += len(raw)
+        self.__usage["hashes"] += 1
+        self.__usage["hash_bytes"] += len(raw)
         return result
+
+    def _retain(self, size: int, count: int = 1):
+        u53(size)
+        u53(count, 1)
+        self._fits("entries", count, self.policy.max_entries)
+        self._fits("retained_bytes", size, self.policy.max_retained_bytes)
+        self.__usage["entries"] += count
+        self.__usage["retained_bytes"] += size
 
 
 def _context(policy: RepairPolicy, budget: RepairBudget):
-    if (type(policy) is not RepairPolicy or type(budget) is not RepairBudget
-            or budget.policy != policy):
+    if type(policy) is not RepairPolicy or type(budget) is not RepairBudget:
+        _fail("repair_invalid_policy")
+    try:
+        if budget.policy != policy:
+            _fail("repair_invalid_policy")
+    except AttributeError:  # A matching type made without its constructor.
         _fail("repair_invalid_policy")
 
 
@@ -417,6 +449,109 @@ def parse_canonical_json(raw: bytes, policy: RepairPolicy, budget: RepairBudget)
 parse_new_wire = parse_canonical_json
 
 
+def _clone_new_value(value: Any, budget: RepairBudget):
+    """Copy only caller-owned JSON values, with an explicit active-path stack."""
+    wire_size = 0
+    available = budget.policy.max_total_bytes - sum(
+        budget._usage[field] for field in ("input_bytes", "output_bytes"))
+    active, stack = set(), []
+
+    def reserve(amount: int):
+        nonlocal wire_size
+        if (amount > budget.policy.max_document_bytes - wire_size
+                or amount > available - wire_size):
+            _fail("repair_over_budget")
+        wire_size += amount
+
+    def string(current: str):
+        size = 0
+        reserve(2)
+        for char in current:
+            cp = ord(char)
+            if 0xD800 <= cp <= 0xDFFF:
+                _fail("repair_invalid_unicode")
+            length = _utf8_size(char)
+            if length > budget.policy.max_string_bytes - size:
+                _fail("repair_over_budget")
+            budget._string(length)
+            size += length
+            reserve(2 if char in '"\\\b\f\n\r\t' else 6 if cp < 0x20 else length)
+        return current
+
+    def clone(current: Any, depth: int):
+        budget._node(depth)
+        kind = type(current)
+        if current is None:
+            reserve(4)
+            return None
+        if kind is bool:
+            reserve(4 if current else 5)
+            return current
+        if kind in (int, float):
+            number = u53(current)
+            reserve(len(str(number)))  # At most sixteen U53 decimal digits.
+            return number
+        if kind is str:
+            return string(current)
+        if kind not in (dict, _DraftDict, list, _DraftList) or id(current) in active:
+            _fail("repair_invalid_json")
+        reserve(2)
+        active.add(id(current))
+        if kind in (list, _DraftList):
+            result = _DraftList()
+            stack.append([current, result, None, depth, len(current), 0])
+        else:
+            result = _DraftDict()
+            stack.append([current, result, iter(dict.items(current)), depth, len(current), 0])
+        return result
+
+    result = clone(value, 1)
+    while stack:
+        source, target, iterator, depth, count, index = stack[-1]
+        if len(source) != count:
+            _fail("repair_invalid_json")
+        if index == count:
+            active.remove(id(source))
+            stack.pop()
+            continue
+        stack[-1][5] += 1
+        if index:
+            reserve(1)
+        if iterator is None:
+            try:
+                child = source[index]
+            except IndexError:
+                _fail("repair_invalid_json")
+            list.append(target, clone(child, depth + 1))
+        else:
+            try:
+                key, child = next(iterator)
+            except (StopIteration, RuntimeError):
+                _fail("repair_invalid_json")
+            budget._node(depth + 1)
+            if type(key) is not str:
+                _fail("repair_invalid_json")
+            string(key)
+            reserve(1)
+            dict.__setitem__(target, key, clone(child, depth + 1))
+    return result
+
+
+def build_new_wire(value: Any, policy: RepairPolicy, budget: RepairBudget) -> DraftJson:
+    """Build canonical draft bytes from a bounded immutable JSON-value copy.
+
+    No input bytes or signatures are fabricated. Validation/copy and canonical
+    output each charge their real node/string traversal. Output size is checked
+    incrementally before encoding; only actual encoding charges output bytes.
+    Shared subtrees are copied per occurrence; cycles on the active path fail.
+    This accepts local caller objects, not arbitrary objects received remotely.
+    """
+    _context(policy, budget)
+    with budget._lock:
+        copied = _clone_new_value(value, budget)
+        return DraftJson(_canonical(copied, budget), copied)
+
+
 @dataclass(frozen=True)
 class RawRef:
     namespace: str
@@ -458,24 +593,35 @@ class LocalRawResolver:
     actual byte/hash work without charging a second retained entry.
     """
 
+    __slots__ = ("__policy", "__budget", "__originals")
+
     def __init__(self, policy: RepairPolicy, budget: RepairBudget):
         _context(policy, budget)
-        self._policy, self._budget = policy, budget
-        self._originals: dict[tuple[str, str], RawOriginal] = {}
+        if hasattr(self, "_LocalRawResolver__originals"):
+            _fail("repair_invalid_policy")
+        object.__setattr__(self, "_LocalRawResolver__policy", policy)
+        object.__setattr__(self, "_LocalRawResolver__budget", budget)
+        object.__setattr__(self, "_LocalRawResolver__originals", {})
+
+    def __setattr__(self, name, value):
+        raise AttributeError("repair_resolver_immutable")
+
+    def __delattr__(self, name):
+        raise AttributeError("repair_resolver_immutable")
 
     @property
     def policy(self) -> RepairPolicy:
-        return self._policy
+        return self.__policy
 
     @property
     def budget(self) -> RepairBudget:
-        return self._budget
+        return self.__budget
 
     def put(self, namespace: str, key: str, raw: bytes) -> RawOriginal:
         with self.budget._lock:
             size = _raw_size(raw, self.policy)
             RawRef(namespace, key, "0" * 64, size)  # Closed identity before work.
-            prior = self._originals.get((namespace, key))
+            prior = self.__originals.get((namespace, key))
             if prior is None:
                 self.budget._fits("entries", 1, self.policy.max_entries)
                 self.budget._fits("retained_bytes", size, self.policy.max_retained_bytes)
@@ -489,15 +635,14 @@ class LocalRawResolver:
                     _fail("repair_ref_conflict")
                 return prior
             result = RawOriginal(reference, original)
-            self._originals[(namespace, key)] = result
-            self.budget._usage["entries"] += 1
-            self.budget._usage["retained_bytes"] += size
+            self.__originals[(namespace, key)] = result
+            self.budget._retain(size)
             return result
 
     def resolve(self, reference: RawRef | dict) -> RawOriginal:
         with self.budget._lock:
             reference = raw_ref(reference)
-            original = self._originals.get((reference.namespace, reference.key))
+            original = self.__originals.get((reference.namespace, reference.key))
             if original is None:
                 _fail("repair_ref_missing")
             if reference.size != len(original.raw):
@@ -524,7 +669,7 @@ class PackEntry:
     offset: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DraftPack:
     """Local byte integrity only; no historical closure or disclosure verdict.
 
@@ -572,8 +717,7 @@ def _pack_capacity(budget: RepairBudget, size: int, count: int):
 
 def _pack_hold(budget: RepairBudget, size: int, count: int):
     _pack_capacity(budget, size, count)
-    budget._usage["entries"] += count + 1
-    budget._usage["retained_bytes"] += size + _PACK_HEADER * count
+    budget._retain(size + _PACK_HEADER * count, count + 1)
 
 
 def _pack_size(total: int, amount: int, policy: RepairPolicy) -> int:
@@ -668,47 +812,56 @@ def build_raw_pack(raws: list[bytes] | tuple[bytes, ...], policy: RepairPolicy,
         inputs = tuple(raws[:count])  # Bounded even if another thread appends.
         if len(inputs) != count or len(raws) != count:
             _fail("repair_invalid_pack")
-        total = _PACK_PREFIX
-        for raw in inputs:
-            size = _raw_size(raw, policy)
-            if size == 0:
-                _fail("repair_invalid_pack")
-            total = _pack_size(total, _PACK_HEADER + size, policy)
-        _pack_capacity(budget, total, count)
-        # Freeze the finite container before hashing; mutable byte inputs are
-        # copied by _snapshot under their exported buffer and charged first.
-        unique = {}
-        for raw in inputs:
-            budget._node(1)
-            original = _snapshot(raw, policy, budget)
-            if not original or original.startswith(PACK_MAGIC):
-                _fail("repair_invalid_pack")
-            digest = budget._hash(original)
-            identity = (digest, len(original))
-            prior = unique.get(identity)
-            if prior is not None and not hmac.compare_digest(prior, original):
-                _fail("repair_ref_conflict")
-            unique[identity] = original
-        total = _PACK_PREFIX
-        for original in unique.values():
-            total = _pack_size(total, _PACK_HEADER + len(original), policy)
-        _pack_capacity(budget, total, len(unique))
-        # Charge the allocated construction buffer and its final immutable copy.
-        budget._bytes("output_bytes", total)
-        output = bytearray(total)
-        output[:6] = PACK_MAGIC
-        output[6:10] = len(unique).to_bytes(4, "big")
-        entries, offset = [], _PACK_PREFIX
-        for (digest, size), original in sorted(unique.items()):
-            output[offset:offset + 8] = size.to_bytes(8, "big")
-            output[offset + 8:offset + _PACK_HEADER] = bytes.fromhex(digest)
-            offset += _PACK_HEADER
-            output[offset:offset + size] = original
-            entries.append(PackEntry(digest, size, offset))
-            offset += size
-        budget._bytes("output_bytes", total)
-        packed = bytes(output)
-        digest = budget._hash(packed)
-        reference = RawRef("meta", digest, digest, total)
-        _pack_hold(budget, total, len(entries))
-        return DraftPack(reference, packed, tuple(entries), budget)
+        # Hold every mutable export before preflighting the batch. Snapshotting
+        # each caller buffer separately later would permit a still-unexported
+        # input to resize after the batch's holding capacity was checked.
+        with ExitStack() as exports:
+            fixed = []
+            for raw in inputs:
+                _raw_size(raw, policy)
+                try:
+                    fixed.append(raw if type(raw) is bytes else exports.enter_context(memoryview(raw)))
+                except (ValueError, BufferError):
+                    _fail("repair_invalid_bytes")
+            total = _PACK_PREFIX
+            for raw in fixed:
+                size = _raw_size(raw, policy)
+                if size == 0:
+                    _fail("repair_invalid_pack")
+                total = _pack_size(total, _PACK_HEADER + size, policy)
+            _pack_capacity(budget, total, count)
+            unique = {}
+            for raw in fixed:
+                budget._node(1)
+                original = _snapshot(raw, policy, budget)
+                if not original or original.startswith(PACK_MAGIC):
+                    _fail("repair_invalid_pack")
+                digest = budget._hash(original)
+                identity = (digest, len(original))
+                prior = unique.get(identity)
+                if prior is not None and not hmac.compare_digest(prior, original):
+                    _fail("repair_ref_conflict")
+                unique[identity] = original
+            total = _PACK_PREFIX
+            for original in unique.values():
+                total = _pack_size(total, _PACK_HEADER + len(original), policy)
+            _pack_capacity(budget, total, len(unique))
+            # Charge the allocated construction buffer and its final immutable copy.
+            budget._bytes("output_bytes", total)
+            output = bytearray(total)
+            output[:6] = PACK_MAGIC
+            output[6:10] = len(unique).to_bytes(4, "big")
+            entries, offset = [], _PACK_PREFIX
+            for (digest, size), original in sorted(unique.items()):
+                output[offset:offset + 8] = size.to_bytes(8, "big")
+                output[offset + 8:offset + _PACK_HEADER] = bytes.fromhex(digest)
+                offset += _PACK_HEADER
+                output[offset:offset + size] = original
+                entries.append(PackEntry(digest, size, offset))
+                offset += size
+            budget._bytes("output_bytes", total)
+            packed = bytes(output)
+            digest = budget._hash(packed)
+            reference = RawRef("meta", digest, digest, total)
+            _pack_hold(budget, total, len(entries))
+            return DraftPack(reference, packed, tuple(entries), budget)

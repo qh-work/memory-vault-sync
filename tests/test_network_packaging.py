@@ -96,7 +96,14 @@ class NetworkPackagingTests(unittest.TestCase):
                          "tests/test_open_provider_typescript_http.py", "tests/test_continuation_trial.py",
                          "tests/test_open_repair_wire.py", "tests/test_open_repair_typescript.py",
                          "tests/test_open_repair_pack.py", "tests/test_open_repair_pack_typescript.py",
+                         "tests/test_open_repair_history.py", "tests/test_open_repair_history_typescript.py",
                          "tests/test_open_provider_status.py", "tests/test_open_provider_status_typescript.py"} <= set(review))
+        repair_sources = literal(RELEASE, "LOCAL_REPAIR_REVIEW_SOURCES")
+        self.assertEqual(set(repair_sources), {
+            "memory_vault_open_repair_wire.py", "memory_vault_open_repair_history.py",
+            "clients/typescript/network/open-repair-wire.ts", "clients/typescript/network/open-repair-history.ts"})
+        for name in repair_sources:
+            self.assertTrue((ROOT / name).is_file())
         for name in ("docs/NATIVE_OPEN_PROVIDER.md", "docs/CONTINUATION_TRIAL.md", "docs/OPEN_NETWORK_QUICKSTART.md"):
             self.assertIn(name, documents)
             self.assertIn(name, protocol)

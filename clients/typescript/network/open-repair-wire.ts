@@ -83,7 +83,12 @@ export class RepairBudget {
   readonly #work = {input_bytes: 0, output_bytes: 0, nodes: 0, string_bytes: 0,
     max_depth: 0, hash_bytes: 0, hashes: 0, entries: 0, retained_bytes: 0,
     signature_checks: 0 as const};
-  constructor(policy: RepairPolicy) {this.#policy = policyCopy(policy);}
+  constructor(policy: RepairPolicy) {
+    this.#policy = policyCopy(policy);
+    // Private counters remain mutable; callers cannot shadow metering methods,
+    // the policy getter or instance prototype with a different local ledger.
+    Object.freeze(this);
+  }
   get policy(): RepairPolicy {return this.#policy;}
   snapshot(): RepairWork {return Object.freeze({...this.#work});}
   assertPolicy(policy: RepairPolicy): void {
@@ -135,8 +140,10 @@ export class RepairBudget {
 }
 
 function checkBudget(policy: RepairPolicy, budget: RepairBudget): void {
-  if (!(budget instanceof RepairBudget)) fail('repair_invalid_policy');
-  budget.assertPolicy(policy);
+  if (isProxy(budget) || !(budget instanceof RepairBudget) ||
+      Object.getPrototypeOf(budget) !== RepairBudget.prototype) fail('repair_invalid_policy');
+  try {RepairBudget.prototype.assertPolicy.call(budget, policy);}
+  catch {fail('repair_invalid_policy');} // Reject an unconstructed private-field brand too.
 }
 function rawSize(raw: Uint8Array): number {
   if (!isUint8Array(raw)) fail('repair_invalid_bytes');
@@ -338,6 +345,85 @@ export function parseCanonicalJson(raw: Uint8Array, policy: RepairPolicy, budget
   return draft;
 }
 export const parseNewWire = parseCanonicalJson;
+
+type CloneFrame = {source: object; target: Obj | DraftValue[]; keys: (string | symbol)[];
+  depth: number; index: number; array: boolean; count: number};
+function cloneNewValue(value: unknown, budget: RepairBudget): DraftValue {
+  const policy = budget.policy, used = budget.snapshot();
+  const available = policy.max_total_bytes - used.input_bytes - used.output_bytes;
+  const active = new Set<object>(), stack: CloneFrame[] = [];
+  let wireSize = 0;
+  const reserve = (amount: number): void => {
+    if (amount > policy.max_document_bytes - wireSize || amount > available - wireSize)
+      fail('repair_over_budget');
+    wireSize += amount;
+  };
+  const string = (current: string): string => {
+    reserve(2); let size = 0;
+    for (const char of current) {
+      const cp = char.codePointAt(0)!;
+      if (cp >= 0xd800 && cp <= 0xdfff) fail('repair_invalid_unicode');
+      const length = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+      if (length > policy.max_string_bytes - size) fail('repair_over_budget');
+      budget.stringBytes(length); size += length;
+      reserve('\"\\\b\f\n\r\t'.includes(char) ? 2 : cp < 0x20 ? 6 : length);
+    }
+    return current;
+  };
+  const clone = (current: unknown, depth: number): DraftValue => {
+    budget.node(depth);
+    if (current === null) {reserve(4); return null;}
+    if (typeof current === 'boolean') {reserve(current ? 4 : 5); return current;}
+    if (typeof current === 'number') {u53(current); reserve(String(current).length); return current;}
+    if (typeof current === 'string') return string(current);
+    if (typeof current !== 'object' || isProxy(current) || active.has(current)) fail('repair_invalid_json');
+    const array = Array.isArray(current), prototype = Object.getPrototypeOf(current);
+    if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null)
+      fail('repair_invalid_json');
+    reserve(2);
+    // Own-key enumeration is a host allocation. The node/output limits govern
+    // the copied JSON graph, not all host heap usage. Remote bytes use parser.
+    const keys = Reflect.ownKeys(current);
+    const count = array ? Object.getOwnPropertyDescriptor(current, 'length')!.value as number : keys.length;
+    if (array && keys.length !== count + 1) fail('repair_invalid_json');
+    const target: Obj | DraftValue[] = array ? [] : Object.create(null);
+    active.add(current); stack.push({source: current, target, keys, depth, index: 0, array, count});
+    return target;
+  };
+  const copied = clone(value, 1);
+  while (stack.length) {
+    const frame = stack[stack.length - 1];
+    if (frame.index === frame.count) {
+      active.delete(frame.source); Object.freeze(frame.target); stack.pop(); continue;
+    }
+    const index = frame.index++;
+    if (index) reserve(1);
+    const key = frame.array ? String(index) : frame.keys[index];
+    if (!frame.array) {
+      budget.node(frame.depth + 1);
+      if (typeof key !== 'string') fail('repair_invalid_json');
+      string(key); reserve(1);
+    }
+    const property = Object.getOwnPropertyDescriptor(frame.source, key);
+    if (!property || !property.enumerable || !Object.hasOwn(property, 'value')) fail('repair_invalid_json');
+    const child = clone(property.value, frame.depth + 1);
+    if (frame.array) (frame.target as DraftValue[]).push(child);
+    else (frame.target as Obj)[key as string] = child;
+  }
+  return copied;
+}
+
+/** Copy/validate local JSON values before canonical output; still draft only.
+ * Both traversals share node/string/depth work. Input/hash/signature counters
+ * stay untouched; the raw getter charges its actual defensive output copy.
+ */
+export function buildNewWire(value: unknown, policy: RepairPolicy, budget: RepairBudget): DraftJson {
+  checkBudget(policy, budget);
+  const copied = cloneNewValue(value, budget);
+  const bytes = encodeParsed(copied, budget.policy, budget);
+  const draft = Object.freeze({get raw(): Uint8Array {return copyOutput(bytes, budget);}, value: copied});
+  draftBytes.set(draft, bytes); return draft;
+}
 
 function refAddress(namespace: unknown, key: unknown): {namespace: 'meta'|'object'; key: string} {
   if ((namespace !== 'meta' && namespace !== 'object') || typeof key !== 'string' ||

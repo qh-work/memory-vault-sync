@@ -73,6 +73,62 @@ class OpenRepairWireTests(unittest.TestCase):
         self.assertCode("repair_over_budget", wire.parse_new_json, b"0", local, budget)
         self.assertEqual(budget.snapshot()["input_bytes"], 4)
 
+    def test_budget_instance_shadowing_cannot_bypass_shared_limits(self):
+        local = policy(max_nodes=1)
+        budget = wire.RepairBudget(local)
+        for name in ("_node", "_hash", "_bytes", "_fits", "_retain", "snapshot",
+                     "policy", "_usage", "_lock", "_policy"):
+            with self.subTest(name=name), self.assertRaises(AttributeError):
+                setattr(budget, name, lambda *args: None)
+        with self.assertRaises(AttributeError):
+            budget.__dict__
+        with self.assertRaises(AttributeError):
+            local.__dict__
+        with self.assertRaises(AttributeError):
+            local.max_nodes = 100
+        with self.assertRaises(TypeError):
+            budget._usage["nodes"] = 0
+        for operation in (lambda b: wire.build_new_wire({"a": [1, 2, 3]}, local, b),
+                          lambda b: wire.parse_new_wire(b'{"a":[1,2,3]}', local, b)):
+            meter = wire.RepairBudget(local)
+            self.assertCode("repair_over_budget", operation, meter)
+            self.assertEqual(meter.snapshot()["nodes"], 1)
+        wire.parse_new_json(b"0", local, budget)
+        self.assertCode("repair_invalid_policy", budget.__init__, policy())
+        self.assertEqual(budget.snapshot()["nodes"], 1)
+        self.assertEqual(budget.snapshot()["input_bytes"], 1)
+        capped = policy(max_hashes=1)
+        meter = wire.RepairBudget(capped)
+        resolver = wire.LocalRawResolver(capped, meter)
+        resolver.put("object", "a" * 64, b"x")
+        for name in ("_budget", "_policy", "budget", "policy", "resolve"):
+            with self.subTest(resolver_field=name), self.assertRaises(AttributeError):
+                setattr(resolver, name, wire.RepairBudget(capped))
+        self.assertCode("repair_invalid_policy", resolver.__init__, capped, wire.RepairBudget(capped))
+        self.assertIs(resolver.budget, meter)
+        self.assertCode("repair_over_budget", resolver.put, "object", "b" * 64, b"x")
+        self.assertEqual((meter.snapshot()["hashes"], meter.snapshot()["entries"]), (1, 1))
+        raw = b"MVRP1\0" + (1).to_bytes(4, "big") + (1).to_bytes(8, "big") + hashlib.sha256(b"x").digest() + b"x"
+        ref = wire.RawRef("meta", hashlib.sha256(raw).hexdigest(), hashlib.sha256(raw).hexdigest(), len(raw))
+        for operation in (lambda b: wire.parse_raw_pack(raw, ref, capped, b),
+                          lambda b: wire.build_raw_pack([b"x"], capped, b)):
+            meter = wire.RepairBudget(capped)
+            self.assertCode("repair_over_budget", operation, meter)
+            self.assertEqual(meter.snapshot()["hashes"], 1)
+            self.assertEqual(meter.snapshot()["entries"], 0)
+        local = policy(max_hashes=2)
+        meter = wire.RepairBudget(local)
+        pack = wire.build_raw_pack([b"x"], local, meter)
+        with self.assertRaises(AttributeError):
+            pack.__dict__
+        with self.assertRaises(AttributeError):
+            pack._budget = wire.RepairBudget(local)
+        self.assertCode("repair_over_budget", pack.entry, 0,
+                        wire.RawRef("object", "a" * 64, hashlib.sha256(b"x").hexdigest(), 1))
+        self.assertEqual(meter.snapshot()["hashes"], 2)
+        self.assertCode("repair_invalid_policy", wire.build_new_wire, {}, local,
+                        object.__new__(wire.RepairBudget))
+
     def test_raw_byte_limits_precede_copy_decode_and_hash(self):
         local = policy(max_document_bytes=3, max_total_bytes=3)
         budget = wire.RepairBudget(local)
@@ -159,6 +215,91 @@ class OpenRepairWireTests(unittest.TestCase):
         self.assertEqual(draft.raw, b'{"draft":[0]}')
         reparsed = wire.parse_new_wire(draft.raw, local, wire.RepairBudget(local))
         self.assertEqual(reparsed.value, {"draft": [0]})
+
+    def test_build_new_wire_canonical_snapshot_and_exact_work(self):
+        value = {"\ue000": 1, "\U00010000": 2, "2": 2, "10": 10,
+                 "__proto__": {"constructor": True}, "control": '"\\\b\f\n\r\t\0'}
+        expected = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        local = policy()
+        meter = wire.RepairBudget(local)
+        draft = wire.build_new_wire(value, local, meter)
+        self.assertEqual(draft.raw, expected)
+        self.assertEqual(meter.snapshot()["output_bytes"], len(expected))
+        value["__proto__"]["constructor"] = False
+        value["added"] = 99
+        self.assertEqual(draft.value["__proto__"], {"constructor": True})
+        self.assertEqual(draft.raw, expected)
+        with self.assertRaises(TypeError):
+            draft.value["__proto__"]["constructor"] = False
+        rebuilt = wire.build_new_wire(draft.value, local, wire.RepairBudget(local))
+        self.assertEqual(rebuilt.raw, expected)
+        self.assertEqual(wire.parse_new_wire(expected, local, wire.RepairBudget(local)).value, draft.value)
+        meter = wire.RepairBudget(local)
+        self.assertEqual(wire.build_new_wire({"a": [1]}, local, meter).raw, b'{"a":[1]}')
+        self.assertEqual(meter.snapshot(), dict(input_bytes=0, output_bytes=9, nodes=8,
+            string_bytes=2, max_depth=3, hash_bytes=0, hashes=0, entries=0,
+            retained_bytes=0, signature_checks=0))
+
+    def test_build_new_wire_invalid_values_and_size_limits_precede_encoding(self):
+        from types import MappingProxyType
+        class HostDict(dict):
+            def items(self):
+                raise AssertionError("host callback must not execute")
+        cases = [("\ud800", {}, "repair_invalid_unicode"),
+                 ({"\udfff": 0}, {}, "repair_invalid_unicode"),
+                 (-1, {}, "repair_invalid_integer"), (1.0, {}, "repair_invalid_integer"),
+                 (wire.U53_MAX + 1, {}, "repair_invalid_integer"),
+                 (float("nan"), {}, "repair_invalid_integer"),
+                 ({1: 0}, {}, "repair_invalid_json"), (HostDict(a=1), {}, "repair_invalid_json"),
+                 (MappingProxyType({"a": 1}), {}, "repair_invalid_json"),
+                 ((1,), {}, "repair_invalid_json"), (b"a", {}, "repair_invalid_json"),
+                 ("éxx", {"max_string_bytes": 3}, "repair_over_budget"),
+                 ("\0", {"max_document_bytes": 7}, "repair_over_budget"),
+                 ({"a": [1]}, {"max_document_bytes": 8}, "repair_over_budget"),
+                 ({"a": [1]}, {"max_total_bytes": 8}, "repair_over_budget"),
+                 ({"a": [1]}, {"max_nodes": 3}, "repair_over_budget"),
+                 ({"a": [1]}, {"max_depth": 2}, "repair_over_budget")]
+        with patch.object(wire, "_canonical", side_effect=AssertionError("invalid input reached encoder")):
+            for value, changes, code in cases:
+                with self.subTest(value=repr(value), changes=changes):
+                    local = policy(**changes)
+                    meter = wire.RepairBudget(local)
+                    self.assertCode(code, wire.build_new_wire, value, local, meter)
+                    self.assertEqual(meter.snapshot()["input_bytes"], 0)
+                    self.assertEqual(meter.snapshot()["output_bytes"], 0)
+                    self.assertEqual(meter.snapshot()["signature_checks"], 0)
+        local = policy(max_total_bytes=4)
+        meter = wire.RepairBudget(local)
+        wire.parse_new_json(b"0", local, meter)
+        self.assertCode("repair_over_budget", wire.build_new_wire, None, local, meter)
+        self.assertEqual(meter.snapshot()["output_bytes"], 0)
+
+    def test_build_new_wire_active_cycles_aliases_and_deep_values(self):
+        local = policy()
+        shared = {"x": [1]}
+        meter = wire.RepairBudget(local)
+        result = wire.build_new_wire([shared, shared], local, meter)
+        self.assertEqual(result.raw, b'[{"x":[1]},{"x":[1]}]')
+        self.assertIsNot(result.value[0], result.value[1])
+        self.assertIsNot(result.value[0]["x"], result.value[1]["x"])
+        self.assertEqual(meter.snapshot()["nodes"], 18)
+        shared["x"].append(2)
+        self.assertEqual(result.value, [{"x": [1]}, {"x": [1]}])
+        array, obj = [], {}
+        array.append(array)
+        obj["self"] = obj
+        for value in (array, obj):
+            meter = wire.RepairBudget(local)
+            self.assertCode("repair_invalid_json", wire.build_new_wire, value, local, meter)
+            self.assertEqual(meter.snapshot()["output_bytes"], 0)
+        depth, value = 1200, 0
+        for _ in range(depth):
+            value = [value]
+        meter = wire.RepairBudget(local)
+        draft = wire.build_new_wire(value, local, meter)
+        self.assertEqual(draft.raw, b"[" * depth + b"0" + b"]" * depth)
+        self.assertEqual(meter.snapshot()["nodes"], 2 * (depth + 1))
+        self.assertEqual(meter.snapshot()["max_depth"], depth + 1)
 
     def test_historical_originals_are_lossless_and_not_parsed_or_verified(self):
         local = policy()

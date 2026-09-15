@@ -795,10 +795,11 @@ AcceptedAuthority, a resource promise, a snapshot handle or a custody result.
 
 The local `build_raw_pack` / `buildRawPack` and `parse_raw_pack` /
 `parseRawPack` implement this byte framing and derived index in the existing
-draft wire modules. They return DraftPack only. They do not yet derive the six
+draft wire modules. They return DraftPack only. Pack operations do not derive
 variant obligations, inspect nested Signed/schema/phase references, enforce
 complete role usage or graph acyclicity, verify signatures, or authorize any
-network read. These checks remain required at the later manifest consumer.
+network read. The local manifest layer below performs only the listed draft
+checks; full authority consumption remains required.
 Original node descriptors supply signing identity and epoch; the separate
 encryption-key source and possession proof remain required for dual identity.
 The old provider authority-kind allowlist does not accept the new Q kinds.
@@ -816,6 +817,34 @@ work is not refunded; retained counters increase only for successful holdings.
 This local meter does not claim to measure signature, disk/WAL, HTTP, allocator
 overhead or the complete legal graph; enabled live policy still requires those
 measurements and the full authority consumer.
+
+The local historical modules construct and parse the six closed manifest
+shapes on bounded immutable draft JSON. `build_new_wire` / `buildNewWire`
+bound the copied graph and canonical byte size before encoding; there is no
+permissive serializer before the limit checks. Only plain JSON values are
+accepted, with U53 integers, strict Unicode and active-path cycle rejection.
+Shared child values count on each appearance. These counters measure actual
+clone/parse/canonical work, not all interpreter heap allocations or total CPU.
+
+`resolve_historical_inputs` / `resolveHistoricalInputs` resolve existing local
+packs into DraftHistoryInputs using the same explicit budget. The allowed
+predecessor walks are feed to member and occupied ACK inputs to empty to
+unbound. They bind common root/slot/message/envelope and ACK predecessor refs;
+root, catalog, genesis heads, attempt, slot, feed head, member core/link/custody,
+ACK grant/binding/receipt/put/disclosure and subtree root/parent indices must
+match their explicit registered role refs. Parent paths contain unique refs in
+the algorithm's order and exclude the subtree root itself. Additional range
+descendant indices remain possible: their complete set must later be derived
+from the actual typed index children, not reduced to only root and parent refs.
+All entries in each read pack must be used by this direct/transitive draft
+plan. This is byte usage, not proof that every listed role is appropriate.
+
+These local results do not verify the role bodies' expected Signed kind,
+signature, issuer, historical time, disclosure scope, nested original grant
+bytes or complete required role/resource/status obligations. They cannot
+establish authenticated range coverage, complete graph acyclicity, custody or
+live repair authority. No arbitrary fetch callback or network fallback is
+accepted. No enabled server or client runtime consumes these drafts yet.
 
 Input/event/copy order is consequently:
 
