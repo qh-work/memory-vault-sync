@@ -3,6 +3,7 @@
  * Wire fields and validity boundaries match memory_vault_open_provider.py.
  */
 import {randomBytes,timingSafeEqual} from 'node:crypto';
+import {isProxy} from 'node:util/types';
 import {
   NetworkCryptoError,canonicalBytes,document,documentSha256,objectFields,
   safeInteger,opaqueId,digestHex,signingKeyId,sha256,validateSigningPublic,validateSigningIdentity,
@@ -54,6 +55,68 @@ export class ProviderError extends NetworkCryptoError {
   constructor(code:string,retryable=false){super(code);this.name='ProviderError';this.retryable=retryable;}
 }
 export function fail(code:string):never{throw new ProviderError(code);}
+
+export interface StatusObservationDecision {
+  readonly action:'store'|'conflict'|'reject';
+  readonly code:string|null;
+  readonly revoked_mask:number;
+}
+/** Reduce one already verified status entry and a protected ledger summary.
+ * This internal shape is not Signed wire, signature verification, authorization
+ * or a persistence operation. Callers must validate the full originals/scope.
+ */
+export function reduceStatusObservation(value:unknown):StatusObservationDecision {
+  const invalid=():never=>fail('provider_invalid_status_observation');
+  const exact=(candidate:unknown,names:readonly string[]):Obj=>{
+    if(candidate===null||typeof candidate!=='object'||Array.isArray(candidate)||isProxy(candidate))invalid();
+    const prototype=Object.getPrototypeOf(candidate);
+    if(prototype!==Object.prototype&&prototype!==null)invalid();
+    const keys=Reflect.ownKeys(candidate as object);
+    if(keys.length!==names.length||keys.some(key=>typeof key!=='string'||!names.includes(key)))invalid();
+    const result:Obj=Object.create(null);
+    for(const key of names){
+      const property=Object.getOwnPropertyDescriptor(candidate,key);
+      if(!property||!property.enumerable||!Object.hasOwn(property,'value'))invalid();
+      result[key]=property!.value;
+    }
+    return result;
+  };
+  const integer=(candidate:unknown,minimum:number,maximum=Number.MAX_SAFE_INTEGER):number=>{
+    if(typeof candidate!=='number'||!Number.isSafeInteger(candidate)||Object.is(candidate,-0)||
+      candidate<minimum||candidate>maximum)invalid();
+    return candidate as number;
+  };
+  const digest=(candidate:unknown):void=>{
+    if(typeof candidate!=='string'||candidate.length!==64||!/^[0-9a-f]{64}$/.test(candidate))invalid();
+  };
+  const raw=exact(value,['incoming','prior','required_revision','operation','same_revision_conflict']);
+  const incoming=exact(raw.incoming,['revision','digest','minimum_document_revision','status','operation_mask']);
+  integer(incoming.revision,1);digest(incoming.digest);integer(incoming.minimum_document_revision,0);
+  if(incoming.status!=='active'&&incoming.status!=='revoked')invalid();
+  const mask=integer(incoming.operation_mask,1,127);
+  const required=integer(raw.required_revision,0),operation=integer(raw.operation,1,64);
+  if(![1,2,4,8,16,32,64].includes(operation)||typeof raw.same_revision_conflict!=='boolean')invalid();
+  const prior=raw.prior===null?null:exact(raw.prior,
+    ['revision','digest','minimum_document_revision','revoked_mask','conflict']);
+  if(prior){
+    integer(prior.revision,1);digest(prior.digest);integer(prior.minimum_document_revision,0);
+    integer(prior.revoked_mask,0,127);if(typeof prior.conflict!=='boolean')invalid();
+  }
+  const previousRevoked=prior?.revoked_mask??0;
+  const decision=(action:StatusObservationDecision['action'],code:string|null,revoked=previousRevoked):StatusObservationDecision=>
+    Object.freeze({action,code,revoked_mask:revoked});
+  // Preserve _observe's order: missing operation precedes even sticky conflict.
+  if(!(mask&operation))return decision('reject','provider_status_operation');
+  if(raw.same_revision_conflict||prior?.conflict)return decision('conflict','provider_status_conflict');
+  if(prior&&incoming.revision<prior.revision)return decision('reject','provider_status_rollback');
+  if(prior&&incoming.revision===prior.revision&&incoming.digest!==prior.digest)
+    return decision('conflict','provider_status_conflict');
+  if(prior&&incoming.minimum_document_revision<prior.minimum_document_revision)
+    return decision('reject','provider_status_rollback');
+  const revoked=previousRevoked|(incoming.status==='revoked'?mask:0);
+  return decision('store',revoked&operation?'provider_authority_revoked':
+    incoming.minimum_document_revision>required?'provider_status_revision':null,revoked);
+}
 const input=(value:unknown)=>value as DocumentInput;
 const same=(left:unknown,right:unknown)=>Buffer.from(canonicalBytes(left)).equals(Buffer.from(canonicalBytes(right)));
 export function nowValue(now?:number):number{return now===undefined?Math.floor(Date.now()/1000):safeInteger(now);}

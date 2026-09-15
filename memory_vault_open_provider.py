@@ -206,6 +206,70 @@ def issue_status(signer, *, root, revision, entries, issued_at, valid_until):
     return result
 
 
+def reduce_status_observation(value):
+    """Plan one monotonic ledger update for an already verified scoped status.
+
+    This internal summary is not a wire document or authority. Its caller must
+    verify the complete Signed original, expected issuer/root/scope and time,
+    load the prior floor and root-wide conflict from protected state, then
+    persist the result in that same transaction. A store can carry a refusal:
+    revocation and minimum-revision observations must survive that refusal.
+    No operation permission, signature, resource or persistence is supplied here.
+    """
+    def shape(item, names):
+        if type(item) is not dict or item.keys() != set(names):
+            fail("provider_invalid_status_observation")
+        return item
+
+    def number(item, minimum=0, maximum=9007199254740991):
+        if type(item) is not int or not minimum <= item <= maximum:
+            fail("provider_invalid_status_observation")
+
+    def summary(item, names):
+        shape(item, names)
+        number(item["revision"], 1)
+        number(item["minimum_document_revision"])
+        if type(item["digest"]) is not str or re.fullmatch(r"[0-9a-f]{64}", item["digest"]) is None:
+            fail("provider_invalid_status_observation")
+
+    shape(value, {"incoming", "prior", "required_revision", "operation", "same_revision_conflict"})
+    incoming, prior = value["incoming"], value["prior"]
+    summary(incoming, {"revision", "digest", "minimum_document_revision", "status", "operation_mask"})
+    if type(incoming["status"]) is not str or incoming["status"] not in ("active", "revoked"):
+        fail("provider_invalid_status_observation")
+    number(incoming["operation_mask"], 1, 127)
+    if prior is not None:
+        summary(prior, {"revision", "digest", "minimum_document_revision", "revoked_mask", "conflict"})
+        number(prior["revoked_mask"], 0, 127)
+        if type(prior["conflict"]) is not bool:
+            fail("provider_invalid_status_observation")
+    number(value["required_revision"])
+    number(value["operation"], 1, 64)
+    if value["operation"] not in (1, 2, 4, 8, 16, 32, 64) or type(value["same_revision_conflict"]) is not bool:
+        fail("provider_invalid_status_observation")
+    operation = value["operation"]
+    revoked = prior["revoked_mask"] if prior else 0
+
+    def decision(action, code, mask=revoked):
+        return {"action": action, "code": code, "revoked_mask": mask}
+
+    if not incoming["operation_mask"] & operation:
+        return decision("reject", "provider_status_operation")
+    if value["same_revision_conflict"] or prior and prior["conflict"]:
+        return decision("conflict", "provider_status_conflict")
+    if prior and incoming["revision"] < prior["revision"]:
+        return decision("reject", "provider_status_rollback")
+    if prior and incoming["revision"] == prior["revision"] and incoming["digest"] != prior["digest"]:
+        return decision("conflict", "provider_status_conflict")
+    if prior and incoming["minimum_document_revision"] < prior["minimum_document_revision"]:
+        return decision("reject", "provider_status_rollback")
+    if incoming["status"] == "revoked":
+        revoked |= incoming["operation_mask"]
+    code = ("provider_authority_revoked" if revoked & operation else
+            "provider_status_revision" if incoming["minimum_document_revision"] > value["required_revision"] else None)
+    return decision("store", code, revoked)
+
+
 def verify_document(value, kind, *, now=None, allow_expired=False):
     choice(kind, KINDS)
     signed = fields(document(value, maximum=CAPS.get(kind, MAX_CONTROL_BYTES)), {"payload", "proof"})

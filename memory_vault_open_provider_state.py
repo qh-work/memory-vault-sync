@@ -15,7 +15,7 @@ from memory_vault_open_control import verify_node
 from memory_vault_open_provider import (
     MAX_CONTROL_BYTES, PUBLISH, ProviderError, answer_target_challenge, as_dual,
     authority_scope, bounded, fail, issue_status, node_binding, resource_scope,
-    sign_document, verify_document, verify_rpc, verify_status,
+    reduce_status_observation, sign_document, verify_document, verify_rpc, verify_status,
 )
 
 DEFAULT_POLICY = {"maximum_leases": 128, "maximum_facts": 512,
@@ -250,28 +250,31 @@ class ProviderState:
         params = (issuer, document_sha256(root), kind, scope_id); digest = document_sha256(status)
         old = self._one("SELECT * FROM open_provider_status WHERE issuer=? AND root_digest=? AND scope_kind=? AND scope_id=?", params)
         same_revision = self._one("SELECT digest FROM open_provider_status WHERE issuer=? AND root_digest=? AND revision=? AND digest<>? LIMIT 1", (issuer, document_sha256(root), raw["revision"], digest))
-        if same_revision:
-            self.db.execute("UPDATE open_provider_status SET second_record=?,conflict=1 WHERE issuer=? AND root_digest=? AND revision=?", (canonical_bytes(status), issuer, document_sha256(root), raw["revision"]))
-            return ProviderError("provider_status_conflict")
-        if old and old["conflict"]:
-            return ProviderError("provider_status_conflict")
-        if old and raw["revision"] < old["revision"]:
-            fail("provider_status_rollback")
-        if old and raw["revision"] == old["revision"] and digest != old["digest"]:
-            self.db.execute("UPDATE open_provider_status SET second_record=?,conflict=1 WHERE issuer=? AND root_digest=? AND scope_kind=? AND scope_id=?", (canonical_bytes(status), *params))
-            return ProviderError("provider_status_conflict")
+        prior = None
         if old:
             prior_entry = next(e for e in document(bytes(old["record"]))["payload"]["entries"] if e["scope_kind"] == kind and e["scope_id"] == scope_id)
-            if entry["minimum_document_revision"] < prior_entry["minimum_document_revision"]:
-                fail("provider_status_rollback")
-        revoked = (old["revoked_mask"] if old else 0) | (entry["operation_mask"] if entry["status"] == "revoked" else 0)
+            prior = {"revision": old["revision"], "digest": old["digest"],
+                     "minimum_document_revision": prior_entry["minimum_document_revision"],
+                     "revoked_mask": old["revoked_mask"], "conflict": bool(old["conflict"])}
+        decision = reduce_status_observation({
+            "incoming": {"revision": raw["revision"], "digest": digest,
+                         "minimum_document_revision": entry["minimum_document_revision"],
+                         "status": entry["status"], "operation_mask": entry["operation_mask"]},
+            "prior": prior, "required_revision": required_revision,
+            "operation": PUBLISH, "same_revision_conflict": same_revision is not None})
+        if decision["action"] == "reject":
+            fail(decision["code"])
+        if decision["action"] == "conflict":
+            if same_revision:
+                self.db.execute("UPDATE open_provider_status SET second_record=?,conflict=1 WHERE issuer=? AND root_digest=? AND revision=?", (canonical_bytes(status), issuer, document_sha256(root), raw["revision"]))
+            elif old and not old["conflict"]:
+                self.db.execute("UPDATE open_provider_status SET second_record=?,conflict=1 WHERE issuer=? AND root_digest=? AND scope_kind=? AND scope_id=?", (canonical_bytes(status), *params))
+            return ProviderError(decision["code"])
         self.db.execute("""INSERT INTO open_provider_status VALUES(?,?,?,?,?,?,?,NULL,?,0,?)
             ON CONFLICT(issuer,root_digest,scope_kind,scope_id) DO UPDATE SET revision=excluded.revision,
             record=excluded.record,digest=excluded.digest,revoked_mask=excluded.revoked_mask,valid_until=excluded.valid_until""",
-            (*params, raw["revision"], canonical_bytes(status), digest, revoked, raw["valid_until"]))
-        if revoked & PUBLISH:
-            return ProviderError("provider_authority_revoked")
-        return ProviderError("provider_status_revision") if entry["minimum_document_revision"] > required_revision else None
+            (*params, raw["revision"], canonical_bytes(status), digest, decision["revoked_mask"], raw["valid_until"]))
+        return ProviderError(decision["code"]) if decision["code"] is not None else None
 
     @staticmethod
     def _fact_key(raw):
