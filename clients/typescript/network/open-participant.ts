@@ -75,6 +75,11 @@ export class OpenParticipant{
   contactStorage<T>(operation:(database:DatabaseSync)=>T):T{this.ready();return operation(this.database);}
   acceptContactControl(value:SignedNode|SignedContact):void{this.accept(value);}
   lookupContactResource(target:string,budget:LookupBudget){this.ready();return this.lookup(target,'general',budget);}
+  /** Provider controls share protected transport state, never canonical Vault records. */
+  providerStorage<T>(operation:(database:DatabaseSync)=>T):T{this.ready();return operation(this.database);}
+  acceptProviderControl(node:SignedNode):void{this.accept(node);}
+  lookupProviderDirectory(target:string,budget:LookupBudget){this.ready();return this.lookup(target,'directory',budget);}
+  cacheVerifiedProviderNode(node:SignedNode):void{this.accept(node);this.cache(node);}
   private cache(node:SignedNode):void{
     this.ready();transaction(this.database,()=>{
       this.database.prepare('INSERT OR REPLACE INTO open_peer_cache VALUES(?,?,?)').run(node.payload.signing_key.key_id,canonicalBytes(node),now());

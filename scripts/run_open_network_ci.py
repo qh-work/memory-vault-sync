@@ -30,8 +30,9 @@ FILES = ("settings.json", "status.json", "progress.jsonl", "errors.jsonl", "resu
 MAX_REPORT_BYTES = 900_000  # All explicitly uploadable files together, <1 MiB.
 MODULES = tuple("tests.test_open_" + name for name in (
     "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "typescript", "typescript_state", "typescript_http", "network_ci",
-    "contact", "contact_state", "contact_http", "contact_typescript", "contact_typescript_http")) + (
-    "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
+    "contact", "contact_state", "contact_http", "contact_typescript", "contact_typescript_http",
+    "delivery_http", "provider_typescript", "provider_typescript_http")) + (
+    "tests.test_continuation_trial", "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {
     "schema_version": "memory-vault-open-routing-acceptance/v2", "logical_nodes": 100,
     "profile": "routing_core_table_initial_no_restart_cache", "checkpoints": False,

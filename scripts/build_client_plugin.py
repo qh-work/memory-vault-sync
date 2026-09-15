@@ -79,6 +79,8 @@ PACKAGE_DOCUMENTS = (
     "clients/typescript/network/open-contact-client.ts", "docs/OPEN_FIRST_CONTACT_V1.md",
     "clients/typescript/network/open-blob.ts", "clients/typescript/network/open-delivery.ts",
     "clients/typescript/network/open-delivery-control.ts", "clients/typescript/network/open-delivery-client.ts",
+    "clients/typescript/network/open-provider.ts", "clients/typescript/network/open-provider-client.ts",
+    "docs/NATIVE_OPEN_PROVIDER.md",
     "docs/OPEN_NETWORK_QUICKSTART.md",
     "docs/CONTINUATION_TRIAL.md",
     "clients/typescript/network/client-config.ts", "clients/typescript/network/transport-state.ts",

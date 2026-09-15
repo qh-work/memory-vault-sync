@@ -28,6 +28,8 @@
     "./open-contact": "./open-contact.ts",
     "./open-contact-state": "./open-contact-state.ts",
     "./open-contact-client": "./open-contact-client.ts",
+    "./open-provider": "./open-provider.ts",
+    "./open-provider-client": "./open-provider-client.ts",
     "./open-blob": "./open-blob.ts",
     "./open-delivery": "./open-delivery.ts",
     "./open-delivery-control": "./open-delivery-control.ts",
