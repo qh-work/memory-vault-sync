@@ -891,6 +891,63 @@ activate resources, approve disclosure, observe current revocations, modify
 trust/Vault state or enable network repair. Full Q typed-parent closure and the
 two independent cold mailbox/ACK consumers remain necessary.
 
+The next local input consumer, `verify_ack_resource_inputs` /
+`verifyAckResourceInputs`, covers the pre-message owner ACK resource branch.
+Its exact six input names are `allocate`, `offer`, `root`, `read`, `activation`,
+and `active`; each supplies the complete `{raw,ref}` original. It requires an
+independently preheld AckSlot, owner and target DualKey descriptors, and target
+storage epoch. Expected objects are copied under the same finite budget;
+callers cannot nominate a previously parsed object as an authenticated input.
+Every RawRef's namespace, opaque locator, original hash and actual byte size
+remain separate. Parent references must match the complete supplied tuple;
+the locator is not rewritten to the document digest.
+
+The six new Q documents use canonical U53 wire and closed kind fields before
+real signature work. Shared Ed25519 proof verification preserves the existing
+message-signature primitive; the unchanged legacy wrapper retains its own
+portable-number and time rules. Q offer/active events do not gain implicit
+`expires_at` or `issued_at` fields. This local subset makes these explicit
+candidate choices for consistent implementations:
+
+- An owner offer's budget and windows exactly equal the signed requested
+  intent; its active result repeats that exact resource, generation, purpose,
+  budget and windows. A reduced offer requires a new owner intent.
+- The embedded owner intent is byte-equal in its two canonical representations
+  and has a separately computed digest. It is `resource.owner_intent` with
+  purpose `ack_slot`, not a contact/index lease or delegated copy request.
+- The activation names exactly one offer and exactly the original ACK root
+  and read grant. Authority references follow the role/ref tuple order from
+  section 7.1. The read grant's own grant ID need not equal AckSlot's preselected
+  future write-grant ID.
+- Issued times follow allocation, offer, root, read, activation, and finally
+  the node-signed `activated_at`, with equality allowed for same-second
+  dependencies. No legacy 30-second skew is imported. Allocation must be valid
+  at offer issuance; root, read and activation must be valid at `activated_at`,
+  which precedes the offer's reservation deadline. This is consistency with
+  the authenticated source event, not an external timestamp or a check at
+  today's time.
+- Resource window deadlines follow allocation issuance and do not exceed
+  their retention deadline; they may outlive the short negotiation documents.
+  Owner root/read windows follow their own issuance, remain within their own
+  authorization expiry, and read budget/windows/operations narrow the root.
+  Owner rights may outlive the original node's resource promise. No common
+  expiry or root-at-most-resource constraint is invented.
+- Budgets, revisions, generations and delegation counters retain their stated
+  U53 domains, including zero where no narrower constraint is defined. The
+  explicit constants remain one binding, one receipt and delegation depth two.
+  This is not an enabled node policy or a claim that zero resources can serve.
+- The allowed-role alphabet is the 89 literal historical roles, the named
+  `bootstrap.grant` upload role, and the four section 9.2 service-profile names.
+  Lists are sorted and unique. Name recognition alone neither authorizes a
+  different signer's original nor proves any profile's disclosure closure.
+
+The authenticated result retains all six originals and the node's asserted
+activation time. It does not verify the source node descriptor, dual-key
+possession, bootstrap/status/disclosure closure, actual reservation ledger or
+custody. It does not establish S_ACK0 or expose an allocation RPC. A later
+consumer still needs the complete original historical chain and independent
+current serving authority before any read, copy or receipt admission.
+
 Input/event/copy order is consequently:
 
 ```text

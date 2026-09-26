@@ -77,6 +77,8 @@ admission.allocate admission.offer admission.empty_replica_manifest
 admission.empty_replica_custody admission.descriptor historical.status.admission_assignment
 """),
 })
+# A finite name alphabet, not permission to disclose any particular original.
+KNOWN_HISTORICAL_ROLES = frozenset().union(*_ROLES.values())
 _OPAQUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 
 

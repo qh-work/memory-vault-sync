@@ -99,13 +99,15 @@ class NetworkPackagingTests(unittest.TestCase):
                          "tests/test_open_repair_history.py", "tests/test_open_repair_history_typescript.py",
                          "tests/test_open_repair_original.py", "tests/test_open_repair_original_typescript.py",
                          "tests/test_open_repair_contact_inputs.py",
+                         "tests/open_repair_resource_fixtures.py", "tests/test_open_repair_resource.py",
+                         "tests/test_open_repair_resource_typescript.py", "tests/test_open_repair_resource_inputs.py",
                          "tests/test_open_provider_status.py", "tests/test_open_provider_status_typescript.py"} <= set(review))
         repair_sources = literal(RELEASE, "LOCAL_REPAIR_REVIEW_SOURCES")
         self.assertEqual(set(repair_sources), {
             "memory_vault_open_repair_wire.py", "memory_vault_open_repair_history.py",
-            "memory_vault_open_repair_original.py",
+            "memory_vault_open_repair_original.py", "memory_vault_open_repair_resource.py",
             "clients/typescript/network/open-repair-wire.ts", "clients/typescript/network/open-repair-history.ts",
-            "clients/typescript/network/open-repair-original.ts"})
+            "clients/typescript/network/open-repair-original.ts", "clients/typescript/network/open-repair-resource.ts"})
         for name in repair_sources:
             self.assertTrue((ROOT / name).is_file())
         for name in ("docs/NATIVE_OPEN_PROVIDER.md", "docs/CONTINUATION_TRIAL.md", "docs/OPEN_NETWORK_QUICKSTART.md"):

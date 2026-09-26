@@ -73,6 +73,8 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_open_repair_history.py", "tests/test_open_repair_history_typescript.py",
     "tests/test_open_repair_original.py", "tests/test_open_repair_original_typescript.py",
     "tests/test_open_repair_contact_inputs.py",
+    "tests/open_repair_resource_fixtures.py", "tests/test_open_repair_resource.py",
+    "tests/test_open_repair_resource_typescript.py", "tests/test_open_repair_resource_inputs.py",
     "tests/test_continuation_trial.py",
     "tests/open_routing_acceptance.py",
     "tests/test_experience.py", "tests/test_experience_edges.py", "tests/test_experience_typescript.py", "tests/test_cross_author_state.py",
@@ -111,9 +113,11 @@ LOCAL_REPAIR_REVIEW_SOURCES = (
     "memory_vault_open_repair_wire.py",
     "memory_vault_open_repair_history.py",
     "memory_vault_open_repair_original.py",
+    "memory_vault_open_repair_resource.py",
     "clients/typescript/network/open-repair-wire.ts",
     "clients/typescript/network/open-repair-history.ts",
     "clients/typescript/network/open-repair-original.ts",
+    "clients/typescript/network/open-repair-resource.ts",
 )
 TRIAL_EXTRA_MODULES = ("memory_vault_trial.py",)
 TRIAL_RUNTIME_MODULES = REQUIRED_MODULES + TRIAL_EXTRA_MODULES

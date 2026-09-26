@@ -255,6 +255,24 @@ function verifyControl(raw: Uint8Array, options: OriginalControlOptions, payload
   const actual = descriptor(payload.signing_key, budget);
   if (actual.value.key_id !== expectedId || (typeof expected !== 'string' && PUBLIC_FIELDS.some(key => expected[key] !== actual.value[key]))) fail('repair_wrong_issuer');
   time(payload, at);
+  verifyProofMath(payload, proof, actual.bytes, expectedId, budget);
+  const raw_sha256 = budget.hash(originalState.get(document)!.bytes);
+  const canonical_sha256 = budget.hash(canonical(document.value, budget));
+  return Object.freeze({document, payload, raw_sha256, canonical_sha256});
+}
+
+/** Internal common proof arithmetic for already bounded, immutable controls.
+ * Resource callers enforce their distinct canonical schema/time profile first;
+ * this helper returns no capability and does not relax the old public API.
+ */
+export function verifyBoundedControlSignature(payload: Obj, valueProof: unknown,
+  expectedKey: unknown, budget: RepairBudget): void {
+  const expected = fields(expectedKey, PUBLIC_FIELDS), actual = descriptor(payload.signing_key, budget);
+  const expectedId = identity(expected.key_id);
+  if (PUBLIC_FIELDS.some(key => expected[key] !== actual.value[key])) fail('repair_wrong_issuer');
+  verifyProofMath(payload, fields(valueProof, ['schema_version','key_id','payload_sha256','signature']), actual.bytes, expectedId, budget);
+}
+function verifyProofMath(payload: Obj, proof: Obj, publicBytes: Buffer, expectedId: string, budget: RepairBudget): void {
   if (proof.schema_version !== 'universal-memory-message-signature/v1') fail();
   if (identity(proof.key_id) !== expectedId) fail('repair_wrong_issuer');
   if (typeof proof.payload_sha256 !== 'string' || /^[0-9a-f]{64}$/.exec(proof.payload_sha256)?.[0] !== proof.payload_sha256) fail();
@@ -263,17 +281,17 @@ function verifyControl(raw: Uint8Array, options: OriginalControlOptions, payload
   const body = canonical({schema_version:proof.schema_version, key_id:proof.key_id, payload_sha256:proof.payload_sha256}, budget);
   budget.output(DOMAIN.length + body.length); const message = Buffer.concat([DOMAIN, body]);
   // RFC 8410 public DER; no hidden descriptor hash or alternative verifier.
-  budget.output(44); const der = Buffer.alloc(44); der.write('302a300506032b6570032100', 0, 'hex'); actual.bytes.copy(der, 12);
+  budget.output(44); const der = Buffer.alloc(44); der.write('302a300506032b6570032100', 0, 'hex'); publicBytes.copy(der, 12);
   let key;
   try {key = createPublicKey({key: der, format:'der', type:'spki'});} catch {fail('repair_invalid_signature');}
   budget.signatureCheck(); // Adjacent to the real call; bad signatures consume it too.
   let valid = false;
   try {valid = edVerify(null, message, key, signature);} catch {fail('repair_invalid_signature');}
   if (!valid) fail('repair_invalid_signature');
-  const raw_sha256 = budget.hash(originalState.get(document)!.bytes);
-  const canonical_sha256 = budget.hash(canonical(document.value, budget));
-  return Object.freeze({document, payload, raw_sha256, canonical_sha256});
 }
+// Shared bounded encoding/key primitives, used only after the caller's wire
+// parser/defensive clone has frozen the graph. They do not infer authority.
+export {canonical as canonicalOriginalControl, descriptor as originalPublicDescriptor};
 
 export const CONTACT_ROLES = ['node','knock_lease','policy','request','decision','grant','delivery_lease'] as const;
 export interface ContactOriginalOptions {

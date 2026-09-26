@@ -249,6 +249,54 @@ class VerifiedOriginalControl:
     canonical_sha256: str
 
 
+def _verify_control_signature(payload, proof, expected_signing_key, budget, *, before_proof=None):
+    """Shared real Ed25519 proof math; callers close their own profile/time.
+
+    This private helper accepts only data already parsed/frozen by its caller.
+    No trust state is written; charges cover each actual key hash and proof.
+    """
+    if type(expected_signing_key) is str:
+        expected_id = _key_id(expected_signing_key)
+    else:
+        _fields(expected_signing_key, {"schema_version", "algorithm", "key_id", "public_key"})
+        expected_id = _key_id(expected_signing_key["key_id"])
+    descriptor = payload["signing_key"]
+    public = _descriptor(descriptor, budget)
+    if (descriptor["key_id"] != expected_id or
+            (type(expected_signing_key) is not str and descriptor != expected_signing_key)):
+        _fail("repair_wrong_issuer")
+    if before_proof is not None:
+        before_proof()
+    proof = _fields(proof, {"schema_version", "key_id", "payload_sha256", "signature"})
+    if proof["schema_version"] != _PROOF_SCHEMA:
+        _invalid()
+    if _key_id(proof["key_id"]) != expected_id:
+        _fail("repair_wrong_issuer")
+    payload_digest = budget._hash(_canonical(payload, budget))
+    if not hmac.compare_digest(_digest(proof["payload_sha256"]), payload_digest):
+        _fail("repair_invalid_signature")
+    signature = _decode64(proof["signature"], 64, budget)
+    proof_body = {name: proof[name] for name in ("schema_version", "key_id", "payload_sha256")}
+    canonical_proof = _canonical(proof_body, budget)
+    budget._bytes("output_bytes", len(_DOMAIN) + len(canonical_proof))
+    message = _DOMAIN + canonical_proof
+    try:
+        from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    except ImportError:
+        _fail("repair_crypto_unavailable")
+    try:
+        public_key = Ed25519PublicKey.from_public_bytes(public)
+        budget._signature_check()  # Immediately before real verify; no refund.
+        public_key.verify(signature, message)
+    except RepairWireError:
+        raise
+    except InvalidSignature:
+        _fail("repair_invalid_signature")
+    except (ValueError, UnsupportedAlgorithm):
+        _fail("repair_crypto_unavailable")
+
+
 def _verify_original_control(raw: bytes, *, expected_signing_key, expected_schema: str,
                              expected_kind: str, at: int, policy: RepairPolicy,
                              budget: RepairBudget, _expected_fields=None,
@@ -274,40 +322,8 @@ def _verify_original_control(raw: bytes, *, expected_signing_key, expected_schem
         if (type(payload) is not _DraftDict or not COMMON <= payload.keys()
                 or payload["schema_version"] != expected_schema or payload["kind"] != expected_kind):
             _invalid()
-        descriptor = payload["signing_key"]
-        public = _descriptor(descriptor, budget)
-        if (descriptor["key_id"] != expected_id or
-                (type(expected_signing_key) is not str and descriptor != expected_signing_key)):
-            _fail("repair_wrong_issuer")
-        _window(payload, at)
-        proof = _fields(signed["proof"], {"schema_version", "key_id", "payload_sha256", "signature"})
-        if proof["schema_version"] != _PROOF_SCHEMA:
-            _invalid()
-        if _key_id(proof["key_id"]) != expected_id:
-            _fail("repair_wrong_issuer")
-        payload_digest = budget._hash(_canonical(payload, budget))
-        if not hmac.compare_digest(_digest(proof["payload_sha256"]), payload_digest):
-            _fail("repair_invalid_signature")
-        signature = _decode64(proof["signature"], 64, budget)
-        proof_body = {name: proof[name] for name in ("schema_version", "key_id", "payload_sha256")}
-        canonical_proof = _canonical(proof_body, budget)
-        budget._bytes("output_bytes", len(_DOMAIN) + len(canonical_proof))
-        message = _DOMAIN + canonical_proof
-        try:
-            from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-        except ImportError:
-            _fail("repair_crypto_unavailable")
-        try:
-            public_key = Ed25519PublicKey.from_public_bytes(public)
-            budget._signature_check()  # Immediately before real verify; no refund.
-            public_key.verify(signature, message)
-        except RepairWireError:
-            raise
-        except InvalidSignature:
-            _fail("repair_invalid_signature")
-        except (ValueError, UnsupportedAlgorithm):
-            _fail("repair_crypto_unavailable")
+        _verify_control_signature(payload, signed["proof"], expected_signing_key, budget,
+                                  before_proof=lambda: _window(payload, at))
         raw_digest = budget._hash(draft.raw)
         canonical_digest = budget._hash(_canonical(signed, budget))
         return VerifiedOriginalControl(draft, payload, raw_digest, canonical_digest)

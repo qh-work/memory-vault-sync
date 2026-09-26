@@ -67,6 +67,10 @@ const ROLES: Record<Variant, ReadonlySet<string>> = {
     'admission.descriptor', 'historical.status.admission_assignment']),
 };
 
+// A finite name alphabet, not permission to disclose a particular original.
+export const knownHistoricalRoles: readonly string[] = Object.freeze(
+  [...new Set(Object.values(ROLES).flatMap(roles => [...roles]))].sort());
+
 function fail(): never {throw new RepairError('repair_invalid_history');}
 function fields(value: unknown, names: readonly string[]): Obj {
   try {return objectFields(value, names);} catch {fail();}
