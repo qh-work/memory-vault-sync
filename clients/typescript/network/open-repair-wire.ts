@@ -17,13 +17,15 @@ export interface RepairPolicy {
   readonly max_hashes: number;
   readonly max_entries: number;
   readonly max_retained_bytes: number;
+  /** Opt-in only: legacy policies perform zero public-key verifications. */
+  readonly max_signature_checks?: number;
 }
 export interface RepairWork {
   readonly input_bytes: number; readonly output_bytes: number;
   readonly nodes: number; readonly string_bytes: number; readonly max_depth: number;
   readonly hash_bytes: number; readonly hashes: number;
   readonly entries: number; readonly retained_bytes: number;
-  readonly signature_checks: 0;
+  readonly signature_checks: number;
 }
 export interface DraftJson {readonly raw: Uint8Array; readonly value: DraftValue;}
 export interface RawRef {
@@ -67,8 +69,12 @@ export function u53(value: unknown, minimum = 0): number {
 }
 function policyCopy(value: RepairPolicy): RepairPolicy {
   try {
-    const raw = objectFields(value, POLICY_FIELDS), result = Object.create(null);
+    if (value === null || typeof value !== 'object' || isProxy(value)) fail('repair_invalid_policy');
+    const names = Object.hasOwn(value, 'max_signature_checks')
+      ? [...POLICY_FIELDS, 'max_signature_checks'] : POLICY_FIELDS;
+    const raw = objectFields(value, names), result = Object.create(null);
     for (const name of POLICY_FIELDS) result[name] = u53(raw[name], 1);
+    result.max_signature_checks = Object.hasOwn(raw, 'max_signature_checks') ? u53(raw.max_signature_checks) : 0;
     return Object.freeze(result) as RepairPolicy;
   } catch {fail('repair_invalid_policy');}
 }
@@ -82,7 +88,7 @@ export class RepairBudget {
   readonly #policy: RepairPolicy;
   readonly #work = {input_bytes: 0, output_bytes: 0, nodes: 0, string_bytes: 0,
     max_depth: 0, hash_bytes: 0, hashes: 0, entries: 0, retained_bytes: 0,
-    signature_checks: 0 as const};
+    signature_checks: 0};
   constructor(policy: RepairPolicy) {
     this.#policy = policyCopy(policy);
     // Private counters remain mutable; callers cannot shadow metering methods,
@@ -93,7 +99,8 @@ export class RepairBudget {
   snapshot(): RepairWork {return Object.freeze({...this.#work});}
   assertPolicy(policy: RepairPolicy): void {
     const checked = policyCopy(policy);
-    if (POLICY_FIELDS.some(name => checked[name] !== this.#policy[name])) fail('repair_invalid_policy');
+    if (POLICY_FIELDS.some(name => checked[name] !== this.#policy[name]) ||
+        checked.max_signature_checks !== this.#policy.max_signature_checks) fail('repair_invalid_policy');
   }
   #fits(current: number, amount: number, maximum: number): void {
     u53(amount);
@@ -127,6 +134,11 @@ export class RepairBudget {
     this.#work.hash_bytes += raw.byteLength;
     this.#work.hashes++;
     return createHash('sha256').update(raw).digest('hex');
+  }
+  /** Call immediately before actual native verification, including bad signatures. */
+  signatureCheck(): void {
+    this.#fits(this.#work.signature_checks, 1, this.#policy.max_signature_checks ?? 0);
+    this.#work.signature_checks++;
   }
   canRetain(length: number, count = 1): void {
     this.#fits(this.#work.entries, count, this.#policy.max_entries);

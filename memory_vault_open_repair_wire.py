@@ -84,11 +84,13 @@ class RepairPolicy:
     max_hashes: int
     max_entries: int
     max_retained_bytes: int
+    max_signature_checks: int = 0
 
     def __post_init__(self):
         for field in dataclass_fields(self):
             value = getattr(self, field.name)
-            if type(value) is not int or not 1 <= value <= U53_MAX:
+            if (type(value) is not int
+                    or not (0 if field.name == "max_signature_checks" else 1) <= value <= U53_MAX):
                 _fail("repair_invalid_policy")
 
 
@@ -99,7 +101,8 @@ class RepairBudget:
     actual canonical/pack output and output copies. nodes/string_bytes include
     the second canonical traversal; nodes also counts decoded pack headers.
     retained_bytes/entries describe resolver and pack/index holdings, not all
-    interpreter heap allocations. No signature verifier is called.
+    interpreter heap allocations. Original-control verifiers explicitly charge
+    signature_checks immediately before each real cryptographic verification.
     One private reentrant lock serializes whole public operations sharing this
     budget, including resolver holdings. This is not a database writer lock.
     """
@@ -170,6 +173,10 @@ class RepairBudget:
         self.__usage["hashes"] += 1
         self.__usage["hash_bytes"] += len(raw)
         return result
+
+    def _signature_check(self):
+        self._fits("signature_checks", 1, self.policy.max_signature_checks)
+        self.__usage["signature_checks"] += 1
 
     def _retain(self, size: int, count: int = 1):
         u53(size)

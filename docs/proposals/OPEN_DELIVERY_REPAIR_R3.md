@@ -814,9 +814,11 @@ index decoding consumes nodes. Input snapshots, construction buffers and actual
 defensive/final output copies consume the shared cumulative input/output work
 budget; language-specific physical copies are charged when they occur. Failed
 work is not refunded; retained counters increase only for successful holdings.
-This local meter does not claim to measure signature, disk/WAL, HTTP, allocator
-overhead or the complete legal graph; enabled live policy still requires those
-measurements and the full authority consumer.
+Pack calls perform no signature verification. The shared meter can additionally
+charge the real original-control signature operations described below. It does
+not measure disk/WAL, HTTP, allocator overhead or the complete legal graph;
+enabled live policy still requires those measurements and the full authority
+consumer.
 
 The local historical modules construct and parse the six closed manifest
 shapes on bounded immutable draft JSON. `build_new_wire` / `buildNewWire`
@@ -845,6 +847,49 @@ bytes or complete required role/resource/status obligations. They cannot
 establish authenticated range coverage, complete graph acyclicity, custody or
 live repair authority. No arbitrary fetch callback or network fallback is
 accepted. No enabled server or client runtime consumes these drafts yet.
+
+The separate `memory_vault_open_repair_original.py` and native
+`open-repair-original.ts` modules authenticate the original legacy contact
+inputs. Their parser preserves a fixed UTF-8 byte snapshot and exact lexical
+spans for `payload.grant`, `payload.resource_lease`, and the nested combination.
+It accepts the existing portable control profile (ASCII keys, signed safe
+integers, bounded depth), rejects ambiguous JSON, and does not parse Memory,
+envelope, D or T bodies through Q/U53. Escapes, key order and whitespace remain
+in the original bytes. Canonical payload/proof encodings are derived separately
+for the existing signature protocol; a legacy canonical document digest is
+not a complete-original RawRef digest.
+
+`verify_original_control` / `verifyOriginalControl` require an independently
+selected expected signing key or its content-derived key ID, expected schema
+and kind, and an explicit `at`. They recompute the advertised key ID and use
+that verified Ed25519 public key with the existing message-signature domain.
+The result attests the signature and these explicit bindings, not the full
+role schema or authority graph. The caller must authenticate the expected
+identity and event time through the correct typed parents before accepting a
+historical obligation; a self-selected ID or caller timestamp is insufficient.
+
+`verify_contact_originals` / `verifyContactOriginals` then consume exactly
+seven supplied byte originals: node, knock lease, policy, request, approved
+decision, store grant and delivery lease. They enforce the legacy closed
+schemas, finite windows/limits and request/policy/resource bindings against
+independent A/B/R signing IDs, A/B encryption IDs and the original node epoch.
+The independent grant bytes must equal the decision's literal nested grant;
+the independent delivery-lease bytes must equal the grant's literal nested
+lease. Re-encoding an equivalent object cannot replace either original.
+Node descriptors still supply only signing identity and epoch, with no invented
+node encryption key or implicit dual-key possession claim.
+
+All operations use the same finite work budget as pack/resolver operations.
+The optional `max_signature_checks` defaults to zero, retaining a refusal for
+cryptographic work under earlier draft-only policies. Each actual Ed25519
+verification consumes one check immediately before the provider call, including
+invalid-signature attempts; repeated calls do not reset or refund earlier work.
+Hashing and bounded encoding/copy work retain their existing cumulative limits.
+`retained_bytes` still describes resolver/pack holdings, not every parsed object
+or cryptographic provider allocation. The seven-original adapter does not
+activate resources, approve disclosure, observe current revocations, modify
+trust/Vault state or enable network repair. Full Q typed-parent closure and the
+two independent cold mailbox/ACK consumers remain necessary.
 
 Input/event/copy order is consequently:
 
