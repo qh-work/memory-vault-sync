@@ -341,7 +341,8 @@ def _archive_inventory(data: bytes, version: str) -> tuple[zipfile.ZipFile, list
         if actual != set(modules) | {"MANIFEST.json"}:
             raise MemoryError("update_runtime_inventory_mismatch")
         for name, digest in modules.items():
-            if (not isinstance(name, str) or re.fullmatch(r"memory_vault(?:_[a-z_]+)?\.py", name) is None
+            if (not isinstance(name, str) or (re.fullmatch(r"memory_vault(?:_[a-z_]+)?\.py", name) is None
+                    and name != "memory_vault_open_capacity_schema.json")
                     or not isinstance(digest, str) or _SHA.fullmatch(digest) is None
                     or hashlib.sha256(archive.read(base + "runtime/" + name)).hexdigest() != digest):
                 raise MemoryError("update_runtime_hash_mismatch")

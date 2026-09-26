@@ -96,7 +96,9 @@ def verify(plugin: Path, python: str) -> dict:
             raise ValueError("packaged_restore_activated_permissions")
         manifest = json.loads((plugin / "runtime/MANIFEST.json").read_text())
         return {"version": version, "launcher_sha256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
-                "runtime_modules": len(manifest["modules"]), "canonical_records_preserved": len(before),
+                "runtime_modules": sum(name.endswith(".py") for name in manifest["modules"]),
+                "runtime_data_files": sum(not name.endswith(".py") for name in manifest["modules"]),
+                "canonical_records_preserved": len(before),
                 "local_save_recall": True, "experience_profile": True, "exact_retries": True, "hook_capture": True,
                 "backup_restore_same_bytes": True, "restored_capture_disabled": True,
                 "private_data_used": False, "network_used": False, "host_installed": False}

@@ -12,7 +12,7 @@ SCHEMA = "memory-vault-open-repair/v1"
 ROLES = ("allocate", "offer", "root", "read", "activation", "active")
 
 
-def ack_resource_fixture():
+def ack_resource_fixture(*, include_encryption=False):
     signers = {role: Identity(Ed25519PrivateKey.generate())
                for role in ("owner", "target", "writer", "maintainer")}
     encryption = {role: EncryptionIdentity.generate() for role in signers}
@@ -96,4 +96,5 @@ def ack_resource_fixture():
     expected = dict(expected_ack_slot=slot, expected_owner=keys["owner"],
                     expected_target=keys["target"],
                     target_storage_epoch=resource["storage_epoch"])
-    return docs, entries, expected, signers
+    result = docs, entries, expected, signers
+    return (*result, encryption) if include_encryption else result

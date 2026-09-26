@@ -948,6 +948,132 @@ custody. It does not establish S_ACK0 or expose an allocation RPC. A later
 consumer still needs the complete original historical chain and independent
 current serving authority before any read, copy or receipt admission.
 
+The local ACK bootstrap/status/source slice makes the following additional
+**candidate choices**. They specify a bounded historical-input contract, not
+an implemented transport, current authorization decision or durable resource
+commit. An authenticated source assertion alone does not establish S_ACK0.
+
+`verify_ack_owner_bootstrap_original` / `verifyAckOwnerBootstrapOriginal`
+consume the exact root, read and `ack_owner` bootstrap originals against an
+independently held AckSlot and owner DualKey. The explicit `at` is a caller
+expectation until the source consumer binds it to the verified node's
+`ack.slot_custody.stored_at`. Canonical RootKey/AckSlot hashes in the selector
+remain distinct from the complete original root/read hashes and opaque RawRef
+locators. Parent references match the complete supplied RawRef tuples.
+
+Each of the nine grant limits and each corresponding field of the independent
+local `limit_policy` is positive U53. A grant limit must not exceed that local
+field or any mapped field in **either** the root Budget or read-grant Budget:
+
+| Bootstrap limit | Ceiling from each parent Budget |
+|---|---|
+| max_probe_bytes | min(max_meta_bytes, max_job_bytes) |
+| max_proof_bytes | min(max_meta_bytes, max_job_bytes) |
+| max_proof_items | max_items |
+| max_signature_checks | max_requests |
+| max_requests | max_requests |
+| max_pending | max_pending |
+| max_replay_records | max_replay_records |
+| max_concurrent_handles | min(max_pending, max_jobs) |
+| max_candidate_attempts | min(max_requests, max_jobs) |
+
+These conservative comparisons do not merge the accounting units or invent
+request charges for signature checks. Actual parsing, hashing, signatures and
+copies still consume the existing shared work budget. A zero parent ceiling
+cannot support a positive child limit. These comparisons do not establish that
+the limits suffice for a later complete service proof: that operation must
+refuse an insufficient cap rather than remove required originals. The supplied
+local policy is an explicit verifier expectation, not evidence of a node's
+enabled policy or physical capacity.
+
+The ordered unique `upload_roles` list is a subset of both the parent's
+`allowed_roles` and the closed list
+`[ack.read_grant,ack.root_authority,ack.write_grant,bootstrap.grant]`.
+The parent must separately include `bootstrap.grant` and
+`ack_owner_service_v1`. This per-upload-role intersection is an explicit
+candidate narrowing. Naming `ack.write_grant` does not create a pre-E write
+original, grant receipt admission or authorize another signer's bytes.
+The bootstrap parent must allow DISCOVER|READ; its read grant must allow READ.
+Root/read/grant issuance is nondecreasing, their expiries cover the supplied
+event, and the grant expiry narrows both parents. Each phase deadline follows
+grant issuance and does not exceed grant expiry; proof/upload deadlines also
+narrow both parents' read/retain windows. The three-original input verifier
+does not require every phase deadline to outlive `at`: an actual action must
+check its own deadline, and the source promise below imposes further ceilings.
+
+`status_scope` / `statusScope` use canonical typed objects for these exact
+scope hashes. Authority scopes retain
+`{kind:authority,root_key,authority_kind,authority_sha256}` with the original
+Q names `ack.root_authority`, `ack.read_grant`, `ack.write_grant` or
+`bootstrap.grant`; no old provider alias is substituted. Resource scopes retain
+`{kind:resource,root_key,resource:ResourceRef}`. This candidate fixes AckSlot
+scope to `{kind:ack_slot,root_key,ack_slot:AckSlot}`, with the nested RootKey
+equal to the outer one.
+
+`verify_status_original` / `verifyStatusOriginal` authenticate complete T
+originals. They preserve the existing portable wire, `valid_until`, 16-entry
+and 16,384-byte bounds, positive status revision, sorted unique entries,
+1..604800-second validity span and 30-second issuance tolerance. They introduce
+no Q canonical-wire requirement, implicit expiry or current-status cache.
+The exact original hash binds its RawRef; the separately recomputed canonical
+Signed hash identifies equivalent status encodings for conflict detection.
+
+At the signed unbound source custody time, the five required observations use
+the following candidate masks and document-revision bindings:
+
+| Historical role | Required operation mask | Bound document revision |
+|---|---|---|
+| historical.status.ack_root | DISCOVER \| READ \| RETAIN = 74 | exact root.revision |
+| historical.status.ack_read | READ = 2 | exact read.revision |
+| historical.status.ack_owner_bootstrap | DISCOVER \| READ = 10 | exact bootstrap.revision |
+| historical.status.ack_slot | READ \| RETAIN = 66 | exact root.revision |
+| historical.status.ack_resource | READ \| RETAIN = 66 | exact active.reservation_generation |
+
+The root's own operation mask must include 74 and its read grant must include
+2. No ADMIT, COPY, PUBLISH or RENEW operation follows from this unbound check.
+Each observation must be active, contain every required bit, and have
+`minimum_document_revision` no greater than the bound original revision.
+The status document's own revision never substitutes for that original value.
+
+The enclosing source consumer derives disclosure eligibility for each original
+signer from typed parents: the owner contributes only the exact
+root/read/bootstrap authority scopes and this AckSlot; the source node
+contributes only its exact resource scope. If the independently bound roles
+have the same signing key, only the union of those specific scopes qualifies.
+Every **present** allowed scope is checked against its derived
+revision and mask obligation, even if that status was selected through another
+role. A separate favorable read-status original cannot hide a read revocation
+inside the root-status original. An unrelated entry rejects the entire Signed
+document; entries are never stripped. R's permission is bound to its signed
+same-scope custody and earlier bootstrap grant, not an assertion by A or P.
+
+Across retained observations in this closure, the same issuer, RootKey and
+status revision with different canonical Signed hashes is a conflict, including
+documents with disjoint entry sets. Different whitespace for the same canonical
+Signed object is not such a conflict; each exact RawRef remains independently
+bound. For each typed scope, a higher status revision cannot lower the retained
+`minimum_document_revision`, and a later active observation cannot restore
+retained revoked operation bits. These checks concern the supplied historical
+closure; they do not load, update or replace a current durable floor ledger,
+and do not claim knowledge of unobserved remote revocations.
+
+The source consumer binds exactly the 13 direct `ack_unbound` roles to the
+node-signed unbound custody, without a write grant, binding, receipt or future
+head. It requires `bootstrap.issued_at <= activation.issued_at` and
+`active.activated_at <= custody.stored_at`. Required retained statuses and the
+source node descriptor are checked at that source event. Allocation/offer and
+activation inputs keep their own earlier event semantics; their negotiation
+expiry is not reapplied at custody time or today's time.
+
+The custody promise obeys `stored_at < read_until <= retain_until`.
+Its read deadline does not exceed root/read read and retain windows, the
+active resource's read window, root/read/bootstrap expiry, or any bootstrap
+probe/proof/upload deadline. Its retention deadline does not exceed the root
+or active resource retention window; it need not end with the narrower caller
+read deadline. These are checks on the signer's original promise. Actual
+durability, capacity, current serving permission, possession, empty/occupied
+ACK transitions and end-to-end cold retrieval remain separate obligations.
+
 Input/event/copy order is consequently:
 
 ```text

@@ -293,6 +293,23 @@ function verifyProofMath(payload: Obj, proof: Obj, publicBytes: Buffer, expected
 // parser/defensive clone has frozen the graph. They do not infer authority.
 export {canonical as canonicalOriginalControl, descriptor as originalPublicDescriptor};
 
+export interface SourceNodeOriginalOptions {
+  readonly expectedSigningKey: string | Readonly<Record<string,unknown>>;
+  readonly expectedStorageEpoch: string; readonly at: number;
+  readonly policy: RepairPolicy; readonly budget: RepairBudget;
+}
+/** Original N node at one external historical event, not a current peer. */
+export function verifySourceNodeOriginal(raw:Uint8Array, options:SourceNodeOriginalOptions):VerifiedOriginalControl {
+  const args=fields(options,['expectedSigningKey','expectedStorageEpoch','at','policy','budget']) as unknown as SourceNodeOriginalOptions;
+  const {policy,budget,at}=args;context(policy,budget);opaque(args.expectedStorageEpoch);
+  if(!isUint8Array(raw))fail('repair_invalid_bytes');if(byteLength.call(raw)>4096)fail();
+  const result=verifyControl(raw,{expectedSigningKey:args.expectedSigningKey,expectedSchema:CONTROL_SCHEMA,
+    expectedKind:'node',at,policy,budget},[...COMMON,...KINDS.node]);
+  contactShape(result,budget,at);
+  if(result.payload.storage_epoch!==args.expectedStorageEpoch)fail('repair_original_mismatch');
+  return result;
+}
+
 export const CONTACT_ROLES = ['node','knock_lease','policy','request','decision','grant','delivery_lease'] as const;
 export interface ContactOriginalOptions {
   readonly senderKeyId: string; readonly senderEncryptionKeyId: string;

@@ -12,6 +12,8 @@ import sys
 from release_source import ReleaseSource
 
 
+# Flat runtime inventory: Python modules plus their explicitly required data.
+# Every entry is copied and hash-bound in runtime/MANIFEST.json.
 REQUIRED_MODULES = (
     "memory_vault.py", "memory_vault_client.py", "memory_vault_lifecycle.py", "memory_vault_trust.py",
     "memory_vault_transfer.py", "memory_vault_sync.py", "memory_vault_remote.py", "memory_vault_credentials.py",
@@ -36,6 +38,7 @@ REQUIRED_MODULES = (
     "memory_vault_open_blob.py", "memory_vault_open_delivery.py", "memory_vault_open_delivery_state.py",
     "memory_vault_open_delivery_client.py", "memory_vault_open_provider.py", "memory_vault_open_provider_state.py",
     "memory_vault_open_provider_client.py", "memory_vault_open_setup.py", "memory_vault_open_agent_setup.py",
+    "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
 )
 OPTIONAL_MODULES: tuple[str, ...] = ()
 PACKAGE_DOCUMENTS = (
@@ -77,6 +80,7 @@ PACKAGE_DOCUMENTS = (
     "clients/typescript/network/open-client.ts", "clients/typescript/network/open-node.ts",
     "clients/typescript/network/open-contact.ts", "clients/typescript/network/open-contact-state.ts",
     "clients/typescript/network/open-contact-client.ts", "docs/OPEN_FIRST_CONTACT_V1.md",
+    "clients/typescript/network/open-capacity.ts", "memory_vault_open_capacity_schema.json",
     "clients/typescript/network/open-blob.ts", "clients/typescript/network/open-delivery.ts",
     "clients/typescript/network/open-delivery-control.ts", "clients/typescript/network/open-delivery-client.ts",
     "clients/typescript/network/open-provider.ts", "clients/typescript/network/open-provider-client.ts",

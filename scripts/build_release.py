@@ -75,6 +75,11 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_open_repair_contact_inputs.py",
     "tests/open_repair_resource_fixtures.py", "tests/test_open_repair_resource.py",
     "tests/test_open_repair_resource_typescript.py", "tests/test_open_repair_resource_inputs.py",
+    "tests/test_open_repair_bootstrap.py", "tests/test_open_repair_bootstrap_typescript.py",
+    "tests/test_open_repair_status.py", "tests/test_open_repair_status_typescript.py",
+    "tests/open_repair_ack_fixtures.py", "tests/test_open_repair_ack.py",
+    "tests/test_open_repair_ack_typescript.py", "tests/test_open_repair_state.py",
+    "tests/test_open_capacity.py", "tests/test_open_capacity_typescript.py",
     "tests/test_continuation_trial.py",
     "tests/open_routing_acceptance.py",
     "tests/test_experience.py", "tests/test_experience_edges.py", "tests/test_experience_typescript.py", "tests/test_cross_author_state.py",
@@ -107,17 +112,27 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_network_trial_coordinator.py",
     "tests/test_network_trial_packaging.py",
 )
-# Local draft repair primitives have no live caller yet. Include their exact
-# sources for review without enrolling them in the client runtime allowlist.
+# Select repair and shared capacity sources explicitly for review. This list
+# does not enroll any source in the separate client runtime allowlist.
 LOCAL_REPAIR_REVIEW_SOURCES = (
     "memory_vault_open_repair_wire.py",
     "memory_vault_open_repair_history.py",
     "memory_vault_open_repair_original.py",
     "memory_vault_open_repair_resource.py",
+    "memory_vault_open_repair_bootstrap.py",
+    "memory_vault_open_repair_status.py",
+    "memory_vault_open_repair_ack.py",
+    "memory_vault_open_repair_state.py",
+    "memory_vault_open_capacity.py",
+    "memory_vault_open_capacity_schema.json",
     "clients/typescript/network/open-repair-wire.ts",
     "clients/typescript/network/open-repair-history.ts",
     "clients/typescript/network/open-repair-original.ts",
     "clients/typescript/network/open-repair-resource.ts",
+    "clients/typescript/network/open-repair-bootstrap.ts",
+    "clients/typescript/network/open-repair-status.ts",
+    "clients/typescript/network/open-repair-ack.ts",
+    "clients/typescript/network/open-capacity.ts",
 )
 TRIAL_EXTRA_MODULES = ("memory_vault_trial.py",)
 TRIAL_RUNTIME_MODULES = REQUIRED_MODULES + TRIAL_EXTRA_MODULES
@@ -246,7 +261,7 @@ def trial_service_configured(source_tree: ReleaseSource) -> bool:
 
 
 def inspect_sources(material: list[Path], review: list[Path], source_tree: ReleaseSource) -> tuple[str, dict[str, int]]:
-    modules = [ROOT / name for name in (*REQUIRED_MODULES, *OPTIONAL_MODULES)]
+    modules = [ROOT / name for name in (*REQUIRED_MODULES, *OPTIONAL_MODULES) if name.endswith(".py")]
     modules.extend(sorted((ROOT / "scripts").glob("*.py")))
     modules.append(ROOT / "plugins/memory-vault-client/scripts/launcher.py")
     modules.extend(path for path in review if path.suffix == ".py")

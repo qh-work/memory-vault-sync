@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import io
 import json
 from pathlib import Path
 import re
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +31,7 @@ NEW_MODULES = {"memory_vault_nodes.py", "memory_vault_node.py", "memory_vault_ne
                "memory_vault_open_blob.py", "memory_vault_open_delivery.py", "memory_vault_open_delivery_state.py",
                "memory_vault_open_delivery_client.py", "memory_vault_open_provider.py", "memory_vault_open_provider_state.py",
                "memory_vault_open_provider_client.py", "memory_vault_open_setup.py", "memory_vault_open_agent_setup.py"}
+RUNTIME_DATA = {"memory_vault_open_capacity_schema.json"}
 TS_NETWORK = {"clients/typescript/network/" + name for name in
               ("README.md", "crypto.ts", "content.ts", "hints.ts", "control.ts", "package.json", "package-lock.json",
                "io.ts", "nodes.ts", "peer.ts", "records.ts", "transport.ts", "vault.ts", "privacy.ts", "setup.ts",
@@ -37,7 +40,7 @@ TS_NETWORK = {"clients/typescript/network/" + name for name in
                "open-client.ts", "open-node.ts", "client-config.ts", "transport-state.ts",
                "open-contact.ts", "open-contact-state.ts", "open-contact-client.ts",
                "open-blob.ts", "open-delivery.ts", "open-delivery-control.ts", "open-delivery-client.ts",
-               "open-provider.ts", "open-provider-client.ts")}
+               "open-provider.ts", "open-provider-client.ts", "open-capacity.ts")}
 TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
                      ("nodes", "records", "vault", "peer", "peer_race", "transport", "setup",
                       "retrieval_text", "retrieval", "agent", "agent_network", "topics")}
@@ -60,12 +63,16 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 68)
-        self.assertTrue(NEW_MODULES <= allowed)
+        self.assertEqual(len(allowed), 70)
+        self.assertTrue(NEW_MODULES | {"memory_vault_open_capacity.py"} | RUNTIME_DATA <= allowed)
+        self.assertEqual({name for name in allowed if not name.endswith(".py")}, RUNTIME_DATA)
         for name in allowed:
             path = ROOT / name
             self.assertTrue(path.is_file() and not path.is_symlink(), name)
             self.assertLessEqual(path.stat().st_size, 1024 * 1024, name)
+            if name in RUNTIME_DATA:
+                self.assertEqual(json.loads(path.read_bytes())["schema_version"], "memory-vault-open-capacity/v1")
+                continue
             # Local imports, including lazy server/control imports, must resolve
             # inside the same flat runtime after leaving the source checkout.
             tree = ast.parse(path.read_bytes(), filename=name)
@@ -86,7 +93,8 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
         self.assertGreaterEqual(len(review), 39)
-        self.assertEqual(len(TS_NETWORK), 38)
+        self.assertEqual(len(TS_NETWORK), 39)
+        self.assertTrue(RUNTIME_DATA <= set(documents))
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
         self.assertTrue({"tests/test_open_contact.py", "tests/test_open_contact_state.py",
@@ -101,13 +109,23 @@ class NetworkPackagingTests(unittest.TestCase):
                          "tests/test_open_repair_contact_inputs.py",
                          "tests/open_repair_resource_fixtures.py", "tests/test_open_repair_resource.py",
                          "tests/test_open_repair_resource_typescript.py", "tests/test_open_repair_resource_inputs.py",
+                         "tests/test_open_repair_bootstrap.py", "tests/test_open_repair_bootstrap_typescript.py",
+                         "tests/test_open_repair_status.py", "tests/test_open_repair_status_typescript.py",
+                         "tests/open_repair_ack_fixtures.py", "tests/test_open_repair_ack.py",
+                         "tests/test_open_repair_ack_typescript.py", "tests/test_open_repair_state.py",
+                         "tests/test_open_capacity.py", "tests/test_open_capacity_typescript.py",
                          "tests/test_open_provider_status.py", "tests/test_open_provider_status_typescript.py"} <= set(review))
         repair_sources = literal(RELEASE, "LOCAL_REPAIR_REVIEW_SOURCES")
         self.assertEqual(set(repair_sources), {
             "memory_vault_open_repair_wire.py", "memory_vault_open_repair_history.py",
             "memory_vault_open_repair_original.py", "memory_vault_open_repair_resource.py",
+            "memory_vault_open_repair_bootstrap.py", "memory_vault_open_repair_status.py",
+            "memory_vault_open_repair_ack.py", "memory_vault_open_repair_state.py",
+            "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
             "clients/typescript/network/open-repair-wire.ts", "clients/typescript/network/open-repair-history.ts",
-            "clients/typescript/network/open-repair-original.ts", "clients/typescript/network/open-repair-resource.ts"})
+            "clients/typescript/network/open-repair-original.ts", "clients/typescript/network/open-repair-resource.ts",
+            "clients/typescript/network/open-repair-bootstrap.ts", "clients/typescript/network/open-repair-status.ts",
+            "clients/typescript/network/open-repair-ack.ts", "clients/typescript/network/open-capacity.ts"})
         for name in repair_sources:
             self.assertTrue((ROOT / name).is_file())
         for name in ("docs/NATIVE_OPEN_PROVIDER.md", "docs/CONTINUATION_TRIAL.md", "docs/OPEN_NETWORK_QUICKSTART.md"):
@@ -203,6 +221,42 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertEqual(crypto_sdk.get("dependencies"), {"jose": "6.2.10"})
         self.assertFalse(set(crypto_sdk.get("scripts", {})) & {"preinstall", "install", "postinstall", "prepare"})
 
+    def test_managed_archive_checks_the_exact_shared_runtime_schema(self):
+        from memory_vault import MemoryError
+        from memory_vault_update import _archive_inventory
+
+        # Inert synthetic runtime bytes exercise archive admission only. No
+        # release builder, package installation or application executes here.
+        root = "memory-vault-client-v0.26.0/"
+        base = root + "plugins/memory-vault-client/"
+        modules = {name: b"# Synthetic archive-admission fixture.\n" for name in literal(BUILDER, "REQUIRED_MODULES")}
+        schema = "memory_vault_open_capacity_schema.json"
+        modules[schema] = (ROOT / schema).read_bytes()
+
+        def archive_bytes(values, *, changed=None):
+            files = {base + "runtime/" + name: data for name, data in values.items()}
+            files[base + "runtime/MANIFEST.json"] = json.dumps({
+                "schema_version": "memory-vault-client-runtime/v1",
+                "modules": {name: hashlib.sha256(data).hexdigest() for name, data in values.items()},
+            }).encode()
+            files.update({base + name: b"{}" for name in (".mcp.json", "hooks/hooks.json", "scripts/launcher.py")})
+            files[base + ".codex-plugin/plugin.json"] = b'{"name":"memory-vault-client","version":"0.26.0"}'
+            files[root + ".agents/plugins/marketplace.json"] = b"{}"
+            if changed is not None:
+                files[base + "runtime/" + schema] = changed
+            stream = io.BytesIO()
+            with zipfile.ZipFile(stream, "w") as archive:
+                for name, data in files.items():
+                    archive.writestr(name, data)
+            return stream.getvalue()
+
+        archive, _ = _archive_inventory(archive_bytes(modules), "0.26.0")
+        archive.close()
+        for raw in (archive_bytes(modules, changed=modules[schema] + b"\n"),
+                    archive_bytes({**modules, "memory_vault_other_data.json": b"{}"})):
+            with self.assertRaisesRegex(MemoryError, "update_runtime_hash_mismatch"):
+                _archive_inventory(raw, "0.26.0")
+
     def test_isolated_source_runtime_launcher_and_strict_inventory(self):
         modules = literal(BUILDER, "REQUIRED_MODULES")
         with tempfile.TemporaryDirectory(prefix="memory-packaging-contract-synthetic-") as temporary:
@@ -241,7 +295,7 @@ class NetworkPackagingTests(unittest.TestCase):
             self.assertFalse(config.exists())
             probe = """import importlib,json,sys
 sys.path.insert(0,sys.argv[1])
-for name in ('memory_vault_nodes','memory_vault_node','memory_vault_network_recovery','memory_vault_node_transfer'):
+for name in ('memory_vault_nodes','memory_vault_node','memory_vault_network_recovery','memory_vault_node_transfer','memory_vault_open_capacity'):
     importlib.import_module(name)
 print(json.dumps({'optional_loaded': sorted(set(sys.modules)&{'cryptography','joserfc','httpx','starlette','uvicorn'})}))
 """
@@ -249,6 +303,15 @@ print(json.dumps({'optional_loaded': sorted(set(sys.modules)&{'cryptography','jo
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=root, timeout=20)
             self.assertEqual(imported.returncode, 0, imported.stderr.decode())
             self.assertEqual(json.loads(imported.stdout)["optional_loaded"], [])
+            # The shared SQL schema is an authenticated runtime input, not an
+            # unchecked adjacent file outside the manifest's exact inventory.
+            schema = runtime / "memory_vault_open_capacity_schema.json"
+            schema_bytes = schema.read_bytes()
+            schema.write_bytes(schema_bytes + b"\n")
+            self.assertEqual(launch().returncode, 1)
+            schema.unlink()
+            self.assertEqual(launch().returncode, 1)
+            schema.write_bytes(schema_bytes)
             for name in ("node_modules", "__pycache__", "client.json"):
                 extra = runtime / name
                 if name.endswith(".json"):

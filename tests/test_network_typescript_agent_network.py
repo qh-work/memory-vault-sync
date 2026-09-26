@@ -76,6 +76,7 @@ class TypeScriptAgentNetworkTests(unittest.TestCase):
         source = ROOT / "clients/typescript/network"
         for file in [*source.glob("*.ts"), source / "package.json"]:
             shutil.copyfile(file, cls.fixture / file.name)
+        shutil.copyfile(ROOT / "memory_vault_open_capacity_schema.json", cls.fixture / "memory_vault_open_capacity_schema.json")
         (cls.fixture / "node_modules").mkdir()
         (cls.fixture / "node_modules/jose").symlink_to(package, target_is_directory=True)
         (cls.fixture / "driver.mjs").write_text(DRIVER)

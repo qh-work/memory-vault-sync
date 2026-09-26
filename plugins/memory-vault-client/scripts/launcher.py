@@ -38,6 +38,7 @@ ALLOWED_MODULES = {
     "memory_vault_open_blob.py", "memory_vault_open_delivery.py", "memory_vault_open_delivery_state.py",
     "memory_vault_open_delivery_client.py", "memory_vault_open_provider.py", "memory_vault_open_provider_state.py",
     "memory_vault_open_provider_client.py", "memory_vault_open_setup.py", "memory_vault_open_agent_setup.py",
+    "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
 }
 REQUIRED_MODULES = ALLOWED_MODULES
 MAX_MODULE_BYTES = 1024 * 1024

@@ -12,6 +12,7 @@ import time
 from memory_vault import MemoryError, canonical_bytes
 from memory_vault_network_crypto import document, document_sha256, integer
 from memory_vault_open_control import verify_node
+from memory_vault_open_capacity import CapacityAuthority, translate_error
 from memory_vault_open_provider import (
     MAX_CONTROL_BYTES, PUBLISH, ProviderError, answer_target_challenge, as_dual,
     authority_scope, bounded, fail, issue_status, node_binding, resource_scope,
@@ -30,7 +31,8 @@ _TARGET_SLOTS = threading.BoundedSemaphore(1)
 
 
 class ProviderState:
-    def __init__(self, db, identity, node, *, encryption_identity, enabled=False, policy=None, clock=None):
+    def __init__(self, db, identity, node, *, encryption_identity, enabled=False, policy=None, clock=None,
+                 capacity_policy=None):
         if type(enabled) is not bool:
             fail("provider_invalid_policy")
         actual = dict(DEFAULT_POLICY)
@@ -46,6 +48,7 @@ class ProviderState:
         self.db, self.identity, self.node = db, identity, document(node)
         self.encryption_identity, self.enabled, self.policy = encryption_identity, enabled, actual
         self.clock, self._lock = clock or time.time, threading.RLock()
+        self.capacity = CapacityAuthority(db, policy=capacity_policy)
 
     def _now(self):
         return integer(int(self.clock()))
@@ -104,9 +107,9 @@ class ProviderState:
                             "open_provider_resources", "open_provider_facts", "open_provider_status", "open_provider_replay")):
                         fail("provider_storage_binding_missing")
                     self.db.execute("INSERT INTO open_provider_state VALUES('binding',?)", (self._expected_binding(),))
-                self._binding(); self.db.commit()
-            except BaseException:
-                self.db.rollback(); raise
+                self._binding(); self.capacity.initialize(); self.db.commit()
+            except BaseException as error:
+                self.db.rollback(); raise translate_error(error)
 
     def _transaction(self, rpc, operation):
         with self._lock:
@@ -114,14 +117,14 @@ class ProviderState:
                 fail("provider_storage_transaction")
             self.db.execute("BEGIN IMMEDIATE")
             try:
-                now = self._now(); self._binding()
+                now = self._now(); self._binding(); self.capacity.check_policy()
                 checked = verify_rpc(rpc, node=self.node, now=now)
                 if not self.enabled:
                     fail("provider_closed")
                 result = operation(checked, now)
                 self._capacity(); self.db.commit()
-            except BaseException:
-                self.db.rollback(); raise
+            except BaseException as error:
+                self.db.rollback(); raise translate_error(error)
         if isinstance(result, ProviderError):
             raise result
         return result
@@ -489,7 +492,7 @@ class ProviderState:
                 fail("provider_storage_transaction")
             self.db.execute("BEGIN IMMEDIATE")
             try:
-                self._binding(); now = self._now(); removed = 0
+                self._binding(); self.capacity.check_policy(); now = self._now(); removed = 0
                 for table in ("open_provider_facts", "open_provider_replay"):
                     cursor = self.db.execute("DELETE FROM " + table + " WHERE rowid IN (SELECT rowid FROM " + table + " WHERE retain_until<=? ORDER BY retain_until LIMIT ?)", (now, limit))
                     removed += cursor.rowcount
@@ -499,7 +502,8 @@ class ProviderState:
                 self.db.execute("""DELETE FROM open_provider_status WHERE rowid IN (
                     SELECT rowid FROM open_provider_status WHERE valid_until+60<=? AND root_digest NOT IN
                     (SELECT root_digest FROM open_provider_resources) LIMIT ?)""", (now, limit))
+                self.capacity.collect_released("provider", now=now, limit=limit)
                 self.db.commit()
                 return {"removed_rows": removed}
-            except BaseException:
-                self.db.rollback(); raise
+            except BaseException as error:
+                self.db.rollback(); raise translate_error(error)
