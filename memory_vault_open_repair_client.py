@@ -611,3 +611,191 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
             expected_owner=self.subject,limit_policy=self.limits,at=self._now(),policy=self.policy,budget=budget)
         return RecoveredMailboxRootProof(MappingProxyType(source),held,tuple(current),MappingProxyType(originals),
             MappingProxyType(dict(requests=requests,wire_bytes=wire_bytes,proof_bytes=proof_bytes,**budget.snapshot())))
+
+
+class MailboxSetupBuilder:
+    """Recipient-side original setup documents; never sends private keys.
+
+    The caller persists the public plan and exact returned originals before
+    sending them. Only a verified custody/recovery result establishes readiness.
+    All capacities, lifetimes and the permitted sender are explicit inputs.
+    """
+    def __init__(self, identity, encryption_identity, plan, *, policy=DEFAULT_POLICY):
+        import memory_vault_open_repair_resource as resource
+        import memory_vault_open_repair_history as history
+        self.identity,self.policy=identity,policy
+        self.owner=dict(signing_key=identity.public_descriptor(),encryption_key=encryption_identity.public_descriptor())
+        budget=wire.RepairBudget(policy)
+        self.plan=wire.build_new_wire(plan,policy,budget).value
+        p=resource._fields(self.plan,{"root_key","slot_key","sender","target","budget","windows","limits","max_appends","max_live_items"})
+        history._slot(p["slot_key"],p["root_key"]);history._dual(p["sender"])
+        target=resource._dual_key(p["target"],budget)
+        if (p["root_key"]["root_kind"]!="mailbox" or p["root_key"]["owner"]!=resource._dual_key(self.owner,budget)
+                or p["slot_key"]["writer"]!=target):
+            _fail("repair_mailbox_root_mismatch")
+        resource._budget(p["budget"]);resource._windows(p["windows"]);bootstrap._limits(p["limits"])
+        if not 1<=wire.u53(p["max_live_items"])<=wire.u53(p["max_appends"])<=65536 or p["max_live_items"]>p["budget"]["max_items"]:
+            _fail("repair_invalid_resource")
+        for name,parents in bootstrap._PARENT_CAPS.items():
+            if any(p["limits"][name]>p["budget"][key] for key in parents):
+                _fail("repair_invalid_resource")
+
+    def _sign(self, kind, fields, at, until, budget):
+        wire.u53(at);wire.u53(until)
+        if at>=until:
+            _fail("repair_resource_expired")
+        payload=dict(schema_version=proof.SCHEMA,kind=kind,signing_key=self.owner["signing_key"],
+            issued_at=at,expires_at=until,**fields)
+        return _entry(probe._sign(wire.build_new_wire(payload,self.policy,budget).value,self.identity,self.policy,budget))
+
+    def _id(self, name):
+        import hashlib
+        # Stable across a caller-persisted plan retry, without exposing root ids
+        # as global resource locators or changing an already returned original.
+        root=wire.build_new_wire(self.plan["root_key"],self.policy,wire.RepairBudget(self.policy)).raw
+        return name+"_"+hashlib.sha256(b"memory-vault-mailbox-setup/v1\0"+root+b"\0"+name.encode()).hexdigest()
+
+    def allocation_requests(self, *, at, expires_at):
+        import memory_vault_open_repair_resource as resource
+        p=self.plan;budget=wire.RepairBudget(self.policy)
+        if not at<expires_at<=min(p["windows"].values()):
+            _fail("repair_resource_expired")
+        result={}
+        for purpose in ("anchor_catalog","feed_metadata","mailbox_data"):
+            intent=dict(kind="resource.owner_intent",allocation_id=self._id(purpose),root_key=p["root_key"],owner=self.owner,
+                target=p["target"],target_storage_epoch=p["slot_key"]["writer_storage_epoch"],purpose=purpose,budget=p["budget"],windows=p["windows"])
+            digest=budget._hash(wire.build_new_wire(intent,self.policy,budget).raw)
+            result[purpose]=self._sign("resource.allocate",dict(request_id=self._id("allocate_"+purpose),
+                target_node_key_id=p["target"]["signing_key"]["key_id"],target_storage_epoch=p["slot_key"]["writer_storage_epoch"],
+                intent=intent,intent_sha256=digest),at,expires_at,budget)
+        return result
+
+    def _offers(self, allocations, offers, at, budget):
+        import memory_vault_open_repair_resource as resource
+        import memory_vault_open_repair_history as history
+        purposes={"anchor_catalog","feed_metadata","mailbox_data"}
+        resource._fields(allocations,purposes);resource._fields(offers,purposes)
+        result={}
+        for purpose in sorted(purposes):
+            value=resource._fields(offers[purpose],{"raw","ref"});ref=resource._ref(value["ref"])
+            parsed=wire.parse_new_wire(value["raw"],self.policy,budget)
+            if len(parsed.raw)!=ref.size or budget._hash(parsed.raw)!=ref.raw_sha256:
+                _fail("repair_ref_mismatch")
+            signed=resource._fields(parsed.value,{"payload","proof"})
+            payload=resource._fields(signed["payload"],resource.COMMON|set(resource._FIELDS[1].split()))
+            original._verify_control_signature(payload,signed["proof"],self.plan["target"]["signing_key"],budget)
+            intent=payload["intent"]
+            expected_intent=dict(kind="resource.owner_intent",allocation_id=self._id(purpose),root_key=self.plan["root_key"],
+                owner=self.owner,target=self.plan["target"],target_storage_epoch=self.plan["slot_key"]["writer_storage_epoch"],
+                purpose=purpose,budget=self.plan["budget"],windows=self.plan["windows"])
+            allocation=resource._fields(allocations[purpose],{"raw","ref"})
+            allocation_ref=resource._ref(wire.build_new_wire(allocation["ref"],self.policy,budget).value)
+            allocation_doc=wire.parse_new_wire(allocation["raw"],self.policy,budget)
+            if len(allocation_doc.raw)!=allocation_ref.size or budget._hash(allocation_doc.raw)!=allocation_ref.raw_sha256:
+                _fail("repair_ref_mismatch")
+            allocation_signed=resource._fields(allocation_doc.value,{"payload","proof"})
+            ap=resource._fields(allocation_signed["payload"],resource.COMMON|set(resource._FIELDS[0].split()))
+            original._verify_control_signature(ap,allocation_signed["proof"],self.owner["signing_key"],budget)
+            resource._lifetime(ap)
+            if (ap["schema_version"]!=resource.SCHEMA or ap["kind"]!="resource.allocate" or ap["intent"]!=expected_intent
+                    or ap["intent_sha256"]!=payload["intent_sha256"] or ap["target_node_key_id"]!=self.plan["target"]["signing_key"]["key_id"]
+                    or ap["target_storage_epoch"]!=self.plan["slot_key"]["writer_storage_epoch"]
+                    or not ap["issued_at"]<=payload["issued_at"]<ap["expires_at"]
+                    or payload["reservation_until"]>ap["expires_at"]):
+                _fail("repair_resource_mismatch")
+            if (payload["schema_version"]!=resource.SCHEMA or payload["kind"]!="resource.offer" or intent!=expected_intent
+                    or payload["intent_sha256"]!=budget._hash(wire.build_new_wire(expected_intent,self.policy,budget).raw)
+                    or payload["allocation_request_ref"]!=allocations[purpose]["ref"]
+                    or payload["target_encryption_key"]!=self.plan["target"]["encryption_key"]
+                    or payload["budget"]!=self.plan["budget"] or payload["windows"]!=self.plan["windows"]
+                    or not wire.u53(payload["issued_at"])<=at<wire.u53(payload["reservation_until"])):
+                _fail("repair_resource_mismatch")
+            history._resource(payload["resource"]);wire.u53(payload["reservation_generation"],1)
+            if (payload["resource"]["node_key_id"]!=self.plan["target"]["signing_key"]["key_id"]
+                    or payload["resource"]["storage_epoch"]!=self.plan["slot_key"]["writer_storage_epoch"]):
+                _fail("repair_resource_mismatch")
+            result[purpose]=dict(raw=parsed.raw,ref=ref.as_dict(),payload=payload)
+        return result
+
+    def slot_documents(self, allocations, offers, *, at, expires_at):
+        import memory_vault_open_repair_history as history
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_slot_owner_inputs
+        p=self.plan;budget=wire.RepairBudget(self.policy);held=self._offers(allocations,offers,at,budget)
+        result={};owner=probe._dual(self.owner);target=probe._dual(p["target"])
+        def add(name,kind,**fields):
+            result[name]=self._sign(kind,fields,at,expires_at,budget)
+        add("maintenance","mailbox.maintenance_root",root_key=p["root_key"],authority_id=self._id("maintenance"),slot_key=p["slot_key"],
+            sender=p["sender"],recipient=owner,maintainers=[target],operation_mask=127,
+            allowed_roles=sorted(["bootstrap.grant","mailbox.slot","mailbox.read_grant","mailbox.maintenance_root","selected_slot_service_v1"]),
+            budget=p["budget"],windows=p["windows"],max_delegate_depth=2,max_destinations_per_job=2,max_concurrent_jobs=1,revision=1)
+        add("read","mailbox.read_grant",grant_id=self._id("slot_read"),root_key=p["root_key"],slot_key=p["slot_key"],reader=owner,
+            serving_authority_id=self._id("maintenance"),operation_mask=2,budget=p["budget"],windows=p["windows"],revision=1)
+        feed=dict(namespace="feed",key=budget._hash(wire._canonical(p["slot_key"],budget)))
+        data,metadata=held["mailbox_data"],held["feed_metadata"]
+        add("slot","mailbox.slot",revision=1,slot_key=p["slot_key"],feed_ref=feed,sender=p["sender"],recipient=owner,
+            data_resource_ref=data["payload"]["resource"],data_resource_offer_ref=data["ref"],metadata_resource_ref=metadata["payload"]["resource"],
+            metadata_resource_offer_ref=metadata["ref"],read_grant_ref=result["read"]["ref"],maintenance_root_ref=result["maintenance"]["ref"],
+            max_appends=p["max_appends"],max_live_items=p["max_live_items"],budget=p["budget"],windows=p["windows"])
+        add("bootstrap","bootstrap.grant",grant_id=self._id("slot_bootstrap"),revision=1,owner=owner,subject=owner,root_key=p["root_key"],
+            consumer="mailbox_feed",selector=dict(root_key_sha256=budget._hash(wire._canonical(p["root_key"],budget)),
+                slot_key_sha256=budget._hash(wire._canonical(p["slot_key"],budget)),feed_ref=feed,slot_sha256=result["slot"]["ref"]["raw_sha256"],
+                read_grant_sha256=result["read"]["ref"]["raw_sha256"],maintenance_root_sha256=result["maintenance"]["ref"]["raw_sha256"]),
+            parent_authority_ref=result["maintenance"]["ref"],caller_authority_ref=result["read"]["ref"],probe_until=expires_at,proof_until=expires_at,
+            upload_until=expires_at,probe_profile="opaque_v1",response_profile="selected_slot_service_v1",upload_roles=["bootstrap.grant"],limits=p["limits"])
+        add("activation","resource.activation",activation_id=self._id("slot_activation"),subject=self.owner,
+            target_node_key_id=p["target"]["signing_key"]["key_id"],target_storage_epoch=p["slot_key"]["writer_storage_epoch"],root_key=p["root_key"],
+            scope=dict(kind="mailbox_slot",slot_key=p["slot_key"],slot_ref=result["slot"]["ref"]),
+            resource_offer_refs=sorted([data["ref"],metadata["ref"]],key=history._ref_tuple),
+            authority_refs=[dict(role=kind,ref=result[name]["ref"]) for name,kind in
+                (("maintenance","mailbox.maintenance_root"),("read","mailbox.read_grant"),("slot","mailbox.slot"))])
+        verify_mailbox_slot_owner_inputs(result,expected_slot=p["slot_key"],expected_owner=self.owner,expected_target=p["target"],
+            target_storage_epoch=p["slot_key"]["writer_storage_epoch"],offers={name:dict(raw=v["raw"],ref=v["ref"]) for name,v in (("data",data),("metadata",metadata))},
+            limit_policy=p["limits"],at=at,policy=self.policy,budget=budget)
+        return result
+
+    def root_documents(self, allocations, offers, slot_entries, slot_result, *, at, expires_at):
+        import memory_vault_open_repair_resource as resource
+        import memory_vault_open_repair_history as history
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_slot_owner_inputs, verify_mailbox_genesis
+        from memory_vault_open_repair_mailbox_root import verify_mailbox_root_bootstrap
+        p=self.plan;budget=wire.RepairBudget(self.policy);held=self._offers(allocations,offers,at,budget)
+        resource._fields(slot_result,{"data","metadata","checkpoint","head"})
+        checked=verify_mailbox_slot_owner_inputs(slot_entries,expected_slot=p["slot_key"],expected_owner=self.owner,expected_target=p["target"],
+            target_storage_epoch=p["slot_key"]["writer_storage_epoch"],offers={name:dict(raw=held[purpose]["raw"],ref=held[purpose]["ref"])
+                for name,purpose in (("data","mailbox_data"),("metadata","feed_metadata"))},limit_policy=p["limits"],at=at,policy=self.policy,budget=budget)
+        activation=checked["activation"].payload;times=[]
+        for name,purpose in (("data","mailbox_data"),("metadata","feed_metadata")):
+            verified=resource.verify_mailbox_resource_inputs(dict(allocate=allocations[purpose],offer=offers[purpose],activation=slot_entries["activation"],active=slot_result[name]),
+                expected_root=p["root_key"],expected_owner=self.owner,expected_target=p["target"],target_storage_epoch=p["slot_key"]["writer_storage_epoch"],
+                expected_purpose=purpose,expected_scope=activation["scope"],expected_authority_refs=activation["authority_refs"],
+                expected_offer_refs=activation["resource_offer_refs"],at=at,policy=self.policy,budget=budget)
+            times.append(verified["active"].payload["activated_at"])
+        if times[0]!=times[1]:
+            _fail("repair_mailbox_slot_incomplete")
+        verify_mailbox_genesis({name:slot_result[name] for name in ("head","checkpoint")},expected_slot=p["slot_key"],
+            expected_signing_key=p["target"]["signing_key"],committed_at=times[0],at=at,policy=self.policy,budget=budget)
+        result={};owner=probe._dual(self.owner);anchor=held["anchor_catalog"]
+        def add(name,kind,**fields):
+            result[name]=self._sign(kind,fields,at,expires_at,budget)
+        add("root","mailbox.root_authority",root_key=p["root_key"],authority_id=self._id("root"),original_resource_ref=anchor["payload"]["resource"],
+            original_resource_offer_ref=anchor["ref"],slot_ids=[p["slot_key"]["slot_id"]],maintainers=[probe._dual(p["target"])],operation_mask=127,
+            allowed_roles=["bootstrap.grant","mailbox.root_authority","mailbox.root_read_grant","mailbox_root_service_v1"],budget=p["budget"],windows=p["windows"],
+            max_delegate_depth=2,max_destinations_per_job=2,max_concurrent_jobs=1,revision=1)
+        add("read","mailbox.root_read_grant",grant_id=self._id("root_read"),root_key=p["root_key"],reader=owner,root_authority_ref=result["root"]["ref"],
+            operation_mask=2,budget=p["budget"],windows=p["windows"],revision=1)
+        add("catalog","mailbox.catalog",root_key=p["root_key"],revision=1,slot_refs=[checked["slot"].ref.as_dict()],root_authority_ref=result["root"]["ref"])
+        add("bootstrap","bootstrap.grant",grant_id=self._id("root_bootstrap"),revision=1,owner=owner,subject=owner,root_key=p["root_key"],consumer="mailbox_root",
+            selector=dict(root_key_sha256=budget._hash(wire._canonical(p["root_key"],budget)),anchor_ref=p["root_key"]["anchor_ref"],
+                root_authority_sha256=result["root"]["ref"]["raw_sha256"],read_grant_sha256=result["read"]["ref"]["raw_sha256"]),
+            parent_authority_ref=result["root"]["ref"],caller_authority_ref=result["read"]["ref"],probe_until=expires_at,proof_until=expires_at,upload_until=expires_at,
+            probe_profile="opaque_v1",response_profile="mailbox_root_service_v1",upload_roles=["bootstrap.grant"],limits=p["limits"])
+        refs=[dict(role=kind,ref=result[name]["ref"]) for name,kind in (("root","mailbox.root_authority"),("read","mailbox.root_read_grant"),("catalog","mailbox.catalog"))]
+        refs += [dict(role=kind,ref=checked[name].ref.as_dict()) for name,kind in (("slot","mailbox.slot"),("read","mailbox.read_grant"),("maintenance","mailbox.maintenance_root"))]
+        refs.sort(key=lambda v:(v["role"],*history._ref_tuple(v["ref"])))
+        add("activation","resource.activation",activation_id=self._id("root_activation"),subject=self.owner,target_node_key_id=p["target"]["signing_key"]["key_id"],
+            target_storage_epoch=p["slot_key"]["writer_storage_epoch"],root_key=p["root_key"],
+            scope=dict(kind="mailbox_root",root_key=p["root_key"],root_authority_ref=result["root"]["ref"],catalog_ref=result["catalog"]["ref"]),
+            resource_offer_refs=[anchor["ref"]],authority_refs=refs)
+        verify_mailbox_root_bootstrap({name:result[name] for name in ("root","read","bootstrap")},expected_root=p["root_key"],expected_owner=self.owner,
+            limit_policy=p["limits"],at=at,policy=self.policy,budget=budget)
+        return result

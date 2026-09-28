@@ -409,6 +409,42 @@ class MailboxSourceTests(unittest.TestCase):
             service.challenge(dict(raw=pending.original.raw,ref=pending.original.ref.as_dict()))
         self.assertEqual(h.db.execute("SELECT count(*) FROM open_repair_mailbox_recovery_challenges").fetchone()[0],0)
 
+    def test_custody_setup_builder_creates_actual_root_without_handwritten_authorities(self):
+        import copy
+        from memory_vault_open_repair_client import MailboxSetupBuilder
+        import memory_vault_open_provider as provider
+        from tests.test_open_repair_status import status_entry
+        from tests.open_repair_ack_fixtures import LIMITS
+        h=self.host.h
+        root=copy.deepcopy(h.root);root["root_id"]="synthetic_builder_root";root["anchor_ref"]["key"]="f"*64
+        slot=dict(h.slot_key,root_key=root,slot_id="synthetic_builder_slot")
+        caps=copy.deepcopy(h.f["docs"]["allocate"]["payload"]["intent"]["budget"]);caps["max_meta_bytes"]=1048576
+        plan=dict(root_key=root,slot_key=slot,sender=dict(signing_key_id=h.f["signers"]["writer"].key_id,
+            encryption_key_id=h.f["encryption"]["writer"].key_id),target=h.source.target,budget=caps,
+            windows={name:h.now+600 for name in h.f["docs"]["allocate"]["payload"]["intent"]["windows"]},
+            limits=LIMITS,max_appends=16,max_live_items=16)
+        builder=MailboxSetupBuilder(h.f["signers"]["owner"],h.f["encryption"]["owner"],plan)
+        allocations=builder.allocation_requests(at=h.now,expires_at=h.now+60)
+        offers=h.resources.allocate_initial(list(allocations.values()),expected_owner=h.owner)
+        entries=builder.slot_documents(allocations,offers,at=h.now,expires_at=h.now+600)
+        slot_result=self.source.root.slots.activate(entries,expected_slot=slot)
+        root_entries=builder.root_documents(allocations,offers,entries,slot_result,at=h.now,expires_at=h.now+600)
+        active=self.source.root.activate(root_entries,expected_root=root,slot_keys=[slot])
+        rid=json.loads(active["raw"])["payload"]["resource"]["resource_id"]
+        context=self.source.root.owner_status_context(rid)
+        state=status_entry(provider.issue_status(h.f["signers"]["owner"],root=root,revision=1,
+            entries=[dict(scope_kind=v["scope_kind"],scope_id=v["scope_id"],minimum_document_revision=1,status="active",operation_mask=127)
+                for v in context["required"]],issued_at=h.now,valid_until=h.now+100))
+        self.source.root.observe_owner_status(rid,state)
+        self.source.observe_resources(rid,"synthetic_builder_status",valid_until=h.now+100)
+        self.source.prepare_history(rid,"synthetic_builder_status")
+        custody=self.source.finalize_root(rid,read_until=h.now+100,retain_until=h.now+100)
+        self.assertEqual(json.loads(custody["raw"])["payload"]["root_key"],root)
+        self.assertEqual(builder.allocation_requests(at=h.now,expires_at=h.now+60),allocations)
+        wrong=dict(offers);wrong["mailbox_data"]=offers["feed_metadata"]
+        with self.assertRaises(RepairWireError):
+            builder.slot_documents(allocations,wrong,at=h.now,expires_at=h.now+600)
+
     def test_real_anchor_and_slot_resources_share_one_node_signed_original(self):
         result = self.observe();self.assertEqual(len(result),1)
         payload = json.loads(result[0]["raw"])["payload"]
