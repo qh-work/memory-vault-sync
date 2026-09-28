@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
   "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.10",
-  "release_publication_verified": false,
+  "release_publication_verified": true,
   "release_assets": {
     "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.10/memory-vault-client-v0.28.0-alpha.0.10.zip",
     "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.10/memory-vault-protocol-v0.28.0-alpha.0.10.zip",

@@ -1,6 +1,6 @@
 # Distribution scope and publication gates
 
-This alpha.0.10 candidate adds remote source preparation with independently held
+This alpha.0.10 release adds remote source preparation with independently held
 private configurations, durable setup/bind retries and contact enablement through
 an already configured node. Actual memory delivery and independent original-receipt
 recovery remain connected. It retains separate
@@ -10,6 +10,8 @@ source and owner commands. Message movement, automatic repair and global
 reliability remain unfinished. Earlier delivery, selected-memory sharing and the
 current-fact scorer remain available. Exact validation belongs to the source-bound
 release record.
+
+Published [v0.28.0-alpha.0.10](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.10) has eight assets, downloaded and compared byte for byte with the reviewed packages. The release is built from `7d844bea6f961ee714a236c61e352d6e9002d2fa`; [its cloud run](https://github.com/qh-work/memory-vault-sync/actions/runs/36474765248) completed 861 tests. The client archive also completed independent remote source setup, selected-memory delivery and original-receipt recovery after the delivery node stopped. These checks use synthetic data and do not establish external adoption or global-scale reliability.
 
 ## One protocol, two complete usage paths
 
