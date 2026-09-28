@@ -12,6 +12,7 @@ import memory_vault_open_repair_history as history
 import memory_vault_open_repair_original as original
 import memory_vault_open_repair_resource as resource
 import memory_vault_open_repair_wire as wire
+import memory_vault_open_repair_status as status
 from memory_vault_open_repair_mailbox_activation import MailboxSlotActivation, _ordered, _role
 from memory_vault_open_repair_state import ROW_CHARGE
 
@@ -244,3 +245,81 @@ class MailboxRootActivation:
                 (root_digest,row["owner"],activation["activation_id"],digest,row["resource_id"],inputs,saved_slots,
                  active["raw"],canonical_bytes(active["ref"]),now))
             return active
+
+    def owner_status_context(self, resource_id, *, _budget=None):
+        """Derive B's finite status scopes from this committed original catalog."""
+        s = self.source
+        budget = _budget if _budget is not None else wire.RepairBudget(s.policy)
+        wire._context(s.policy,budget)
+        with s._transaction():
+            row = s._one("SELECT inputs,slots FROM open_repair_mailbox_roots WHERE resource_id=?",(resource_id,))
+            if row is None:
+                wire._fail("repair_unknown_resource")
+            held = wire.parse_new_wire(bytes(row["inputs"]),s.policy,budget).value
+            slots = wire.parse_new_wire(bytes(row["slots"]),s.policy,budget).value
+            def original_entry(value):
+                parsed,ref = s._entry(dict(raw=value["raw"].encode(),ref=value["ref"]),budget)
+                return parsed.value["payload"],ref
+            root,_ = original_entry(held["root"])
+            requirements,deadlines = {},[]
+            def add(kind,subject,revision,bits):
+                scope_id = status.status_scope(root["root_key"],kind,subject,s.policy,budget)
+                requirements[(kind,scope_id)] = dict(issuer=root["signing_key"]["key_id"],scope_kind=kind,
+                    scope_id=scope_id,document_revision=revision,operation_mask=bits)
+            def authority(value,bits):
+                p,ref = original_entry(value)
+                deadlines.append(p["expires_at"])
+                if "windows" in p:
+                    deadlines.extend(p["windows"][name] for name in ("read_until","retain_until"))
+                if p["kind"] == "bootstrap.grant":
+                    deadlines.extend(p[name] for name in ("probe_until","proof_until","upload_until"))
+                add("authority",dict(authority_kind=p["kind"],authority_sha256=ref.raw_sha256),p["revision"],bits)
+            authority(held["root"],10); authority(held["read"],2); authority(held["bootstrap"],10)
+            catalog,_ = original_entry(held["catalog"])
+            deadlines.append(catalog["expires_at"])
+            add("catalog",dict(root_key=root["root_key"]),catalog["revision"],8)
+            for slot in slots:
+                values = slot["entries"]
+                p,_ = original_entry(values["slot"])
+                deadlines.append(p["expires_at"])
+                deadlines.extend(p["windows"][name] for name in ("read_until","retain_until"))
+                add("mailbox_slot",p["slot_key"],p["revision"],10)
+                for name,bits in (("read",2),("maintenance",10),("bootstrap",10)):
+                    authority(values[name],bits)
+            return dict(signing_key=root["signing_key"],root_key=root["root_key"],
+                        required=[requirements[key] for key in sorted(requirements)],deadline=min(deadlines))
+
+    def observe_owner_status(self, resource_id, entry, *, _budget=None):
+        from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
+        s = self.source
+        budget = _budget if _budget is not None else wire.RepairBudget(s.policy)
+        context = self.owner_status_context(resource_id,_budget=budget)
+        # A large catalog may span multiple whole signed documents. Select only
+        # their claimed scopes from the independently derived set, never project
+        # the signed original or authorize an extra entry by caller assertion.
+        entry = status._fields(entry,{"raw","ref"})
+        reference = wire.build_new_wire(entry["ref"],s.policy,budget).value
+        preview = status.original.parse_original_control(entry["raw"],s.policy,budget)
+        raw = preview.raw
+        payload = status._fields(status._fields(preview.value,{"payload","proof"})["payload"],status._PAYLOAD)
+        if type(payload["entries"]) is not wire._DraftList or not 1 <= len(payload["entries"]) <= 16:
+            wire._fail("repair_invalid_status")
+        claimed = {status._scope_key(status._fields(item,status._ENTRY)) for item in payload["entries"]}
+        known = {(item["scope_kind"],item["scope_id"]):item for item in context["required"]}
+        if not claimed <= known.keys():
+            wire._fail("repair_status_disclosure")
+        allowed = [dict(scope_kind=kind,scope_id=scope_id) for kind,scope_id in sorted(claimed)]
+        ledger = MailboxStatusLedger(self.resources); ledger.initialize()
+        return ledger.observe(resource_id,dict(raw=raw,ref=reference),expected_signing_key=context["signing_key"],
+                              allowed_scopes=allowed,_budget=budget)
+
+    def owner_status_guard(self, resource_id, *, _budget=None):
+        from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
+        budget = _budget if _budget is not None else wire.RepairBudget(self.source.policy)
+        context = self.owner_status_context(resource_id,_budget=budget)
+        ledger = MailboxStatusLedger(self.resources); ledger.initialize()
+        def guard():
+            if self.source._now() >= context["deadline"]:
+                return "repair_resource_expired"
+            return ledger.check_locked(resource_id,context["required"],_budget=budget)
+        return guard

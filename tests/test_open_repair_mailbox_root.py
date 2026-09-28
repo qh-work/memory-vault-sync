@@ -21,6 +21,7 @@ class MailboxRootTests(unittest.TestCase):
         h.activate(self.slot_entries)
         p = copy.deepcopy(h.f["docs"]["allocate"]["payload"])
         p["intent"].update(root_key=h.root,purpose="anchor_catalog",allocation_id="synthetic_anchor")
+        p["intent"]["windows"].update(getattr(self,"anchor_window_overrides",{}))
         p["request_id"] = "synthetic_anchor_request"
         p["intent_sha256"] = hashlib.sha256(canonical_bytes(p["intent"])).hexdigest()
         self.offer = h.resources.allocate(signed_entry(p,h.f["signers"]["owner"],"synthetic_anchor"),expected_owner=h.owner)

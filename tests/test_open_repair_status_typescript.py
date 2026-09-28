@@ -143,6 +143,18 @@ class OpenRepairStatusTypeScriptTests(unittest.TestCase):
         self.assertEqual(values[0]['result']['hashes'],[expected])
         self.assertEqual([value['code'] for value in values[1:]],['repair_invalid_status']*3)
 
+    def test_mailbox_catalog_slot_and_owner_authority_scopes_match_python(self):
+        import memory_vault_open_repair_status as status
+        root=copy.deepcopy(self.options['expected_root']);root['root_kind']='mailbox'
+        slot=dict(root_key=root,slot_id='synthetic_mailbox_slot',writer=root['owner'],writer_storage_epoch='synthetic_epoch')
+        cases=[dict(kind='catalog',subject=dict(root_key=root)),dict(kind='mailbox_slot',subject=slot)]
+        cases += [dict(kind='authority',subject=dict(authority_kind=name,authority_sha256='ab'*32)) for name in
+            ('mailbox.root_authority','mailbox.root_read_grant','mailbox.maintenance_root','mailbox.read_grant','delivery.destination','message.disclosure')]
+        actual=self.ts([self.call(op='scope',root=root,cases=cases)])[0]
+        self.assertTrue(actual['ok'],actual)
+        policy=wire.RepairPolicy(**POLICY);budget=wire.RepairBudget(policy)
+        self.assertEqual(actual['result']['hashes'],[status.status_scope(root,c['kind'],c['subject'],policy,budget) for c in cases])
+
     def test_whole_status_disclosure_and_required_scope_presence(self):
         first = self.options["required"][0]
         partial = {**self.options, "allowed_scopes": [{k: first[k] for k in ("scope_kind", "scope_id")}],
