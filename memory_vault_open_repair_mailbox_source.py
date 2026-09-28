@@ -93,11 +93,6 @@ class MailboxRootSource:
             if (m["variant"] != "mailbox_root" or m["root_key"] != root_key
                     or {v.role for v in resolved.roles} != history._ROLES["mailbox_root"]):
                 wire._fail("repair_mailbox_root_mismatch")
-            from memory_vault_open_repair_mailbox_root import verify_mailbox_root_history_inputs
-            verify_mailbox_root_history_inputs(resolved,expected_root=root_key,
-                expected_owner=json.loads(bytes(resources[resource_id][0]["owner_keys"])),expected_target=s.target,
-                target_storage_epoch=s.node["payload"]["storage_epoch"],limit_policy=s.limits,
-                at=now,policy=s.policy,budget=budget)
             held = wire.parse_new_wire(bytes(anchor["inputs"]),s.policy,budget).value
             if m["root_authority_ref"] != held["root"]["ref"] or m["catalog_ref"] != held["catalog"]["ref"]:
                 wire._fail("repair_mailbox_root_mismatch")
@@ -128,6 +123,10 @@ class MailboxRootSource:
                 genesis_head_refs=m["genesis_head_refs"],historical_manifest_ref=manifest["ref"],
                 resource_refs=dict(anchor=resources[resource_id][1]["resource"],feeds=feeds),stored_at=now,
                 read_until=read_until,retain_until=retain_until),"mailbox_root_custody",budget)
+            from memory_vault_open_repair_mailbox_root import verify_mailbox_root_source_event
+            verify_mailbox_root_source_event(manifest,resolver,custody,expected_root=root_key,
+                expected_owner=json.loads(bytes(resources[resource_id][0]["owner_keys"])),expected_target=s.target,
+                target_storage_epoch=s.node["payload"]["storage_epoch"],limit_policy=s.limits,policy=s.policy,budget=budget)
             resource_row,offer = resources[resource_id]
             charge = len(custody["raw"])+2*ROW_CHARGE
             if (resource_row["metadata_bytes"]+charge > offer["budget"]["max_meta_bytes"]

@@ -193,6 +193,41 @@ class MailboxSourceTests(unittest.TestCase):
             verify(expected_authority_refs=[])
         h.connect()
 
+    def test_custody_detached_complete_verifier_rejects_overpromise_and_missing_status(self):
+        import copy
+        import hashlib
+        import memory_vault_open_repair_wire as wire
+        import memory_vault_open_repair_history as history
+        from memory_vault_open_repair_mailbox_root import verify_mailbox_root_source_event
+        from tests.open_repair_ack_fixtures import signed_entry
+        self.owner_observation();self.observe()
+        saved = self.source.prepare_history(self.resource_id,"synthetic_observation")
+        custody = self.custody()
+        h = self.host.h
+        expected = dict(expected_root=h.root,expected_owner=h.owner,expected_target=h.source.target,
+            target_storage_epoch=h.slot_key["writer_storage_epoch"],limit_policy=h.source.limits)
+        h.db.close()
+        def verify(event=custody,manifest=saved["manifest"],**changes):
+            budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
+            resolver.put("meta",saved["pack"]["ref"]["key"],saved["pack"]["raw"])
+            return verify_mailbox_root_source_event(manifest,resolver,event,**(expected|changes),policy=DEFAULT_POLICY,budget=budget)
+        self.assertEqual(verify()["custody"].raw,custody["raw"])
+        p=json.loads(custody["raw"])["payload"]
+        changed=copy.deepcopy(p);changed["retain_until"] += 10000
+        with self.assertRaises(RepairWireError):
+            verify(signed_entry(changed,h.f["signers"]["target"],"synthetic_overpromise"))
+        with self.assertRaises(RepairWireError):
+            verify(expected_target=h.owner)
+        m=json.loads(saved["manifest"]["raw"])
+        m["roles"]=[v for v in m["roles"] if v["role"]!="historical.status.root_read"]
+        raw=history.build_historical_manifest(m,DEFAULT_POLICY,RepairBudget(DEFAULT_POLICY)).raw
+        digest=hashlib.sha256(raw).hexdigest()
+        incomplete=dict(raw=raw,ref=dict(namespace="meta",key=digest,raw_sha256=digest,size=len(raw)))
+        changed=copy.deepcopy(p);changed["historical_manifest_ref"]=incomplete["ref"]
+        with self.assertRaisesRegex(RepairWireError,"repair_status_missing"):
+            verify(signed_entry(changed,h.f["signers"]["target"],"synthetic_incomplete_custody"),incomplete)
+        h.connect()
+
     def test_real_anchor_and_slot_resources_share_one_node_signed_original(self):
         result = self.observe();self.assertEqual(len(result),1)
         payload = json.loads(result[0]["raw"])["payload"]

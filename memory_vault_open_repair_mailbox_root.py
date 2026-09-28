@@ -183,16 +183,18 @@ def verify_mailbox_root_inputs(entries, anchor_resources, slot_chains, *, expect
         activation = originals["activation"].payload
         deadlines = [v.payload["expires_at"] for k,v in originals.items() if k!="activation"]
         deadlines.extend(originals["bootstrap"].payload[k] for k in ("probe_until","proof_until","upload_until"))
+        checked_resources = {}
         for name,purpose in (("data","mailbox_data"),("metadata","feed_metadata")):
             checked = resource.verify_mailbox_resource_inputs(dict(resources[name],activation=slot_held["activation"]),
                 expected_root=root,expected_owner=owner,expected_target=target,target_storage_epoch=epoch,
                 expected_purpose=purpose,expected_scope=activation["scope"],expected_authority_refs=activation["authority_refs"],
                 expected_offer_refs=activation["resource_offer_refs"],at=committed_at,policy=policy,budget=budget)
+            checked_resources[name] = checked
             deadlines.extend(checked["active"].payload["windows"].values())
         genesis = verify_mailbox_genesis(chain["genesis"],expected_slot=key,expected_signing_key=target["signing_key"],
             committed_at=slot_at,at=committed_at,policy=policy,budget=budget)
         slots.append(dict(key=key,slot=originals["slot"].payload,entries=slot_held,activated_at=slot_at,
-            retain_until=genesis["head"].payload["retain_until"],deadlines=deadlines,genesis=genesis))
+            retain_until=genesis["head"].payload["retain_until"],deadlines=deadlines,genesis=genesis,originals=originals,resources=checked_resources))
     slots.sort(key=lambda item:history._ref_tuple(item["entries"]["slot"]["ref"]))
     offer = dict(wire.parse_new_wire(anchor["offer"]["raw"],policy,budget).value["payload"],ref=anchor["offer"]["ref"])
     _check_root_authority(held,payloads,root,owner,offer,slots,budget,committed_at,
@@ -265,6 +267,139 @@ def verify_mailbox_root_history_inputs(resolved, *, expected_root, expected_owne
     return verify_mailbox_root_inputs(entries,resources("anchor"),slot_chains,expected_root=expected_root,
         expected_owner=expected_owner,expected_target=expected_target,target_storage_epoch=target_storage_epoch,
         limit_policy=limit_policy,at=at,policy=policy,budget=budget)
+
+
+def verify_mailbox_root_source_event(manifest_entry, resolver, custody_entry, *, expected_root, expected_owner,
+        expected_target, target_storage_epoch, limit_policy, policy, budget):
+    """Authenticate a complete historical root custody independently of its node.
+
+    Successful historical verification never grants current network access.
+    Live callers must still enforce original read grants and current statuses.
+    """
+    wire._context(policy,budget)
+    expected = wire.build_new_wire(dict(root=expected_root,owner=expected_owner,target=expected_target,
+        epoch=target_storage_epoch,limits=limit_policy),policy,budget).value
+    root,owner,target = (expected[k] for k in ("root","owner","target"))
+    def parse(entry):
+        resource._fields(entry,{"raw","ref"})
+        ref = resource._ref(wire.build_new_wire(entry["ref"],policy,budget).value)
+        parsed = wire.parse_new_wire(entry["raw"],policy,budget)
+        if len(parsed.raw)!=ref.size or budget._hash(parsed.raw)!=ref.raw_sha256:
+            wire._fail("repair_ref_mismatch")
+        return parsed,ref
+    custody,cref = parse(custody_entry)
+    signed = resource._fields(custody.value,{"payload","proof"})
+    event = resource._fields(signed["payload"],resource.COMMON | set(
+        "root_key root_authority_ref catalog_ref genesis_head_refs historical_manifest_ref resource_refs stored_at read_until retain_until".split()))
+    if event["schema_version"] != resource.SCHEMA or event["kind"] != "root.custody" or event["root_key"] != root:
+        _fail()
+    original._verify_control_signature(event,signed["proof"],target["signing_key"],budget)
+    at,read_until,retain_until = (wire.u53(event[k]) for k in ("stored_at","read_until","retain_until"))
+    if not at < read_until <= retain_until:
+        _fail()
+    manifest,mref = parse(manifest_entry)
+    if event["historical_manifest_ref"] != mref.as_dict():
+        _fail()
+    resolved = history.resolve_historical_inputs(manifest.raw,resolver,policy,budget)
+    graph = verify_mailbox_root_history_inputs(resolved,expected_root=root,expected_owner=owner,expected_target=target,
+        target_storage_epoch=expected["epoch"],limit_policy=expected["limits"],at=at,policy=policy,budget=budget)
+    m = resolved.manifest.value
+    if any(event[k]!=m[k] for k in ("root_authority_ref","catalog_ref","genesis_head_refs")):
+        _fail()
+    wanted,obligations,deadlines,feeds = set(),[],[],[]
+    def want(role,value):
+        wanted.add((role,value.ref))
+    def obligation(role,kind,subject,revision,bits,signer):
+        obligations.append(dict(role=role,kind=kind,scope_id=status.status_scope(root,kind,subject,policy,budget),
+            revision=revision,bits=bits,signer=signer))
+    def authority(role,status_role,value,bits):
+        want(role,value);p=value.payload
+        obligation(status_role,"authority",dict(authority_kind=p["kind"],authority_sha256=value.ref.raw_sha256),p["revision"],bits,owner["signing_key"])
+        deadlines.append(p["expires_at"])
+        if "windows" in p:
+            deadlines.extend(p["windows"][k] for k in ("read_until","retain_until"))
+        if p["kind"]=="bootstrap.grant":
+            deadlines.extend(p[k] for k in ("probe_until","proof_until","upload_until"))
+    r = graph["originals"]
+    for name,role,obs,bits in (("root","mailbox.root_authority","root",10),("read","mailbox.root_read_grant","root_read",2),
+            ("bootstrap","bootstrap.mailbox_root","root_bootstrap",10)):
+        authority(role,"historical.status."+obs,r[name],bits)
+    want("mailbox.catalog",r["catalog"]);want("resource.anchor_activation",r["activation"])
+    deadlines.append(r["catalog"].payload["expires_at"])
+    obligation("historical.status.catalog","catalog",dict(root_key=root),r["catalog"].payload["revision"],8,owner["signing_key"])
+    def resource_group(name,values):
+        for field in ("allocate","offer","active"):
+            want("resource."+name+"_"+field,values[field])
+        p=values["active"].payload
+        if read_until > p["windows"]["read_until"] or retain_until > p["windows"]["retain_until"]:
+            _fail()
+        obligation("historical.status."+name+"_resource","resource",p["resource"],p["reservation_generation"],66,target["signing_key"])
+        return p["resource"]
+    anchor_ref=resource_group("anchor",graph["anchor"])
+    for slot in graph["slots"]:
+        values=slot["originals"];p=values["slot"].payload
+        want("mailbox.slot",values["slot"]);want("resource.slot_activation",values["activation"])
+        deadlines.extend((p["expires_at"],p["windows"]["read_until"],p["windows"]["retain_until"]))
+        obligation("historical.status.slot","mailbox_slot",slot["key"],p["revision"],10,owner["signing_key"])
+        for name,role,obs,bits in (("read","mailbox.read_grant","read",2),("maintenance","mailbox.maintenance_root","maintenance",10),
+                ("bootstrap","bootstrap.mailbox_feed","bootstrap",10)):
+            authority(role,"historical.status."+obs,values[name],bits)
+        feeds.append(dict(slot_key=slot["key"],**{name:resource_group(name,slot["resources"][name]) for name in ("data","metadata")}))
+        for name,value in slot["genesis"].items():
+            want("genesis."+name,value)
+            if retain_until > value.payload["retain_until"]:
+                _fail()
+    if event["resource_refs"] != dict(anchor=anchor_ref,feeds=feeds) or retain_until > min(deadlines):
+        _fail()
+    descriptors = [v.original for v in resolved.roles if v.role=="source.descriptor"]
+    if len(descriptors)!=1:
+        _fail()
+    descriptor = original.verify_original_control(descriptors[0].raw,expected_signing_key=target["signing_key"],
+        expected_schema="memory-vault-open-control/v1",expected_kind="node",at=at,policy=policy,budget=budget)
+    original._node_shape(descriptor,at,budget)
+    if descriptor.payload["storage_epoch"]!=expected["epoch"]:
+        _fail()
+    want("source.descriptor",descriptors[0])
+    statuses,revisions,observations,covered = [],{},{},set()
+    for item in resolved.roles:
+        if not item.role.startswith("historical.status."):
+            continue
+        parsed=original.parse_original_control(item.original.raw,policy,budget)
+        p=resource._fields(resource._fields(parsed.value,{"payload","proof"})["payload"],status._PAYLOAD)
+        signer=p["signing_key"]
+        permitted=[v for v in obligations if v["signer"]==signer]
+        if not permitted or type(p["entries"]) is not wire._DraftList or not 1<=len(p["entries"])<=16:
+            _fail()
+        present={status._scope_key(status._fields(v,status._ENTRY)) for v in p["entries"]}
+        matches=[v for v in permitted if v["role"]==item.role and (v["kind"],v["scope_id"]) in present]
+        if not matches:
+            _fail()
+        required={(v["kind"],v["scope_id"]):dict(scope_kind=v["kind"],scope_id=v["scope_id"],document_revision=v["revision"],operation_mask=v["bits"])
+            for v in permitted if (v["kind"],v["scope_id"]) in present}
+        checked=status.verify_status_original(dict(raw=item.original.raw,ref=item.original.ref.as_dict()),
+            expected_root=root,expected_signing_key=signer,at=at,allowed_scopes=[dict(scope_kind=v["kind"],scope_id=v["scope_id"]) for v in permitted],
+            required=list(required.values()),policy=policy,budget=budget)
+        key=(signer["key_id"],checked.payload["revision"])
+        if key in revisions and revisions[key]!=checked.canonical_sha256:
+            wire._fail("repair_status_conflict")
+        revisions[key]=checked.canonical_sha256
+        for value in checked.payload["entries"]:
+            observations.setdefault((signer["key_id"],value["scope_kind"],value["scope_id"]),[]).append(
+                (checked.payload["revision"],value["minimum_document_revision"]))
+        covered.update((v["role"],v["kind"],v["scope_id"]) for v in matches)
+        want(item.role,item.original);statuses.append(checked)
+    if covered!={(v["role"],v["kind"],v["scope_id"]) for v in obligations}:
+        wire._fail("repair_status_missing")
+    for values in observations.values():
+        floor=0
+        for _,minimum in sorted(values):
+            if minimum<floor:
+                wire._fail("repair_status_rollback")
+            floor=minimum
+    if wanted!={(v.role,v.original.ref) for v in resolved.roles}:
+        _fail()
+    return dict(manifest=resolved,custody=resource.AuthenticatedRepairOriginal(custody.raw,cref,event),
+        setup=graph,descriptor=descriptor,statuses=tuple(statuses),stored_at=at,read_until=read_until,retain_until=retain_until)
 
 
 class MailboxRootActivation:
