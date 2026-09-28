@@ -139,6 +139,52 @@ class AckIndexPublicationClientTests(unittest.TestCase):
         self.assertEqual(result.state, 'advertised')
         self.assertFalse(result.metrics['from_local_history'])
 
+    def test_lost_response_retries_exact_request_after_automatic_source_node_renewal(self):
+        from pathlib import Path
+        from memory_vault_open_control import issue_node
+        from memory_vault_open_node import _NodePublication
+        from memory_vault_trust import _write_new_private
+
+        old = self.f.f['docs']['descriptor']['payload']
+        descriptor = issue_node(self.f.f['signers']['target'], base_url=old['base_url'],
+            storage_epoch=old['storage_epoch'], roles=old['roles'], revision=old['revision'] + 1,
+            issued_at=self.f.at - 1, expires_at=self.f.at + 301)
+        directory = Path(self.f.h.temp.name) / 'node-publication'
+        directory.mkdir(mode=0o700)
+        storage = directory / 'state'
+        storage.mkdir(mode=0o700)
+        path = directory / 'node-config.json'
+        config = dict(node=descriptor, state_directory=str(storage), allow_loopback=True)
+        _write_new_private(path, canonical_bytes(config))
+        publication = _NodePublication(path, config, self.f.f['signers']['target'])
+        self.f.f['docs']['descriptor'] = publication.refresh()
+        self.f.h.db.close(); self.f.h.connect(); self.make_client()
+        self.transport.drop_kind = 'ack.index_publish'
+        with self.assertRaises(MemoryError):
+            self.publish()
+        before = list(self.transport.calls)
+        snapshot = self.client.journal.snapshot(self.f.h.resource_id)
+        self.assertEqual(len(self.http.lookup()['entries']), 1)
+
+        # The real node renewal implementation persists the next signed
+        # revision as its ordinary remaining-lifetime threshold is crossed.
+        self.f.h.now[0] = self.f.at + 2
+        with patch('time.time', return_value=self.f.at + 2):
+            renewed = publication.refresh()
+            self.assertEqual(renewed['payload']['revision'], descriptor['payload']['revision'] + 1)
+            self.assertEqual(json.loads(path.read_bytes())['node'], renewed)
+            self.assertGreater(descriptor['payload']['expires_at'], self.f.h.now[0])
+            self.f.f['docs']['descriptor'] = renewed
+            self.f.h.db.close(); self.f.h.connect(); self.make_client()
+            result = self.publish()
+        self.assertEqual(self.transport.calls[len(before):], [('ack.index_publish', before[-1][1])])
+        self.assertEqual(result.state, 'advertised')
+        after = self.client.journal.snapshot(self.f.h.resource_id)
+        self.assertEqual(after['plan'], snapshot['plan'])
+        self.assertEqual(after['deadline'], snapshot['deadline'])
+        self.assertEqual(after['maximum_bytes'], snapshot['maximum_bytes'])
+        self.assertGreater(after['attempts'], snapshot['attempts'])
+
     def test_cached_result_is_historical_and_expired_session_sends_nothing(self):
         result = self.publish()
         before = len(self.transport.calls)

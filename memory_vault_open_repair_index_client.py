@@ -85,6 +85,18 @@ def _provider(entry, kind, expected_signer, at, budget):
     return resource.AuthenticatedRepairOriginal(parsed.raw, ref, p)
 
 
+def _node(entry, keys, epoch, at, policy, budget):
+    wire.object_fields(entry, {"raw", "ref"})
+    ref = wire.raw_ref(entry["ref"])
+    checked = original.verify_original_control(entry["raw"], expected_signing_key=keys["signing_key"],
+        expected_schema="memory-vault-open-control/v1", expected_kind="node", at=at, policy=policy, budget=budget)
+    original._node_shape(checked, at, budget)
+    if (ref.namespace != "meta" or checked.raw_sha256 != ref.raw_sha256
+            or len(checked.document.raw) != ref.size or checked.payload["storage_epoch"] != epoch):
+        _fail("repair_ref_mismatch")
+    return checked, dict(raw=checked.document.raw, ref=ref.as_dict())
+
+
 @dataclass(frozen=True, slots=True)
 class AckIndexPublication:
     state: str
@@ -518,19 +530,40 @@ class AckIndexPublicationClient:
         self.until = min(self._now() + 60, self.plan.publish_until)
         budget = self._budget()
         with self.journal.preparation_work(resource_id, budget):
+            try:
+                saved = self.journal.snapshot(resource_id)
+            except wire.RepairWireError as error:
+                if error.code != "repair_index_job_missing":
+                    raise
+                saved = None
+            if saved is not None:
+                plan = wire.parse_new_wire(bytes(saved["plan"]), self.policy, budget)
+                wire.object_fields(plan.value, {"semantic", "until", "nonce"})
+                wire.object_fields(plan.value["semantic"], {"schema_version", "kind", "resource_id", "base_url",
+                    "target_node", "provider_node", "expected_directory", "provider_fact", "intent", "owner_consent",
+                    "recipient_consent", "current_statuses", "allocation"})
+                self.until = wire.u53(plan.value["until"])
+                nonce = original._decode64(plan.value["nonce"], 32, budget, url=True)
             nodes, frozen_nodes = [], []
             for entry, keys, epoch in ((target_node_entry, expected_directory, self.plan.intent["target_storage_epoch"]),
                     (provider_node_entry, self.state.target, self.state.node["payload"]["storage_epoch"])):
-                reference = wire.raw_ref(entry["ref"])
-                checked = original.verify_original_control(entry["raw"], expected_signing_key=keys["signing_key"],
-                    expected_schema="memory-vault-open-control/v1", expected_kind="node", at=self._now(), policy=self.policy, budget=budget)
-                original._node_shape(checked, self._now(), budget)
-                if (reference.namespace != "meta" or checked.raw_sha256 != reference.raw_sha256 or len(checked.document.raw) != reference.size
-                        or checked.payload["storage_epoch"] != epoch):
-                    _fail("repair_ref_mismatch")
+                checked, frozen = _node(entry, keys, epoch, self._now(), self.policy, budget)
                 nodes.append(checked)
-                frozen_nodes.append(dict(raw=checked.document.raw, ref=reference.as_dict()))
+                frozen_nodes.append(frozen)
             target_node_entry, provider_node_entry = frozen_nodes
+            if saved is not None:
+                # The running node may renew its introduction while this exact
+                # publication awaits a response. Authenticate both revisions,
+                # then retain the original staged bytes and original deadline.
+                retained, retained_entry = _node(_decode(plan.value["semantic"]["provider_node"], budget),
+                    self.state.target, self.state.node["payload"]["storage_epoch"], self._now(), self.policy, budget)
+                current, old = nodes[1].payload, retained.payload
+                if (any(current[name] != old[name] for name in ("signing_key", "storage_epoch", "base_url", "roles"))
+                        or current["revision"] < old["revision"] or current["issued_at"] < old["issued_at"]
+                        or current["expires_at"] < old["expires_at"]
+                        or (current["revision"] == old["revision"] and nodes[1].document.value != retained.document.value)):
+                    _fail("repair_index_job_conflict")
+                nodes[1], provider_node_entry = retained, retained_entry
             if allocation_entry is not None:
                 allocation_entry = _entry(self._allocation(allocation_entry, budget))
             node = nodes[0]
@@ -544,20 +577,9 @@ class AckIndexPublicationClient:
                 owner_consent=_encode(_entry(self.plan.owner_consent), budget), recipient_consent=_encode(_entry(self.plan.recipient_consent), budget),
                 current_statuses=[_encode(_entry(item), budget) for item in self.plan.statuses],
                 allocation=None if allocation_entry is None else _encode(allocation_entry, budget))
-            try:
-                saved = self.journal.snapshot(resource_id)
-            except wire.RepairWireError as error:
-                if error.code != "repair_index_job_missing":
-                    raise
-                saved = None
             if saved is None:
                 nonce = probe._fresh_nonce(budget)
                 plan = wire.build_new_wire(dict(semantic=semantic, until=self.until, nonce=probe._encode(nonce, budget)), self.policy, budget)
-            else:
-                plan = wire.parse_new_wire(bytes(saved["plan"]), self.policy, budget)
-                wire.object_fields(plan.value, {"semantic", "until", "nonce"})
-                self.until = wire.u53(plan.value["until"])
-                nonce = original._decode64(plan.value["nonce"], 32, budget, url=True)
             self.journal.start(resource_id, plan.raw, deadline=self.until, guard=self._guard)
             if saved is not None and plan.value["semantic"] != semantic:
                 _fail("repair_index_job_conflict")

@@ -4,6 +4,11 @@ This source checkout adds one-directory publication for an already committed
 original ACK receipt. These commands are newer than the alpha.0.7 release.
 Use the matching source or a release whose notes include this capability.
 
+These commands consume an already provisioned ACK source and independently
+signed authority bundles. This version does not yet generate the complete
+publication plan or A/B consents for a fresh agent. Integrators must construct
+them using the public signing and validation APIs before invoking `publish`.
+
 The recipient B has already saved the message and shared its original receipt
 with source R. R is an owner-authorized maintainer. The directory D receives only
 the exact source history covered by separate A and B publication consents.
