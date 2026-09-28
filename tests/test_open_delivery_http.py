@@ -225,6 +225,41 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         self.assertEqual(next(value.original.raw for value in resolved.roles if value.role=='delivery.attempt'),draft['attempt']['raw'])
         self.assertNotIn('mailbox.root_authority',{value.role for value in resolved.roles})
         self.assertEqual(resolved.manifest.value['envelope_ref']['raw_sha256'],hashlib.sha256(envelope).hexdigest())
+        from unittest.mock import patch
+        sign=source._sign
+        def interrupted(payload,*args,**kwargs):
+            if payload['kind']=='message.custody':raise RuntimeError('synthetic interruption before custody')
+            return sign(payload,*args,**kwargs)
+        with patch.object(source,'_sign',side_effect=interrupted):
+            with self.assertRaisesRegex(RuntimeError,'synthetic interruption'):
+                staging.commit_member(self.ai.key_id,sent['message_id'],object_until=now+90,enum_until=now+90)
+        self.assertEqual(db.execute('SELECT phase FROM open_mailbox_message_staging').fetchone()[0],'pending')
+        admitted=staging.commit_member(self.ai.key_id,sent['message_id'],object_until=now+90,enum_until=now+90)
+        self.assertEqual(staging.commit_member(self.ai.key_id,sent['message_id'],object_until=now+90,enum_until=now+90),admitted)
+        from memory_vault_network_crypto import decrypt_bytes
+        core=json.loads(admitted['core']['raw'])['payload']
+        self.assertEqual(core['envelope_ref'],resolved.manifest.value['envelope_ref'])
+        context=dict(schema_version=core['schema_version'],kind='admission.sealed_core',slot_key=slot,sequence=0,
+            plaintext_sha256=admitted['core']['ref']['raw_sha256'],plaintext_size=len(admitted['core']['raw']))
+        self.assertEqual(decrypt_bytes(admitted['sealed_core']['raw'],owner_encryption,context=context),admitted['core']['raw'])
+        page=json.loads(admitted['repair_page']['raw'])
+        private=wire.build_new_wire(dict(schema_version=core['schema_version'],kind='range.private_page',slot_key=slot,
+            start=0,end=1,entries=page['entries']),DEFAULT_POLICY,RepairBudget(DEFAULT_POLICY)).raw
+        context=dict(schema_version=core['schema_version'],kind='range.sealed_page',slot_key=slot,start=0,end=1,
+            plaintext_sha256=hashlib.sha256(private).hexdigest(),plaintext_size=len(private))
+        self.assertEqual(decrypt_bytes(admitted['sealed_page']['raw'],owner_encryption,context=context),private)
+        self.assertEqual(json.loads(admitted['head']['raw'])['payload']['count'],1)
+        self.assertEqual(db.execute('SELECT phase FROM open_mailbox_message_staging').fetchone()[0],'committed')
+        self.assertEqual(db.execute('SELECT count(*) FROM open_mailbox_admissions').fetchone()[0],1)
+        missing=admitted['sealed_page']['ref']['key']
+        db.execute('SAVEPOINT missing_original')
+        db.execute('DELETE FROM open_mailbox_admission_objects WHERE key=?',(missing,))
+        db.execute('RELEASE missing_original')
+        with self.assertRaisesRegex(RepairWireError,'repair_storage_corrupt'):
+            staging.commit_member(self.ai.key_id,sent['message_id'],object_until=now+90,enum_until=now+90)
+        value=admitted['sealed_page'];ref=value['ref']
+        db.execute('INSERT INTO open_mailbox_admission_objects VALUES(?,?,?,?)',(missing,ref['raw_sha256'],ref['size'],value['raw']))
+        db.commit()
         revoked=status_entry(issue_status(self.bi,root=root,revision=3,entries=[dict(value,status='revoked') for value in scoped],issued_at=now,valid_until=now+100))
         with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
             staging.stage_delivered(raw,revoked)
