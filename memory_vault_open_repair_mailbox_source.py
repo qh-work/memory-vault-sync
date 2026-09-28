@@ -10,6 +10,7 @@ from memory_vault import canonical_bytes
 import memory_vault_open_repair_history as history
 import memory_vault_open_repair_original as original
 import memory_vault_open_repair_status as status
+import memory_vault_open_repair_resource as resource
 import memory_vault_open_repair_wire as wire
 from memory_vault_open_repair_state import ROW_CHARGE
 
@@ -92,6 +93,28 @@ class MailboxRootSource:
             if (m["variant"] != "mailbox_root" or m["root_key"] != root_key
                     or {v.role for v in resolved.roles} != history._ROLES["mailbox_root"]):
                 wire._fail("repair_mailbox_root_mismatch")
+            # Re-authenticate actual allocation and storage events from the
+            # detached history, with the locally committed owner and target.
+            by_ref = {v.original.ref:v.original for v in resolved.roles}
+            def history_entry(reference):
+                value = by_ref.get(wire.raw_ref(reference))
+                if value is None:
+                    wire._fail("repair_ref_missing")
+                return dict(raw=value.raw,ref=value.ref.as_dict())
+            for role in resolved.roles:
+                if role.role not in ("resource.anchor_active","resource.data_active","resource.metadata_active"):
+                    continue
+                active_entry = dict(raw=role.original.raw,ref=role.original.ref.as_dict())
+                active = wire.parse_new_wire(active_entry["raw"],s.policy,budget).value["payload"]
+                offer_entry,activation_entry = history_entry(active["offer_ref"]),history_entry(active["activation_ref"])
+                offer = wire.parse_new_wire(offer_entry["raw"],s.policy,budget).value["payload"]
+                activation = wire.parse_new_wire(activation_entry["raw"],s.policy,budget).value["payload"]
+                resource.verify_mailbox_resource_inputs(dict(allocate=history_entry(offer["allocation_request_ref"]),
+                    offer=offer_entry,activation=activation_entry,active=active_entry),expected_root=root_key,
+                    expected_owner=json.loads(bytes(resources[resource_id][0]["owner_keys"])),expected_target=s.target,
+                    target_storage_epoch=s.node["payload"]["storage_epoch"],expected_purpose=active["purpose"],
+                    expected_scope=activation["scope"],expected_authority_refs=activation["authority_refs"],
+                    expected_offer_refs=activation["resource_offer_refs"],at=now,policy=s.policy,budget=budget)
             held = wire.parse_new_wire(bytes(anchor["inputs"]),s.policy,budget).value
             if m["root_authority_ref"] != held["root"]["ref"] or m["catalog_ref"] != held["catalog"]["ref"]:
                 wire._fail("repair_mailbox_root_mismatch")

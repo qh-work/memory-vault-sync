@@ -158,6 +158,41 @@ class MailboxSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(RepairWireError,"repair_mailbox_custody_missing"):
             self.custody()
 
+    def test_history_detached_resource_verifier_rejects_signed_capacity_change(self):
+        import copy
+        import memory_vault_open_repair_resource as resource
+        from tests.open_repair_ack_fixtures import signed_entry
+        h = self.host.h
+        anchor = h.source._one("SELECT * FROM open_repair_mailbox_roots WHERE resource_id=?",(self.resource_id,))
+        row = h.source._one("SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?",(self.resource_id,))
+        held = json.loads(bytes(anchor["inputs"]))
+        activation = dict(raw=held["activation"]["raw"].encode(),ref=held["activation"]["ref"])
+        p = json.loads(activation["raw"])["payload"]
+        entries = dict(allocate=h.source._saved(row,"allocation"),offer=h.source._saved(row,"offer"),
+            activation=activation,active=h.source._saved(anchor,"active"))
+        expected = dict(expected_root=h.root,expected_owner=h.owner,expected_target=h.source.target,
+            target_storage_epoch=h.source.node["payload"]["storage_epoch"],expected_purpose="anchor_catalog",
+            expected_scope=p["scope"],expected_authority_refs=p["authority_refs"],expected_offer_refs=p["resource_offer_refs"],at=h.now)
+        # The verifier receives only bytes and independently supplied expectations.
+        # Close the database to ensure it cannot consult or trust local state.
+        h.db.close()
+        def verify(values=entries,**changes):
+            return resource.verify_mailbox_resource_inputs(values,**(expected|changes),
+                policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+        self.assertEqual(set(verify()),set(entries))
+        changed = copy.deepcopy(json.loads(entries["active"]["raw"])["payload"])
+        changed["budget"]["max_meta_bytes"] += 1
+        modified = dict(entries,active=signed_entry(changed,h.f["signers"]["target"],"synthetic_changed_active"))
+        with self.assertRaises(RepairWireError):
+            verify(modified)
+        with self.assertRaises(RepairWireError):
+            verify(target_storage_epoch="synthetic_wrong_epoch")
+        with self.assertRaises(RepairWireError):
+            verify(expected_target=h.owner)
+        with self.assertRaises(RepairWireError):
+            verify(expected_authority_refs=[])
+        h.connect()
+
     def test_real_anchor_and_slot_resources_share_one_node_signed_original(self):
         result = self.observe();self.assertEqual(len(result),1)
         payload = json.loads(result[0]["raw"])["payload"]
