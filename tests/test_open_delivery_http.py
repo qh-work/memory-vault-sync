@@ -301,6 +301,39 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         self.assertEqual(feed_inputs.manifest.value['covered_interval'],dict(start=0,end=1))
         self.assertEqual(len(feed_inputs.predecessors),1)
         self.assertEqual(feed_inputs.manifest.value['members'][0]['source_custody_ref'],admitted['custody']['ref'])
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_history_inputs
+        feed_verified=verify_mailbox_feed_history_inputs(feed_inputs,expected_slot=slot,expected_owner=owner,
+            expected_sender=member_args['expected_sender'],expected_target=source.target,at=int(time.time()),
+            limit_policy=DEFAULT_LIMITS,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+        self.assertEqual(feed_verified['head']['count'],1)
+        def interrupted_feed(payload,*args,**kwargs):
+            if payload['kind']=='feed.custody':raise RuntimeError('synthetic feed interruption')
+            return sign(payload,*args,**kwargs)
+        metadata_before=db.execute('SELECT sum(metadata_bytes) FROM open_repair_mailbox_resources').fetchone()[0]
+        with patch.object(source,'_sign',side_effect=interrupted_feed):
+            with self.assertRaisesRegex(RuntimeError,'synthetic feed interruption'):
+                staging.finalize_feed(slot,admitted['head']['ref'],read_until=now+80,retain_until=now+90)
+        self.assertEqual(db.execute('SELECT sum(metadata_bytes) FROM open_repair_mailbox_resources').fetchone()[0],metadata_before)
+        feed_custody=staging.finalize_feed(slot,admitted['head']['ref'],read_until=now+80,retain_until=now+90)
+        self.assertEqual(staging.finalize_feed(slot,admitted['head']['ref'],read_until=now+80,retain_until=now+90),feed_custody)
+        payload=json.loads(feed_custody['raw'])['payload']
+        self.assertEqual(payload['historical_manifest_ref'],feed_history['manifest']['ref'])
+        self.assertEqual(payload['covered_interval'],dict(start=0,end=1))
+        self.assertEqual(db.execute('SELECT count(*) FROM open_mailbox_feed_custody').fetchone()[0],1)
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_source_event
+        budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
+        for value in (saved['pack'],feed_history['pack']):resolver.put('meta',value['ref']['key'],value['raw'])
+        verified_feed=verify_mailbox_feed_source_event(feed_history['manifest'],resolver,feed_custody,expected_slot=slot,
+            expected_owner=owner,expected_sender=member_args['expected_sender'],expected_target=source.target,
+            limit_policy=DEFAULT_LIMITS,policy=DEFAULT_POLICY,budget=budget)
+        self.assertEqual(verified_feed['read_until'],now+80)
+        extended=source._sign(dict(payload,retain_until=now+91),'synthetic_overpromise',RepairBudget(DEFAULT_POLICY))
+        budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
+        for value in (saved['pack'],feed_history['pack']):resolver.put('meta',value['ref']['key'],value['raw'])
+        with self.assertRaises(RepairWireError):
+            verify_mailbox_feed_source_event(feed_history['manifest'],resolver,extended,expected_slot=slot,
+                expected_owner=owner,expected_sender=member_args['expected_sender'],expected_target=source.target,
+                limit_policy=DEFAULT_LIMITS,policy=DEFAULT_POLICY,budget=budget)
         authority_reads=[]
         def traced_original(reference):
             authority_reads.append(reference['namespace'])

@@ -494,6 +494,7 @@ def verify_mailbox_member_inputs(resolved, *, expected_slot, expected_owner, exp
         role={'request':'contact.request','policy':'contact.policy','knock_lease':'contact.knock_lease','decision':'contact.decision','grant':'contact.store_grant'}[name]
         if dp[field]!=roles[role]['ref']:_mismatch()
     wire.u53(cp['revision'],1);status._mask(cp['operation_mask'])
+    if wire.raw_ref(cp['envelope_ref']).namespace!='object':_mismatch()
     if (cp['root_key']!=root or cp['maintenance_root_ref']!=roles['mailbox.maintenance_root']['ref']
             or cp['issued_at']>ap['issued_at'] or cp['operation_mask']&65!=65
             or not at<wire.u53(cp['consent_until'])<=cp['expires_at']<=min(slot['expires_at'],maintenance['expires_at'])
@@ -548,3 +549,191 @@ def verify_mailbox_member_inputs(resolved, *, expected_slot, expected_owner, exp
             minimum=value
     graph.update(destination=dp,attempt=ap,disclosure=cp,statuses=tuple(statuses),obligations=tuple(obligations))
     return graph
+
+
+def verify_mailbox_feed_history_inputs(resolved, *, expected_slot, expected_owner, expected_sender,
+        expected_target, at, limit_policy, policy, budget):
+    """Authenticate a complete original prefix before signing feed custody.
+
+    Ciphertext layout and authenticated references are checked without B's
+    secret key. B must still decrypt pages/cores when consuming the feed.
+    """
+    import memory_vault_open_repair_status as status
+    from memory_vault_network_crypto import validate_jwe, NetworkCryptoError
+    wire._context(policy,budget);wire.u53(at)
+    key=wire.build_new_wire(expected_slot,policy,budget).value;history._slot(key,key['root_key'])
+    m=resolved.manifest.value
+    if m['variant']!='mailbox_feed' or m['slot_key']!=key or m['root_key']!=key['root_key']:_mismatch()
+    by_ref={};wanted=set()
+    for item in resolved.roles:
+        identity=(item.role,item.original.ref)
+        if identity in by_ref:_mismatch()
+        by_ref[identity]=item.original
+    def get(role,reference):
+        identity=(role,wire.raw_ref(reference));value=by_ref.get(identity)
+        if value is None:wire._fail('repair_original_missing')
+        wanted.add(identity)
+        if len(value.raw)!=value.ref.size or budget._hash(value.raw)!=value.ref.raw_sha256:wire._fail('repair_ref_mismatch')
+        return value
+    def event(role,reference,kind,fields):
+        value=get(role,reference);signed=resource._fields(wire.parse_new_wire(value.raw,policy,budget).value,{'payload','proof'})
+        p=resource._fields(signed['payload'],resource.COMMON|set(fields.split())|{'slot_key'})
+        if p['schema_version']!=resource.SCHEMA or p['kind']!=kind or p['slot_key']!=key:_mismatch()
+        original._verify_control_signature(p,signed['proof'],expected_target['signing_key'],budget)
+        return p
+    head=event('feed.head',m['feed_head_ref'],'mailbox.feed_head','checkpoint_ref count range_root_ref catalog_generation committed_at retain_until')
+    checkpoint=event('feed.checkpoint',head['checkpoint_ref'],'mailbox.checkpoint','slot_binding count leaf_root frontier committed_at retain_until')
+    count=wire.u53(head['count'],1)
+    if (m['covered_interval']!=dict(start=0,end=count) or m['subtree']!=dict(root_ref=head['range_root_ref'],parent_path_refs=[])
+            or checkpoint['count']!=count or head['committed_at']!=checkpoint['committed_at']
+            or head['retain_until']!=checkpoint['retain_until'] or not wire.u53(head['committed_at'])<=at<wire.u53(head['retain_until'])):_mismatch()
+    def sealed(role,reference,raw,kind,**fields):
+        value=get(role,reference)
+        context=dict(schema_version=resource.SCHEMA,kind=kind,slot_key=key,plaintext_sha256=budget._hash(raw),plaintext_size=len(raw),**fields)
+        try:checked=validate_jwe(value.raw,context=context)
+        except NetworkCryptoError:_mismatch()
+        if len(checked['recipients'])!=1 or checked['recipients'][0]['header']['kid']!=expected_owner['encryption_key']['key_id']:_mismatch()
+    predecessors={budget._hash(v.manifest.raw):v for v in resolved.predecessors}
+    expected_members={};setups=[];deadlines=[head['retain_until']]
+    for member in m['members']:
+        sequence=wire.u53(member['sequence']);manifest=get('history.member',member['historical_manifest_ref'])
+        child=predecessors.get(manifest.ref.raw_sha256)
+        if child is None:_mismatch()
+        core=event('member.core',member['admission_core_ref'],'admission.core',
+            'core_id sequence message_id envelope_ref attempt_ref historical_manifest_ref data_resource_ref metadata_resource_ref accepted_at object_until enum_until')
+        if (core['sequence']!=sequence or any(core[field]!=member[field] for field in ('message_id','envelope_ref','historical_manifest_ref'))
+                or any(core[field]!=child.manifest.value[field] for field in ('message_id','envelope_ref','attempt_ref'))
+                or not wire.u53(core['accepted_at'])<=at<wire.u53(core['enum_until'])
+                or not core['accepted_at']<wire.u53(core['object_until'])<=core['enum_until']):_mismatch()
+        setup=verify_mailbox_member_inputs(child,expected_slot=key,expected_owner=expected_owner,expected_sender=expected_sender,
+            expected_target=expected_target,target_storage_epoch=key['writer_storage_epoch'],accepted_at=core['accepted_at'],
+            limit_policy=limit_policy,policy=policy,budget=budget)
+        setups.append(setup);deadlines.extend((core['enum_until'],setup['disclosure']['consent_until'],setup['disclosure']['bootstrap_return']['until']))
+        for role in history._SLOT_INPUT:
+            original_entry=setup['roles'][role];get(role,original_entry['ref'])
+        if setup['roles']['mailbox.slot']['ref']!=m['slot_ref']:_mismatch()
+        for name in ('data','metadata'):
+            if core[name+'_resource_ref']!=setup['resources'][name]['active'].payload['resource']:_mismatch()
+        link=event('member.link',member['admission_link_ref'],'admission.link',
+            'sequence message_id envelope_ref core_ref sealed_core_ref historical_manifest_ref checkpoint_ref inclusion_path')
+        if (link['core_ref']!=member['admission_core_ref'] or link['sequence']!=sequence
+                or any(link[field]!=core[field] for field in ('message_id','envelope_ref','historical_manifest_ref'))):_mismatch()
+        sealed('member.sealed_core',link['sealed_core_ref'],get('member.core',member['admission_core_ref']).raw,'admission.sealed_core',sequence=sequence)
+        cp=event('member.checkpoint',link['checkpoint_ref'],'mailbox.checkpoint','slot_binding count leaf_root frontier committed_at retain_until')
+        if (cp['count']!=sequence+1 or not core['accepted_at']<=wire.u53(cp['committed_at'])<=head['committed_at']
+                or wire.u53(cp['retain_until'])<core['enum_until']):_mismatch()
+        mailbox_range.verify_inclusion({name:cp[name] for name in ('slot_binding','count','leaf_root','frontier')},sequence,
+            link['sealed_core_ref']['raw_sha256'],link['inclusion_path'],expected_slot=key,policy=policy,budget=budget)
+        custody=event('member.custody',member['source_custody_ref'],'message.custody',
+            'root_key message_id envelope_ref admission_link_ref checkpoint_ref feed_head_ref resource_refs stored_at object_until enum_until')
+        if (custody['root_key']!=key['root_key'] or custody['admission_link_ref']!=member['admission_link_ref']
+                or custody['checkpoint_ref']!=link['checkpoint_ref'] or custody['stored_at']!=cp['committed_at']
+                or custody['resource_refs']!=dict(data=core['data_resource_ref'],metadata=core['metadata_resource_ref'])
+                or any(custody[name]!=core[name] for name in ('message_id','envelope_ref','object_until','enum_until'))):_mismatch()
+        old_head=event('member.head',custody['feed_head_ref'],'mailbox.feed_head','checkpoint_ref count range_root_ref catalog_generation committed_at retain_until')
+        if (old_head['checkpoint_ref']!=link['checkpoint_ref'] or old_head['count']!=sequence+1
+                or old_head['committed_at']!=cp['committed_at'] or old_head['retain_until']!=cp['retain_until']):_mismatch()
+        expected_members[sequence]=dict(sequence=sequence,admission_link_ref=member['admission_link_ref'],sealed_core_ref=link['sealed_core_ref'])
+    if len(expected_members)!=count or len(predecessors)!=count:_mismatch()
+    state=mailbox_range.empty_state(key,policy=policy,budget=budget)
+    def walk(reference,level,start,end):
+        nonlocal state
+        role='range.index' if level>=0 else 'range.repair_page';value=get(role,reference)
+        p=wire.parse_new_wire(value.raw,policy,budget).value
+        resource._fields(p,{'schema_version','kind','slot_key','start','end'}|({'level','children'} if level>=0 else {'entries','sealed_page_ref'}))
+        if p['schema_version']!=resource.SCHEMA or p['kind']!=role or p['slot_key']!=key or wire.u53(p['start'])!=start or wire.u53(p['end'])!=end:_mismatch()
+        if level>=0:
+            if wire.u53(p['level'])!=level or type(p['children']) is not wire._DraftList or not 1<=len(p['children'])<=16:_mismatch()
+            cursor=start;span=16**(level+1)
+            for child in p['children']:
+                resource._fields(child,{'start','end','ref'});stop=min(cursor+span,end)
+                if wire.u53(child['start'])!=cursor or wire.u53(child['end'])!=stop or cursor>=stop:_mismatch()
+                walk(child['ref'],level-1,cursor,stop);cursor=stop
+            if cursor!=end:_mismatch()
+        else:
+            if list(p['entries'])!=[expected_members[i] for i in range(start,end)] or not 1<=end-start<=16:_mismatch()
+            plain=wire.build_new_wire(dict(schema_version=resource.SCHEMA,kind='range.private_page',slot_key=key,start=start,end=end,entries=p['entries']),policy,budget).raw
+            sealed('range.sealed_page',p['sealed_page_ref'],plain,'range.sealed_page',start=start,end=end)
+            for item in p['entries']:state=mailbox_range.append(state,item['sealed_core_ref']['raw_sha256'],expected_slot=key,policy=policy,budget=budget)
+    level=0
+    while count>16**(level+2):level+=1
+    walk(head['range_root_ref'],level,0,count)
+    if any(state[name]!=checkpoint[name] for name in state):_mismatch()
+    obligations={};allowed={}
+    for setup in setups:
+        for item in setup['obligations']:
+            identity=(item['signer']['key_id'],item['scope_kind'],item['scope_id']);allowed[identity]=item
+            if item['role'] not in ('destination','data_resource'):
+                obligations[identity]=dict(item,operation_mask=2 if item['role']=='read' else 10 if item['role']=='bootstrap' else 66)
+        for name in ('slot','read','maintenance','bootstrap'):
+            p=setup['originals'][name].payload;deadlines.append(p['expires_at'])
+            if 'windows' in p:deadlines.extend(p['windows'][field] for field in ('read_until','retain_until'))
+        p=setup['resources']['metadata']['active'].payload;deadlines.extend(p['windows'][field] for field in ('read_until','retain_until'))
+    covered=set();statuses=[];revisions={}
+    for (role,ref),entry in by_ref.items():
+        if not role.startswith('historical.status.'):continue
+        p=original.parse_original_control(entry.raw,policy,budget).value['payload'];issuer=p['signing_key']['key_id']
+        matches=[(identity,v) for identity,v in obligations.items() if identity[0]==issuer and role=='historical.status.'+v['role']]
+        present={(v['scope_kind'],v['scope_id']) for v in p['entries']}
+        matches=[(identity,v) for identity,v in matches if (v['scope_kind'],v['scope_id']) in present]
+        if not matches:_mismatch()
+        required=[{name:v[name] for name in ('scope_kind','scope_id','document_revision','operation_mask')}
+            for identity,v in obligations.items() if identity[0]==issuer and (v['scope_kind'],v['scope_id']) in present]
+        observed=status.verify_status_original(dict(raw=entry.raw,ref=ref.as_dict()),expected_root=key['root_key'],
+            expected_signing_key=matches[0][1]['signer'],at=at,allowed_scopes=[dict(scope_kind=v['scope_kind'],scope_id=v['scope_id'])
+                for identity,v in allowed.items() if identity[0]==issuer],required=required,policy=policy,budget=budget)
+        identity=(issuer,observed.payload['revision'])
+        if identity in revisions and revisions[identity]!=observed.canonical_sha256:wire._fail('repair_status_conflict')
+        revisions[identity]=observed.canonical_sha256;covered.update(identity for identity,_ in matches);statuses.append(observed);wanted.add((role,ref))
+    if covered!=set(obligations):wire._fail('repair_status_missing')
+    floors={}
+    for observed in (*statuses,*(value for setup in setups for value in setup['statuses'])):
+        issuer=observed.payload['scope_key']['issuer_key_id'];revision=observed.payload['revision'];identity=(issuer,revision)
+        if identity in revisions and revisions[identity]!=observed.canonical_sha256:wire._fail('repair_status_conflict')
+        revisions[identity]=observed.canonical_sha256
+        for value in observed.payload['entries']:
+            identity=(issuer,value['scope_kind'],value['scope_id']);required=obligations.get(identity)
+            if required and value['status']=='revoked' and value['operation_mask']&required['operation_mask']:wire._fail('repair_authority_revoked')
+            if required and value['minimum_document_revision']>required['document_revision']:wire._fail('repair_status_revision')
+            floors.setdefault(identity,[]).append((revision,value['minimum_document_revision']))
+    for values in floors.values():
+        minimum=0
+        for _,floor in sorted(values):
+            if floor<minimum:wire._fail('repair_status_rollback')
+            minimum=floor
+    for observed in statuses:
+        issuer=observed.payload['scope_key']['issuer_key_id']
+        for value in observed.payload['entries']:
+            if observed.payload['revision']<max(v[0] for v in floors[(issuer,value['scope_kind'],value['scope_id'])]):wire._fail('repair_status_rollback')
+    if wanted!=set(by_ref) or at>=min(deadlines):_mismatch()
+    return dict(head=head,checkpoint=checkpoint,members=tuple(setups),statuses=tuple(statuses),
+        obligations=tuple(obligations.values()),retain_until=min(deadlines),
+        metadata_resource=setups[0]['resources']['metadata']['active'].payload['resource'])
+
+
+def verify_mailbox_feed_source_event(manifest_entry, resolver, custody_entry, *, expected_slot,
+        expected_owner, expected_sender, expected_target, limit_policy, policy, budget):
+    """Independently verify an original local-prefix feed custody and inputs."""
+    wire._context(policy,budget)
+    def parse(entry):
+        resource._fields(entry,{'raw','ref'});ref=wire.raw_ref(entry['ref'])
+        if ref.namespace!='meta' or len(entry['raw'])!=ref.size or budget._hash(entry['raw'])!=ref.raw_sha256:wire._fail('repair_ref_mismatch')
+        return wire.parse_new_wire(entry['raw'],policy,budget),ref
+    parsed,ref=parse(custody_entry);signed=resource._fields(parsed.value,{'payload','proof'})
+    p=resource._fields(signed['payload'],resource.COMMON|set('root_key slot_key slot_ref feed_head_ref covered_interval subtree historical_manifest_ref resource_refs stored_at read_until retain_until'.split()))
+    key=wire.build_new_wire(expected_slot,policy,budget).value
+    if p['schema_version']!=resource.SCHEMA or p['kind']!='feed.custody' or p['slot_key']!=key or p['root_key']!=key['root_key']:_mismatch()
+    original._verify_control_signature(p,signed['proof'],expected_target['signing_key'],budget)
+    at=wire.u53(p['stored_at'])
+    if not at<wire.u53(p['read_until'])<=wire.u53(p['retain_until']):_mismatch()
+    manifest,mref=parse(manifest_entry)
+    if p['historical_manifest_ref']!=mref.as_dict():_mismatch()
+    resolved=history.resolve_historical_inputs(manifest.raw,resolver,policy,budget)
+    for name in ('slot_ref','feed_head_ref','covered_interval','subtree'):
+        if p[name]!=resolved.manifest.value[name]:_mismatch()
+    graph=verify_mailbox_feed_history_inputs(resolved,expected_slot=key,expected_owner=expected_owner,
+        expected_sender=expected_sender,expected_target=expected_target,at=at,limit_policy=limit_policy,policy=policy,budget=budget)
+    if (p['resource_refs']!=dict(metadata=graph['metadata_resource'],dependencies=[])
+            or p['retain_until']>graph['retain_until']):_mismatch()
+    return dict(manifest=resolved,graph=graph,custody=resource.AuthenticatedRepairOriginal(parsed.raw,ref,p),
+        read_until=p['read_until'],retain_until=p['retain_until'])

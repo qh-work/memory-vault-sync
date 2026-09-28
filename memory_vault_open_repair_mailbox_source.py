@@ -1372,7 +1372,7 @@ class MailboxMessageStaging:
             if code:wire._fail(code)
             root_digest=budget._hash(wire._canonical(key['root_key'],budget))
             for item in requirements:
-                floor=s._one('SELECT revision FROM open_repair_mailbox_status_floors WHERE root_digest=? AND issuer=? AND scope_kind=? AND scope_id=?',
+                floor=s._one('SELECT max(revision) AS revision FROM open_repair_mailbox_status_floors WHERE root_digest=? AND issuer=? AND scope_kind=? AND scope_id=?',
                     (root_digest,item['issuer'],item['scope_kind'],item['scope_id']))
                 observed=s._one('SELECT raw,ref FROM open_repair_mailbox_status_documents WHERE root_digest=? AND issuer=? AND revision=? ORDER BY ref_digest LIMIT 1',
                     (root_digest,item['issuer'],floor['revision'] if floor is not None else -1))
@@ -1412,3 +1412,69 @@ class MailboxMessageStaging:
             self.db.execute('INSERT INTO open_mailbox_feed_history VALUES(?,?,?,?,?,?,?)',(digest,head['ref']['raw_sha256'],manifest.raw,canonical_bytes(ref),pack.raw,canonical_bytes(pack.ref.as_dict()),now))
             self.db.execute('UPDATE open_repair_mailbox_resources SET metadata_bytes=metadata_bytes+? WHERE resource_id=?',(charge,resource_id))
             return dict(manifest=dict(raw=manifest.raw,ref=ref),pack=dict(raw=pack.raw,ref=pack.ref.as_dict()))
+
+    def finalize_feed(self, slot_key, head_ref, *, read_until, retain_until):
+        """Atomically record original feed custody over an existing full prefix."""
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_history_inputs
+        from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
+        s=self.source;budget=wire.RepairBudget(s.policy)
+        key=wire.build_new_wire(slot_key,s.policy,budget).value;history._slot(key,key['root_key'])
+        head=wire.raw_ref(head_ref);wire.u53(read_until);wire.u53(retain_until)
+        digest=budget._hash(wire._canonical(key,budget));requirements=[];resource_id=None;deadlines=[]
+        binding=budget._hash(wire.build_new_wire(dict(slot_key=key,head_ref=head.as_dict(),read_until=read_until,retain_until=retain_until),s.policy,budget).raw)
+        def guard():
+            if deadlines and s._now()>=min(deadlines):return 'repair_resource_expired'
+            if requirements:return MailboxStatusLedger(self.resources).check_locked(resource_id,requirements,_budget=budget)
+        with s._transaction(guard=guard) as now:
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_mailbox_feed_custody(
+                slot_digest TEXT NOT NULL,head_digest TEXT NOT NULL,input_digest TEXT NOT NULL,
+                custody BLOB NOT NULL,custody_ref BLOB NOT NULL,stored_at INTEGER NOT NULL,
+                PRIMARY KEY(slot_digest,head_digest))''')
+            marker_name='mailbox_feed_custody:'+digest+':'+head.raw_sha256
+            marker=s._one('SELECT value FROM open_repair_state WHERE name=?',(marker_name,))
+            old=s._one('SELECT * FROM open_mailbox_feed_custody WHERE slot_digest=? AND head_digest=?',(digest,head.raw_sha256))
+            if old is not None:
+                custody=s._saved(old,'custody')
+                if old['input_digest']!=binding:wire._fail('repair_message_conflict')
+                if marker is None or marker['value']!=s._expected_binding()+'|'+custody['ref']['raw_sha256']:wire._fail('repair_storage_corrupt')
+                return custody
+            if marker is not None:wire._fail('repair_storage_corrupt')
+            held=s._one('SELECT * FROM open_mailbox_feed_history WHERE slot_digest=? AND head_digest=?',(digest,head.raw_sha256))
+            slot_row=s._one('SELECT * FROM open_repair_mailbox_slot_activations WHERE slot_digest=?',(digest,))
+            if held is None or slot_row is None:wire._fail('repair_mailbox_history_missing')
+            manifest,pack=s._saved(held,'manifest'),s._saved(held,'pack')
+            parsed=history.parse_historical_manifest(manifest['raw'],s.policy,budget)
+            if parsed.value['feed_head_ref']!=head.as_dict():wire._fail('repair_ref_mismatch')
+            local=wire.parse_new_wire(bytes(slot_row['inputs']),s.policy,budget).value
+            slot=wire.parse_new_wire(local['slot']['raw'].encode(),s.policy,budget).value['payload']
+            resource_id=slot_row['metadata_resource_id']
+            metadata=s._one('SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?',(resource_id,))
+            if metadata is None or metadata['status']!='active':wire._fail('repair_resource_inactive')
+            resolver=wire.LocalRawResolver(s.policy,budget);resolver.put('meta',pack['ref']['key'],pack['raw'])
+            for member in parsed.value['members']:
+                row=s._one('SELECT * FROM open_mailbox_member_history WHERE sender=? AND message_id=?',(slot['sender']['signing_key_id'],member['message_id']))
+                if row is None:wire._fail('repair_original_missing')
+                prior=s._saved(row,'pack');resolver.put('meta',prior['ref']['key'],prior['raw'])
+            resolved=history.resolve_historical_inputs(manifest['raw'],resolver,s.policy,budget)
+            request=next(v.original.raw for v in resolved.predecessors[0].roles if v.role=='contact.request')
+            p=original.parse_original_control(request,s.policy,budget).value['payload']
+            sender=dict(signing_key=p['signing_key'],encryption_key=p['encryption_key'])
+            graph=verify_mailbox_feed_history_inputs(resolved,expected_slot=key,expected_owner=json.loads(bytes(metadata['owner_keys'])),
+                expected_sender=sender,expected_target=s.target,at=now,limit_policy=s.limits,policy=s.policy,budget=budget)
+            if not now<read_until<=retain_until<=graph['retain_until']:wire._fail('repair_resource_expired')
+            deadlines.append(read_until)
+            for item in graph['obligations']:
+                requirements.append(dict(issuer=item['signer']['key_id'],**{name:item[name] for name in ('scope_kind','scope_id','document_revision','operation_mask')}))
+            code=guard()
+            if code:wire._fail(code)
+            custody=s._sign(dict(schema_version=resource.SCHEMA,kind='feed.custody',signing_key=s.identity.public_descriptor(),
+                root_key=key['root_key'],slot_key=key,slot_ref=parsed.value['slot_ref'],feed_head_ref=head.as_dict(),
+                covered_interval=parsed.value['covered_interval'],subtree=parsed.value['subtree'],historical_manifest_ref=manifest['ref'],
+                resource_refs=dict(metadata=graph['metadata_resource'],dependencies=[]),stored_at=now,read_until=read_until,retain_until=retain_until),'feed_custody',budget)
+            offer=wire.parse_new_wire(s._saved(metadata,'offer')['raw'],s.policy,budget).value['payload']
+            charge=len(custody['raw'])+len(canonical_bytes(custody['ref']))+3*ROW_CHARGE
+            if metadata['metadata_bytes']+charge>min(offer['budget']['max_meta_bytes'],slot['budget']['max_meta_bytes']):wire._fail('repair_message_capacity')
+            self.db.execute('INSERT INTO open_mailbox_feed_custody VALUES(?,?,?,?,?,?)',(digest,head.raw_sha256,binding,custody['raw'],canonical_bytes(custody['ref']),now))
+            self.db.execute('INSERT INTO open_repair_state VALUES(?,?)',(marker_name,s._expected_binding()+'|'+custody['ref']['raw_sha256']))
+            self.db.execute('UPDATE open_repair_mailbox_resources SET metadata_bytes=metadata_bytes+? WHERE resource_id=?',(charge,resource_id))
+            return custody
