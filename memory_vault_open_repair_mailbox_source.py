@@ -93,66 +93,11 @@ class MailboxRootSource:
             if (m["variant"] != "mailbox_root" or m["root_key"] != root_key
                     or {v.role for v in resolved.roles} != history._ROLES["mailbox_root"]):
                 wire._fail("repair_mailbox_root_mismatch")
-            # Re-authenticate actual allocation and storage events from the
-            # detached history, with the locally committed owner and target.
-            by_ref = {v.original.ref:v.original for v in resolved.roles}
-            def history_entry(reference):
-                value = by_ref.get(wire.raw_ref(reference))
-                if value is None:
-                    wire._fail("repair_ref_missing")
-                return dict(raw=value.raw,ref=value.ref.as_dict())
-            from memory_vault_open_repair_mailbox_activation import verify_mailbox_slot_owner_inputs, verify_mailbox_genesis
-            def matching(role_name, predicate):
-                matches = []
-                for item in resolved.roles:
-                    if item.role == role_name:
-                        parsed = wire.parse_new_wire(item.original.raw,s.policy,budget).value["payload"]
-                        if predicate(parsed):
-                            matches.append(dict(raw=item.original.raw,ref=item.original.ref.as_dict()))
-                if len(matches) != 1:
-                    wire._fail("repair_mailbox_slot_incomplete")
-                return matches[0]
-            for item in resolved.roles:
-                if item.role != "mailbox.slot":
-                    continue
-                slot = wire.parse_new_wire(item.original.raw,s.policy,budget).value["payload"]
-                if slot["slot_key"]["root_key"] != root_key:
-                    wire._fail("repair_mailbox_root_mismatch")
-                slot_entry = dict(raw=item.original.raw,ref=item.original.ref.as_dict())
-                entries = dict(slot=slot_entry,read=history_entry(slot["read_grant_ref"]),
-                    maintenance=history_entry(slot["maintenance_root_ref"]),
-                    bootstrap=matching("bootstrap.mailbox_feed",lambda p:p["selector"]["slot_sha256"]==item.original.ref.raw_sha256),
-                    activation=matching("resource.slot_activation",lambda p:p["scope"]["slot_ref"]==item.original.ref.as_dict()))
-                verify_mailbox_slot_owner_inputs(entries,expected_slot=slot["slot_key"],
-                    expected_owner=json.loads(bytes(resources[resource_id][0]["owner_keys"])),expected_target=s.target,
-                    target_storage_epoch=s.node["payload"]["storage_epoch"],
-                    offers={name:history_entry(slot[name+"_resource_offer_ref"]) for name in ("data","metadata")},
-                    limit_policy=s.limits,at=now,policy=s.policy,budget=budget)
-                active_times = []
-                for name in ("data","metadata"):
-                    active_entry = matching("resource."+name+"_active",lambda p:p["resource"]==slot[name+"_resource_ref"])
-                    active_times.append(wire.parse_new_wire(active_entry["raw"],s.policy,budget).value["payload"]["activated_at"])
-                if active_times[0] != active_times[1]:
-                    wire._fail("repair_mailbox_slot_incomplete")
-                head = matching("genesis.head",lambda p:p["slot_key"]==slot["slot_key"])
-                head_payload = wire.parse_new_wire(head["raw"],s.policy,budget).value["payload"]
-                verify_mailbox_genesis(dict(head=head,checkpoint=history_entry(head_payload["checkpoint_ref"])),
-                    expected_slot=slot["slot_key"],expected_signing_key=s.identity.public_descriptor(),
-                    committed_at=active_times[0],at=now,policy=s.policy,budget=budget)
-            for role in resolved.roles:
-                if role.role not in ("resource.anchor_active","resource.data_active","resource.metadata_active"):
-                    continue
-                active_entry = dict(raw=role.original.raw,ref=role.original.ref.as_dict())
-                active = wire.parse_new_wire(active_entry["raw"],s.policy,budget).value["payload"]
-                offer_entry,activation_entry = history_entry(active["offer_ref"]),history_entry(active["activation_ref"])
-                offer = wire.parse_new_wire(offer_entry["raw"],s.policy,budget).value["payload"]
-                activation = wire.parse_new_wire(activation_entry["raw"],s.policy,budget).value["payload"]
-                resource.verify_mailbox_resource_inputs(dict(allocate=history_entry(offer["allocation_request_ref"]),
-                    offer=offer_entry,activation=activation_entry,active=active_entry),expected_root=root_key,
-                    expected_owner=json.loads(bytes(resources[resource_id][0]["owner_keys"])),expected_target=s.target,
-                    target_storage_epoch=s.node["payload"]["storage_epoch"],expected_purpose=active["purpose"],
-                    expected_scope=activation["scope"],expected_authority_refs=activation["authority_refs"],
-                    expected_offer_refs=activation["resource_offer_refs"],at=now,policy=s.policy,budget=budget)
+            from memory_vault_open_repair_mailbox_root import verify_mailbox_root_history_inputs
+            verify_mailbox_root_history_inputs(resolved,expected_root=root_key,
+                expected_owner=json.loads(bytes(resources[resource_id][0]["owner_keys"])),expected_target=s.target,
+                target_storage_epoch=s.node["payload"]["storage_epoch"],limit_policy=s.limits,
+                at=now,policy=s.policy,budget=budget)
             held = wire.parse_new_wire(bytes(anchor["inputs"]),s.policy,budget).value
             if m["root_authority_ref"] != held["root"]["ref"] or m["catalog_ref"] != held["catalog"]["ref"]:
                 wire._fail("repair_mailbox_root_mismatch")

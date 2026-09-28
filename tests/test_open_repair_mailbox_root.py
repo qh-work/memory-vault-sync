@@ -68,6 +68,38 @@ class MailboxRootTests(unittest.TestCase):
     def activate(self, entries=None, **options):
         return self.state.activate(entries or self.entries(),expected_root=self.h.root,slot_keys=[self.h.slot_key],**options)
 
+    def test_detached_root_graph_rejects_missing_duplicate_or_changed_catalog(self):
+        from memory_vault_open_repair_mailbox_root import verify_mailbox_root_inputs
+        from memory_vault_open_repair_state import DEFAULT_POLICY
+        from memory_vault_open_repair_wire import RepairBudget
+        entries = self.entries();self.activate(entries)
+        h = self.h
+        root = h.source._one("SELECT * FROM open_repair_mailbox_roots")
+        def resources(rid,active):
+            row = h.source._one("SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?",(rid,))
+            return dict(allocate=h.source._saved(row,"allocation"),offer=h.source._saved(row,"offer"),active=active)
+        anchor = resources(root["resource_id"],h.source._saved(root,"active"))
+        slot = h.source._one("SELECT * FROM open_repair_mailbox_slot_activations")
+        genesis = h.source._one("SELECT * FROM open_repair_mailbox_genesis")
+        chain = dict(entries=self.slot_entries,
+            data=resources(slot["data_resource_id"],h.source._saved(slot,"data_active")),
+            metadata=resources(slot["metadata_resource_id"],h.source._saved(slot,"metadata_active")),
+            genesis={name:h.source._saved(genesis,name) for name in ("head","checkpoint")})
+        expected = dict(expected_root=h.root,expected_owner=h.owner,expected_target=h.source.target,
+            target_storage_epoch=h.slot_key["writer_storage_epoch"],limit_policy=h.source.limits,at=h.now)
+        h.db.close()
+        def verify(values=entries,chains=None):
+            return verify_mailbox_root_inputs(values,anchor,[chain] if chains is None else chains,
+                **expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+        self.assertEqual(len(verify()["slots"]),1)
+        for chains in ([],[chain,chain]):
+            with self.assertRaises(RepairWireError):
+                verify(chains=chains)
+        changed = self.entries({"catalog":{"slot_refs":[]}})
+        with self.assertRaises(RepairWireError):
+            verify(changed)
+        h.connect()
+
     def test_anchor_catalog_and_slot_originals_persist_and_replay_after_restart(self):
         entries = self.entries(); first = self.activate(entries)
         self.assertEqual(json.loads(first["raw"])["payload"]["purpose"],"anchor_catalog")
