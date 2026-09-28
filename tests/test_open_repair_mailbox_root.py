@@ -37,6 +37,7 @@ class MailboxRootTests(unittest.TestCase):
             p.update(changes.get(name,{}))
             entries[name] = signed_entry(p,h.f["signers"]["owner"],"synthetic_root_"+name)
         caps = copy.deepcopy(h.f["docs"]["allocate"]["payload"]["intent"]["budget"])
+        caps.update(getattr(self,"owner_budget_overrides",{}))
         windows = {k:h.now+600 for k in h.f["docs"]["allocate"]["payload"]["intent"]["windows"]}
         add("root","mailbox.root_authority",root_key=h.root,authority_id="synthetic_root_authority",
             original_resource_ref=json.loads(self.offer["raw"])["payload"]["resource"],original_resource_offer_ref=self.offer["ref"],

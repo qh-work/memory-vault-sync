@@ -7,6 +7,7 @@ opens a Vault, creates another database or treats a historical proof as access.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import fields
 import hashlib
 import json
 import threading
@@ -141,16 +142,24 @@ class RepairAckState:
                 self.db.rollback()
                 raise
 
+    def _budget_policy(self, budget):
+        policy=budget.policy
+        wire._context(policy,budget)
+        if any(getattr(policy,item.name)>getattr(self.policy,item.name) for item in fields(self.policy)):
+            _fail("repair_invalid_policy")
+        return policy
+
     def _entry(self, value, budget):
         raw, ref = ack._entry(value)
-        parsed = wire.parse_new_wire(raw, self.policy, budget)
+        parsed = wire.parse_new_wire(raw, self._budget_policy(budget), budget)
         if len(parsed.raw) != ref.size or budget._hash(parsed.raw) != ref.raw_sha256:
             _fail("repair_ref_mismatch")
         return parsed, ref
 
     def _sign(self, payload, name, budget):
+        policy=self._budget_policy(budget)
         signed = dict(payload=payload, proof=self.identity.sign_message(payload))
-        raw = wire.build_new_wire(signed, self.policy, budget).raw
+        raw = wire.build_new_wire(signed, policy, budget).raw
         digest = budget._hash(raw)
         key = budget._hash(("memory-vault-repair-meta/v1:" + name + ":" + digest).encode())
         return dict(raw=raw, ref=dict(namespace="meta", key=key, raw_sha256=digest, size=len(raw)))

@@ -17,7 +17,8 @@ class MailboxSourceTests(unittest.TestCase):
             self.host.anchor_budget_overrides = dict(max_meta_bytes=1048576)
         if "recovery" in self._testMethodName:
             from tests.open_repair_ack_fixtures import LIMITS
-            self.host.bootstrap_limits = dict(LIMITS,max_probe_bytes=8192)
+            self.host.bootstrap_limits = dict(LIMITS,max_probe_bytes=8192,max_signature_checks=512)
+            self.host.owner_budget_overrides = dict(max_requests=512)
         self.host.setUp();self.addCleanup(self.host.doCleanups)
         active = self.host.activate()
         self.resource_id = json.loads(active["raw"])["payload"]["resource"]["resource_id"]
@@ -248,13 +249,24 @@ class MailboxSourceTests(unittest.TestCase):
         challenge=service.challenge(packet)
         answer=probe.solve_bootstrap_challenge(packet,challenge,signer=h.f["signers"]["owner"],
             encryption_identity=h.f["encryption"]["owner"],target_nonce=pending.nonce,expires_at=h.now+30,**opts())
+        response=service.answer(dict(raw=answer.raw,ref=answer.ref.as_dict()))
+        import memory_vault_open_repair_proof as proof
+        checked=proof.verify_bootstrap_proof_response(response,expected_subject=h.owner,expected_target=h.source.target,
+            target_storage_epoch=h.slot_key["writer_storage_epoch"],selector=grant["selector"],bootstrap_grant_ref=saved["ref"],
+            probe_ref=packet["ref"],challenge_ref=challenge["ref"],answer_ref=answer.ref.as_dict(),at=h.now,
+            max_proof_items=64,max_proof_bytes=131072,consumer="mailbox_root",expected_source_state="root",
+            policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+        self.assertIn("root.custody",{v["role"] for v in checked.manifest.value["children"]})
         held=h.source._one("SELECT * FROM open_repair_mailbox_recovery_challenges")
         probe.verify_bootstrap_answer(packet,challenge,dict(raw=answer.raw,ref=answer.ref.as_dict()),caller_nonce=bytes(held["nonce"]),**opts())
         self.assertGreater(h.source._one("SELECT signatures FROM open_repair_mailbox_recovery_usage")["signatures"],0)
         h.db.close();h.connect()
         self.source=MailboxRootSource(MailboxRootActivation(h.resources));service=MailboxRecoveryService(self.source);service.initialize()
         self.assertEqual(service.challenge(packet),challenge)
-        self.assertEqual(h.source._one("SELECT requests FROM open_repair_mailbox_recovery_usage")["requests"],2)
+        prior=h.source._one("SELECT proof_bytes FROM open_repair_mailbox_recovery_responses")["proof_bytes"]
+        self.assertEqual(service.answer(dict(raw=answer.raw,ref=answer.ref.as_dict())),response)
+        self.assertGreater(h.source._one("SELECT proof_bytes FROM open_repair_mailbox_recovery_responses")["proof_bytes"],prior)
+        self.assertEqual(h.source._one("SELECT requests FROM open_repair_mailbox_recovery_usage")["requests"],4)
         h.now += 41
         with self.assertRaises(RepairWireError):
             service.challenge(packet)

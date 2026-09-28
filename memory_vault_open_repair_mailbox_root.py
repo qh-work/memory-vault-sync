@@ -399,7 +399,7 @@ def verify_mailbox_root_source_event(manifest_entry, resolver, custody_entry, *,
     if wanted!={(v.role,v.original.ref) for v in resolved.roles}:
         _fail()
     return dict(manifest=resolved,custody=resource.AuthenticatedRepairOriginal(custody.raw,cref,event),
-        setup=graph,descriptor=descriptor,statuses=tuple(statuses),stored_at=at,read_until=read_until,retain_until=retain_until)
+        setup=graph,descriptor=descriptor,statuses=tuple(statuses),obligations=tuple(obligations),stored_at=at,read_until=read_until,retain_until=retain_until)
 
 
 class MailboxRootActivation:

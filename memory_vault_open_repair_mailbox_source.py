@@ -314,11 +314,11 @@ class MailboxRootSource:
         anchor = s._one("SELECT * FROM open_repair_mailbox_roots WHERE resource_id=?",(resource_id,))
         if anchor is None:
             wire._fail("repair_unknown_resource")
-        held = wire.parse_new_wire(bytes(anchor["inputs"]),s.policy,budget).value
+        held = wire.parse_new_wire(bytes(anchor["inputs"]),s._budget_policy(budget),budget).value
         p,_ = s._entry(dict(raw=held["root"]["raw"].encode(),ref=held["root"]["ref"]),budget)
         root_key = p.value["payload"]["root_key"]
-        slots = wire.parse_new_wire(bytes(anchor["slots"]),s.policy,budget).value
-        selected = None if slot_keys is None else wire.build_new_wire(slot_keys,s.policy,budget).value
+        slots = wire.parse_new_wire(bytes(anchor["slots"]),s._budget_policy(budget),budget).value
+        selected = None if slot_keys is None else wire.build_new_wire(slot_keys,s._budget_policy(budget),budget).value
         if selected is not None:
             if type(selected) is not wire._DraftList or not 1 <= len(selected) <= 16:
                 wire._fail("repair_invalid_status")
@@ -341,7 +341,7 @@ class MailboxRootSource:
             if row is None or row["status"] != "active":
                 wire._fail("repair_resource_inactive")
             offer = s._saved(row,"offer")
-            payload = wire.parse_new_wire(offer["raw"],s.policy,budget).value["payload"]
+            payload = wire.parse_new_wire(offer["raw"],s._budget_policy(budget),budget).value["payload"]
             if payload["intent"]["root_key"] != root_key or payload["intent"]["target"] != s.target:
                 wire._fail("repair_resource_mismatch")
             rows[value] = row,payload
@@ -367,17 +367,17 @@ class MailboxRootSource:
                 return "repair_resource_expired"
         with s._transaction(guard=guard) as now:
             budget = _budget if _budget is not None else wire.RepairBudget(s.policy)
-            wire._context(s.policy,budget)
+            wire._context(s._budget_policy(budget),budget)
             anchor,root_key,resources = self._resources(resource_id,slot_keys,budget)
             root_digest = budget._hash(wire._canonical(root_key,budget))
             refs = sorted([p["resource"] for _,p in resources.values()],key=lambda v:v["resource_id"])
             digest = budget._hash(wire.build_new_wire(dict(resource_id=resource_id,root_key=root_key,
-                resources=refs,valid_until=valid_until),s.policy,budget).raw)
+                resources=refs,valid_until=valid_until),s._budget_policy(budget),budget).raw)
             old = s._one("SELECT * FROM open_repair_mailbox_node_observations WHERE root_digest=? AND request_id=?",(root_digest,request_id))
             if old is not None:
                 if old["input_digest"] != digest:
                     wire._fail("repair_status_request_conflict")
-                records = wire.parse_new_wire(bytes(old["records"]),s.policy,budget).value
+                records = wire.parse_new_wire(bytes(old["records"]),s._budget_policy(budget),budget).value
                 result = []
                 for item in records:
                     parsed,ref = s._entry(dict(raw=item["raw"].encode(),ref=item["ref"]),budget)
@@ -391,11 +391,11 @@ class MailboxRootSource:
             anchor_row = s._one("SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?",(resource_id,))
             if anchor_row is None or anchor_row["status"] != "active":
                 wire._fail("repair_resource_inactive")
-            anchor_offer = wire.parse_new_wire(s._saved(anchor_row,"offer")["raw"],s.policy,budget).value["payload"]
+            anchor_offer = wire.parse_new_wire(s._saved(anchor_row,"offer")["raw"],s._budget_policy(budget),budget).value["payload"]
             count = self.db.execute("SELECT count(*) FROM open_repair_mailbox_node_observations WHERE resource_id=?",(resource_id,)).fetchone()[0]
             if count >= min(s.limits["max_replay_records"],anchor_offer["budget"]["max_replay_records"]):
                 wire._fail("repair_insufficient_capacity")
-            entries = [dict(scope_kind="resource",scope_id=status.status_scope(root_key,"resource",p["resource"],s.policy,budget),
+            entries = [dict(scope_kind="resource",scope_id=status.status_scope(root_key,"resource",p["resource"],s._budget_policy(budget),budget),
                 minimum_document_revision=p["reservation_generation"],status="active",operation_mask=127) for _,p in resources.values()]
             entries.sort(key=lambda item:(item["scope_kind"],item["scope_id"]))
             prior = s._one("SELECT revision FROM open_repair_mailbox_node_revisions WHERE root_digest=?",(root_digest,))
@@ -413,7 +413,7 @@ class MailboxRootSource:
                 result.append(s._sign(dict(schema_version=status.SCHEMA,kind="authority.status",signing_key=s.identity.public_descriptor(),
                     scope_key=dict(root_key=root_key,issuer_key_id=s.identity.key_id),revision=revision,
                     issued_at=now,valid_until=valid_until,entries=entries[offset:offset+16]),"mailbox_resource_status",budget))
-            records = wire.build_new_wire([dict(raw=item["raw"].decode(),ref=item["ref"]) for item in result],s.policy,budget).raw
+            records = wire.build_new_wire([dict(raw=item["raw"].decode(),ref=item["ref"]) for item in result],s._budget_policy(budget),budget).raw
             charge = len(records)+(len(result)+3)*ROW_CHARGE
             if anchor_row["metadata_bytes"]+charge > anchor_offer["budget"]["max_meta_bytes"]:
                 wire._fail("repair_insufficient_capacity")
@@ -447,6 +447,69 @@ class MailboxRecoveryService:
                 probe BLOB NOT NULL,probe_ref BLOB NOT NULL,challenge BLOB NOT NULL,
                 challenge_ref BLOB NOT NULL,nonce BLOB NOT NULL,expires_at INTEGER NOT NULL,
                 PRIMARY KEY(subject,probe_id))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_repair_mailbox_recovery_responses(
+                challenge_digest TEXT PRIMARY KEY,resource_id TEXT NOT NULL,answer BLOB NOT NULL,answer_ref BLOB NOT NULL,
+                response BLOB NOT NULL,children BLOB NOT NULL,expires_at INTEGER NOT NULL,proof_bytes INTEGER NOT NULL)''')
+
+    def _proof_inputs(self, rid, budget, observation_id, valid_until):
+        """Build a local finite plan; caller must reserve work before calling."""
+        from memory_vault_open_repair_mailbox_root import verify_mailbox_root_source_event
+        s=self.source
+        guard=self.mailbox.root.owner_status_guard(rid)
+        node_statuses=self.mailbox.observe_resources(rid,observation_id,valid_until=valid_until,
+            _budget=budget,_transaction_guard=guard)
+        with s._transaction(guard=guard) as now:
+            row=s._one("SELECT * FROM open_repair_mailbox_root_history WHERE resource_id=?",(rid,))
+            custody_row=s._one("SELECT * FROM open_repair_mailbox_root_custody WHERE resource_id=?",(rid,))
+            resource_row=s._one("SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?",(rid,))
+            if row is None or custody_row is None or now>=min(custody_row["read_until"],custody_row["retain_until"]):
+                wire._fail("repair_service_unavailable")
+            manifest,pack,custody=s._saved(row,"manifest"),s._saved(row,"pack"),s._saved(custody_row,"custody")
+            owner=json.loads(bytes(resource_row["owner_keys"]))
+            offer=wire.parse_new_wire(s._saved(resource_row,"offer")["raw"],budget.policy,budget).value["payload"]
+            root=offer["intent"]["root_key"]
+            root_digest=budget._hash(wire._canonical(root,budget))
+        resolver=wire.LocalRawResolver(budget.policy,budget)
+        resolver.put(pack["ref"]["namespace"],pack["ref"]["key"],pack["raw"])
+        verified=verify_mailbox_root_source_event(manifest,resolver,custody,expected_root=root,expected_owner=owner,
+            expected_target=s.target,target_storage_epoch=s.node["payload"]["storage_epoch"],limit_policy=s.limits,
+            policy=budget.policy,budget=budget)
+        children={}
+        def add(role,entry):
+            parsed,ref=s._entry(entry,budget)
+            children[(role,*history._ref_tuple(ref.as_dict()))]=dict(role=role,raw=parsed.raw,ref=ref.as_dict())
+        for item in verified["manifest"].roles:
+            add(item.role,dict(raw=item.original.raw,ref=item.original.ref.as_dict()))
+        add("history.mailbox_root",manifest);add("root.custody",custody)
+        # Raw packs are binary and must not pass through a JSON reserializer.
+        children[("history.raw_pack",*history._ref_tuple(pack["ref"]))]=dict(role="history.raw_pack",**pack)
+        obligations=verified["obligations"]
+        with s._transaction(guard=guard) as now:
+            for item in obligations:
+                if item["signer"]==s.identity.public_descriptor():
+                    candidates=node_statuses
+                else:
+                    revision=self.db.execute("SELECT max(revision) FROM open_repair_mailbox_status_floors WHERE root_digest=? AND issuer=? AND scope_kind=? AND scope_id=?",
+                        (root_digest,item["signer"]["key_id"],item["kind"],item["scope_id"])).fetchone()[0]
+                    row=s._one("SELECT raw,ref FROM open_repair_mailbox_status_documents WHERE root_digest=? AND issuer=? AND revision=? ORDER BY ref_digest LIMIT 1",
+                        (root_digest,item["signer"]["key_id"],revision))
+                    candidates=[] if row is None else [dict(raw=bytes(row["raw"]),ref=json.loads(bytes(row["ref"])))]
+                found=False
+                for entry in candidates:
+                    payload=original.parse_original_control(entry["raw"],budget.policy,budget).value["payload"]
+                    if not any(v["scope_kind"]==item["kind"] and v["scope_id"]==item["scope_id"] for v in payload["entries"]):
+                        continue
+                    permitted=[v for v in obligations if v["signer"]==item["signer"]]
+                    present={(v["scope_kind"],v["scope_id"]) for v in payload["entries"]}
+                    status.verify_status_original(entry,expected_root=root,expected_signing_key=item["signer"],at=now,
+                        allowed_scopes=[dict(scope_kind=v["kind"],scope_id=v["scope_id"]) for v in permitted],
+                        required=[dict(scope_kind=v["kind"],scope_id=v["scope_id"],document_revision=v["revision"],operation_mask=v["bits"])
+                            for v in permitted if (v["kind"],v["scope_id"]) in present],policy=budget.policy,budget=budget)
+                    add(item["role"].replace("historical.","current.",1),entry);found=True
+                    break
+                if not found:
+                    wire._fail("repair_status_missing")
+        return tuple(children[key] for key in sorted(children))
 
     def _usage_locked(self, rid):
         s=self.source
@@ -560,4 +623,114 @@ class MailboxRecoveryService:
                 self._usage_locked(rid)
                 self.db.execute("UPDATE open_repair_mailbox_recovery_usage SET signatures=signatures-? WHERE resource_id=?",
                     (allowance-actual,rid))
+                self._mark_usage_locked(rid)
+
+    def answer(self, entry):
+        """Complete possession and persist a finite recipient-bound proof plan."""
+        from dataclasses import replace
+        import base64
+        import secrets
+        import memory_vault_open_repair_probe as probe
+        import memory_vault_open_repair_proof as proof
+        s=self.source
+        preview=wire.RepairBudget(s.policy)
+        parsed,ref=s._entry(entry,preview)
+        signed=probe._fields(parsed.value,{"payload","proof"})
+        payload=probe._fields(signed["payload"],probe._FIELDS["answer"])
+        parent=probe._ref(payload["challenge_ref"])
+        rows=self.db.execute("SELECT * FROM open_repair_mailbox_recovery_challenges WHERE json_extract(challenge_ref,'$.raw_sha256')=? LIMIT 2",(parent.raw_sha256,)).fetchall()
+        if len(rows)!=1:
+            wire._fail("repair_service_unavailable")
+        columns=[v[1] for v in self.db.execute("PRAGMA table_info(open_repair_mailbox_recovery_challenges)")]
+        held=dict(zip(columns,rows[0]));rid=held["resource_id"]
+        if json.loads(bytes(held["challenge_ref"]))!=parent.as_dict():
+            wire._fail("repair_ref_mismatch")
+        resource_row=s._one("SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?",(rid,))
+        root_row=s._one("SELECT * FROM open_repair_mailbox_roots WHERE resource_id=?",(rid,))
+        inputs=wire.parse_new_wire(bytes(root_row["inputs"]),s.policy,preview).value
+        grant=wire.parse_new_wire(inputs["bootstrap"]["raw"].encode(),s.policy,preview).value["payload"]
+        offer=wire.parse_new_wire(s._saved(resource_row,"offer")["raw"],s.policy,preview).value["payload"]
+        owner=json.loads(bytes(resource_row["owner_keys"]))
+        usage=s._one("SELECT * FROM open_repair_mailbox_recovery_usage WHERE resource_id=?",(rid,))
+        if usage is None:
+            wire._fail("repair_mailbox_recovery_ledger_missing")
+        allowance=min(s.policy.max_signature_checks,grant["limits"]["max_signature_checks"]-usage["signatures"])
+        if allowance<1:
+            wire._fail("repair_service_capacity")
+        budget=wire.RepairBudget(replace(s.policy,max_signature_checks=allowance))
+        original._verify_control_signature(payload,signed["proof"],owner["signing_key"],budget)
+        expires=min(held["expires_at"],grant["proof_until"],payload["expires_at"])
+        owner_guard=self.mailbox.root.owner_status_guard(rid)
+        def guard():
+            if s._now()>=expires:
+                return "repair_access_expired"
+            return owner_guard()
+        with s._transaction(guard=guard):
+            usage=self._usage_locked(rid)
+            if (usage["requests"]>=min(grant["limits"]["max_requests"],offer["budget"]["max_requests"],
+                    grant["limits"]["max_replay_records"],offer["budget"]["max_replay_records"])
+                    or usage["signatures"]+allowance>grant["limits"]["max_signature_checks"]):
+                wire._fail("repair_service_capacity")
+            generation=usage["requests"]+1
+            self.db.execute("UPDATE open_repair_mailbox_recovery_usage SET requests=requests+1,signatures=signatures+? WHERE resource_id=?",(allowance,rid))
+            self._mark_usage_locked(rid)
+        try:
+            expected=dict(expected_subject=owner,expected_target=s.target,target_storage_epoch=s.node["payload"]["storage_epoch"],
+                bootstrap_grant_sha256=inputs["bootstrap"]["ref"]["raw_sha256"],selector=grant["selector"],at=s._now(),
+                consumer="mailbox_root",policy=budget.policy,budget=budget)
+            p,c=s._saved(held,"probe"),s._saved(held,"challenge")
+            packet=dict(raw=parsed.raw,ref=ref.as_dict())
+            probe.verify_bootstrap_answer(p,c,packet,caller_nonce=bytes(held["nonce"]),**expected)
+            with s._transaction(guard=guard):
+                old=s._one("SELECT * FROM open_repair_mailbox_recovery_responses WHERE challenge_digest=?",(parent.raw_sha256,))
+                if old is not None:
+                    if bytes(old["answer"])!=parsed.raw or json.loads(bytes(old["answer_ref"]))!=ref.as_dict():
+                        wire._fail("repair_probe_replay_conflict")
+                    if s._now()>=old["expires_at"]:
+                        wire._fail("repair_access_expired")
+                    response_wire=wire.parse_new_wire(bytes(old["response"]),budget.policy,budget).value
+                    cost=len(old["response"])+sum(len(original._decode64(response_wire[name],len(response_wire[name])*3//4,budget,url=True))
+                        for name in ("handle_raw_base64url","manifest_raw_base64url"))
+                    total=self.db.execute("SELECT coalesce(sum(proof_bytes),0) FROM open_repair_mailbox_recovery_responses WHERE resource_id=?",(rid,)).fetchone()[0]
+                    if total+cost>grant["limits"]["max_proof_bytes"]:
+                        wire._fail("repair_service_capacity")
+                    self.db.execute("UPDATE open_repair_mailbox_recovery_responses SET proof_bytes=proof_bytes+? WHERE challenge_digest=?",(cost,parent.raw_sha256))
+                    return bytes(old["response"])
+            children=self._proof_inputs(rid,budget,"recovery_"+parent.raw_sha256,expires)
+            expires=min(expires,*(wire.parse_new_wire(v["raw"],budget.policy,budget).value["payload"]["valid_until"]
+                for v in children if v["role"].startswith("current.status.")))
+            if len(children)>grant["limits"]["max_proof_items"]:
+                wire._fail("repair_service_capacity")
+            manifest=dict(schema_version=proof.SCHEMA,kind="bootstrap.proof_manifest",probe_ref=p["ref"],
+                subject=probe._dual(owner),target=probe._dual(s.target),target_storage_epoch=expected["target_storage_epoch"],
+                consumer="mailbox_root",selector=grant["selector"],bootstrap_grant_ref=inputs["bootstrap"]["ref"],
+                service_generation=generation,response_profile="mailbox_root_service_v1",
+                children=[dict(index=i,role=v["role"],ref=v["ref"]) for i,v in enumerate(children)])
+            response=proof.make_bootstrap_proof_response(s.identity,manifest,probe_ref=p["ref"],challenge_ref=c["ref"],answer_ref=ref.as_dict(),
+                subject=owner,target=s.target,at=s._now(),expires_at=expires,handle_id="handle_"+secrets.token_hex(16),policy=budget.policy,budget=budget)
+            checked=proof.verify_bootstrap_proof_response(response.raw,expected_subject=owner,expected_target=s.target,
+                target_storage_epoch=expected["target_storage_epoch"],selector=grant["selector"],bootstrap_grant_ref=inputs["bootstrap"]["ref"],
+                probe_ref=p["ref"],challenge_ref=c["ref"],answer_ref=ref.as_dict(),at=s._now(),
+                max_proof_items=grant["limits"]["max_proof_items"],max_proof_bytes=grant["limits"]["max_proof_bytes"],
+                expected_source_state="root",consumer="mailbox_root",policy=budget.policy,budget=budget)
+            encoded=wire.build_new_wire([dict(role=v["role"],ref=v["ref"],raw_base64=base64.b64encode(v["raw"]).decode()) for v in children],budget.policy,budget).raw
+            transferred=len(response.raw)+len(checked.handle.raw)+len(checked.manifest.raw)
+            charge=len(encoded)+len(response.raw)+len(parsed.raw)+ROW_CHARGE
+            with s._transaction(guard=guard):
+                row=s._one("SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?",(rid,))
+                count,total=self.db.execute("SELECT count(*),coalesce(sum(proof_bytes),0) FROM open_repair_mailbox_recovery_responses WHERE resource_id=?",(rid,)).fetchone()
+                if (count>=grant["limits"]["max_concurrent_handles"] or total+transferred>grant["limits"]["max_proof_bytes"]
+                        or row["metadata_bytes"]+charge>offer["budget"]["max_meta_bytes"]):
+                    wire._fail("repair_service_capacity")
+                if s._one("SELECT 1 FROM open_repair_mailbox_recovery_responses WHERE challenge_digest=?",(parent.raw_sha256,)):
+                    wire._fail("repair_probe_replay_conflict")
+                self.db.execute("INSERT INTO open_repair_mailbox_recovery_responses VALUES(?,?,?,?,?,?,?,?)",
+                    (parent.raw_sha256,rid,parsed.raw,canonical_bytes(ref.as_dict()),response.raw,encoded,expires,transferred))
+                self.db.execute("UPDATE open_repair_mailbox_resources SET metadata_bytes=metadata_bytes+? WHERE resource_id=?",(charge,rid))
+            return response.raw
+        finally:
+            actual=budget.snapshot()["signature_checks"]
+            with s._transaction():
+                self._usage_locked(rid)
+                self.db.execute("UPDATE open_repair_mailbox_recovery_usage SET signatures=signatures-? WHERE resource_id=?",(allowance-actual,rid))
                 self._mark_usage_locked(rid)
