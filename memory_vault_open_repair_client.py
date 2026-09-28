@@ -680,6 +680,15 @@ class MailboxSetupBuilder:
             owner=self.owner,allocations=[encode_entry(allocations[name],self.policy,budget) for name in purposes]),
             self.policy,budget).raw
 
+    def activation_packet(self, stage, entries, *, at, expires_at):
+        from memory_vault_open_repair_bind import encode_entry
+        if stage not in ("slot","root"):
+            _fail("repair_remote_setup_mismatch")
+        budget=wire.RepairBudget(self.policy)
+        return self._sign("mailbox.source_"+stage,dict(owner=self.owner,root_key=self.plan["root_key"],
+            slot_key=self.plan["slot_key"],entries={name:encode_entry(value,self.policy,budget) for name,value in entries.items()}),
+            at,expires_at,budget)["raw"]
+
     def _offers(self, allocations, offers, at, budget):
         import memory_vault_open_repair_resource as resource
         import memory_vault_open_repair_history as history

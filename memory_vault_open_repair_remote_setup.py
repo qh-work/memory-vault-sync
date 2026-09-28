@@ -431,6 +431,11 @@ class MailboxRemoteSetupService:
                 request BLOB NOT NULL,response BLOB,retain_until INTEGER NOT NULL,
                 PRIMARY KEY(owner,root_digest))''')
 
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_repair_mailbox_remote_stages(
+                owner TEXT NOT NULL,root_digest TEXT NOT NULL,kind TEXT NOT NULL,
+                request_digest TEXT NOT NULL,request BLOB NOT NULL,response BLOB,
+                PRIMARY KEY(owner,root_digest,kind))''')
+
     def handle(self, raw):
         from dataclasses import replace
         if not self.policy['enabled']:
@@ -519,4 +524,73 @@ class MailboxRemoteSetupService:
         finally:
             with s._transaction():
                 self.db.execute("UPDATE open_repair_mailbox_remote_owners SET signatures=signatures-?,bytes=bytes-? WHERE owner=?",
+                    (allowance-budget.snapshot()['signature_checks'],MAX_BYTES-(len(response) if response is not None else 0),owner_id))
+
+    def activate(self, raw):
+        """Resume one recipient-signed slot/root stage using reserved resources."""
+        from memory_vault_open_repair_mailbox_root import MailboxRootActivation
+        if not self.policy['enabled']:
+            wire._fail('repair_remote_setup_closed')
+        if type(raw) is not bytes or not 0<len(raw)<=MAX_BYTES:
+            wire._fail('repair_remote_setup_too_large')
+        s=self.state;budget=wire.RepairBudget(s.policy)
+        parsed=wire.parse_new_wire(raw,s.policy,budget)
+        signed=resource._fields(parsed.value,{'payload','proof'})
+        p=resource._fields(signed['payload'],resource.COMMON|{'issued_at','expires_at','owner','root_key','slot_key','entries'})
+        if p['schema_version']!=SCHEMA or p['kind'] not in ('mailbox.source_slot','mailbox.source_root'):
+            wire._fail('repair_remote_setup_mismatch')
+        owner=resource._dual_key(p['owner'],budget)
+        history._slot(p['slot_key'],p['root_key']);resource._lifetime(p)
+        if p['root_key']['owner']!=owner or p['signing_key']!=p['owner']['signing_key']:
+            wire._fail('repair_remote_setup_mismatch')
+        original._verify_control_signature(p,signed['proof'],p['owner']['signing_key'],budget)
+        root_digest=budget._hash(wire._canonical(p['root_key'],budget));digest=budget._hash(raw)
+        owner_id=owner['signing_key_id'];kind=p['kind'];allowance=s.policy.max_signature_checks
+        entries={name:decode_entry(value,s.policy,budget) for name,value in resource._fields(p['entries'],
+            {'maintenance','read','slot','bootstrap','activation'} if kind=='mailbox.source_slot' else
+            {'root','read','catalog','bootstrap','activation'}).items()}
+        root=MailboxRootActivation(self.resources);root.initialize()
+        with s._transaction() as now:
+            allocation=s._one('SELECT * FROM open_repair_mailbox_remote_allocations WHERE owner=? AND root_digest=?',(owner_id,root_digest))
+            if allocation is None or allocation['response'] is None:
+                wire._fail('repair_unknown_resource')
+            old=s._one('SELECT * FROM open_repair_mailbox_remote_stages WHERE owner=? AND root_digest=? AND kind=?',(owner_id,root_digest,kind))
+            if old is not None and old['request_digest']!=digest:
+                wire._fail('repair_remote_setup_conflict')
+            usage=s._one('SELECT * FROM open_repair_mailbox_remote_owners WHERE owner=?',(owner_id,))
+            if usage is None:
+                wire._fail('repair_remote_setup_ledger_missing')
+            charge=0 if old is not None else len(raw)+MAX_BYTES+2*ROW_CHARGE
+            if (usage['requests']>=self.policy['max_requests'] or usage['signatures']+allowance>self.policy['max_signatures']
+                    or usage['bytes']+len(raw)+MAX_BYTES>self.policy['max_bytes']
+                    or usage['metadata']+charge>self.policy['max_journal_bytes']):
+                wire._fail('repair_remote_setup_capacity')
+            if old is None:
+                if not p['issued_at']<=now<p['expires_at'] or p['expires_at']>allocation['retain_until']:
+                    wire._fail('repair_resource_expired')
+                self.db.execute('INSERT INTO open_repair_mailbox_remote_stages VALUES(?,?,?,?,?,NULL)',(owner_id,root_digest,kind,digest,raw))
+            self.db.execute('UPDATE open_repair_mailbox_remote_owners SET requests=requests+1,signatures=signatures+?,bytes=bytes+?,metadata=metadata+? WHERE owner=?',
+                (allowance,len(raw)+MAX_BYTES,charge,owner_id))
+        response=None
+        try:
+            if old is not None and old['response'] is not None:
+                response=bytes(old['response']);return response
+            def guard():
+                if not p['issued_at']<=s._now()<p['expires_at']:
+                    return 'repair_resource_expired'
+            if kind=='mailbox.source_slot':
+                result=root.slots.activate(entries,expected_slot=p['slot_key'],_budget=budget,_transaction_guard=guard)
+            else:
+                result={'active':root.activate(entries,expected_root=p['root_key'],slot_keys=[p['slot_key']],_budget=budget,_transaction_guard=guard)}
+            response=wire.build_new_wire(dict(schema_version=SCHEMA,kind=kind+'_active',request_sha256=digest,
+                originals={name:encode_entry(value,s.policy,budget) for name,value in result.items()}),s.policy,budget).raw
+            if len(response)>MAX_BYTES:
+                wire._fail('repair_remote_setup_too_large')
+            with s._transaction():
+                self.db.execute('UPDATE open_repair_mailbox_remote_stages SET response=? WHERE owner=? AND root_digest=? AND kind=? AND request_digest=?',
+                    (response,owner_id,root_digest,kind,digest))
+            return response
+        finally:
+            with s._transaction():
+                self.db.execute('UPDATE open_repair_mailbox_remote_owners SET signatures=signatures-?,bytes=bytes-? WHERE owner=?',
                     (allowance-budget.snapshot()['signature_checks'],MAX_BYTES-(len(response) if response is not None else 0),owner_id))

@@ -451,9 +451,24 @@ class MailboxSourceTests(unittest.TestCase):
         else:
             offers=h.resources.allocate_initial(list(allocations.values()),expected_owner=h.owner)
         entries=builder.slot_documents(allocations,offers,at=h.now,expires_at=h.now+600)
-        slot_result=self.source.root.slots.activate(entries,expected_slot=slot)
+        def activate_remote(stage,documents):
+            packet=builder.activation_packet(stage,documents,at=h.now,expires_at=h.now+600)
+            raw=transport.request_repair(remote.base_url,packet,deadline=time.monotonic()+15)
+            self.assertEqual(raw,transport.request_repair(remote.base_url,packet,deadline=time.monotonic()+15))
+            result=wire.parse_new_wire(raw,DEFAULT_POLICY,wire.RepairBudget(DEFAULT_POLICY)).value
+            self.assertEqual(result["kind"],"mailbox.source_"+stage+"_active")
+            changed=builder.activation_packet(stage,documents,at=h.now,expires_at=h.now+599)
+            with self.assertRaisesRegex(RepairWireError,"repair_remote_setup_conflict"):
+                remote.participant.handle_repair(changed)
+            return {name:decode_entry(value,DEFAULT_POLICY,wire.RepairBudget(DEFAULT_POLICY)) for name,value in result["originals"].items()}
+        if "remote" in self._testMethodName:
+            remote.participant.repair_policy["remote_setup"]["enabled"]=True
+            slot_result=activate_remote("slot",entries)
+        else:
+            slot_result=self.source.root.slots.activate(entries,expected_slot=slot)
         root_entries=builder.root_documents(allocations,offers,entries,slot_result,at=h.now,expires_at=h.now+600)
-        active=self.source.root.activate(root_entries,expected_root=root,slot_keys=[slot])
+        active=(activate_remote("root",root_entries)["active"] if "remote" in self._testMethodName else
+            self.source.root.activate(root_entries,expected_root=root,slot_keys=[slot]))
         rid=json.loads(active["raw"])["payload"]["resource"]["resource_id"]
         context=self.source.root.owner_status_context(rid)
         state=status_entry(provider.issue_status(h.f["signers"]["owner"],root=root,revision=1,
