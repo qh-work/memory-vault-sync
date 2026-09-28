@@ -121,6 +121,7 @@ class OpenRepairStatusTypeScriptTests(unittest.TestCase):
         root = self.options["expected_root"]
         cases = [("authority", self.subjects["root"]), ("authority", self.subjects["read"]),
                  ("authority", {"authority_kind": "bootstrap.grant", "authority_sha256": "ab" * 32}),
+                 ("authority", {"authority_kind": "ack.disclosure", "authority_sha256": "ac" * 32}),
                  ("ack_slot", self.expected["expected_ack_slot"]),
                  ("resource", self.docs["active"]["payload"]["resource"])]
         call = self.call(op="scope", root=root, cases=[dict(kind=k, subject=s) for k, s in cases])
@@ -129,6 +130,18 @@ class OpenRepairStatusTypeScriptTests(unittest.TestCase):
         self.assertEqual(value["result"]["hashes"], [scope_digest(root, k, s) for k, s in cases])
         self.assertEqual(value["work"]["hashes"], len(cases))
         self.assertEqual(value["work"]["signature_checks"], 0)
+
+    def test_ack_disclosure_scope_matches_python_without_opening_future_authority_kinds(self):
+        import memory_vault_open_repair_status as status
+        root=self.options['expected_root'];subject=dict(authority_kind='ack.disclosure',authority_sha256='cd'*32)
+        calls=[self.call(op='scope',root=root,cases=[dict(kind='authority',subject=subject)])]
+        for name in ('ack.disclosure.future','ack.occupied','mailbox.disclosure'):
+            calls.append(self.call(op='scope',root=root,cases=[dict(kind='authority',subject=subject|{'authority_kind':name})]))
+        values=self.ts(calls);self.assertTrue(values[0]['ok'],values[0])
+        local=wire.RepairPolicy(**POLICY)
+        expected=status.status_scope(root,'authority',subject,local,wire.RepairBudget(local))
+        self.assertEqual(values[0]['result']['hashes'],[expected])
+        self.assertEqual([value['code'] for value in values[1:]],['repair_invalid_status']*3)
 
     def test_whole_status_disclosure_and_required_scope_presence(self):
         first = self.options["required"][0]

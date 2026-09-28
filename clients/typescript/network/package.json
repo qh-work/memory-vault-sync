@@ -1,6 +1,6 @@
 {
   "name": "memory-vault-network-crypto",
-  "version": "0.28.0-alpha.0.6",
+  "version": "0.28.0-alpha.0.7",
   "private": true,
   "type": "module",
   "exports": {
@@ -33,7 +33,12 @@
     "./open-blob": "./open-blob.ts",
     "./open-delivery": "./open-delivery.ts",
     "./open-delivery-control": "./open-delivery-control.ts",
-    "./open-delivery-client": "./open-delivery-client.ts"
+    "./open-delivery-client": "./open-delivery-client.ts",
+    "./open-repair-client": "./open-repair-client.ts",
+    "./open-repair-wire": "./open-repair-wire.ts",
+    "./open-repair-bound": "./open-repair-bound.ts",
+    "./open-repair-empty": "./open-repair-empty.ts",
+    "./open-repair-occupied": "./open-repair-occupied.ts"
   },
   "types": "./crypto.ts",
   "engines": {

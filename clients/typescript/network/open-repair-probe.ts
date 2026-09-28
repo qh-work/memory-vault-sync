@@ -4,7 +4,7 @@
  */
 import {createPrivateKey,createPublicKey,randomBytes,sign,timingSafeEqual} from 'node:crypto';
 import type {KeyObject} from 'node:crypto';
-import {isUint8Array} from 'node:util/types';
+import {isUint8Array,isProxy} from 'node:util/types';
 import {GeneralEncrypt,generalDecrypt,importJWK} from 'jose';
 import type {GeneralJWE} from 'jose';
 import {buildNewWire,parseNewWire,rawRef,objectFields,u53,RepairError} from './open-repair-wire.ts';
@@ -13,18 +13,21 @@ import {canonicalOriginalControl,originalPublicDescriptor,parseOriginalControl,v
 import type {AuthenticatedRepairOriginal} from './open-repair-resource.ts';
 
 type Obj=Record<string,any>;
-const SCHEMA='memory-vault-open-repair/v1',PURPOSE='bootstrap.service_proof',CONSUMER='ack_owner';
+const SCHEMA='memory-vault-open-repair/v1',PURPOSE='bootstrap.service_proof';
 const BYTES='memory-vault-network-bytes/v1',MAGIC=Buffer.from(BYTES+'\n'),DOMAIN=Buffer.from('UniversalAgentMemory\0message-signature\0v1\0');
 const MAX_RAW=65536,MAX_AAD=16384,FRAME_BYTES=MAGIC.length+40+32;
 const COMMON=['schema_version','kind','signing_key','issued_at','expires_at'];
 const BINDING=['subject','target','target_storage_epoch','purpose','consumer','bootstrap_grant_sha256'];
 const OPTIONS=['expectedSubject','expectedTarget','targetStorageEpoch','bootstrapGrantSha256','selector','at','policy','budget'];
 const SELECTOR=['root_key_sha256','ack_slot_sha256','root_authority_sha256','read_grant_sha256'];
+const OFFER_SELECTOR=['root_key_sha256','ack_slot_sha256','root_authority_sha256','write_grant_sha256'];
+export type BootstrapConsumer='ack_owner'|'ack_offer';
 const byteLength=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),'byteLength')!.get!;
 export interface BootstrapProbeOptions{
   readonly expectedSubject:unknown;readonly expectedTarget:unknown;readonly targetStorageEpoch:string;
   readonly bootstrapGrantSha256:string;readonly selector:unknown;readonly at:number;
   readonly policy:RepairPolicy;readonly budget:RepairBudget;
+  readonly consumer?:BootstrapConsumer;
 }
 export interface PreparedBootstrapProbe{readonly original:AuthenticatedRepairOriginal;readonly nonce:Uint8Array;}
 export interface AuthenticatedBootstrapAnswer{
@@ -49,14 +52,17 @@ function outputRoom(size:number,budget:RepairBudget):void{
 }
 function clone(value:unknown,context:Context):Obj{return buildNewWire(value,context.policy,context.budget).value as Obj;}
 function context(options:unknown,extra:readonly string[]=[]):{args:Obj;ctx:Context}{
-  const args=fields(options,[...OPTIONS,...extra]),policy=args.policy as RepairPolicy,budget=args.budget as RepairBudget;
-  const expected=buildNewWire({subject:args.expectedSubject,target:args.expectedTarget,target_storage_epoch:args.targetStorageEpoch,
+  if(options===null||typeof options!=='object'||isProxy(options))fail();
+  const args=fields(options,[...OPTIONS,...extra,...(Object.hasOwn(options,'consumer')?['consumer']:[])]),policy=args.policy as RepairPolicy,budget=args.budget as RepairBudget;
+  const consumer=Object.hasOwn(args,'consumer')?args.consumer:'ack_owner';if(consumer!=='ack_owner'&&consumer!=='ack_offer')fail();
+  const value=buildNewWire({subject:args.expectedSubject,target:args.expectedTarget,target_storage_epoch:args.targetStorageEpoch,
     bootstrap_grant_sha256:args.bootstrapGrantSha256,selector:args.selector,at:args.at},policy,budget).value as Obj;
+  const expected:Obj={...value,consumer},selector=consumer==='ack_owner'?SELECTOR:OFFER_SELECTOR;
   for(const key of ['subject','target']){
     const dual=fields(expected[key],['signing_key','encryption_key']);
     originalPublicDescriptor(dual.signing_key,budget);originalPublicDescriptor(dual.encryption_key,budget,true);
   }
-  fields(expected.selector,SELECTOR);for(const name of SELECTOR)digest(expected.selector[name]);
+  fields(expected.selector,selector);for(const name of selector)digest(expected.selector[name]);
   opaque(expected.target_storage_epoch);digest(expected.bootstrap_grant_sha256);const at=number(expected.at);
   return {args,ctx:{expected,policy,budget,at}};
 }
@@ -72,10 +78,10 @@ function base(kind:string,signer:Obj,expires:unknown,ctx:Context):Obj{
 }
 function binding(ctx:Context,full=false):Obj{
   const value=ctx.expected;return {subject:full?value.subject:ids(value.subject),target:full?value.target:ids(value.target),
-    target_storage_epoch:value.target_storage_epoch,purpose:PURPOSE,consumer:CONSUMER,bootstrap_grant_sha256:value.bootstrap_grant_sha256};
+    target_storage_epoch:value.target_storage_epoch,purpose:PURPOSE,consumer:value.consumer,bootstrap_grant_sha256:value.bootstrap_grant_sha256};
 }
 function checkBinding(payload:Obj,ctx:Context,full=false):void{
-  if(payload.purpose!==PURPOSE||payload.consumer!==CONSUMER)fail();
+  if(payload.purpose!==PURPOSE||payload.consumer!==ctx.expected.consumer)fail();
   const expected=binding(ctx,full);if(BINDING.some(name=>!same(payload[name],expected[name])))mismatch();
 }
 function encode(raw:Uint8Array,budget:RepairBudget,url=true):string{

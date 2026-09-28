@@ -72,6 +72,69 @@ class RepairProofTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             checked.manifest.value["children"][0]["ref"]["key"] = "0"*64
 
+    def empty_manifest(self):
+        value=copy.deepcopy(self.manifest)
+        ref=self.fixture["entries"]["root"]["ref"]
+        rows=[(role,ref) for role in sorted(proof.EMPTY_FIXED_ROLES)]
+        rows.extend(("history.raw_pack",dict(namespace="meta",key=digest,raw_sha256=digest,size=2))
+                    for digest in ("ae"*32,"bf"*32))
+        value["children"]=[dict(index=index,role=role,ref=reference) for index,(role,reference) in enumerate(rows)]
+        return value
+
+    def test_empty_phase_is_explicit_with_the_existing_owner_profile(self):
+        response=self.response(self.empty_manifest())
+        self.assertCode("repair_proof_mismatch",self.verify,response.raw)
+        checked=self.verify(response.raw,expected_source_state="empty")
+        self.assertEqual(len(checked.manifest.value["children"]),22)
+        self.assertEqual(checked.manifest.value["response_profile"],"ack_owner_service_v1")
+        self.assertCode("repair_proof_mismatch",self.verify,self.response().raw,
+                        expected_source_state="empty")
+        self.assertCode("repair_invalid_proof",self.verify,response.raw,expected_source_state="arbitrary")
+
+    def test_empty_container_requires_exact_head_and_both_history_pack_generations(self):
+        for role in ("ack.head","history.raw_pack"):
+            manifest=self.empty_manifest()
+            index=next(i for i,item in enumerate(manifest["children"]) if item["role"]==role)
+            manifest["children"].pop(index)
+            for index,item in enumerate(manifest["children"]):
+                item["index"]=index
+            self.assertCode("repair_invalid_proof",self.response,manifest)
+        manifest=self.empty_manifest()
+        manifest["response_profile"]="ack_owner_empty_service_v1"
+        self.assertCode("repair_proof_mismatch",self.response,manifest)
+
+    def occupied_manifest(self):
+        value=copy.deepcopy(self.manifest)
+        ref=self.fixture["entries"]["root"]["ref"]
+        rows=[(role,dict(ref,namespace="object") if role=="recipient.receipt" else ref)
+              for role in sorted(proof.OCCUPIED_FIXED_ROLES)]
+        rows.extend(("history.raw_pack",dict(namespace="meta",key=digest,raw_sha256=digest,size=2))
+                    for digest in ("ae"*32,"bf"*32,"ce"*32))
+        value["children"]=[dict(index=index,role=role,ref=reference) for index,(role,reference) in enumerate(rows)]
+        return value
+
+    def test_occupied_phase_requires_explicit_expectation_and_three_complete_generations(self):
+        response=self.response(self.occupied_manifest())
+        checked=self.verify(response.raw,expected_source_state="occupied")
+        self.assertEqual(len(checked.manifest.value["children"]),25)
+        self.assertEqual(checked.manifest.value["response_profile"],"ack_owner_service_v1")
+        for state in ("unbound","empty"):
+            self.assertCode("repair_proof_mismatch",self.verify,response.raw,expected_source_state=state)
+        for role in ("current.status.ack_disclosure","history.raw_pack"):
+            manifest=self.occupied_manifest()
+            manifest["children"].pop(next(index for index,item in enumerate(manifest["children"]) if item["role"]==role))
+            for index,item in enumerate(manifest["children"]):
+                item["index"]=index
+            self.assertCode("repair_invalid_proof",self.response,manifest)
+
+    def test_only_the_actual_receipt_role_can_use_an_object_reference(self):
+        for role in ("ack.commit","ack.disclosure","current.status.ack_disclosure","history.raw_pack"):
+            manifest=self.occupied_manifest()
+            next(item for item in manifest["children"] if item["role"]==role)["ref"] = dict(
+                self.fixture["entries"]["root"]["ref"],namespace="object")
+            with self.subTest(role=role),self.assertRaises(wire.RepairWireError):
+                self.response(manifest)
+
     def test_parent_raw_locators_and_independent_target_are_bound(self):
         for name in self.parents:
             changed = dict(self.parents[name], key="0"*64)

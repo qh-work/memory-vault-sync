@@ -1,20 +1,20 @@
 {
   "schema_version": "memory-vault-discovery/v1",
   "name": "Memory Vault",
-  "implementation_version": "0.28.0-alpha.0.6",
+  "implementation_version": "0.28.0-alpha.0.7",
   "implementation_status": "alpha_preview",
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
-  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.6",
+  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.7",
   "release_publication_verified": false,
   "release_assets": {
-    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.6/memory-vault-client-v0.28.0-alpha.0.6.zip",
-    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.6/memory-vault-protocol-v0.28.0-alpha.0.6.zip",
-    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.6/memory-vault-review-v0.28.0-alpha.0.6.zip",
-    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.6/memory-vault-network-test-v0.28.0-alpha.0.6.zip",
-    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.6/SHA256SUMS"
+    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.7/memory-vault-client-v0.28.0-alpha.0.7.zip",
+    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.7/memory-vault-protocol-v0.28.0-alpha.0.7.zip",
+    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.7/memory-vault-review-v0.28.0-alpha.0.7.zip",
+    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.7/memory-vault-network-test-v0.28.0-alpha.0.7.zip",
+    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.7/SHA256SUMS"
   },
-  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.5",
+  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.6",
   "relative_links_base": "this discovery document",
   "start_here": "../AI_START_HERE.md",
   "specification": "../PROTOCOL.md",
@@ -60,10 +60,15 @@
     "delivery_path": "original_approved_node",
     "project_operated_public_seed": false,
     "replacement_node_repair": false,
-    "independent_receipt_repair": false,
+    "independent_receipt_repair": true,
     "delivery_node_runtime": "python",
     "unbound_ack_source_recovery": true,
-    "ack_recovery_guide": "../docs/OPEN_ACK_RECOVERY.md"
+    "ack_recovery_guide": "../docs/OPEN_ACK_RECOVERY.md",
+    "bound_ack_source_recovery": true,
+    "occupied_ack_receipt_recovery": true,
+    "receipt_disclosure_requires_recipient_signature": true,
+    "automatic_ack_repair": false,
+    "independent_receipt_repair_scope": "explicit original signed receipt recovery through a separately authorized ACK source; no automatic relocation"
   },
   "continuation_trial": {
     "guide": "../docs/CONTINUATION_TRIAL.md",

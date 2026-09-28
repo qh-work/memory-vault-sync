@@ -91,6 +91,23 @@ class OpenNetworkClient:
     def read_message(self, **arguments):
         return self._delivery().read_message(**arguments)
 
+    def publish_saved_ack(self, base_url, request, *, timeout=30):
+        """Explicitly share one actually saved receipt through an ACK source.
+
+        The closed request supplies retained original authorities and binding.
+        This call signs B's bounded receipt-return consent; receive() never
+        invokes it automatically. The result distinguishes retained history
+        from a newly verified network commit.
+        """
+        from memory_vault_open_repair_put_client import AckReceiptClient
+        from memory_vault_open_repair_receipt import SavedAckReceiptPublisher
+        from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS
+        client = AckReceiptClient(self.identity, self.encryption,
+            limit_policy=RECEIPT_WORKFLOW_LIMITS,
+            allow_loopback=self.participant.transport.allow_loopback,
+            transport=self.participant.transport)
+        return SavedAckReceiptPublisher(self._delivery(), client).publish_saved(base_url, request, timeout=timeout)
+
     def _delivery(self):
         from memory_vault_open_delivery_client import OpenDeliveryClient
         return OpenDeliveryClient(self.participant, self.encryption, self.client_config)

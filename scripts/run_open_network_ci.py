@@ -45,7 +45,9 @@ MODULES = tuple("tests.test_open_" + name for name in (
     "repair_service",
     "repair_service_budget",
     "repair_http",
-    "repair_client", "repair_client_typescript", "repair_admin", "repair_runtime_review", "repair_bound")) + (
+    "repair_client", "repair_client_typescript", "repair_admin", "repair_runtime_review", "repair_bound",
+    "repair_bound_typescript", "repair_empty", "repair_empty_typescript", "repair_empty_review", "repair_empty_access", "repair_empty_http", "repair_empty_client", "repair_empty_client_typescript",
+    "repair_bind_http", "repair_offer_access", "repair_offer_http", "repair_offer_client", "repair_offer_http_typescript", "repair_occupied", "repair_occupied_typescript", "repair_occupied_access", "repair_occupied_client", "repair_put_http", "repair_put_client", "repair_put_recovery", "repair_roundtrip", "repair_receipt", "repair_occupied_client_typescript")) + (
     "tests.test_continuation_trial", "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {
     "schema_version": "memory-vault-open-routing-acceptance/v2", "logical_nodes": 100,
@@ -226,6 +228,7 @@ def initialize(reports, mode, seed):
             "open-provider.ts", "open-provider-client.ts", "open-blob.ts", "open-repair-wire.ts", "open-repair-history.ts", "open-repair-original.ts", "open-repair-resource.ts",
             "open-repair-bootstrap.ts", "open-repair-status.ts", "open-repair-ack.ts", "open-capacity.ts",
             "open-repair-probe.ts", "open-repair-proof.ts", "open-repair-client.ts",
+            "open-repair-bound.ts", "open-repair-empty.ts", "open-repair-occupied.ts",
             "open-delivery.ts", "open-delivery-control.ts", "open-delivery-client.ts",
             "agent.ts", "peer.ts", "io.ts", "crypto.ts", "nodes.ts")]
         sources += ["requirements-network-server-lock.txt", "tests/test_open_typescript.py", "tests/test_open_typescript_http.py", "tests/test_open_typescript_state.py",
@@ -247,6 +250,21 @@ def initialize(reports, mode, seed):
                     "memory_vault_open_repair_service.py",
                     "memory_vault_open_repair_client.py", "memory_vault_open_repair_admin.py",
                     "memory_vault_open_repair_bound.py", "tests/open_repair_bound_fixtures.py",
+                    "memory_vault_open_repair_empty.py",
+                    "memory_vault_open_repair_empty_state.py",
+                    "memory_vault_open_repair_empty_access.py",
+                    "memory_vault_open_repair_empty_service.py",
+                    "memory_vault_open_repair_bind.py",
+                    "memory_vault_open_repair_bind_client.py",
+                    "memory_vault_open_repair_offer_access.py",
+                    "memory_vault_open_repair_offer_service.py",
+                    "memory_vault_open_repair_offer_client.py",
+                    "memory_vault_open_repair_occupied.py",
+                    "memory_vault_open_repair_occupied_state.py",
+                    "memory_vault_open_repair_occupied_access.py",
+                    "memory_vault_open_repair_put.py",
+                    "memory_vault_open_repair_put_client.py",
+                    "memory_vault_open_repair_receipt.py",
                     "memory_vault.py", "memory_vault_update.py", "memory_vault_trust.py", "memory_vault_network_crypto.py",
                     "memory_vault_network_control.py", "memory_vault_nodes.py",
                     "examples/protocol/open-repair-wire-v1.json",

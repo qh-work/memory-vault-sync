@@ -224,7 +224,7 @@ class OpenParticipant:
                 if self.repair_policy.get("enabled", False):
                     self._repair_service(db).initialize()
 
-    def _repair_service(self, db):
+    def _repair_service(self, db, packet_payload=None):
         from memory_vault_open_repair_state import RepairAckState
         from memory_vault_open_repair_service import RepairBootstrapService
         state = RepairAckState(db, self.identity, self.descriptor,
@@ -232,6 +232,19 @@ class OpenParticipant:
             limit_policy=self.repair_policy.get("limit_policy"),
             capacity_policy=self.repair_policy.get("capacity_policy"))
         state.initialize()
+        if packet_payload is not None:
+            if packet_payload.get("kind") == "ack.put_request":
+                from memory_vault_open_repair_put import RepairAckPutService
+                service = RepairAckPutService(state)
+                service.initialize()
+                return service
+            if packet_payload.get("kind") == "ack.bind_request":
+                from memory_vault_open_repair_bind import RepairOwnerBindService
+                service = RepairOwnerBindService(state)
+                service.initialize()
+                return service
+            from memory_vault_open_repair_empty_service import service_for_packet
+            return service_for_packet(state, packet_payload)
         return RepairBootstrapService(state)
 
     def handle_repair(self, raw):
@@ -244,21 +257,27 @@ class OpenParticipant:
         from memory_vault_open_repair_state import DEFAULT_POLICY
         meter = repair_wire.RepairBudget(DEFAULT_POLICY)
         parsed = repair_wire.parse_new_wire(raw, DEFAULT_POLICY, meter)
+        if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "ack.put_request":
+            with self.state.db() as db:
+                service = self._repair_service(db, parsed.value)
+                return service.put(parsed.raw), False
         signed = repair_wire.object_fields(parsed.value, {"payload", "proof"})
         payload = signed["payload"]
         if type(payload) is not repair_wire._DraftDict:
             raise MemoryError("open_invalid_repair_request")
         kind = payload.get("kind")
-        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request"):
+        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "ack.bind_request"):
             raise MemoryError("open_invalid_repair_request")
         digest = meter._hash(parsed.raw)
         packet = dict(raw=parsed.raw, ref=dict(namespace="meta", key=digest, raw_sha256=digest, size=len(parsed.raw)))
         with self.state.db() as db:
-            service = self._repair_service(db)
+            service = self._repair_service(db, payload)
             if kind == "bootstrap.probe":
                 result, child = service.challenge(packet).raw, False
             elif kind == "bootstrap.answer":
                 result, child = service.answer(packet).raw, False
+            elif kind == "ack.bind_request":
+                result, child = service.bind(packet).raw, False
             else:
                 result, child = service.child(packet), True
         return result, child

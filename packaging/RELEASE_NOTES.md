@@ -1,39 +1,42 @@
-# Memory Vault v0.28.0-alpha.0.6 — bounded ACK source recovery
+# Memory Vault v0.28.0-alpha.0.7 — original receipt recovery
 
-Python and native TypeScript clients can recover the exact original evidence
-for a previously committed, unbound ACK source through a real HTTP service.
-The Python node retains possession challenges, replay state, authorization
-floors and admitted work charges across restart. Each request rechecks current
-access; a remembered revocation or conflicting status cannot grant a later read.
+An ACK source can now bind an owner's exact message and encrypted envelope,
+accept the recipient's original signed saved-message receipt, and let the owner
+independently recover that receipt after restart. Clients verify the complete
+unbound, empty and occupied source history and preserve every original byte and
+opaque reference. B must explicitly sign permission to return the receipt;
+existing narrow consent is never expanded automatically.
 
-The full client includes an explicit recovery command and a new-node
-`--enable-repair` option. Recovery exports a new private evidence file and keeps
-all status witnesses needed for a later cold run. It does not open the Vault or
-alter existing identities. The native client uses its own crypto and transport.
+The Python client exposes `publish_saved_ack` for an actually saved inbox receipt,
+using the existing identity and protected transport journal. The original
+delivery node can be offline while this explicit ACK path completes.
 
-Use the [agent quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.6/docs/OPEN_NETWORK_QUICKSTART.md)
-for encrypted chat and selected original memory sharing, or the
-[ACK recovery guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.6/docs/OPEN_ACK_RECOVERY.md)
-for the separate operator recovery entry. Download the
-[full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.6/memory-vault-client-v0.28.0-alpha.0.6.zip)
-and verify its bytes against `SHA256SUMS` and `release-manifest.json`.
-Existing releases and private installations remain unchanged by extraction.
+The Python client provides remote binding, recipient preflight/upload and the
+`recover-empty` / `recover-occupied` commands. Native TypeScript independently
+verifies source histories with its own crypto and transport. The fixed Python
+HTTP service enforces shared persistent capacity, signature, transfer and replay
+limits, with current READ checks before every response. Extracting the package
+does not alter existing identities, Vaults or installations.
 
-This release recovers the pre-message unbound ACK phase. Independent recovery
-of an actual recipient-save receipt, replacement-node message repair and
-automatic ACK garbage collection remain unfinished. The source must already
-hold the original authorized allocation; enabling the route does not allocate
-storage or authorize arbitrary reads. Finite grant, work and retained-history
-limits can reject a request. Participants operate their own nodes and exchange
-signed introductions; no project-hosted public server or default seed is added.
+Use the [agent quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.7/docs/OPEN_NETWORK_QUICKSTART.md)
+for encrypted chat and selected original memories, or the
+[ACK recovery guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.7/docs/OPEN_ACK_RECOVERY.md)
+for the explicit receipt path. Download the
+[full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.7/memory-vault-client-v0.28.0-alpha.0.7.zip)
+and compare its bytes with `SHA256SUMS` and `release-manifest.json`.
 
-The approval fix for `open_delivery_not_authorized` and the current-fact
-continuation scorer are retained. The scorer rejects guesses without a source
-read, includes an old-but-still-correct control and rejects avoidable unknown
-answers. It does not establish real-world adoption or model understanding.
+The source must already hold the authorized allocation. Enabling the route
+creates no storage grant or arbitrary read access. Reserve enough finite work
+before signing the grants; a later operation cannot reset its shared budget.
+Message migration, automatic repair, ACK head publication to additional nodes
+and automatic ACK collection remain unfinished. Participants operate their own
+nodes; no public project server or default seed is supplied.
 
-Validation uses deliberately synthetic identities and content, real
-cryptography, native TypeScript/Python interoperability and loopback HTTP.
-The publication record attaches the exact source, cloud run and archive hashes.
-Those results do not certify global reliability, independent adoption or the
-full thousand-agent requirement.
+The `open_delivery_not_authorized` approval fix and current-fact continuation
+scorer are retained. The scorer requires actual fact-source reads, includes an
+old-but-still-correct control and rejects avoidable unknown answers.
+
+Validation uses synthetic identities and content, real cryptography and actual
+loopback HTTP. The publication record binds the final source, cloud run and
+archive hashes. It does not establish public adoption, global reliability or
+the full thousand-agent requirement.

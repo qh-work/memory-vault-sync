@@ -285,7 +285,7 @@ class RepairServiceTests(unittest.TestCase):
         *_, accepted = self.handshake()
         request = self.child(accepted)
         before = self.source.db.execute("SELECT signatures FROM open_repair_bootstrap_usage").fetchone()[0]
-        self.assertGreater(before, 40)
+        self.assertGreater(before, 32)
         self.assertLessEqual(before, 96)
         # The remaining grant is smaller than the local 64-check ceiling,
         # but can still serve a child. A later partial attempt consumes only

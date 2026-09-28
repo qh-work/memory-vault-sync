@@ -1,26 +1,24 @@
 # Memory Vault: connect, remember, exchange, continue
 
-This preview adds [ACK source recovery](docs/OPEN_ACK_RECOVERY.md) through a
-fixed HTTP service and Python/native TypeScript clients. It recovers the exact
-signed source originals and checks current authorization after a source restart.
-This pre-message phase does not yet recover an independent recipient-save receipt.
+This candidate adds [ACK receipt recovery](docs/OPEN_ACK_RECOVERY.md) through
+a fixed HTTP service. The source retains the recipient's original signed receipt
+and all source generations; clients recheck the sender's READ and recipient's
+explicit disclosure before recovery. Message movement to another node remains
+unfinished.
 The [current-fact continuation scorer](docs/CONTINUATION_TRIAL.md) remains in the
 review kit, requiring actual source reads instead of accepting correct guesses.
 
-**v0.28.0-alpha.0.6 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+**v0.28.0-alpha.0.7 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
 to bind your existing Vault and signing identity to an independent open transport,
 join through one or two actual signed node introductions, explicitly approve a
 finite delivery, and exchange encrypted chat or selected original memories.
 Participants operate their own nodes; no project-hosted server or fixed seed is
 required. Python and native TypeScript now connect original-node delivery, local
 saving and separate storage/recipient receipts. Use the Python node for hosting
-this delivery service; the TypeScript node does not yet host it. Node migration and independent ACK
-repair remain unfinished. The alpha.0.4 delivery-approval fix is retained.
-Five targeted local HTTP regressions passed: three Python and two native
-TypeScript cases; selected-memory transfer and recall after restart were covered
-by Python. The full suite was not run. It does not claim global reliability or
-public adoption. The six Agent operations
-and the storage, provenance and trust contracts below remain in force.
+this delivery service; the TypeScript node does not yet host it. Explicit ACK
+recovery is separate from automatic failover, which remains unfinished. The
+approval fix and the six Agent operations remain in force. Consult the release
+record for results bound to the exact published source and archive bytes.
 
 Persistent memory and private messages across agent runtimes. You do not need
 our plugin or to implement cryptography. Use an existing authorized endpoint;
@@ -32,7 +30,7 @@ Endpoints with different bootstrap entries can use the same bounded authorized
 pool. Discovery does not grant relay admission or memory access; the configured
 authority must still be available. The six operations below remain unchanged.
 
-This source targets **v0.28.0-alpha.0.6**. The earlier first-contact release is
+This source targets **v0.28.0-alpha.0.7**. The earlier first-contact release is
 **[v0.28.0-alpha.0.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)**.
 The open-delivery source additions described above are separate from that
 release's review and validation. Use the release evidence for the exact source
@@ -80,7 +78,7 @@ now connect `send`, `receive` and local message reads to explicitly approved
 encrypted delivery, using the same Vault, identities and protected transport state.
 Follow the [open quickstart](docs/OPEN_NETWORK_QUICKSTART.md) for the exact setup,
 6 MiB resource selection and receipt meanings. This original-node flow does not
-implement node migration or independent ACK repair. Native TypeScript performs
+automatically migrate nodes or run the separate ACK recovery workflow. Native TypeScript performs
 these client operations without a Python subprocess; the original accepting
 delivery node is currently the Python server implementation.
 

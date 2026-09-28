@@ -1,4 +1,4 @@
-"""Bounded ACK-owner mutual-possession wire, without service authority.
+"""Bounded ACK owner/offer mutual-possession wire, without service authority.
 
 Fresh nonces remain local return values. Callers must authenticate local grant
 and current service permission before exposure, and persist replay/one-use state
@@ -31,6 +31,8 @@ _FIELDS = {
     "answer": _COMMON | {"challenge_ref", "probe_ref", "answer"},
 }
 _SELECTOR = frozenset("root_key_sha256 ack_slot_sha256 root_authority_sha256 read_grant_sha256".split())
+_SELECTORS = {"ack_owner": _SELECTOR,
+              "ack_offer": (_SELECTOR - {"read_grant_sha256"}) | {"write_grant_sha256"}}
 
 
 def _fail(code="repair_invalid_probe"):
@@ -58,19 +60,21 @@ def _ref(value):
     return result
 
 
-def _expected(subject, target, epoch, grant, selector, at, policy, budget):
+def _expected(subject, target, epoch, grant, selector, at, policy, budget, *, consumer="ack_owner"):
+    if type(consumer) is not str or consumer not in _SELECTORS:
+        _fail()
     value = wire.build_new_wire(dict(subject=subject, target=target, epoch=epoch,
         grant=grant, selector=selector, at=at), policy, budget).value
     _shape(wire.u53, value["at"])
     _shape(original._opaque, value["epoch"])
     _shape(original._digest, value["grant"])
-    for digest in _fields(value["selector"], _SELECTOR).values():
+    for digest in _fields(value["selector"], _SELECTORS[consumer]).values():
         _shape(original._digest, digest)
     for name in ("subject", "target"):
         key = _shape(resource._dual_key_shape, value[name])
         original._descriptor(key["signing_key"], budget)
         original._descriptor(key["encryption_key"], budget, encryption=True)
-    return value
+    return dict(value, consumer=consumer)
 
 
 def _dual(keys):
@@ -250,7 +254,7 @@ def _base(kind, expected, expires_at, budget):
         issued_at=expected["at"], expires_at=expires_at,
         subject=expected["subject"] if kind == "probe" else _dual(expected["subject"]),
         target=expected["target"] if kind == "probe" else _dual(expected["target"]),
-        target_storage_epoch=expected["epoch"], purpose="bootstrap.service_proof", consumer="ack_owner",
+        target_storage_epoch=expected["epoch"], purpose="bootstrap.service_proof", consumer=expected["consumer"],
         bootstrap_grant_sha256=expected["grant"])
     _window(payload, expected["at"])
     return payload
@@ -268,7 +272,7 @@ def _verify(entry, kind, expected, policy, budget):
     payload = _fields(signed["payload"], _FIELDS[kind])
     _window(payload, expected["at"])
     if (payload["schema_version"] != SCHEMA or payload["kind"] != "bootstrap." + kind
-            or payload["purpose"] != "bootstrap.service_proof" or payload["consumer"] != "ack_owner"):
+            or payload["purpose"] != "bootstrap.service_proof" or payload["consumer"] != expected["consumer"]):
         _fail()
     if (payload["target_storage_epoch"] != expected["epoch"] or payload["bootstrap_grant_sha256"] != expected["grant"]
             or payload["subject"] != (expected["subject"] if kind == "probe" else _dual(expected["subject"]))
@@ -317,10 +321,10 @@ class AuthenticatedBootstrapExchange:
 
 
 def make_bootstrap_probe(signer, *, expected_subject, expected_target, target_storage_epoch,
-                         bootstrap_grant_sha256, selector, at, expires_at, policy, budget):
+                         bootstrap_grant_sha256, selector, at, expires_at, policy, budget, consumer="ack_owner"):
     wire._context(policy, budget)
     with budget._lock:
-        expected = _expected(expected_subject, expected_target, target_storage_epoch, bootstrap_grant_sha256, selector, at, policy, budget)
+        expected = _expected(expected_subject, expected_target, target_storage_epoch, bootstrap_grant_sha256, selector, at, policy, budget, consumer=consumer)
         payload = _base("probe", expected, expires_at, budget)
         payload.update(probe_id=_fresh_id("probe", budget), selector=expected["selector"])
         nonce = _fresh_nonce(budget)
@@ -329,18 +333,18 @@ def make_bootstrap_probe(signer, *, expected_subject, expected_target, target_st
 
 
 def verify_bootstrap_probe(entry, *, expected_subject, expected_target, target_storage_epoch,
-                           bootstrap_grant_sha256, selector, at, policy, budget):
+                           bootstrap_grant_sha256, selector, at, policy, budget, consumer="ack_owner"):
     wire._context(policy, budget)
     with budget._lock:
-        expected = _expected(expected_subject, expected_target, target_storage_epoch, bootstrap_grant_sha256, selector, at, policy, budget)
+        expected = _expected(expected_subject, expected_target, target_storage_epoch, bootstrap_grant_sha256, selector, at, policy, budget, consumer=consumer)
         return _verify(entry, "probe", expected, policy, budget)
 
 
 def issue_bootstrap_challenge(probe_entry, *, signer, encryption_identity, expected_subject, expected_target,
-                              target_storage_epoch, bootstrap_grant_sha256, selector, at, expires_at, policy, budget):
+                              target_storage_epoch, bootstrap_grant_sha256, selector, at, expires_at, policy, budget, consumer="ack_owner"):
     wire._context(policy, budget)
     with budget._lock:
-        expected = _expected(expected_subject, expected_target, target_storage_epoch, bootstrap_grant_sha256, selector, at, policy, budget)
+        expected = _expected(expected_subject, expected_target, target_storage_epoch, bootstrap_grant_sha256, selector, at, policy, budget, consumer=consumer)
         probe = _verify(probe_entry, "probe", expected, policy, budget)
         payload = _base("challenge", expected, expires_at, budget)
         if expires_at > probe.payload["expires_at"]:
@@ -356,10 +360,10 @@ def issue_bootstrap_challenge(probe_entry, *, signer, encryption_identity, expec
 
 def solve_bootstrap_challenge(probe_entry, challenge_entry, *, signer, encryption_identity, target_nonce,
                               expected_subject, expected_target, target_storage_epoch, bootstrap_grant_sha256,
-                              selector, at, expires_at, policy, budget):
+                              selector, at, expires_at, policy, budget, consumer="ack_owner"):
     wire._context(policy, budget)
     with budget._lock:
-        expected = _expected(expected_subject, expected_target, target_storage_epoch, bootstrap_grant_sha256, selector, at, policy, budget)
+        expected = _expected(expected_subject, expected_target, target_storage_epoch, bootstrap_grant_sha256, selector, at, policy, budget, consumer=consumer)
         probe = _verify(probe_entry, "probe", expected, policy, budget)
         challenge = _verify(challenge_entry, "challenge", expected, policy, budget)
         _child(challenge, probe, "probe_ref")
@@ -375,10 +379,10 @@ def solve_bootstrap_challenge(probe_entry, challenge_entry, *, signer, encryptio
 
 
 def verify_bootstrap_answer(probe_entry, challenge_entry, answer_entry, *, caller_nonce, expected_subject,
-                            expected_target, target_storage_epoch, bootstrap_grant_sha256, selector, at, policy, budget):
+                            expected_target, target_storage_epoch, bootstrap_grant_sha256, selector, at, policy, budget, consumer="ack_owner"):
     wire._context(policy, budget)
     with budget._lock:
-        expected = _expected(expected_subject, expected_target, target_storage_epoch, bootstrap_grant_sha256, selector, at, policy, budget)
+        expected = _expected(expected_subject, expected_target, target_storage_epoch, bootstrap_grant_sha256, selector, at, policy, budget, consumer=consumer)
         checked = {kind: _verify(entry, kind, expected, policy, budget) for kind, entry in
                    (("probe", probe_entry), ("challenge", challenge_entry), ("answer", answer_entry))}
         probe, challenge, answer = (checked[kind] for kind in ("probe", "challenge", "answer"))

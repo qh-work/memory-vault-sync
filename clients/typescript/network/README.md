@@ -258,3 +258,14 @@ interop evidence, not a static TypeScript compiler check or an external audit.
 provide native open contact discovery and finite HTTP directory nodes. The same
 Agent dispatches an explicit open config without creating a private-profile peer.
 Open messaging is still unsupported. See [native open HTTP](../../../docs/NATIVE_OPEN_HTTP.md).
+
+## Explicit open ACK recovery
+
+`open-repair-client.ts` exposes owner recovery of unbound, message-bound empty
+and occupied ACK source phases. Each call uses independently retained source
+keys, authority originals and the expected message/envelope/writer tuple.
+Occupied recovery returns B's exact signed saved-message receipt and verifies
+all three source generations; B's explicit four-role return consent and current
+READ remain separate from A's permission. See the [ACK guide](../../../docs/OPEN_ACK_RECOVERY.md).
+The package exports the client plus bounded, empty and occupied verifiers.
+No Python subprocess is used. The Python node hosts the protected HTTP service.

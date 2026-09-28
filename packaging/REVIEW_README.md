@@ -1,13 +1,14 @@
-# Memory Vault v0.28.0-alpha.0.6 independent review kit
+# Memory Vault v0.28.0-alpha.0.7 independent review kit
 
-This alpha.0.6 preview adds bounded recovery of an unbound ACK source through
-an opt-in Python HTTP node, with Python and native TypeScript recovery clients.
-It retains exact signed originals, current authorization checks and persistent
-source work/replay limits. This pre-message phase does not yet recover a saved
-recipient receipt or move a message to a replacement node. See
-`docs/OPEN_ACK_RECOVERY.md` in the package documentation and the release record
-for results tied to the exact source and archive bytes. The current-fact scorer
-from alpha.0.5 and the delivery-approval fix from alpha.0.4 are retained.
+This alpha.0.7 candidate adds message-bound ACK slots, recipient-authorized
+receipt uploads and independent recovery of the original signed saved-message
+receipt. It retains all three source generations, original bytes, current
+READ permissions and durable shared work/replay limits across restart. The
+ACK recovery guide in the package documentation describes the explicit operator and
+client APIs. Message movement to replacement nodes and automatic repair remain
+unfinished. The current-fact scorer from alpha.0.5 and the delivery-approval fix
+from alpha.0.4 are retained. Exact source and archive validation belongs to the
+release record.
 
 The Python and native TypeScript open clients add encrypted messages and selected original
 memory sharing after explicit first-contact approval. Recipient-saved receipts
@@ -16,14 +17,12 @@ nodes and exchange signed introductions; no central service or project-operated
 public seed is supplied. Node and agent setup commands are included in the full
 client archive. Ordinary clients need no public listener.
 
-This preview uses the original approved delivery node. Replacement-node repair
-and independent receipt repair remain unfinished. Both clients share the same wire protocol and existing Vault. The supplied
-Python node serves delivery; the native TypeScript node serves routing and first
-contact. The alpha.0.4 delivery-approval fix is retained. Five targeted
-local HTTP regressions passed: three Python and two native TypeScript cases.
-Selected-memory transfer and recall after restart were covered by Python.
-The full suite was not run; historical results retain their original source
-scope. Memory content never grants execution authority or automatically
+Messages use the original approved delivery node. The separate, explicitly
+authorized ACK source retains original saved-message receipts for independent
+recovery. Replacement-node message repair remains unfinished. Both clients
+share the same wire protocol and existing Vault. The Python node hosts delivery
+and ACK recovery; the native TypeScript node hosts routing and first contact.
+Validation results and their exact source bindings are in the release record. Memory content never grants execution authority or automatically
 enrolls an author as trusted.
 
 [Open-network quickstart](docs/OPEN_NETWORK_QUICKSTART.md).

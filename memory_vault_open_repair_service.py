@@ -29,6 +29,10 @@ def _entry(original):
 
 
 class RepairBootstrapService:
+    resource_state = "unbound"
+    consumer = "ack_owner"
+    response_profile = "ack_owner_service_v1"
+
     def __init__(self, state):
         self.state, self.db = state, state.db
         self.access = RepairAckAccess(state)
@@ -74,7 +78,7 @@ class RepairBootstrapService:
 
     def _context(self, resource_id, budget):
         row = self.state._row(resource_id)
-        if row["status"] != "unbound":
+        if row["status"] != self.resource_state:
             _fail("repair_service_unavailable")
         setup = wire.parse_new_wire(bytes(row["activation_inputs"]), budget.policy, budget).value
         grant = wire.parse_new_wire(setup["bootstrap"]["raw"].encode(), budget.policy, budget).value["payload"]
@@ -82,7 +86,11 @@ class RepairBootstrapService:
         return row, grant, dict(expected_subject=owner, expected_target=self.state.target,
             target_storage_epoch=self.state.node["payload"]["storage_epoch"],
             bootstrap_grant_sha256=setup["bootstrap"]["ref"]["raw_sha256"], selector=grant["selector"],
-            at=self.state._now(), policy=budget.policy, budget=budget)
+            at=self.state._now(), policy=budget.policy, budget=budget, consumer=self.consumer)
+
+    def _grant_entry(self, resource_id):
+        setup = json.loads(bytes(self.state._row(resource_id)["activation_inputs"]))
+        return dict(raw=setup["bootstrap"]["raw"].encode(), ref=setup["bootstrap"]["ref"])
 
     def _lookup_probe(self, payload):
         # A selector is only a lookup hint. The complete saved source and the
@@ -91,9 +99,9 @@ class RepairBootstrapService:
         grant_hash = closed["bootstrap_grant_sha256"]
         probe._shape(probe.original._digest, grant_hash)
         subject = resource._dual_key_shape(closed["subject"])
-        rows = self.db.execute("""SELECT resource_id FROM open_repair_ack_resources WHERE owner=? AND status='unbound'
+        rows = self.db.execute("""SELECT resource_id FROM open_repair_ack_resources WHERE owner=? AND status=?
             AND json_extract(activation_inputs,'$.bootstrap.ref.raw_sha256')=? LIMIT 2""",
-            (subject["signing_key"]["key_id"], grant_hash)).fetchall()
+            (subject["signing_key"]["key_id"], self.resource_state, grant_hash)).fetchall()
         if len(rows) != 1:
             _fail("repair_service_unavailable")
         return rows[0][0]
@@ -191,7 +199,7 @@ class RepairBootstrapService:
         subject, target = expected["expected_subject"], expected["expected_target"]
         if (payload["schema_version"] != proof.SCHEMA or payload["kind"] != "bootstrap." + ("proof_child_request" if kind == "child" else kind)
                 or payload["purpose"] != ("bootstrap.service_proof_child" if kind == "child" else "bootstrap.service_proof")
-                or payload["consumer"] != "ack_owner"
+                or payload["consumer"] != self.consumer
                 or payload["subject"] != (subject if kind == "probe" else probe._dual(subject))
                 or payload["target"] != (target if kind == "probe" else probe._dual(target))
                 or payload["target_storage_epoch"] != expected["target_storage_epoch"]
@@ -298,12 +306,13 @@ class RepairBootstrapService:
     def _verify_response(self, raw, row, expected, budget):
         p,c = self._exchange(row,budget)
         answer_ref = json.loads(bytes(row["handle_ref"]))["answer_ref"]
-        setup = json.loads(bytes(self.state._row(row["resource_id"])["activation_inputs"]))
+        grant = self._grant_entry(row["resource_id"])
+        limits = json.loads(grant["raw"])["payload"]["limits"]
         return proof.verify_bootstrap_proof_response(raw,expected_subject=expected["expected_subject"],expected_target=expected["expected_target"],
-            target_storage_epoch=expected["target_storage_epoch"],selector=expected["selector"],bootstrap_grant_ref=setup["bootstrap"]["ref"],
+            target_storage_epoch=expected["target_storage_epoch"],selector=expected["selector"],bootstrap_grant_ref=grant["ref"],
             probe_ref=p.ref.as_dict(),challenge_ref=c.ref.as_dict(),answer_ref=answer_ref,at=self.state._now(),
-            max_proof_items=json.loads(setup["bootstrap"]["raw"])["payload"]["limits"]["max_proof_items"],
-            max_proof_bytes=json.loads(setup["bootstrap"]["raw"])["payload"]["limits"]["max_proof_bytes"],policy=budget.policy,budget=budget)
+            max_proof_items=limits["max_proof_items"], max_proof_bytes=limits["max_proof_bytes"],
+            expected_source_state=self.resource_state,consumer=self.consumer,policy=budget.policy,budget=budget)
 
     def _answer(self, answer_entry, *, budget, capacity):
         parsed, reference, payload = self._preview(answer_entry,budget)
@@ -333,8 +342,8 @@ class RepairBootstrapService:
             _fail("repair_service_capacity")
         manifest = dict(schema_version=proof.SCHEMA,kind="bootstrap.proof_manifest",probe_ref=p.ref.as_dict(),
             subject=dict(decision.subject),target=probe._dual(self.state.target),target_storage_epoch=expected["target_storage_epoch"],
-            consumer="ack_owner",selector=dict(decision.selector),bootstrap_grant_ref=decision.bootstrap_grant_ref.as_dict(),
-            service_generation=decision.generation,response_profile="ack_owner_service_v1",
+            consumer=self.consumer,selector=dict(decision.selector),bootstrap_grant_ref=decision.bootstrap_grant_ref.as_dict(),
+            service_generation=decision.generation,response_profile=self.response_profile,
             children=[dict(index=index,role=item["role"],ref=item["ref"].as_dict()) for index,item in enumerate(children)])
         response = proof.make_bootstrap_proof_response(self.state.identity,manifest,probe_ref=p.ref.as_dict(),challenge_ref=c.ref.as_dict(),
             answer_ref=exchange.originals["answer"].ref.as_dict(),subject=expected["expected_subject"],target=self.state.target,
@@ -343,9 +352,12 @@ class RepairBootstrapService:
         candidate = proof.verify_bootstrap_proof_response(response.raw,expected_subject=expected["expected_subject"],expected_target=self.state.target,
             target_storage_epoch=expected["target_storage_epoch"],selector=dict(decision.selector),bootstrap_grant_ref=decision.bootstrap_grant_ref.as_dict(),
             probe_ref=p.ref.as_dict(),challenge_ref=c.ref.as_dict(),answer_ref=exchange.originals["answer"].ref.as_dict(),at=self.state._now(),
-            max_proof_items=decision.limit_policy["max_proof_items"],max_proof_bytes=decision.limit_policy["max_proof_bytes"],policy=budget.policy,budget=budget)
-        prepared = self.access.prepare(row["resource_id"],action="proof",expected_generation=decision.generation,
-                                       policy=budget.policy,budget=budget)
+            max_proof_items=decision.limit_policy["max_proof_items"],max_proof_bytes=decision.limit_policy["max_proof_bytes"],
+            expected_source_state=self.resource_state,consumer=self.consumer,policy=budget.policy,budget=budget)
+        # Reuse the authenticated immutable preparation. check_locked below
+        # rechecks its complete retained-byte stamp and current status floors;
+        # repeating the cryptography would consume the same operation budget
+        # twice without strengthening that final publication guard.
         # An exact retry transmits encoded and decoded originals again. Its
         # saved response is authenticated outside the writer transaction.
         previous_response = None
@@ -422,7 +434,7 @@ class RepairBootstrapService:
             _fail(decision.code)
         p = request.payload
         row_child = frozen.manifest.value["children"][p["child_index"]]
-        expected_ref = probe._ref(row_child["ref"])
+        expected_ref = wire.raw_ref(row_child["ref"])
         candidates = [item for item in children if item["role"] == row_child["role"] and item["ref"] == expected_ref]
         if len(candidates) != 1:
             _fail("repair_access_generation")

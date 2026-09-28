@@ -3,11 +3,12 @@
  * does not grant live read permission or make a handle a bearer capability.
  */
 import {randomBytes} from 'node:crypto';
-import {isUint8Array} from 'node:util/types';
+import {isUint8Array,isProxy} from 'node:util/types';
 import {buildNewWire,parseNewWire,rawRef,objectFields,u53,RepairError} from './open-repair-wire.ts';
 import type {DraftJson,RawRef,RepairPolicy,RepairBudget} from './open-repair-wire.ts';
 import {originalPublicDescriptor,verifyBoundedControlSignature} from './open-repair-original.ts';
 import {signBoundedBootstrapOriginal} from './open-repair-probe.ts';
+import type {BootstrapConsumer} from './open-repair-probe.ts';
 import type {AuthenticatedRepairOriginal} from './open-repair-resource.ts';
 
 type Obj=Record<string,any>;
@@ -16,11 +17,27 @@ const FIXED_ROLES=Object.freeze(['ack.root_authority','ack.read_grant','bootstra
   'resource.ack_activation','resource.ack_active','source.descriptor','historical.status.ack_root','historical.status.ack_read',
   'historical.status.ack_owner_bootstrap','historical.status.ack_slot','historical.status.ack_resource','current.status.ack_root',
   'current.status.ack_read','current.status.ack_owner_bootstrap','current.status.ack_slot','current.status.ack_resource','history.ack_unbound','ack.unbound_custody']);
+const EMPTY_FIXED_ROLES=Object.freeze(['historical.status.ack_root','historical.status.ack_read','historical.status.ack_owner_bootstrap',
+  'historical.status.ack_write','historical.status.ack_offer_bootstrap','historical.status.ack_slot','historical.status.ack_resource',
+  'history.ack_unbound','ack.unbound_custody','ack.write_grant','bootstrap.ack_offer','ack.binding','history.ack_empty','ack.empty_custody','ack.head',
+  'current.status.ack_root','current.status.ack_read','current.status.ack_owner_bootstrap','current.status.ack_slot','current.status.ack_resource']);
+const OCCUPIED_FIXED_ROLES=Object.freeze(['historical.status.ack_root','historical.status.ack_read','historical.status.ack_owner_bootstrap',
+  'historical.status.ack_write','historical.status.ack_offer_bootstrap','historical.status.ack_slot','historical.status.admission_resource','historical.status.ack_disclosure',
+  'history.ack_empty','ack.empty_custody','recipient.receipt','ack.disclosure','ack.put','history.ack_occupied_inputs','ack.commit','ack.head',
+  'current.status.ack_root','current.status.ack_read','current.status.ack_owner_bootstrap','current.status.ack_slot','current.status.ack_resource','current.status.ack_disclosure']);
+const SOURCE_STATES=new Map<string,{roles:readonly string[];minimumPacks:number}>([
+  ['unbound',{roles:FIXED_ROLES,minimumPacks:1}],['empty',{roles:EMPTY_FIXED_ROLES,minimumPacks:2}],['occupied',{roles:OCCUPIED_FIXED_ROLES,minimumPacks:3}]]);
+const OFFER_FIXED_ROLES=Object.freeze(EMPTY_FIXED_ROLES.map(role=>role==='current.status.ack_read'?'current.status.ack_write':
+  role==='current.status.ack_owner_bootstrap'?'current.status.ack_offer_bootstrap':role));
+const CONSUMER_STATES=new Map<string,Map<string,{roles:readonly string[];minimumPacks:number}>>([
+  ['ack_owner',SOURCE_STATES],['ack_offer',new Map([['empty',{roles:OFFER_FIXED_ROLES,minimumPacks:2}]])]]);
+export type BootstrapProofSourceState='unbound'|'empty'|'occupied';
 const COMMON=['schema_version','kind','signing_key','issued_at','expires_at','subject','target','target_storage_epoch','purpose','consumer'];
 const HANDLE=[...COMMON,'bootstrap_grant_sha256','handle_id','probe_ref','challenge_ref','answer_ref','service_generation','manifest_ref','child_count'];
 const CHILD=[...COMMON,'request_id','probe_ref','handle_ref','manifest_ref','service_generation','child_index','offset','requested_bytes'];
 const MANIFEST=['schema_version','kind','probe_ref','subject','target','target_storage_epoch','consumer','selector','bootstrap_grant_ref','service_generation','response_profile','children'];
 const SELECTOR=['root_key_sha256','ack_slot_sha256','root_authority_sha256','read_grant_sha256'];
+const OFFER_SELECTOR=['root_key_sha256','ack_slot_sha256','root_authority_sha256','write_grant_sha256'];
 const EXPECTED=['expectedSubject','expectedTarget','targetStorageEpoch','selector','bootstrapGrantRef','probeRef','challengeRef','answerRef','at'];
 const proofBrand=new WeakSet<object>();
 const byteLength=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),'byteLength')!.get!;
@@ -31,6 +48,8 @@ export interface BootstrapProofOptions{
   readonly expectedSubject:unknown;readonly expectedTarget:unknown;readonly targetStorageEpoch:string;readonly selector:unknown;
   readonly bootstrapGrantRef:unknown;readonly probeRef:unknown;readonly challengeRef:unknown;readonly answerRef:unknown;
   readonly at:number;readonly maxProofItems:number;readonly maxProofBytes:number;readonly policy:RepairPolicy;readonly budget:RepairBudget;
+  readonly expectedSourceState?:BootstrapProofSourceState;
+  readonly consumer?:BootstrapConsumer;
 }
 function fail(code='repair_invalid_proof'):never{throw new RepairError(code);}
 function mismatch():never{fail('repair_proof_mismatch');}
@@ -51,29 +70,38 @@ function window(payload:Obj,at:number):void{
   if(!(issued<=at&&at<expires&&expires-issued>=1&&expires-issued<=60))fail('repair_invalid_probe');
 }
 function expected(args:Obj,policy:RepairPolicy,budget:RepairBudget):Obj{
+  const consumer=Object.hasOwn(args,'consumer')?args.consumer:'ack_owner';
+  if(consumer!=='ack_owner'&&consumer!=='ack_offer')fail('repair_invalid_probe');
   const value=buildNewWire(Object.fromEntries(EXPECTED.map(name=>[name,args[name]])),policy,budget).value as Obj;
   for(const name of ['bootstrapGrantRef','probeRef','challengeRef','answerRef'])meta(value[name]);
   dual(value.expectedSubject,budget);dual(value.expectedTarget,budget);u53(value.at);opaque(value.targetStorageEpoch);
-  fields(value.selector,SELECTOR);for(const name of SELECTOR)pattern(value.selector[name],/^[0-9a-f]{64}$/);return value;
+  const selector=consumer==='ack_owner'?SELECTOR:OFFER_SELECTOR;
+  fields(value.selector,selector);for(const name of selector)pattern(value.selector[name],/^[0-9a-f]{64}$/);return {...value,consumer};
 }
-function manifestShape(value:unknown,expected:Obj,maximumItems:number):Obj{
-  const m=fields(value,MANIFEST);
-  if(m.schema_version!==SCHEMA||m.kind!=='bootstrap.proof_manifest'||m.consumer!=='ack_owner'||m.response_profile!=='ack_owner_service_v1'||
+function manifestShape(value:unknown,expected:Obj,maximumItems:number,expectedSourceState?:BootstrapProofSourceState):Obj{
+  const m=fields(value,MANIFEST);if(m.response_profile!==expected.consumer+'_service_v1')mismatch();
+  if(!Array.isArray(m.children)||m.children.length<1||m.children.length>maximumItems)fail();
+  const roles=new Set<string>();for(const value of m.children){const item=fields(value,['index','role','ref']);
+    if(typeof item.role!=='string')fail();if(item.role!=='history.raw_pack')roles.add(item.role);}
+  const states=[...CONSUMER_STATES.get(expected.consumer)!].filter(([,phase])=>phase.roles.length===roles.size&&phase.roles.every(role=>roles.has(role)));
+  if(states.length!==1)fail();const [state,profile]=states[0];if(expectedSourceState!==undefined&&state!==expectedSourceState)mismatch();
+  if(m.schema_version!==SCHEMA||m.kind!=='bootstrap.proof_manifest'||m.consumer!==expected.consumer||
       !same(m.subject,ids(expected.expectedSubject))||!same(m.target,ids(expected.expectedTarget))||m.target_storage_epoch!==expected.targetStorageEpoch||
       !same(m.selector,expected.selector)||!same(meta(m.bootstrap_grant_ref),meta(expected.bootstrapGrantRef))||!same(meta(m.probe_ref),meta(expected.probeRef)))mismatch();
   u53(m.service_generation,1);
-  if(!Array.isArray(m.children)||m.children.length<FIXED_ROLES.length+1||m.children.length>maximumItems)fail();
+  if(!Array.isArray(m.children)||m.children.length<profile.roles.length+profile.minimumPacks||m.children.length>maximumItems)fail();
   const counts=new Map<string,number>(),packs=new Set<string>();
   for(const [index,value] of m.children.entries()){
     const item=fields(value,['index','role','ref']);
-    if(u53(item.index)!==index||typeof item.role!=='string'||(item.role!=='history.raw_pack'&&!FIXED_ROLES.includes(item.role)))fail();
-    const ref=meta(item.ref);counts.set(item.role,(counts.get(item.role)??0)+1);
+    if(u53(item.index)!==index||typeof item.role!=='string'||(item.role!=='history.raw_pack'&&!profile.roles.includes(item.role)))fail();
+    // The existing delivery receipt alone may retain its original object ref.
+    const ref=item.role==='recipient.receipt'?rawRef(item.ref):meta(item.ref);counts.set(item.role,(counts.get(item.role)??0)+1);
     if(item.role==='history.raw_pack'){
       const identity=`${ref.namespace}:${ref.key}:${ref.raw_sha256}:${ref.size}`;
       if(packs.has(identity)||ref.key!==ref.raw_sha256)fail();packs.add(identity);
     }
   }
-  if(FIXED_ROLES.some(name=>counts.get(name)!==1)||packs.size===0)fail();return m;
+  if(profile.roles.some(name=>counts.get(name)!==1)||packs.size<profile.minimumPacks)fail();return m;
 }
 function encode(raw:Uint8Array,budget:RepairBudget):string{
   budget.output(Math.ceil(raw.length*4/3));return Buffer.from(raw.buffer,raw.byteOffset,raw.byteLength).toString('base64url');
@@ -107,19 +135,23 @@ export function makeBootstrapProofResponse(signer:unknown,manifestPayload:unknow
   const args=fields(options,['probeRef','challengeRef','answerRef','subject','target','at','expiresAt','handleId','policy','budget']),policy=args.policy as RepairPolicy,budget=args.budget as RepairBudget;
   const manifest=buildNewWire(manifestPayload,policy,budget),body=fields(manifest.value,MANIFEST);
   const e=expected({expectedSubject:args.subject,expectedTarget:args.target,targetStorageEpoch:body.target_storage_epoch,selector:body.selector,
-    bootstrapGrantRef:body.bootstrap_grant_ref,probeRef:args.probeRef,challengeRef:args.challengeRef,answerRef:args.answerRef,at:args.at},policy,budget);
+    bootstrapGrantRef:body.bootstrap_grant_ref,probeRef:args.probeRef,challengeRef:args.challengeRef,answerRef:args.answerRef,at:args.at,consumer:body.consumer},policy,budget);
   manifestShape(body,e,policy.max_entries);opaque(args.handleId);
   const bytes=manifest.raw,digest=budget.hash(bytes),ref=meta({namespace:'meta',key:digest,raw_sha256:digest,size:bytes.length});
   const payload={schema_version:SCHEMA,kind:'bootstrap.proof_handle',signing_key:e.expectedTarget.signing_key,issued_at:e.at,expires_at:u53(args.expiresAt),
     handle_id:args.handleId,probe_ref:e.probeRef,challenge_ref:e.challengeRef,answer_ref:e.answerRef,subject:body.subject,target:body.target,
-    target_storage_epoch:body.target_storage_epoch,purpose:'bootstrap.service_proof',consumer:'ack_owner',bootstrap_grant_sha256:body.bootstrap_grant_ref.raw_sha256,
+    target_storage_epoch:body.target_storage_epoch,purpose:'bootstrap.service_proof',consumer:body.consumer,bootstrap_grant_sha256:body.bootstrap_grant_ref.raw_sha256,
     service_generation:body.service_generation,manifest_ref:ref,child_count:body.children.length};
   window(payload,e.at);const handle=signBoundedBootstrapOriginal(payload,signer,policy,budget);
   const response=buildNewWire({schema_version:SCHEMA,kind:'bootstrap.proof_response',handle_raw_base64url:encode(handle.raw,budget),manifest_raw_base64url:encode(bytes,budget)},policy,budget);
   if(response.raw.length>MAX_RESPONSE)fail('repair_proof_too_large');return response;
 }
 export function verifyBootstrapProofResponse(raw:Uint8Array,options:BootstrapProofOptions):AuthenticatedBootstrapProof{
-  const args=fields(options,[...EXPECTED,'maxProofItems','maxProofBytes','policy','budget']),policy=args.policy as RepairPolicy,budget=args.budget as RepairBudget;
+  if(options===null||typeof options!=='object'||isProxy(options))fail();
+  const args=fields(options,[...EXPECTED,'maxProofItems','maxProofBytes','policy','budget',...['expectedSourceState','consumer'].filter(name=>Object.hasOwn(options,name))]),policy=args.policy as RepairPolicy,budget=args.budget as RepairBudget;
+  const sourceState=Object.hasOwn(args,'expectedSourceState')?args.expectedSourceState:'unbound';
+  const consumer=Object.hasOwn(args,'consumer')?args.consumer:'ack_owner';
+  if(typeof consumer!=='string'||typeof sourceState!=='string'||!CONSUMER_STATES.get(consumer)?.has(sourceState))fail();
   const maximumItems=u53(args.maxProofItems,1),maximumBytes=u53(args.maxProofBytes,1);
   if(!isUint8Array(raw))fail();const inputSize=Reflect.apply(byteLength,raw,[]) as number;
   if(inputSize>Math.min(MAX_RESPONSE,maximumBytes))fail('repair_proof_too_large');
@@ -129,13 +161,13 @@ export function verifyBootstrapProofResponse(raw:Uint8Array,options:BootstrapPro
   if(inputSize+hs+ms>maximumBytes)fail('repair_proof_too_large');
   const h=parsed(decode(wrapper.handle_raw_base64url,hs,budget),policy,budget),signed=fields(h.document.value,['payload','proof']),payload=fields(signed.payload,HANDLE);
   window(payload,e.at);opaque(payload.handle_id);
-  if(payload.schema_version!==SCHEMA||payload.kind!=='bootstrap.proof_handle'||payload.purpose!=='bootstrap.service_proof'||payload.consumer!=='ack_owner'||
+  if(payload.schema_version!==SCHEMA||payload.kind!=='bootstrap.proof_handle'||payload.purpose!=='bootstrap.service_proof'||payload.consumer!==consumer||
       !same(payload.subject,ids(e.expectedSubject))||!same(payload.target,ids(e.expectedTarget))||payload.target_storage_epoch!==e.targetStorageEpoch||
       payload.bootstrap_grant_sha256!==e.bootstrapGrantRef.raw_sha256||['probe_ref','challenge_ref','answer_ref'].some((name,index)=>!same(meta(payload[name]),meta(e[['probeRef','challengeRef','answerRef'][index]]))))mismatch();
   verifyBoundedControlSignature(payload,signed.proof,e.expectedTarget.signing_key,budget);
   const manifestRef=meta(payload.manifest_ref),m=parsed(decode(wrapper.manifest_raw_base64url,ms,budget),policy,budget);
   if(m.ref.raw_sha256!==manifestRef.raw_sha256||m.ref.size!==manifestRef.size)fail('repair_ref_mismatch');
-  const body=manifestShape(m.document.value,e,maximumItems);
+  const body=manifestShape(m.document.value,e,maximumItems,sourceState as BootstrapProofSourceState);
   if(u53(payload.child_count)!==body.children.length||u53(payload.service_generation,1)!==body.service_generation)mismatch();
   const result=Object.freeze({handle:held(h.document.raw,h.ref,payload,budget),manifest:m.document,manifest_ref:manifestRef});proofBrand.add(result);return result;
 }
@@ -149,7 +181,7 @@ export function makeBootstrapChildRequest(signer:unknown,value:AuthenticatedBoot
   const {proof,subject,target,at}=childParents(value,args.subject,args.target,args.at,policy,budget),handle=proof.handle.payload as Obj;
   budget.output(16);const token=randomBytes(16);budget.output(38);const requestId='child_'+token.toString('hex');
   const payload={schema_version:SCHEMA,kind:'bootstrap.proof_child_request',signing_key:subject.signing_key,issued_at:at,expires_at:u53(args.expiresAt),request_id:requestId,
-    subject:ids(subject),target:ids(target),target_storage_epoch:handle.target_storage_epoch,purpose:'bootstrap.service_proof_child',consumer:'ack_owner',probe_ref:handle.probe_ref,
+    subject:ids(subject),target:ids(target),target_storage_epoch:handle.target_storage_epoch,purpose:'bootstrap.service_proof_child',consumer:handle.consumer,probe_ref:handle.probe_ref,
     handle_ref:proof.handle.ref,manifest_ref:proof.manifest_ref,service_generation:handle.service_generation,child_index:args.childIndex,offset:args.offset,requested_bytes:args.requestedBytes};
   window(payload,at);childRange(payload,(proof.manifest.value as Obj).children);
   if(payload.issued_at<handle.issued_at||payload.expires_at>handle.expires_at)mismatch();
@@ -163,7 +195,7 @@ export function verifyBootstrapChildRequest(entry:unknown,value:AuthenticatedBoo
   if(raw.length!==ref.size||budget.hash(raw)!==ref.raw_sha256)fail('repair_ref_mismatch');
   const signed=fields(document.value,['payload','proof']),payload=fields(signed.payload,CHILD),handle=proof.handle.payload as Obj;
   window(payload,at);opaque(payload.request_id);
-  if(payload.schema_version!==SCHEMA||payload.kind!=='bootstrap.proof_child_request'||payload.purpose!=='bootstrap.service_proof_child'||payload.consumer!=='ack_owner'||
+  if(payload.schema_version!==SCHEMA||payload.kind!=='bootstrap.proof_child_request'||payload.purpose!=='bootstrap.service_proof_child'||payload.consumer!==handle.consumer||
       !same(payload.subject,ids(subject))||!same(payload.target,ids(target))||payload.target_storage_epoch!==handle.target_storage_epoch||
       !same(meta(payload.handle_ref),proof.handle.ref)||!same(meta(payload.manifest_ref),proof.manifest_ref)||!same(meta(payload.probe_ref),meta(handle.probe_ref))||
       payload.service_generation!==handle.service_generation||payload.issued_at<handle.issued_at||payload.expires_at>handle.expires_at)mismatch();

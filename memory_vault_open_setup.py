@@ -39,12 +39,14 @@ def _read_seed(path: Path, now: int):
     return seed
 
 
-def initialize_node(directory: Path, *, base_url: str, listen_port: int = 8787, seeds=(), enable_repair=False):
+def initialize_node(directory: Path, *, base_url: str, listen_port: int = 8787, seeds=(), enable_repair=False,
+                    repair_profile="unbound"):
     directory = _absolute_path(directory)
     endpoint(base_url, allow_loopback=False)
     if type(listen_port) is not int or not 1024 <= listen_port <= 65535:
         raise MemoryError("open_invalid_listener")
-    if type(enable_repair) is not bool:
+    if (type(enable_repair) is not bool or repair_profile not in ("unbound", "receipt")
+            or (repair_profile == "receipt" and not enable_repair)):
         raise MemoryError("open_invalid_repair_policy")
     if not isinstance(seeds, (list, tuple)) or len(seeds) > 2:
         raise MemoryError("open_two_initial_introductions_maximum")
@@ -95,8 +97,9 @@ def initialize_node(directory: Path, *, base_url: str, listen_port: int = 8787, 
             "maximum_pending": 1024, "maximum_jobs": 4096, "maximum_job_bytes": 16 * 1024 * 1024}},
     }
     if enable_repair:
-        from memory_vault_open_repair_state import DEFAULT_LIMITS
-        config["repair_policy"] = {"enabled": True, "limit_policy": dict(DEFAULT_LIMITS)}
+        from memory_vault_open_repair_state import DEFAULT_LIMITS, RECEIPT_WORKFLOW_LIMITS
+        config["repair_policy"] = {"enabled": True, "limit_policy": dict(
+            RECEIPT_WORKFLOW_LIMITS if repair_profile == "receipt" else DEFAULT_LIMITS)}
     _write_new_private(config_path, canonical_bytes(config) + b"\n")
     # This file alone is shareable. It contains a signed public introduction,
     # never the config, filesystem paths or either private identity document.
@@ -124,10 +127,12 @@ def main(argv=None):
     parser.add_argument("--listen-port", type=int, default=8787, help="local 127.0.0.1 port behind your HTTPS terminator (default: 8787)")
     parser.add_argument("--seed", type=Path, action="append", default=[], help="public signed node JSON file; repeat at most twice")
     parser.add_argument("--enable-repair", action="store_true", help="serve existing authorized ACK source originals with finite repair limits")
+    parser.add_argument("--repair-profile", choices=("unbound", "receipt"), default="unbound",
+                        help="finite new-node repair ceiling; receipt budgets the full bind/upload/recovery workflow")
     args = parser.parse_args(argv)
     try:
         result = initialize_node(args.directory, base_url=args.base_url, listen_port=args.listen_port,
-                                 seeds=args.seed, enable_repair=args.enable_repair)
+                                 seeds=args.seed, enable_repair=args.enable_repair, repair_profile=args.repair_profile)
     except (MemoryError, OSError) as exc:
         print(json.dumps({"error": getattr(exc, "code", "open_setup_storage_unavailable")}), file=sys.stderr)
         return 1

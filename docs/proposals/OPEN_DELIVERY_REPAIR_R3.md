@@ -1256,6 +1256,73 @@ The later empty commitment is not obtained by editing the original event.
 An empty replica retains the actual empty commitment; an earlier unbound-only
 replica cannot claim it has the binding just because A owns the root.
 
+### 8.1 Candidate original-R owner binding submission
+
+The section 8 submission has a separate, closed `ack.bind_request` control
+message. It does not allocate a resource or implement B's `receipt.put`.
+A first independently verifies its already-held root/read/owner bootstrap,
+write/offer originals and the intended writer/message/envelope tuple. It then
+finishes the existing `ack_owner` mutual dual-key exchange and retrieves and
+independently verifies the complete original-R **unbound** service proof.
+Only after that verification may A upload the two new originals. A failed or
+incomplete proof never permits sending them. The wire response profile remains
+`ack_owner_service_v1`; no additional bootstrap consumer/profile is created.
+
+The Signed request has the common fields and exactly
+`issued_at,expires_at,request_id,subject:DualID,target:DualID,target_storage_epoch,
+purpose=ack.owner_bind,consumer=ack_owner,probe_ref,handle_ref,manifest_ref,
+service_generation,write,offer,receipt_writer:DualKey,message_id,envelope_ref,
+current_statuses,read_until,retain_until`. `write` and `offer`, and every entry
+of `current_statuses`, are exactly `{ref:RawRef,raw_base64url}`; decoded bytes
+are preserved, hashed, and checked against the full reference. Statuses are
+one to seven complete originals, never projections. The whole canonical
+request is at most 65,536 bytes. Its lifetime is at most 60 seconds and ends
+by the live owner's handle and upload deadline. No E bytes, receipt or keys
+are uploaded. The caller supplies the independent writer/message/E reference;
+neither the source nor an uploaded grant chooses that expectation.
+
+The live handle identifies the locally committed successful owner dual-key
+exchange; a handle alone is not a bearer capability. Each bind request has a
+new A signature and binds that exact handle, manifest, probe, source generation
+and R epoch. The original owner bootstrap's READ, `upload_until`, and explicit
+`ack.write_grant`/`bootstrap.grant` upload roles authorize this transfer only.
+The mutation separately requires the actual original root's ACK ADMIT/READ/
+DISCOVER/RENEW checks, exact A write authorization, both original bootstrap
+dependencies, the current seven typed obligations, durable status floors and
+the actual committed resource/capacity. B's ack_offer grant never authorizes A
+as its subject or supplies A's owner read permission.
+
+Before any historical work, R authenticates the one fresh A request signature
+and atomically reserves a bounded work attempt in the **existing owner-grant**
+request/signature/replay/metadata ledger. The request, its encoded and decoded
+original bytes, and returned encoded and decoded bytes share that grant's
+finite transfer allowance. A fixed local signature allowance is reserved for
+each bind attempt; a smaller remaining allowance refuses admission. Actual
+work remains charged after every authenticated failure; an interrupted attempt
+keeps its reservation. Request IDs are single-use and retained: different bytes
+under one ID are conflicts, failed/incomplete IDs cannot resume, and an exact
+committed retry revalidates the original closure and current permissions before
+returning the exact previously committed result. No expiry-based replay or
+conflict collection is introduced.
+
+The short binding transaction rechecks the live exchange, exact source pins,
+current generation and permissions, retained request identity, capacity and
+all charges before atomically committing the binding/head and successful replay
+record. Signing, parsing and response encoding happen outside the writer lock.
+No newly signed result is returned if that transaction fails. A later source
+generation invalidates a fresh request; an exact successful retry uses only
+its recorded committed generation and never silently binds another message.
+
+The unsigned canonical response is exactly
+`{schema_version,kind=ack.bind_response,request_ref,binding,manifest,custody,head,packs}`.
+The four originals and every complete pack use the same `{ref,raw_base64url}`
+encoding. `packs` contains exactly the new `ack_empty` generation's packs;
+the caller already holds every predecessor pack from its verified preflight.
+The response also fits 65,536 bytes. This envelope asserts no permission:
+the client verifies the complete empty historical closure, original R binding,
+custody and head, the unchanged independent tuple, all exact original refs,
+and its current status observations before accepting a durable result.
+
 B receives the original root/write grant and ack_offer bootstrap grant through
 the authorized delivery evidence before any cold probe. To learn the
 preconfigured ACK offer/root, B completes section 9's locally authorized probe,
@@ -1490,8 +1557,16 @@ A message.disclosure and B ack.disclosure each have mandatory closed
 
 - message.disclosure fixes subject to its original recipient B, consumer to
   mailbox_feed and roles to `[authority.status.disclosure,message.disclosure]`.
-- ack.disclosure fixes subject to its original owner A, consumer to ack_owner
-  and roles to `[ack.disclosure,authority.status.disclosure]`.
+- ack.disclosure fixes subject to its original owner A and consumer to ack_owner.
+  Its signed `roles` selects one of exactly two ordered variants:
+  `[ack.disclosure,authority.status.disclosure]` returns only consent/status;
+  `[ack.disclosure,ack.put,authority.status.disclosure,recipient.receipt]`
+  additionally permits the exact B receipt and put named by this consent and
+  its occupied event to participate in complete owner service preflight.
+  The second variant is a candidate extension requiring a new explicit B
+  signature. It does not enlarge an existing two-role consent, any A grant,
+  another receipt or another consumer. All `allowed_roles`, current READ,
+  exact references and return deadlines remain separately required.
 
 The disclosure role means this one complete original consent. The status role
 means only complete original authority.status documents signed by that same
@@ -1505,9 +1580,11 @@ rules apply to M assignment status and node resource status. Thus B's grant
 cannot authorize A's status, nor A's grant B's status.
 
 until intersects consent expiry/consent_until, selected maintenance or ACK root
-read/retain windows and current status. This permits returning the consent
-and narrowly scoped status, not A contact/attempt or B receipt/put. It does not
-permit uploading that consent to an unknown P. Old signed consents without
+read/retain windows and current status. The two-role variant permits returning
+only the consent and narrowly scoped status. The four-role ACK variant also
+permits only its exact B receipt/put under the complete occupied closure.
+Neither permits A contact/attempt or uploading that consent to an unknown P.
+Old signed consents without
 this field do not support this profile; no node may infer or add it. The normal
 content/historical phase still uses its exact original disclosure/read roles.
 
@@ -1648,8 +1725,11 @@ A READ/COPY-only replica cannot receive the first B receipt.
 Root uses its exact anchor scope. Feed uses only selected slot/read/maintenance
 and the exact covered feed/member scope; each necessary A consent/status also
 passes its bootstrap_return rule. ACK owner uses A root/read and the phase
-matching A's retained grant/binding; occupied permission needing B consent
-requires B's explicit return rule. ACK offer uses A's exact write/bootstrap
+matching A's retained grant/binding; complete occupied preflight needs the
+receipt/put admission premises and therefore requires B's explicitly signed
+four-role return variant. A two-role consent makes that complete bootstrap
+profile unsupported/incomplete; do not send the missing B originals, infer
+them from a hash, or silently upgrade the consent. ACK offer uses A's exact write/bootstrap
 grants, original binding, actual empty source custody and, at P, already
 committed exact empty replica.custody plus M ACK-admit/read authority. If
 original activation references A's read grant, the new A bootstrap grant must
@@ -1703,6 +1783,34 @@ verified preflight and outer bootstrap.use, not a changed receipt/disclosure/
 put body. Before sending any of those originals or their stage descriptor,
 B verifies actual ACK-admit authority and its own exact disclosure consent.
 A failed preflight cannot be bypassed by calling receipt.put directly.
+
+The original-R inline HTTP carrier is unsigned canonical
+`{schema_version,kind:ack.put_request,use,receipt,disclosure,put,current_statuses,read_until,retain_until}`.
+Each original uses exactly `{ref:RawRef,raw_base64url}` and retains its original
+bytes and opaque key; an existing `recipient.receipt` may have an object
+reference. `current_statuses` contains one to eight whole scoped originals.
+The request fits the existing 65,536-byte control frame. This carrier creates
+no additional consumer, authority or receipt format. Its signed `bootstrap.use`
+names the immutable B `ack.put`; the latter binds the exact receipt and consent.
+The node locates the completed B dual-key exchange by subject and probe, checks
+its full manifest reference, epoch, generation, deadline and offer grant, then
+rechecks all original/current ADMIT and disclosure dependencies at commit.
+
+Use IDs are durably consumed. Each authenticated attempt charges the same
+finite service work and encoded-plus-decoded transfer ledger; an incomplete
+attempt cannot be retried as a fresh admission. An exact successful retry
+revalidates the retained originals and current permissions. Its receipt, head,
+pending publication job, transfer charges and replay result commit atomically;
+failure to reserve the response rolls back that receipt commit. No success
+means that a pending publication job has already reached another node.
+
+The unsigned reply is exactly
+`{schema_version,kind:ack.put_response,use_ref,manifest,commit,head,packs}`.
+Original entries use the same encoding, and `packs` contains exactly the new
+occupied generation's raw packs. The caller retains both predecessor
+generations from its verified preflight and verifies all three original
+generations, the exact B receipt/consent/put and signed R commit/head before
+reporting a saved receipt at this source. The reply also fits 65,536 bytes.
 
 ### 9.6 Protected head and inline/staged evidence
 

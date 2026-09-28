@@ -12,6 +12,8 @@ from types import MappingProxyType
 from memory_vault_open_transport import OpenHTTPTransport, endpoint
 import memory_vault_open_repair_ack as ack
 import memory_vault_open_repair_bootstrap as bootstrap
+import memory_vault_open_repair_empty as empty
+import memory_vault_open_repair_occupied as occupied
 import memory_vault_open_repair_original as original
 import memory_vault_open_repair_probe as probe
 import memory_vault_open_repair_proof as proof
@@ -30,7 +32,7 @@ def _fail(code):
 
 @dataclass(frozen=True, slots=True)
 class RecoveredAckOwnerProof:
-    source: ack.AuthenticatedAckUnboundSourceEvent
+    source: object
     proof: proof.AuthenticatedBootstrapProof
     current_statuses: tuple
     originals: object
@@ -59,13 +61,40 @@ class AckOwnerRecoveryClient:
 
     def recover(self, base_url, *, target_node_entry, expected_target, expected_ack_slot,
                 root_entry, read_entry, bootstrap_entry, known_statuses=(), archive_statuses=(), timeout=30):
+        return self._recover(base_url,target_node_entry=target_node_entry,expected_target=expected_target,
+            expected_ack_slot=expected_ack_slot,root_entry=root_entry,read_entry=read_entry,
+            bootstrap_entry=bootstrap_entry,known_statuses=known_statuses,archive_statuses=archive_statuses,
+            timeout=timeout,empty_expected=None)
+
+    def recover_empty(self, base_url, *, target_node_entry, expected_target, expected_ack_slot,
+                      root_entry, read_entry, bootstrap_entry, expected_receipt_writer,
+                      expected_message_id, expected_envelope_ref,
+                      known_statuses=(), archive_statuses=(), timeout=30):
+        """Read a bound empty source using the caller's independent S_ACK1 tuple."""
+        return self._recover(base_url,target_node_entry=target_node_entry,expected_target=expected_target,
+            expected_ack_slot=expected_ack_slot,root_entry=root_entry,read_entry=read_entry,
+            bootstrap_entry=bootstrap_entry,known_statuses=known_statuses,archive_statuses=archive_statuses,
+            timeout=timeout,empty_expected=dict(receipt_writer=expected_receipt_writer,
+                message_id=expected_message_id,envelope_ref=expected_envelope_ref))
+
+    def _recover(self, base_url, *, target_node_entry, expected_target, expected_ack_slot,
+                 root_entry, read_entry, bootstrap_entry, known_statuses, archive_statuses, timeout, empty_expected,
+                 _budget=None, _source_state=None):
         if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=60:
             _fail("repair_invalid_deadline")
-        budget = wire.RepairBudget(self.policy)
+        budget = wire.RepairBudget(self.policy) if _budget is None else _budget
+        wire._context(self.policy,budget)
         retained = self._retained_inputs(known_statuses, archive_statuses, budget)
         started = self._now()
         deadline = time.monotonic()+timeout
         expected = wire.build_new_wire(dict(target=expected_target,slot=expected_ack_slot),self.policy,budget).value
+        if empty_expected is not None:
+            empty_expected=wire.build_new_wire(empty_expected,self.policy,budget).value
+            empty.bound._expected(expected["slot"],self.subject,empty_expected["receipt_writer"],
+                empty_expected["message_id"],empty_expected["envelope_ref"],started,self.policy,budget)
+        source_state=("unbound" if empty_expected is None else "empty") if _source_state is None else _source_state
+        if source_state not in ("unbound","empty","occupied") or (source_state=="unbound")!=(empty_expected is None):
+            _fail("repair_invalid_proof")
         setup = bootstrap.verify_ack_owner_bootstrap_original(bootstrap_entry,dict(root=root_entry,read=read_entry),
             expected_ack_slot=expected["slot"],expected_owner=self.subject,at=started,limit_policy=self.limits,
             policy=self.policy,budget=budget)
@@ -80,7 +109,8 @@ class AckOwnerRecoveryClient:
         grant = setup.originals["bootstrap"].payload
         obligations = self._obligations(setup.originals, expected["slot"], budget)
         known = self._known(retained, obligations, expected["slot"]["root_key"],
-                            expected["target"], budget)
+                            expected["target"], budget,deferred_authorities=empty_expected is not None,
+                            receipt_writer=empty_expected["receipt_writer"] if source_state=="occupied" else None)
         expiry = min(started+min(60,max(1,int(timeout))),grant["probe_until"],grant["proof_until"],grant["expires_at"],
                      node.payload["expires_at"],*(setup.originals[name].payload["expires_at"] for name in ("root","read")))
         if expiry<=started:
@@ -112,11 +142,12 @@ class AckOwnerRecoveryClient:
         held = proof.verify_bootstrap_proof_response(response,expected_subject=self.subject,expected_target=expected["target"],
             target_storage_epoch=node.payload["storage_epoch"],selector=grant["selector"],bootstrap_grant_ref=setup.originals["bootstrap"].ref.as_dict(),
             probe_ref=outgoing.original.ref.as_dict(),challenge_ref=challenge["ref"],answer_ref=answer.ref.as_dict(),at=self._now(),
-            max_proof_items=grant["limits"]["max_proof_items"],max_proof_bytes=grant["limits"]["max_proof_bytes"],policy=self.policy,budget=budget)
+            max_proof_items=grant["limits"]["max_proof_items"],max_proof_bytes=grant["limits"]["max_proof_bytes"],policy=self.policy,budget=budget,
+            expected_source_state=source_state)
         proof_bytes = len(response)+len(held.handle.raw)+len(held.manifest.raw)
         originals,roles = {},{}
         for item in held.manifest.value["children"]:
-            reference = probe._ref(item["ref"])
+            reference = wire.raw_ref(item["ref"])
             roles.setdefault(item["role"],[]).append(reference)
             if reference in originals:
                 continue
@@ -148,19 +179,43 @@ class AckOwnerRecoveryClient:
         for reference in roles["history.raw_pack"]:
             if resolver.put(reference.namespace,reference.key,originals[reference]).ref!=reference:
                 _fail("repair_ref_mismatch")
-        source=ack.verify_ack_unbound_source_event(entry("history.ack_unbound"),resolver,entry("ack.unbound_custody"),
-            expected_ack_slot=expected["slot"],expected_owner=self.subject,expected_target=expected["target"],
+        source_options=dict(expected_ack_slot=expected["slot"],expected_owner=self.subject,expected_target=expected["target"],
             target_storage_epoch=node.payload["storage_epoch"],limit_policy=self.limits,policy=self.policy,budget=budget)
+        if empty_expected is None:
+            source=ack.verify_ack_unbound_source_event(entry("history.ack_unbound"),resolver,entry("ack.unbound_custody"),**source_options)
+            prior=source
+        elif source_state=="empty":
+            source=empty.verify_ack_empty_source_event(entry("history.ack_empty"),resolver,entry("ack.empty_custody"),
+                expected_receipt_writer=empty_expected["receipt_writer"],expected_message_id=empty_expected["message_id"],
+                expected_envelope_ref=empty_expected["envelope_ref"],**source_options)
+            self._empty_head(entry("ack.head"),source,expected["target"],budget)
+            prior=source.predecessor
+        else:
+            source=occupied.verify_ack_occupied_source_event(entry("history.ack_occupied_inputs"),resolver,entry("ack.commit"),
+                expected_receipt_writer=empty_expected["receipt_writer"],expected_message_id=empty_expected["message_id"],
+                expected_envelope_ref=empty_expected["envelope_ref"],**source_options)
+            occupied.verify_ack_occupied_head(entry("ack.head"),source,expected_target=expected["target"],
+                policy=self.policy,budget=budget)
+            prior=source.predecessor.predecessor
         # Every displayed historical child must be the exact original in H,
         # not another signed body of the same kind at an unrelated locator.
         for item in source.manifest.roles:
             if roles[item.role]!=[item.original.ref] or originals[item.original.ref]!=item.original.raw:
                 _fail("repair_proof_mismatch")
-        if (source.resources.originals["root"].ref!=setup.originals["root"].ref or
-                source.resources.originals["read"].ref!=setup.originals["read"].ref or
-                source.bootstrap.originals["bootstrap"].ref!=setup.originals["bootstrap"].ref):
+        if (prior.resources.originals["root"].ref!=setup.originals["root"].ref or
+                prior.resources.originals["read"].ref!=setup.originals["read"].ref or
+                prior.bootstrap.originals["bootstrap"].ref!=setup.originals["bootstrap"].ref):
             _fail("repair_proof_mismatch")
-        current=self._current(source,roles,originals,expected["target"],budget,known)
+        manifests=((source.manifest,) if empty_expected is None else
+            (source.manifest,prior.manifest) if source_state=="empty" else
+            (source.manifest,source.predecessor.manifest,prior.manifest))
+        used_packs={wire.raw_ref(item["pack_ref"]) for manifest in manifests for item in manifest.manifest.value["roles"]}
+        if set(roles["history.raw_pack"]) != used_packs:
+            _fail("repair_unused_pack")
+        current=(self._current(source,roles,originals,expected["target"],budget,known) if empty_expected is None else
+            self._current(prior,roles,originals,expected["target"],budget,known,extra_source=source) if source_state=="empty" else
+            self._current(prior,roles,originals,expected["target"],budget,known,extra_source=source.predecessor,
+                occupied_source=source,receipt_writer=empty_expected["receipt_writer"]))
         # A successful cryptographic check cannot extend the source's signed
         # read promise or a phase deadline while the last originals are checked.
         now = self._now()
@@ -171,6 +226,32 @@ class AckOwnerRecoveryClient:
         metrics=MappingProxyType(dict(requests=requests,wire_bytes=wire_bytes,proof_bytes=proof_bytes,
                                       **budget.snapshot()))
         return RecoveredAckOwnerProof(source,held,current,MappingProxyType(originals),metrics)
+
+    def recover_occupied(self, base_url, *, target_node_entry, expected_target, expected_ack_slot,
+                         root_entry, read_entry, bootstrap_entry, expected_receipt_writer,
+                         expected_message_id, expected_envelope_ref,
+                         known_statuses=(), archive_statuses=(), timeout=30):
+        """Recover an exact B receipt with B's explicit full bootstrap consent."""
+        return self._recover(base_url,target_node_entry=target_node_entry,expected_target=expected_target,
+            expected_ack_slot=expected_ack_slot,root_entry=root_entry,read_entry=read_entry,
+            bootstrap_entry=bootstrap_entry,known_statuses=known_statuses,archive_statuses=archive_statuses,
+            timeout=timeout,empty_expected=dict(receipt_writer=expected_receipt_writer,
+                message_id=expected_message_id,envelope_ref=expected_envelope_ref),_source_state="occupied")
+
+    def _empty_head(self,entry,source,target,budget):
+        raw,ref=ack._entry(entry)
+        parsed=wire.parse_new_wire(raw,self.policy,budget)
+        if len(parsed.raw)!=ref.size or budget._hash(parsed.raw)!=ref.raw_sha256:
+            _fail("repair_ref_mismatch")
+        signed=wire.object_fields(parsed.value,{"payload","proof"})
+        payload=wire.object_fields(signed["payload"],empty.resource.COMMON|{
+            "ack_slot","generation","observed_at","retain_until","state","root_authority_ref","grant_ref","binding_ref"})
+        if (payload["schema_version"]!=empty.resource.SCHEMA or payload["kind"]!="ack.head" or payload["state"]!="empty"
+                or wire.u53(payload["generation"],1)!=1 or payload["ack_slot"]!=source.custody.payload["ack_slot"]
+                or payload["observed_at"]!=source.stored_at or payload["retain_until"]!=source.retain_until
+                or any(payload[name]!=source.custody.payload[name] for name in ("root_authority_ref","grant_ref","binding_ref"))):
+            _fail("repair_ack_empty_mismatch")
+        original._verify_control_signature(payload,signed["proof"],target["signing_key"],budget)
 
     def _obligations(self, originals, slot, budget):
         root = slot["root_key"]
@@ -215,7 +296,7 @@ class AckOwnerRecoveryClient:
                 _fail("repair_status_history_capacity")
         return tuple(unique.values())
 
-    def _known(self, entries, obligations, root, target, budget):
+    def _known(self, entries, obligations, root, target, budget, *, deferred_authorities=False,receipt_writer=None):
         """Authenticate retained originals before contacting their source.
 
         Expired originals still retain revocation and monotone-floor evidence.
@@ -237,13 +318,27 @@ class AckOwnerRecoveryClient:
             if issuer == self.subject["signing_key"]["key_id"]:
                 signer = self.subject["signing_key"]
                 allowed = [dict(scope_kind=item["kind"],scope_id=item["scope_id"]) for item in obligations]
+                if deferred_authorities:
+                    scopes={(item["scope_kind"],item["scope_id"]) for item in allowed}
+                    scopes.update((item["scope_kind"],item["scope_id"]) for item in values if item["scope_kind"]=="authority")
+                    allowed=[dict(scope_kind=kind,scope_id=scope_id) for kind,scope_id in sorted(scopes)]
                 if issuer == target["signing_key"]["key_id"]:
                     allowed += [dict(scope_kind=item["scope_kind"],scope_id=item["scope_id"])
                                 for item in values if item["scope_kind"] == "resource"]
             elif issuer == target["signing_key"]["key_id"]:
                 signer = target["signing_key"]
-                if any(item["scope_kind"] != "resource" for item in values):
+                kinds={"resource"}
+                if receipt_writer is not None and issuer==receipt_writer["signing_key"]["key_id"]:
+                    kinds.add("authority")
+                if any(item["scope_kind"] not in kinds for item in values):
                     _fail("repair_status_disclosure")
+                allowed = [dict(scope_kind=item["scope_kind"],scope_id=item["scope_id"]) for item in values]
+            elif receipt_writer is not None and issuer == receipt_writer["signing_key"]["key_id"]:
+                signer = receipt_writer["signing_key"]
+                if any(item["scope_kind"] != "authority" for item in values):
+                    _fail("repair_status_disclosure")
+                # Its exact completed consent hash becomes independently known
+                # from the authenticated occupied closure, never from a label.
                 allowed = [dict(scope_kind=item["scope_kind"],scope_id=item["scope_id"]) for item in values]
             else:
                 _fail("repair_status_mismatch")
@@ -251,10 +346,14 @@ class AckOwnerRecoveryClient:
                 expected_root=root,expected_signing_key=signer,at=issued,allowed_scopes=allowed,
                 policy=self.policy,budget=budget)
             checked.append(observed)
-        self._floors(checked,(),obligations,probe_phase=True)
+        # Co-located A/B keys make a not-yet-recovered authority scope
+        # ambiguous. Conservatively retain its READ revocation before probing.
+        defer=deferred_authorities and not (receipt_writer is not None and
+            receipt_writer["signing_key"]["key_id"]==self.subject["signing_key"]["key_id"])
+        self._floors(checked,(),obligations,probe_phase=True,deferred_authorities=defer)
         return tuple(checked)
 
-    def _floors(self, known, current, obligations, *, probe_phase=False):
+    def _floors(self, known, current, obligations, *, probe_phase=False,deferred_authorities=False):
         seen={};floors={}
         required={(item["signer"]["key_id"],item["kind"],item["scope_id"]):item for item in obligations}
         for observed in (*known,*current):
@@ -267,11 +366,14 @@ class AckOwnerRecoveryClient:
             for entry in observed.payload["entries"]:
                 key=issuer,entry["scope_kind"],entry["scope_id"]
                 wanted=required.get(key)
-                mask=10 if probe_phase and wanted and wanted["role"] in (
-                    "current.status.ack_root","current.status.ack_owner_bootstrap") else 2
+                mask=wanted.get("mask",2) if wanted else 2
+                if probe_phase and wanted and wanted["role"] in ("current.status.ack_root","current.status.ack_owner_bootstrap"):
+                    mask=10
+                if deferred_authorities and wanted is None and issuer==self.subject["signing_key"]["key_id"] and entry["scope_kind"]=="authority":
+                    mask=0
                 if entry["status"]=="revoked" and entry["operation_mask"] & mask:
                     _fail("repair_authority_revoked")
-                if wanted:
+                if wanted and mask:
                     if entry["minimum_document_revision"]>wanted["revision"]:
                         _fail("repair_status_revision")
                 floors.setdefault(key,[]).append((revision,entry["minimum_document_revision"]))
@@ -288,7 +390,8 @@ class AckOwnerRecoveryClient:
                 if observed.payload["revision"]<max(revision for revision,_ in floors[key]):
                     _fail("repair_status_rollback")
 
-    def _current(self,source,roles,originals,target,budget,known=()):
+    def _current(self,source,roles,originals,target,budget,known=(),*,extra_source=None,
+                 occupied_source=None,receipt_writer=None):
         root=source.custody.payload["ack_slot"]["root_key"]
         parents=dict(source.resources.originals)
         parents["bootstrap"]=source.bootstrap.originals["bootstrap"]
@@ -297,6 +400,27 @@ class AckOwnerRecoveryClient:
         obligations.append(dict(role="current.status.ack_resource",kind="resource",subject=active["resource"],
             revision=active["reservation_generation"],signer=target["signing_key"],
             scope_id=status.status_scope(root,"resource",active["resource"],self.policy,budget)))
+        if extra_source is not None:
+            for name,kind in (("write","ack.write_grant"),("bootstrap","bootstrap.grant")):
+                item=extra_source.authorities.originals[name]
+                subject=dict(authority_kind=kind,authority_sha256=item.ref.raw_sha256)
+                obligations.append(dict(role=None,kind="authority",subject=subject,revision=item.payload["revision"],
+                    signer=self.subject["signing_key"],mask=0,
+                    scope_id=status.status_scope(root,"authority",subject,self.policy,budget)))
+        if occupied_source is not None:
+            consent=occupied_source.inputs["disclosure"]
+            returned=consent.payload["bootstrap_return"]
+            if (returned["roles"] != ["ack.disclosure","ack.put","authority.status.disclosure","recipient.receipt"]
+                    or returned["subject"]!=probe._dual(self.subject) or returned["consumer"]!="ack_owner"
+                    or consent.payload["operation_mask"] & 2 != 2
+                    or not occupied.B_ROLES <= set(consent.payload["allowed_roles"])):
+                _fail("repair_disclosure_permission")
+            if self._now() >= min(returned["until"],consent.payload["expires_at"],consent.payload["consent_until"]):
+                _fail("repair_access_expired")
+            subject=dict(authority_kind="ack.disclosure",authority_sha256=consent.ref.raw_sha256)
+            obligations.append(dict(role="current.status.ack_disclosure",kind="authority",subject=subject,
+                revision=consent.payload["revision"],signer=receipt_writer["signing_key"],mask=2,
+                scope_id=status.status_scope(root,"authority",subject,self.policy,budget)))
         permitted={(item["signer"]["key_id"],item["kind"],item["scope_id"]) for item in obligations}
         for observed in known:
             issuer=observed.payload["scope_key"]["issuer_key_id"]
@@ -304,6 +428,8 @@ class AckOwnerRecoveryClient:
                 _fail("repair_status_disclosure")
         groups={}
         for item in obligations:
+            if item["role"] is None:
+                continue
             ref=roles[item["role"]][0]
             group=groups.setdefault(ref,dict(signer=item["signer"],required=[]))
             if group["signer"]!=item["signer"]:
@@ -318,11 +444,14 @@ class AckOwnerRecoveryClient:
             required={(item["scope_kind"],item["scope_id"]):item for item in group["required"]}
             for item in allowed:
                 key=item["kind"],item["scope_id"]
-                if key in present:
+                if key in present and item.get("mask",2):
                     required[key]=dict(scope_kind=item["kind"],scope_id=item["scope_id"],document_revision=item["revision"],operation_mask=2)
             observed=status.verify_status_original(dict(raw=originals[ref],ref=ref.as_dict()),expected_root=root,
                 expected_signing_key=group["signer"],at=self._now(),allowed_scopes=[dict(scope_kind=item["kind"],scope_id=item["scope_id"]) for item in allowed],
                 required=list(required.values()),policy=self.policy,budget=budget)
             checked.append(observed)
-        self._floors((*source.statuses,*known),checked,obligations)
+        historical=source.statuses if extra_source is None else (*source.statuses,*extra_source.statuses)
+        if occupied_source is not None:
+            historical=(*historical,*occupied_source.statuses)
+        self._floors((*historical,*known),checked,obligations)
         return tuple(checked)

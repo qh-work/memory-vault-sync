@@ -9,7 +9,7 @@ import {parseOriginalControl, canonicalOriginalControl, verifyBoundedControlSign
 type Obj = Record<string, any>;
 const SCHEMA = 'memory-vault-open-authority/v1';
 const MAX_BYTES = 16384, MAX_SECONDS = 604800;
-const AUTHORITY_KINDS = new Set(['ack.root_authority','ack.read_grant','ack.write_grant','bootstrap.grant']);
+const AUTHORITY_KINDS = new Set(['ack.root_authority','ack.read_grant','ack.write_grant','ack.disclosure','bootstrap.grant']);
 const SCOPE_KINDS = new Set(['catalog','mailbox_slot','ack_slot','authority','resource','assignment','contact_policy']);
 const PAYLOAD = ['schema_version','kind','signing_key','scope_key','revision','issued_at','valid_until','entries'];
 const ENTRY = ['scope_kind','scope_id','minimum_document_revision','status','operation_mask'];

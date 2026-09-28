@@ -12,17 +12,20 @@ import unittest
 from cryptography.hazmat.primitives import serialization
 from memory_vault import canonical_bytes
 from memory_vault_network_crypto import b64url, unb64url
-from memory_vault_open_repair_admin import main, REQUEST_SCHEMA, EVIDENCE_SCHEMA
+from memory_vault_open_repair_admin import main, REQUEST_SCHEMA, EMPTY_REQUEST_SCHEMA, OCCUPIED_REQUEST_SCHEMA, EVIDENCE_SCHEMA
 from memory_vault_open_setup import initialize_node
 from memory_vault_trust import TrustStore, _write_new_private
 from tests import test_open_repair_http as http_fixture
 
 
-class RepairAdminTests(unittest.TestCase):
-    def setUp(self):
-        self.host = http_fixture.RepairHTTPTests()
-        self.host.setUp()
-        self.addCleanup(self.host.doCleanups)
+class _AdminFixture:
+    def enterContext(self, context):
+        # The supported Python 3.10 TestCase lacks enterContext (3.11+).
+        value = context.__enter__()
+        self.addCleanup(context.__exit__, None, None, None)
+        return value
+
+    def configure_owner(self):
         self.directory = Path(self.host.source.temp.name).resolve() / "synthetic-owner"
         self.directory.mkdir(mode=0o700)
         f = self.host.source.fixture
@@ -53,13 +56,21 @@ class RepairAdminTests(unittest.TestCase):
         self.request_path, self.output = self.directory / "request.json", self.directory / "evidence.json"
         self.originals = {path: path.read_bytes() for path in (self.identity, self.encryption, self.trust, self.config, self.network)}
 
-    def call(self):
+    def call(self, command="recover-ack"):
         _write_new_private(self.request_path, canonical_bytes(self.request))
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            code = main(["recover-ack", "--network-config", str(self.network), "--request", str(self.request_path),
+            code = main([command, "--network-config", str(self.network), "--request", str(self.request_path),
                          "--output", str(self.output), "--timeout", "30"])
         return code, stdout.getvalue(), stderr.getvalue()
+
+
+class RepairAdminTests(_AdminFixture, unittest.TestCase):
+    def setUp(self):
+        self.host = http_fixture.RepairHTTPTests()
+        self.host.setUp()
+        self.addCleanup(self.host.doCleanups)
+        self.configure_owner()
 
     def test_command_recovers_exact_originals_without_opening_vault_or_changing_identity(self):
         code, output, error = self.call()
@@ -98,6 +109,80 @@ class RepairAdminTests(unittest.TestCase):
         self.assertEqual(json.loads(error)["error"], "repair_ref_mismatch")
         self.assertFalse(self.output.exists())
         self.assertEqual(self.host.source.db.execute("SELECT count(*) FROM open_repair_bootstrap_challenges").fetchone()[0], 0)
+
+
+class RepairOccupiedAdminTests(_AdminFixture, unittest.TestCase):
+    def test_command_recovers_recipient_original_and_all_status_generations(self):
+        from tests.test_open_repair_occupied_client import OccupiedHTTPFixture
+        occupied = OccupiedHTTPFixture(self)
+        self.host = occupied.http
+        self.configure_owner()
+        expected = occupied.empty.expected
+        self.request.update(schema_version=OCCUPIED_REQUEST_SCHEMA,
+            receipt_writer=expected["expected_receipt_writer"], message_id=expected["expected_message_id"],
+            envelope_ref=expected["expected_envelope_ref"])
+        code, output, error = self.call("recover-occupied")
+        self.assertEqual((code,error),(0,""))
+        result, evidence = json.loads(output),json.loads(self.output.read_bytes())
+        self.assertEqual(result["state"],"ack_occupied_source_recovered")
+        self.assertTrue(result["recipient_saved"])
+        self.assertFalse(self.vault.exists())
+        self.assertEqual(unb64url(evidence["recipient_receipt"]["raw_base64url"],maximum=4096),occupied.receipt["raw"])
+        self.assertEqual(evidence["recipient_receipt"]["ref"],occupied.receipt["ref"])
+        retained={canonical_bytes(item["ref"]) for item in evidence["archive_statuses"]}
+        originals=[occupied.f["entries"][name] for name in ("owner_status","target_status")]
+        originals.extend(occupied.empty.expected["current_statuses"])
+        originals.extend(occupied.options["current_statuses"])
+        self.assertTrue({canonical_bytes(item["ref"]) for item in originals} <= retained)
+        self.assertEqual(stat.S_IMODE(self.output.stat().st_mode),0o600)
+        self.assertEqual({path:path.read_bytes() for path in self.originals},self.originals)
+
+
+class RepairEmptyAdminTests(_AdminFixture, unittest.TestCase):
+    def setUp(self):
+        from tests.test_open_repair_empty_http import EmptyHTTPFixture
+        self.empty_host = EmptyHTTPFixture(self)
+        self.host = self.empty_host.http
+        self.configure_owner()
+        expected = self.empty_host.expected
+        self.request.update(schema_version=EMPTY_REQUEST_SCHEMA,
+            receipt_writer=expected["expected_receipt_writer"], message_id=expected["expected_message_id"],
+            envelope_ref=expected["expected_envelope_ref"])
+
+    def test_message_bound_command_exports_both_generations_and_preserves_private_state(self):
+        code, output, error = self.call("recover-empty")
+        self.assertEqual((code, error), (0, ""))
+        result, evidence = json.loads(output), json.loads(self.output.read_bytes())
+        self.assertEqual(result["state"], "ack_empty_source_recovered")
+        self.assertFalse(result["recipient_saved"])
+        self.assertFalse(self.vault.exists())
+        self.assertEqual(stat.S_IMODE(self.output.stat().st_mode), 0o600)
+        self.assertEqual(evidence["message_id"], self.request["message_id"])
+        self.assertEqual(evidence["receipt_writer"], self.request["receipt_writer"])
+        self.assertEqual(evidence["envelope_ref"], self.request["envelope_ref"])
+        retained = {canonical_bytes(item["ref"]) for item in evidence["archive_statuses"]}
+        expected_statuses = [self.empty_host.f["entries"][name] for name in ("owner_status", "target_status")]
+        expected_statuses.extend(self.empty_host.expected["current_statuses"])
+        self.assertTrue({canonical_bytes(item["ref"]) for item in expected_statuses} <= retained)
+        for item in evidence["originals"]:
+            raw = unb64url(item["raw_base64url"], maximum=524288)
+            ref = item["ref"]
+            rows = self.host.source.db.execute("""SELECT o.raw FROM open_repair_ack_objects o
+                JOIN open_repair_ack_pins p ON p.namespace=o.namespace AND p.opaque_key=o.opaque_key
+                WHERE p.resource_id=? AND o.namespace=? AND o.opaque_key=? AND o.raw_sha256=? AND o.size=?""",
+                (self.host.source.resource_id, ref["namespace"], ref["key"], ref["raw_sha256"], ref["size"])).fetchall()
+            self.assertTrue(rows)
+            self.assertTrue(all(raw == bytes(row[0]) for row in rows))
+        self.assertEqual({path: path.read_bytes() for path in self.originals}, self.originals)
+        self.assertNotIn(b'"private_key"', self.output.read_bytes())
+
+    def test_wrong_independent_tuple_writes_no_evidence(self):
+        self.request["message_id"] = "synthetic-wrong-message"
+        code, output, error = self.call("recover-empty")
+        self.assertEqual((code, output), (1, ""))
+        self.assertTrue(json.loads(error)["error"].startswith("repair_"))
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.vault.exists())
 
 
 class RepairSetupTests(unittest.TestCase):

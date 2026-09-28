@@ -14,7 +14,7 @@ SCHEMA = "memory-vault-open-authority/v1"
 MAX_STATUS_BYTES = 16384
 MAX_STATUS_SECONDS = 604800
 AUTHORITY_KINDS = frozenset(("ack.root_authority", "ack.read_grant",
-                            "ack.write_grant", "bootstrap.grant"))
+                            "ack.write_grant", "bootstrap.grant", "ack.disclosure"))
 SCOPE_KINDS = frozenset(("catalog", "mailbox_slot", "ack_slot", "authority",
                        "resource", "assignment", "contact_policy"))
 _PAYLOAD = frozenset(("schema_version", "kind", "signing_key", "scope_key",

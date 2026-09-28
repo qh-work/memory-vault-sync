@@ -106,6 +106,37 @@ class OpenRepairProbeTests(unittest.TestCase):
         local = policy(max_signature_checks=0)
         self.make(local=local)  # Signing is not mislabeled as a verification.
 
+    def test_offer_exchange_uses_exact_writer_selector_and_both_real_keys(self):
+        selector = dict(self.expected["selector"])
+        selector["write_grant_sha256"] = selector.pop("read_grant_sha256")
+        self.expected.update(consumer="ack_offer", selector=selector)
+        local = policy(max_signature_checks=6, max_hashes=44)
+        budget = wire.RepairBudget(local)
+        first, second, third, first_entry = self.exchange(local, budget)
+        result = self.verify(first_entry, entry(second.original), entry(third), second.nonce,
+                             local=local, budget=budget)
+        self.assertTrue(all(item.payload["consumer"] == "ack_offer" for item in result.originals.values()))
+        self.assertEqual((budget.snapshot()["signature_checks"], budget.snapshot()["hashes"]), (6, 44))
+        self.assertNotIn("read_grant_sha256", result.originals["probe"].payload["selector"])
+
+    def test_owner_and_offer_consumers_cannot_borrow_each_others_exchange(self):
+        owner = self.make()
+        selector = dict(self.expected["selector"])
+        selector["write_grant_sha256"] = selector.pop("read_grant_sha256")
+        self.assertCode("repair_invalid_probe", probe.verify_bootstrap_probe, entry(owner.original),
+                        **self.options(consumer="ack_offer", selector=selector))
+        offer = self.make(consumer="ack_offer", selector=selector)
+        self.assertCode("repair_invalid_probe", probe.verify_bootstrap_probe, entry(offer.original), **self.options())
+        # Even the same signing keys cannot re-label a retained encrypted probe:
+        # consumer and selector are part of the original AEAD context.
+        forged = self.changed(entry(owner.original), lambda p: p.update(consumer="ack_offer", selector=selector))
+        self.assertCode("repair_invalid_original", probe.verify_bootstrap_probe, forged,
+                        **self.options(consumer="ack_offer", selector=selector))
+
+    def test_offer_rejects_read_selector_and_unknown_consumers_before_signing(self):
+        for consumer in ("ack_offer", "mailbox_root", [], None):
+            self.assertCode("repair_invalid_probe", self.make, consumer=consumer)
+
     def test_independently_expected_subject_target_epoch_grant_and_selector(self):
         first = entry(self.make().original)
         _, _, other = probe_fixture()

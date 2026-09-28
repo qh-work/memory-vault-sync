@@ -10,10 +10,14 @@ import type {RepairPolicy,RepairWork,RawRef,RawOriginal} from './open-repair-wir
 import {verifyAckOwnerBootstrapOriginal} from './open-repair-bootstrap.ts';
 import {verifyAckUnboundSourceEvent} from './open-repair-ack.ts';
 import type {AuthenticatedAckUnboundSourceEvent} from './open-repair-ack.ts';
-import {parseOriginalControl,verifySourceNodeOriginal} from './open-repair-original.ts';
+import {verifyAckEmptySourceEvent} from './open-repair-empty.ts';
+import type {AuthenticatedAckEmptySourceEvent} from './open-repair-empty.ts';
+import {verifyAckOccupiedSourceEvent,verifyAckOccupiedHead} from './open-repair-occupied.ts';
+import type {AuthenticatedAckOccupiedSourceEvent} from './open-repair-occupied.ts';
+import {parseOriginalControl,verifySourceNodeOriginal,originalPublicDescriptor,verifyBoundedControlSignature} from './open-repair-original.ts';
 import {makeBootstrapProbe,solveBootstrapChallenge} from './open-repair-probe.ts';
 import {verifyBootstrapProofResponse,makeBootstrapChildRequest} from './open-repair-proof.ts';
-import type {AuthenticatedBootstrapProof} from './open-repair-proof.ts';
+import type {AuthenticatedBootstrapProof,BootstrapProofSourceState} from './open-repair-proof.ts';
 import {statusScope,verifyStatusOriginal,authenticateStatusOriginal} from './open-repair-status.ts';
 import type {AuthenticatedStatusOriginal} from './open-repair-status.ts';
 
@@ -28,10 +32,15 @@ export interface AckOwnerRecoveryOptions{readonly policy?:RepairPolicy;readonly 
   readonly transport?:OpenHTTPTransport;readonly clock?:()=>number;}
 export interface AckOwnerRecoverOptions{readonly targetNodeEntry:unknown;readonly expectedTarget:unknown;readonly expectedAckSlot:unknown;
   readonly rootEntry:unknown;readonly readEntry:unknown;readonly bootstrapEntry:unknown;readonly knownStatuses?:readonly unknown[];readonly archiveStatuses?:readonly unknown[];readonly timeout?:number;}
-export interface RecoveredAckOwnerProof{readonly source:AuthenticatedAckUnboundSourceEvent;readonly proof:AuthenticatedBootstrapProof;
+export interface AckOwnerRecoverEmptyOptions extends AckOwnerRecoverOptions{readonly expectedReceiptWriter:unknown;readonly expectedMessageId:string;readonly expectedEnvelopeRef:unknown;}
+export type AckOwnerRecoverOccupiedOptions=AckOwnerRecoverEmptyOptions;
+export interface RecoveredAckOwnerProof<Source=AuthenticatedAckUnboundSourceEvent>{readonly source:Source;readonly proof:AuthenticatedBootstrapProof;
   readonly current_statuses:readonly AuthenticatedStatusOriginal[];readonly originals:readonly RawOriginal[];
   readonly metrics:Readonly<RepairWork&{requests:number;wire_bytes:number;proof_bytes:number}>;}
-interface Obligation{role:string;kind:string;subject:unknown;revision:number;signer:Obj;scope_id:string;}
+export type RecoveredAckOwnerEmptyProof=RecoveredAckOwnerProof<AuthenticatedAckEmptySourceEvent>;
+export type RecoveredAckOwnerOccupiedProof=RecoveredAckOwnerProof<AuthenticatedAckOccupiedSourceEvent>;
+type AckOwnerSource=AuthenticatedAckUnboundSourceEvent|AuthenticatedAckEmptySourceEvent|AuthenticatedAckOccupiedSourceEvent;
+interface Obligation{role:string|null;kind:string;subject:unknown;revision:number;signer:Obj;scope_id:string;mask?:number;}
 function fail(code:string):never{throw new RepairError(code);}
 function fields(value:unknown,names:readonly string[]):Obj{return objectFields(value,names);}
 function options(value:unknown,required:readonly string[],optional:readonly string[]):Obj{
@@ -79,12 +88,27 @@ export class AckOwnerRecoveryClient{
   close():void{if(this.#ownTransport)this.#transport.close();}
   #now():number{return u53(Math.floor(this.#clock()));}
   async recover(baseUrl:string,value:AckOwnerRecoverOptions):Promise<RecoveredAckOwnerProof>{
-    const args=options(value,['targetNodeEntry','expectedTarget','expectedAckSlot','rootEntry','readEntry','bootstrapEntry'],['knownStatuses','archiveStatuses','timeout']);
+    const result=await this.#recover(baseUrl,value,'unbound'),source=result.source;if('predecessor' in source)fail('repair_proof_mismatch');
+    return Object.freeze({...result,source});
+  }
+  async recoverEmpty(baseUrl:string,value:AckOwnerRecoverEmptyOptions):Promise<RecoveredAckOwnerEmptyProof>{
+    const result=await this.#recover(baseUrl,value,'empty'),source=result.source;if(!('predecessor' in source)||'inputs' in source)fail('repair_proof_mismatch');
+    return Object.freeze({...result,source});
+  }
+  async recoverOccupied(baseUrl:string,value:AckOwnerRecoverOccupiedOptions):Promise<RecoveredAckOwnerOccupiedProof>{
+    const result=await this.#recover(baseUrl,value,'occupied'),source=result.source;if(!('inputs' in source))fail('repair_proof_mismatch');
+    return Object.freeze({...result,source});
+  }
+  async #recover(baseUrl:string,value:AckOwnerRecoverOptions|AckOwnerRecoverEmptyOptions,sourceState:BootstrapProofSourceState):Promise<RecoveredAckOwnerProof<AckOwnerSource>>{
+    const isBound=sourceState!=='unbound';
+    const args=options(value,['targetNodeEntry','expectedTarget','expectedAckSlot','rootEntry','readEntry','bootstrapEntry',
+      ...(isBound?['expectedReceiptWriter','expectedMessageId','expectedEnvelopeRef']:[])],['knownStatuses','archiveStatuses','timeout']);
     const timeout=args.timeout??30;if(typeof timeout!=='number'||!Number.isFinite(timeout)||timeout<=0||timeout>60)fail('repair_invalid_deadline');
     const policy=this.#policy,budget=new RepairBudget(policy),started=this.#now(),deadline=clock()+timeout;
     const expected=buildNewWire({target:args.expectedTarget,slot:args.expectedAckSlot},policy,budget).value as Obj;
     const setup=verifyAckOwnerBootstrapOriginal(args.bootstrapEntry,{root:args.rootEntry,read:args.readEntry},
       {expectedAckSlot:expected.slot,expectedOwner:this.#subject,at:started,limitPolicy:this.#limits,policy,budget});
+    const emptyExpected=isBound?this.#emptyExpected(args,expected.slot,budget):null;
     const nodeEntry=snapshotEntry(args.targetNodeEntry,policy,budget,true),nodePayload=checkedNodePayload(nodeEntry.raw,policy,budget);
     const node=verifySourceNodeOriginal(nodeEntry.raw,{expectedSigningKey:expected.target.signing_key,expectedStorageEpoch:nodePayload.storage_epoch,at:started,policy,budget});
     if(!same(endpoint(baseUrl,this.#allowLoopback),endpoint(node.payload.base_url,this.#allowLoopback)))fail('repair_proof_mismatch');
@@ -93,7 +117,8 @@ export class AckOwnerRecoveryClient{
       node.payload.expires_at as number,setup.originals.root.payload.expires_at as number,setup.originals.read.payload.expires_at as number);
     if(expiry<=started)fail('repair_access_expired');
     const history=this.#statusHistory(args.knownStatuses??[],args.archiveStatuses??[],budget);
-    const known=this.#known(history,this.#obligations(setup.originals,expected.slot,budget),expected.slot.root_key,expected.target,budget);
+    const known=this.#known(history,this.#obligations(setup.originals,expected.slot,budget),expected.slot.root_key,expected.target,budget,isBound,
+      sourceState==='occupied'?emptyExpected!.writer:undefined);
     const binding={expectedSubject:this.#subject,expectedTarget:expected.target,targetStorageEpoch:node.payload.storage_epoch as string,
       bootstrapGrantSha256:setup.originals.bootstrap.ref.raw_sha256,selector:grant.selector,policy,budget};
     let requests=0,wireBytes=0,proofBytes=0;
@@ -110,7 +135,7 @@ export class AckOwnerRecoveryClient{
     const response=await request(answer.raw),held=verifyBootstrapProofResponse(response,{expectedSubject:this.#subject,expectedTarget:expected.target,
       targetStorageEpoch:node.payload.storage_epoch as string,selector:grant.selector,bootstrapGrantRef:setup.originals.bootstrap.ref,
       probeRef:outgoing.original.ref,challengeRef:challenge.ref,answerRef:answer.ref,at:this.#now(),maxProofItems:grant.limits.max_proof_items,
-      maxProofBytes:grant.limits.max_proof_bytes,policy,budget});
+      maxProofBytes:grant.limits.max_proof_bytes,expectedSourceState:sourceState,policy,budget});
     proofBytes=response.length+held.handle.raw.length+held.manifest.raw.length;
     const originals=new Map<string,RawOriginal>(),roles=new Map<string,RawRef[]>(),manifest=held.manifest.value as Obj;
     for(const item of manifest.children){
@@ -129,17 +154,53 @@ export class AckOwnerRecoveryClient{
     const entry=(role:string):RawOriginal=>originals.get(refKey(roles.get(role)![0]))!;
     const resolver=new LocalRawResolver(policy,budget);
     for(const reference of roles.get('history.raw_pack')!){const item=originals.get(refKey(reference))!;if(!same(resolver.put(reference.namespace,reference.key,item.raw).ref,reference))fail('repair_ref_mismatch');}
-    const source=verifyAckUnboundSourceEvent(entry('history.ack_unbound'),resolver,entry('ack.unbound_custody'),{expectedAckSlot:expected.slot,expectedOwner:this.#subject,
-      expectedTarget:expected.target,targetStorageEpoch:node.payload.storage_epoch as string,limitPolicy:this.#limits,policy,budget});
+    const sourceOptions={expectedAckSlot:expected.slot,expectedOwner:this.#subject,expectedTarget:expected.target,
+      targetStorageEpoch:node.payload.storage_epoch as string,limitPolicy:this.#limits,policy,budget};
+    let source:AckOwnerSource,prior:AuthenticatedAckUnboundSourceEvent,extraSource:AuthenticatedAckEmptySourceEvent|undefined,
+      occupiedSource:AuthenticatedAckOccupiedSourceEvent|undefined;
+    if(!emptyExpected){source=verifyAckUnboundSourceEvent(entry('history.ack_unbound'),resolver,entry('ack.unbound_custody'),sourceOptions);prior=source;}
+    else if(sourceState==='empty'){
+      source=verifyAckEmptySourceEvent(entry('history.ack_empty'),resolver,entry('ack.empty_custody'),{...sourceOptions,
+        expectedReceiptWriter:emptyExpected.writer,expectedMessageId:emptyExpected.message,expectedEnvelopeRef:emptyExpected.envelope});
+      extraSource=source;prior=source.predecessor;this.#emptyHead(entry('ack.head'),source,expected.target,budget);
+    }else{
+      source=verifyAckOccupiedSourceEvent(entry('history.ack_occupied_inputs'),resolver,entry('ack.commit'),{...sourceOptions,
+        expectedReceiptWriter:emptyExpected.writer,expectedMessageId:emptyExpected.message,expectedEnvelopeRef:emptyExpected.envelope});
+      occupiedSource=source;extraSource=source.predecessor;prior=source.predecessor.predecessor;
+      verifyAckOccupiedHead(entry('ack.head'),source,{expectedTarget:expected.target,policy,budget});
+    }
     for(const item of source.manifest.roles){const actual=originals.get(refKey(item.original.ref));if(!same(roles.get(item.role),[item.original.ref])||!actual||!Buffer.from(actual.raw).equals(Buffer.from(item.original.raw)))fail('repair_proof_mismatch');}
-    if(!same(source.resources.originals.root.ref,setup.originals.root.ref)||!same(source.resources.originals.read.ref,setup.originals.read.ref)||
-      !same(source.bootstrap.originals.bootstrap.ref,setup.originals.bootstrap.ref))fail('repair_proof_mismatch');
-    const current=this.#current(source,roles,originals,expected.target,budget,known),now=this.#now();
+    if(!same(prior.resources.originals.root.ref,setup.originals.root.ref)||!same(prior.resources.originals.read.ref,setup.originals.read.ref)||
+      !same(prior.bootstrap.originals.bootstrap.ref,setup.originals.bootstrap.ref))fail('repair_proof_mismatch');
+    const usedPacks=new Set<string>();for(const manifest of occupiedSource?[source.manifest,occupiedSource.predecessor.manifest,prior.manifest]:extraSource?[source.manifest,prior.manifest]:[source.manifest])
+      for(const row of (manifest.manifest.value as Obj).roles)usedPacks.add(refKey(rawRef(row.pack_ref)));
+    const suppliedPacks=roles.get('history.raw_pack')!.map(refKey);
+    if(suppliedPacks.length!==usedPacks.size||suppliedPacks.some(key=>!usedPacks.has(key)))fail('repair_unused_pack');
+    const current=this.#current(prior,roles,originals,expected.target,budget,known,extraSource,occupiedSource,emptyExpected?.writer),now=this.#now();
     if(now>=Math.min(expiry,held.handle.payload.expires_at as number,source.read_until,...current.map(item=>item.payload.valid_until as number))||clock()>=deadline)fail('repair_access_expired');
     // Copy-on-read preserves exact originals against consumer buffer mutation.
     const saved=Object.freeze([...originals.values()].map(item=>Object.freeze({ref:item.ref,get raw(){return Uint8Array.from(item.raw);}})));
     return Object.freeze({source,proof:held,current_statuses:Object.freeze(current),originals:saved,
       metrics:Object.freeze({requests,wire_bytes:wireBytes,proof_bytes:proofBytes,...budget.snapshot()})});
+  }
+  #emptyExpected(args:Obj,slot:Obj,budget:RepairBudget):Obj{
+    const value=buildNewWire({writer:args.expectedReceiptWriter,message:args.expectedMessageId,envelope:args.expectedEnvelopeRef},this.#policy,budget).value as Obj;
+    let writer:Obj;try{
+      writer=fields(value.writer,['signing_key','encryption_key']);for(const part of ['signing_key','encryption_key'])fields(writer[part],['schema_version','algorithm','key_id','public_key']);
+      rawRef(fields(value.envelope,['namespace','key','raw_sha256','size']));
+      if(typeof value.message!=='string'||/^msg_[0-9a-f]{64}$/.exec(value.message)?.[0]!==value.message)fail('repair_invalid_ack_bound');
+    }catch{fail('repair_invalid_ack_bound');}
+    for(const keys of [this.#subject,writer]){originalPublicDescriptor(keys.signing_key,budget);originalPublicDescriptor(keys.encryption_key,budget,true);}
+    if(!same(slot.receipt_writer,{signing_key_id:writer.signing_key.key_id,encryption_key_id:writer.encryption_key.key_id}))fail('repair_ack_bound_mismatch');
+    return value;
+  }
+  #emptyHead(entry:RawOriginal,source:AuthenticatedAckEmptySourceEvent,target:Obj,budget:RepairBudget):void{
+    const input=snapshotEntry(entry,this.#policy,budget),signed=fields(parseNewWire(input.raw,this.#policy,budget).value,['payload','proof']);
+    const p=fields(signed.payload,['schema_version','kind','signing_key','ack_slot','generation','observed_at','retain_until','state','root_authority_ref','grant_ref','binding_ref']);
+    if(p.schema_version!=='memory-vault-open-repair/v1'||p.kind!=='ack.head'||p.state!=='empty'||u53(p.generation,1)!==1||
+      !same(p.ack_slot,source.custody.payload.ack_slot)||p.observed_at!==source.stored_at||p.retain_until!==source.retain_until||
+      ['root_authority_ref','grant_ref','binding_ref'].some(name=>!same(p[name],source.custody.payload[name])))fail('repair_ack_empty_mismatch');
+    verifyBoundedControlSignature(p,signed.proof,target.signing_key,budget);
   }
   #obligations(originals:Obj,slot:Obj,budget:RepairBudget):Obligation[]{
     const root=slot.root_key,result:Obligation[]=[];
@@ -167,7 +228,7 @@ export class AckOwnerRecoveryClient{
     }
     return [...merged.values()];
   }
-  #known(values:unknown,obligations:Obligation[],root:Obj,target:Obj,budget:RepairBudget):AuthenticatedStatusOriginal[]{
+  #known(values:unknown,obligations:Obligation[],root:Obj,target:Obj,budget:RepairBudget,deferredAuthorities=false,receiptWriter?:Obj):AuthenticatedStatusOriginal[]{
     // Copy raw entries before the first asynchronous operation.
     if(!Array.isArray(values)||isProxy(values)||values.length>32)fail('repair_invalid_status');
     const descriptors=Object.getOwnPropertyDescriptors(values);for(let index=0;index<values.length;index++)if(!descriptors[index]||!Object.hasOwn(descriptors[index],'value'))fail('repair_invalid_status');
@@ -177,21 +238,33 @@ export class AckOwnerRecoveryClient{
       const issuer=fields(payload.scope_key,['root_key','issuer_key_id']).issuer_key_id,issued=u53(payload.issued_at);
       if(issued>this.#now()+30)fail('repair_status_mismatch');let signer:Obj,allowed:Obj[];
       if(issuer===this.#subject.signing_key.key_id){signer=this.#subject.signing_key;allowed=obligations.map(v=>({scope_kind:v.kind,scope_id:v.scope_id}));
+        if(deferredAuthorities){const scopes=new Map(allowed.map(item=>[scopeKey(item),item]));
+          for(const item of payload.entries)if(item.scope_kind==='authority')scopes.set(scopeKey(item),{scope_kind:item.scope_kind,scope_id:item.scope_id});allowed=[...scopes.values()];}
         if(issuer===target.signing_key.key_id)allowed.push(...payload.entries.filter((v:Obj)=>v.scope_kind==='resource').map((v:Obj)=>({scope_kind:v.scope_kind,scope_id:v.scope_id})));}
-      else if(issuer===target.signing_key.key_id){signer=target.signing_key;if(payload.entries.some((v:Obj)=>v.scope_kind!=='resource'))fail('repair_status_disclosure');allowed=payload.entries.map((v:Obj)=>({scope_kind:v.scope_kind,scope_id:v.scope_id}));}
+      else if(issuer===target.signing_key.key_id){signer=target.signing_key;
+        const kinds=new Set(['resource']);if(receiptWriter&&issuer===receiptWriter.signing_key.key_id)kinds.add('authority');
+        if(payload.entries.some((v:Obj)=>!kinds.has(v.scope_kind)))fail('repair_status_disclosure');allowed=payload.entries.map((v:Obj)=>({scope_kind:v.scope_kind,scope_id:v.scope_id}));}
+      else if(receiptWriter&&issuer===receiptWriter.signing_key.key_id){signer=receiptWriter.signing_key;
+        if(payload.entries.some((v:Obj)=>v.scope_kind!=='authority'))fail('repair_status_disclosure');allowed=payload.entries.map((v:Obj)=>({scope_kind:v.scope_kind,scope_id:v.scope_id}));}
       else fail('repair_status_mismatch');
       checked.push(authenticateStatusOriginal(item,{expectedRoot:root,expectedSigningKey:signer,at:issued,allowedScopes:allowed,policy:this.#policy,budget}));
     }
-    this.#floors(checked,[],obligations,true);return checked;
+    // If A and B share a signing key, an unknown authority could be consent;
+    // retain its READ revocation before the actual consent hash is recovered.
+    const defer=deferredAuthorities&&!(receiptWriter&&receiptWriter.signing_key.key_id===this.#subject.signing_key.key_id);
+    this.#floors(checked,[],obligations,true,defer);return checked;
   }
-  #floors(known:readonly AuthenticatedStatusOriginal[],current:readonly AuthenticatedStatusOriginal[],obligations:Obligation[],probePhase=false):void{
+  #floors(known:readonly AuthenticatedStatusOriginal[],current:readonly AuthenticatedStatusOriginal[],obligations:Obligation[],probePhase=false,deferredAuthorities=false):void{
     const seen=new Map<string,string>(),floors=new Map<string,[number,number][]>(),required=new Map(obligations.map(v=>[v.signer.key_id+':'+v.kind+':'+v.scope_id,v]));
     for(const observed of [...known,...current]){
       const payload=observed.payload as Obj,issuer=payload.scope_key.issuer_key_id,revision=payload.revision,id=issuer+':'+revision;
       if(seen.has(id)&&seen.get(id)!==observed.canonical_sha256)fail('repair_status_conflict');seen.set(id,observed.canonical_sha256);
-      for(const entry of payload.entries){const key=issuer+':'+scopeKey(entry),wanted=required.get(key),mask=probePhase&&wanted&&['current.status.ack_root','current.status.ack_owner_bootstrap'].includes(wanted.role)?10:2;
+      for(const entry of payload.entries){const key=issuer+':'+scopeKey(entry),wanted=required.get(key);
+        let mask=wanted?.mask??2;
+        if(probePhase&&wanted&&['current.status.ack_root','current.status.ack_owner_bootstrap'].includes(wanted.role??''))mask=10;
+        if(deferredAuthorities&&!wanted&&issuer===this.#subject.signing_key.key_id&&entry.scope_kind==='authority')mask=0;
         if(entry.status==='revoked'&&(entry.operation_mask&mask))fail('repair_authority_revoked');
-        if(wanted&&entry.minimum_document_revision>wanted.revision)fail('repair_status_revision');
+        if(wanted&&mask&&entry.minimum_document_revision>wanted.revision)fail('repair_status_revision');
         floors.set(key,[...(floors.get(key)??[]),[revision,entry.minimum_document_revision]]);
       }
     }
@@ -199,22 +272,38 @@ export class AckOwnerRecoveryClient{
     for(const observed of current){const payload=observed.payload as Obj;for(const entry of payload.entries){const values=floors.get(payload.scope_key.issuer_key_id+':'+scopeKey(entry))!;
       if(payload.revision<Math.max(...values.map(v=>v[0])))fail('repair_status_rollback');}}
   }
-  #current(source:AuthenticatedAckUnboundSourceEvent,roles:Map<string,RawRef[]>,originals:Map<string,RawOriginal>,target:Obj,budget:RepairBudget,known:AuthenticatedStatusOriginal[]):AuthenticatedStatusOriginal[]{
+  #current(source:AuthenticatedAckUnboundSourceEvent,roles:Map<string,RawRef[]>,originals:Map<string,RawOriginal>,target:Obj,budget:RepairBudget,known:AuthenticatedStatusOriginal[],extraSource?:AuthenticatedAckEmptySourceEvent,
+    occupiedSource?:AuthenticatedAckOccupiedSourceEvent,receiptWriter?:Obj):AuthenticatedStatusOriginal[]{
     const slot=source.custody.payload.ack_slot as Obj,root=slot.root_key,policy=this.#policy;
     const obligations=this.#obligations({...source.resources.originals,bootstrap:source.bootstrap.originals.bootstrap},slot,budget),active=source.resources.originals.active.payload as Obj;
     obligations.push({role:'current.status.ack_resource',kind:'resource',subject:active.resource,revision:active.reservation_generation,signer:target.signing_key,scope_id:statusScope(root,'resource',active.resource,policy,budget)});
+    if(extraSource)for(const [name,kind] of [['write','ack.write_grant'],['bootstrap','bootstrap.grant']] as const){
+      const item=extraSource.authorities.originals[name],subject={authority_kind:kind,authority_sha256:item.ref.raw_sha256};
+      obligations.push({role:null,kind:'authority',subject,revision:item.payload.revision as number,signer:this.#subject.signing_key,mask:0,
+        scope_id:statusScope(root,'authority',subject,policy,budget)});
+    }
+    if(occupiedSource){
+      const consent=occupiedSource.inputs.disclosure,p=consent.payload as Obj,returned=p.bootstrap_return;
+      if(!receiptWriter||!same(returned.roles,['ack.disclosure','ack.put','authority.status.disclosure','recipient.receipt'])||
+        !same(returned.subject,{signing_key_id:this.#subject.signing_key.key_id,encryption_key_id:this.#subject.encryption_key.key_id})||returned.consumer!=='ack_owner'||
+        (p.operation_mask&2)!==2||!['recipient.receipt','ack.disclosure','ack.put','historical.status.ack_disclosure'].every(role=>p.allowed_roles.includes(role)))fail('repair_disclosure_permission');
+      if(this.#now()>=Math.min(returned.until,p.expires_at,p.consent_until))fail('repair_access_expired');
+      const subject={authority_kind:'ack.disclosure',authority_sha256:consent.ref.raw_sha256};
+      obligations.push({role:'current.status.ack_disclosure',kind:'authority',subject,revision:p.revision,signer:receiptWriter.signing_key,mask:2,
+        scope_id:statusScope(root,'authority',subject,policy,budget)});
+    }
     const permitted=new Set(obligations.map(v=>v.signer.key_id+':'+v.kind+':'+v.scope_id));
     for(const observed of known){const p=observed.payload as Obj;if(p.entries.some((v:Obj)=>!permitted.has(p.scope_key.issuer_key_id+':'+scopeKey(v))))fail('repair_status_disclosure');}
     const groups=new Map<string,{ref:RawRef;signer:Obj;required:Obj[]}>();
-    for(const item of obligations){const ref=roles.get(item.role)![0],key=refKey(ref),group=groups.get(key)??{ref,signer:item.signer,required:[]};
+    for(const item of obligations){if(item.role===null)continue;const ref=roles.get(item.role)![0],key=refKey(ref),group=groups.get(key)??{ref,signer:item.signer,required:[]};
       if(!same(group.signer,item.signer))fail('repair_proof_mismatch');group.required.push({scope_kind:item.kind,scope_id:item.scope_id,document_revision:item.revision,operation_mask:2});groups.set(key,group);}
     const checked:AuthenticatedStatusOriginal[]=[];
     for(const [key,group] of groups){
       const allowed=obligations.filter(v=>same(v.signer,group.signer)),entry=originals.get(key)!,payload=checkedStatus(entry.raw,policy,budget),present=new Set(payload.entries.map(scopeKey)),required=new Map(group.required.map(v=>[scopeKey(v),v]));
-      for(const item of allowed)if(present.has(item.kind+':'+item.scope_id))required.set(item.kind+':'+item.scope_id,{scope_kind:item.kind,scope_id:item.scope_id,document_revision:item.revision,operation_mask:2});
+      for(const item of allowed)if(present.has(item.kind+':'+item.scope_id)&&(item.mask??2))required.set(item.kind+':'+item.scope_id,{scope_kind:item.kind,scope_id:item.scope_id,document_revision:item.revision,operation_mask:2});
       checked.push(verifyStatusOriginal(entry,{expectedRoot:root,expectedSigningKey:group.signer,at:this.#now(),allowedScopes:allowed.map(v=>({scope_kind:v.kind,scope_id:v.scope_id})),required:[...required.values()],policy,budget}));
     }
-    this.#floors([...source.statuses,...known],checked,obligations);return checked;
+    this.#floors([...source.statuses,...(extraSource?.statuses??[]),...(occupiedSource?.statuses??[]),...known],checked,obligations);return checked;
   }
 }
 function checkedNodePayload(raw:Uint8Array,policy:RepairPolicy,budget:RepairBudget):Obj{return fields(parseOriginalControl(raw,policy,budget).value,['payload','proof']).payload;}

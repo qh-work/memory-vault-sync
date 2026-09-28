@@ -1,13 +1,14 @@
 # Memory Vault development status
 
-This alpha.0.6 preview adds bounded recovery of an unbound ACK source through
-an opt-in Python HTTP node, with Python and native TypeScript recovery clients.
-It retains exact signed originals, current authorization checks and persistent
-source work/replay limits. This pre-message phase does not yet recover a saved
-recipient receipt or move a message to a replacement node. See
-`docs/OPEN_ACK_RECOVERY.md` in the package documentation and the release record
-for results tied to the exact source and archive bytes. The current-fact scorer
-from alpha.0.5 and the delivery-approval fix from alpha.0.4 are retained.
+This alpha.0.7 candidate adds message-bound ACK slots, recipient-authorized
+receipt uploads and independent recovery of the original signed saved-message
+receipt. It retains all three source generations, original bytes, current
+READ permissions and durable shared work/replay limits across restart. The
+[ACK recovery guide](OPEN_ACK_RECOVERY.md) describes the explicit operator and
+client APIs. Message movement to replacement nodes and automatic repair remain
+unfinished. The current-fact scorer from alpha.0.5 and the delivery-approval fix
+from alpha.0.4 are retained. Exact source and archive validation belongs to the
+release record.
 
 **Current development priority:** a globally decentralized network with bounded
 local routing and sharded resource growth, not a larger private relay pool.
@@ -17,12 +18,12 @@ private-first sequence. The first executable open routing slice now has
 source-pinned implementation and cloud evidence; the full architecture remains
 a development target, not a global reliability claim.
 
-This source includes bounded [ACK source recovery](OPEN_ACK_RECOVERY.md),
-with a real fixed HTTP service, durable possession/replay state, shared node
-capacity and a recovery command. This pre-message unbound phase does not yet
-complete independent recipient-receipt or mailbox recovery. The release manifest and uploaded assets establish publication separately.
+This source includes explicit [ACK recovery](OPEN_ACK_RECOVERY.md), with remote
+binding, recipient-authorized upload, three-generation source verification,
+independent signed-receipt reads and a private recovery command. The release
+manifest and uploaded assets establish publication separately.
 
-Current source target: **0.28.0-alpha.0.6**, an open encrypted-delivery preview.
+Current source target: **0.28.0-alpha.0.7**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use
@@ -34,14 +35,11 @@ project server, fixed seed, common issuer or global member roster is supplied.
 
 The native TypeScript client uses its own crypto, Vault and protected transport
 code without a Python subprocess. Delivery hosting currently uses the Python
-node implementation; the TypeScript node does not yet host delivery. Node migration, independent ACK
-repair and the full 0.28.0-alpha.1 vertical milestone remain pending. The alpha.0.4
-delivery-approval fix is retained. Five targeted local HTTP regressions
-passed: three Python and two native TypeScript cases. Selected-memory transfer
-and recall after restart were covered by Python. The full suite was not run;
-earlier review, CI and test counts retain their original source bindings. This
-source status does not establish upload availability, global reliability or
-public adoption.
+node implementation; the TypeScript node does not yet host delivery. Message
+migration, automatic repair and the full 0.28.0-alpha.1 milestone remain pending.
+The alpha.0.4 delivery-approval fix is retained. Historical tests remain evidence
+for their own exact source. Current results belong to the source-bound release
+record; they do not establish global reliability or public adoption.
 
 The prior **0.28.0-alpha.0.2** first-contact release added finite knock opt-in,
 real dual-key challenge, explicit approval/rejection and request-bound results
