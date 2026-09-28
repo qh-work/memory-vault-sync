@@ -106,6 +106,45 @@ class MailboxActivationTests(unittest.TestCase):
     def activate(self, entries=None, **options):
         return self.state.activate(entries or self.setup_entries(), expected_slot=self.slot_key, **options)
 
+    def test_detached_genesis_rejects_node_signed_nonempty_or_wrong_commit(self):
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_genesis
+        from memory_vault_open_repair_wire import RepairBudget
+        result = self.activate(self.setup_entries())
+        entries = {name:result[name] for name in ("head","checkpoint")}
+        def verify(values,**changes):
+            return verify_mailbox_genesis(values,**(dict(expected_slot=self.slot_key,
+                expected_signing_key=self.source.identity.public_descriptor(),committed_at=self.now,at=self.now)|changes),
+                policy=self.source.policy,budget=RepairBudget(self.source.policy))
+        self.assertEqual(verify(entries)["head"].raw,entries["head"]["raw"])
+        for field,value in (("count",1),("catalog_generation",1),("range_root_ref",entries["checkpoint"]["ref"])):
+            p = json.loads(entries["head"]["raw"])["payload"];p[field] = value
+            changed = dict(entries,head=signed_entry(p,self.f["signers"]["target"],"synthetic_changed_genesis"))
+            with self.subTest(field=field),self.assertRaises(RepairWireError):
+                verify(changed)
+        with self.assertRaises(RepairWireError):
+            verify(entries,committed_at=self.now-1)
+
+    def test_detached_owner_chain_requires_original_slot_scope_and_reader(self):
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_slot_owner_inputs
+        from memory_vault_open_repair_wire import RepairBudget
+        entries = self.setup_entries()
+        expected = dict(expected_slot=self.slot_key,expected_owner=self.owner,expected_target=self.source.target,
+            target_storage_epoch=self.slot_key["writer_storage_epoch"],limit_policy=self.source.limits,at=self.now,
+            offers=dict(data=self.offers["mailbox_data"],metadata=self.offers["feed_metadata"]),policy=self.source.policy)
+        def verify(values,**changes):
+            return verify_mailbox_slot_owner_inputs(values,**(expected|changes),budget=RepairBudget(self.source.policy))
+        verified = verify(entries)
+        self.assertEqual(verified["read"].raw,entries["read"]["raw"])
+        for changes in ({"bootstrap":{"consumer":"mailbox_root"}},
+                        {"read":{"reader":self.dual(self.source.target)}},
+                        {"activation":{"authority_refs":[]}}):
+            with self.subTest(changes=changes),self.assertRaises(RepairWireError):
+                verify(self.setup_entries(changes))
+        with self.assertRaises(RepairWireError):
+            verify(entries,expected_owner=self.source.target)
+        with self.assertRaises(RepairWireError):
+            verify(entries,at=self.now+1000)
+
     def test_pair_and_originals_survive_restart_without_reactivation(self):
         entries = self.setup_entries()
         result = self.activate(entries)

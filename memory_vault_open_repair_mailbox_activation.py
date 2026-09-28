@@ -48,6 +48,196 @@ def _role(value):
         _mismatch()
 
 
+def _check_slot_authority(held, p, slot_key, owner, offers, budget, now, *, target, epoch, policy, limits):
+    root = slot_key["root_key"]
+    owner_id = resource._dual_key(owner, budget)
+    maintenance, read, slot, grant, activation = (p[k] for k in FIELDS)
+    if (root["owner"] != owner_id or slot_key["writer"] != resource._dual_key(target, budget)
+            or slot_key["writer_storage_epoch"] != epoch):
+        _mismatch()
+    for name in ("maintenance", "read", "slot"):
+        value = p[name]
+        history._slot(value["slot_key"], root)
+        resource._budget(value["budget"])
+        resource._windows(value["windows"], issued=value["issued_at"], expires=value["expires_at"])
+        wire.u53(value["revision"])
+        if value["slot_key"] != slot_key or (name != "slot" and value["root_key"] != root):
+            _mismatch()
+    for value in (maintenance, read):
+        resource._opmask(value["operation_mask"])
+    for value in (maintenance, slot):
+        history._dual(value["sender"]); history._dual(value["recipient"])
+        if value["recipient"] != owner_id:
+            _mismatch()
+    history._dual(read["reader"])
+    for value in (maintenance["authority_id"], read["grant_id"], read["serving_authority_id"]):
+        original._opaque(value)
+    if (read["reader"] != owner_id or slot["sender"] != maintenance["sender"]
+            or read["serving_authority_id"] != maintenance["authority_id"]
+            or slot["read_grant_ref"] != held["read"]["ref"]
+            or slot["maintenance_root_ref"] != held["maintenance"]["ref"]):
+        _mismatch()
+    resource._fields(slot["feed_ref"], {"namespace", "key"})
+    if slot["feed_ref"]["namespace"] != "feed":
+        _mismatch()
+    original._digest(slot["feed_ref"]["key"])
+    if not 1 <= wire.u53(slot["max_live_items"]) <= wire.u53(slot["max_appends"], 1) <= 65536:
+        _mismatch()
+    if slot["max_live_items"] > slot["budget"]["max_items"]:
+        _mismatch()
+    if wire.u53(maintenance["max_delegate_depth"]) != 2:
+        _mismatch()
+    wire.u53(maintenance["max_destinations_per_job"])
+    wire.u53(maintenance["max_concurrent_jobs"])
+    _ordered(maintenance["maintainers"], lambda v: (v["signing_key_id"], v["encryption_key_id"]), history._dual)
+    _ordered(maintenance["allowed_roles"], lambda v: v, _role)
+    if (maintenance["operation_mask"] & 10 != 10 or read["operation_mask"] & 2 != 2
+            or read["operation_mask"] & ~maintenance["operation_mask"]
+            or not {"bootstrap.grant", "selected_slot_service_v1"} <= set(maintenance["allowed_roles"])
+            or any(read["budget"][k] > maintenance["budget"][k] for k in resource._BUDGET)
+            or any(read["windows"][k] > maintenance["windows"][k] for k in resource._WINDOWS)
+            or read["expires_at"] > maintenance["expires_at"]):
+        _mismatch()
+    for name, purpose in (("data", "mailbox_data"), ("metadata", "feed_metadata")):
+        offer = offers[name]
+        value = wire.parse_new_wire(offer["raw"], policy, budget).value["payload"]
+        intent = value["intent"]
+        if (slot[name+"_resource_ref"] != value["resource"]
+                or slot[name+"_resource_offer_ref"] != offer["ref"]
+                or intent["purpose"] != purpose or intent["root_key"] != root
+                or intent["owner"] != owner or intent["target"] != target
+                or value["issued_at"] > min(p[k]["issued_at"] for k in ("maintenance", "read", "slot"))
+                or min(intent["windows"].values()) <= now):
+            _mismatch()
+    # The read/maintenance grants may outlive a particular resource. The
+    # later custody promise intersects their windows with the actual lease.
+    resource._fields(grant["selector"], {"root_key_sha256", "slot_key_sha256", "feed_ref",
+                                       "slot_sha256", "read_grant_sha256", "maintenance_root_sha256"})
+    original._opaque(grant["grant_id"]); wire.u53(grant["revision"])
+    if (grant["owner"] != owner_id or grant["subject"] != owner_id or grant["root_key"] != root
+            or grant["consumer"] != "mailbox_feed" or grant["probe_profile"] != "opaque_v1"
+            or grant["response_profile"] != "selected_slot_service_v1"
+            or grant["parent_authority_ref"] != held["maintenance"]["ref"]
+            or grant["caller_authority_ref"] != held["read"]["ref"]
+            or grant["selector"] != dict(root_key_sha256=budget._hash(wire._canonical(root, budget)),
+                slot_key_sha256=budget._hash(wire._canonical(slot_key, budget)), feed_ref=slot["feed_ref"],
+                slot_sha256=held["slot"]["ref"]["raw_sha256"], read_grant_sha256=held["read"]["ref"]["raw_sha256"],
+                maintenance_root_sha256=held["maintenance"]["ref"]["raw_sha256"])):
+        _mismatch()
+    _ordered(grant["upload_roles"], lambda v: v, _role)
+    if not set(grant["upload_roles"]) <= UPLOAD_ROLES & set(maintenance["allowed_roles"]):
+        _mismatch()
+    bootstrap._limits(grant["limits"])
+    for key, parent_fields in bootstrap._PARENT_CAPS.items():
+        value = grant["limits"][key]
+        if value > limits[key] or any(value > parent["budget"][field]
+                for parent in (maintenance, read) for field in parent_fields):
+            _mismatch()
+    if not (maintenance["issued_at"] <= read["issued_at"] <= slot["issued_at"]
+            <= grant["issued_at"] <= activation["issued_at"] <= now
+            and grant["expires_at"] <= min(maintenance["expires_at"], read["expires_at"])):
+        _mismatch()
+    for key in ("probe_until", "proof_until", "upload_until"):
+        if not now < wire.u53(grant[key]) <= grant["expires_at"]:
+            _mismatch()
+    if any(grant[key] > parent["windows"][window] for key in ("proof_until", "upload_until")
+           for parent in (maintenance, read) for window in ("read_until", "retain_until")):
+        _mismatch()
+    original._opaque(activation["activation_id"])
+    expected_offers = sorted((offer["ref"] for offer in offers.values()), key=history._ref_tuple)
+    expected_authorities = [{"role": KINDS[name], "ref": held[name]["ref"]}
+                            for name in ("maintenance", "read", "slot")]
+    if (activation["subject"] != owner or activation["target_node_key_id"] != target["signing_key"]["key_id"]
+            or activation["target_storage_epoch"] != slot_key["writer_storage_epoch"]
+            or activation["root_key"] != root
+            or activation["scope"] != dict(kind="mailbox_slot", slot_key=slot_key, slot_ref=held["slot"]["ref"])
+            or activation["resource_offer_refs"] != expected_offers
+            or activation["authority_refs"] != expected_authorities):
+        _mismatch()
+
+
+def verify_mailbox_slot_owner_inputs(entries, *, expected_slot, expected_owner, expected_target,
+        target_storage_epoch, offers, limit_policy, at, policy, budget):
+    """Verify detached B slot/read/maintenance/bootstrap and activation originals.
+
+    Expected identities are supplied independently by the caller. Resource
+    offer signatures and custody are separate checks; this function checks the
+    complete owner authority chain without a database, clock or signing key.
+    """
+    wire._context(policy,budget)
+    expected = wire.build_new_wire(dict(slot=expected_slot,owner=expected_owner,target=expected_target,
+        epoch=target_storage_epoch,limits=limit_policy,at=at),policy,budget).value
+    history._slot(expected["slot"],expected["slot"]["root_key"])
+    original._opaque(expected["epoch"]);wire.u53(expected["at"])
+    resource._dual_key(expected["owner"],budget);resource._dual_key(expected["target"],budget)
+    bootstrap._limits(expected["limits"])
+    resource._fields(entries,FIELDS);resource._fields(offers,{"data","metadata"})
+    held,payloads = {},{}
+    for name in FIELDS:
+        value = resource._fields(entries[name],{"raw","ref"})
+        ref = resource._ref(wire.build_new_wire(value["ref"],policy,budget).value)
+        parsed = wire.parse_new_wire(value["raw"],policy,budget)
+        if len(parsed.raw) != ref.size or budget._hash(parsed.raw) != ref.raw_sha256:
+            wire._fail("repair_ref_mismatch")
+        signed = resource._fields(parsed.value,{"payload","proof"})
+        payload = resource._fields(signed["payload"],resource.COMMON | set(FIELDS[name].split()))
+        if payload["schema_version"] != resource.SCHEMA or payload["kind"] != KINDS[name]:
+            _mismatch()
+        resource._lifetime(payload)
+        if not payload["issued_at"] <= expected["at"] < payload["expires_at"]:
+            wire._fail("repair_resource_expired")
+        original._verify_control_signature(payload,signed["proof"],expected["owner"]["signing_key"],budget)
+        held[name],payloads[name] = dict(raw=parsed.raw,ref=ref.as_dict()),payload
+    frozen_offers = {}
+    for name in ("data","metadata"):
+        value = resource._fields(offers[name],{"raw","ref"})
+        ref = resource._ref(wire.build_new_wire(value["ref"],policy,budget).value)
+        parsed = wire.parse_new_wire(value["raw"],policy,budget)
+        if len(parsed.raw) != ref.size or budget._hash(parsed.raw) != ref.raw_sha256:
+            wire._fail("repair_ref_mismatch")
+        frozen_offers[name] = dict(raw=parsed.raw,ref=ref.as_dict())
+    _check_slot_authority(held,payloads,expected["slot"],expected["owner"],frozen_offers,budget,expected["at"],
+        target=expected["target"],epoch=expected["epoch"],policy=policy,limits=expected["limits"])
+    return {name:resource.AuthenticatedRepairOriginal(held[name]["raw"],wire.raw_ref(held[name]["ref"]),payloads[name])
+            for name in FIELDS}
+
+
+def verify_mailbox_genesis(entries, *, expected_slot, expected_signing_key, committed_at, at, policy, budget):
+    """Authenticate count-zero checkpoint/head bound to the original slot commit."""
+    wire._context(policy,budget)
+    resource._fields(entries,{"checkpoint","head"})
+    slot = wire.build_new_wire(expected_slot,policy,budget).value
+    history._slot(slot,slot["root_key"])
+    key = wire.build_new_wire(expected_signing_key,policy,budget).value
+    wire.u53(committed_at);wire.u53(at)
+    initial = mailbox_range.empty_state(slot,policy=policy,budget=budget)
+    checked = {}
+    for name,kind,fields in (("checkpoint","mailbox.checkpoint",set(initial)),
+            ("head","mailbox.feed_head",{"checkpoint_ref","count","range_root_ref","catalog_generation"})):
+        value = resource._fields(entries[name],{"raw","ref"})
+        ref = resource._ref(wire.build_new_wire(value["ref"],policy,budget).value)
+        parsed = wire.parse_new_wire(value["raw"],policy,budget)
+        if len(parsed.raw) != ref.size or budget._hash(parsed.raw) != ref.raw_sha256:
+            wire._fail("repair_ref_mismatch")
+        signed = resource._fields(parsed.value,{"payload","proof"})
+        payload = resource._fields(signed["payload"],resource.COMMON | fields | {"slot_key","committed_at","retain_until"})
+        if (payload["schema_version"] != resource.SCHEMA or payload["kind"] != kind
+                or payload["slot_key"] != slot or payload["committed_at"] != committed_at
+                or not wire.u53(payload["committed_at"]) <= at < wire.u53(payload["retain_until"])):
+            _mismatch()
+        original._verify_control_signature(payload,signed["proof"],key,budget)
+        if name == "checkpoint":
+            if any(payload[k] != v for k,v in initial.items()):
+                _mismatch()
+        elif (payload["checkpoint_ref"] != checked["checkpoint"].ref.as_dict()
+                or wire.u53(payload["count"]) != 0 or payload["range_root_ref"] is not None
+                or wire.u53(payload["catalog_generation"]) != 0
+                or payload["retain_until"] != checked["checkpoint"].payload["retain_until"]):
+            _mismatch()
+        checked[name] = resource.AuthenticatedRepairOriginal(parsed.raw,ref,payload)
+    return checked
+
+
 class MailboxSlotActivation:
     def __init__(self, resources):
         self.resources, self.source, self.db = resources, resources.source, resources.db
@@ -84,112 +274,9 @@ class MailboxSlotActivation:
         return held, payloads
 
     def _check(self, held, p, slot_key, owner, offers, budget, now):
-        s = self.source
-        root = slot_key["root_key"]
-        owner_id = resource._dual_key(owner, budget)
-        maintenance, read, slot, grant, activation = (p[k] for k in FIELDS)
-        if (root["owner"] != owner_id or slot_key["writer"] != resource._dual_key(s.target, budget)
-                or slot_key["writer_storage_epoch"] != s.node["payload"]["storage_epoch"]):
-            _mismatch()
-        for name in ("maintenance", "read", "slot"):
-            value = p[name]
-            history._slot(value["slot_key"], root)
-            resource._budget(value["budget"])
-            resource._windows(value["windows"], issued=value["issued_at"], expires=value["expires_at"])
-            wire.u53(value["revision"])
-            if value["slot_key"] != slot_key or (name != "slot" and value["root_key"] != root):
-                _mismatch()
-        for value in (maintenance, read):
-            resource._opmask(value["operation_mask"])
-        for value in (maintenance, slot):
-            history._dual(value["sender"]); history._dual(value["recipient"])
-            if value["recipient"] != owner_id:
-                _mismatch()
-        history._dual(read["reader"])
-        for value in (maintenance["authority_id"], read["grant_id"], read["serving_authority_id"]):
-            original._opaque(value)
-        if (read["reader"] != owner_id or slot["sender"] != maintenance["sender"]
-                or read["serving_authority_id"] != maintenance["authority_id"]
-                or slot["read_grant_ref"] != held["read"]["ref"]
-                or slot["maintenance_root_ref"] != held["maintenance"]["ref"]):
-            _mismatch()
-        resource._fields(slot["feed_ref"], {"namespace", "key"})
-        if slot["feed_ref"]["namespace"] != "feed":
-            _mismatch()
-        original._digest(slot["feed_ref"]["key"])
-        if not 1 <= wire.u53(slot["max_live_items"]) <= wire.u53(slot["max_appends"], 1) <= 65536:
-            _mismatch()
-        if slot["max_live_items"] > slot["budget"]["max_items"]:
-            _mismatch()
-        if wire.u53(maintenance["max_delegate_depth"]) != 2:
-            _mismatch()
-        wire.u53(maintenance["max_destinations_per_job"])
-        wire.u53(maintenance["max_concurrent_jobs"])
-        _ordered(maintenance["maintainers"], lambda v: (v["signing_key_id"], v["encryption_key_id"]), history._dual)
-        _ordered(maintenance["allowed_roles"], lambda v: v, _role)
-        if (maintenance["operation_mask"] & 10 != 10 or read["operation_mask"] & 2 != 2
-                or read["operation_mask"] & ~maintenance["operation_mask"]
-                or not {"bootstrap.grant", "selected_slot_service_v1"} <= set(maintenance["allowed_roles"])
-                or any(read["budget"][k] > maintenance["budget"][k] for k in resource._BUDGET)
-                or any(read["windows"][k] > maintenance["windows"][k] for k in resource._WINDOWS)
-                or read["expires_at"] > maintenance["expires_at"]):
-            _mismatch()
-        for name, purpose in (("data", "mailbox_data"), ("metadata", "feed_metadata")):
-            offer = offers[name]
-            value = wire.parse_new_wire(offer["raw"], s.policy, budget).value["payload"]
-            intent = value["intent"]
-            if (slot[name+"_resource_ref"] != value["resource"]
-                    or slot[name+"_resource_offer_ref"] != offer["ref"]
-                    or intent["purpose"] != purpose or intent["root_key"] != root
-                    or intent["owner"] != owner or intent["target"] != s.target
-                    or value["issued_at"] > min(p[k]["issued_at"] for k in ("maintenance", "read", "slot"))
-                    or min(intent["windows"].values()) <= now):
-                _mismatch()
-        # The read/maintenance grants may outlive a particular resource. The
-        # later custody promise intersects their windows with the actual lease.
-        resource._fields(grant["selector"], {"root_key_sha256", "slot_key_sha256", "feed_ref",
-                                           "slot_sha256", "read_grant_sha256", "maintenance_root_sha256"})
-        original._opaque(grant["grant_id"]); wire.u53(grant["revision"])
-        if (grant["owner"] != owner_id or grant["subject"] != owner_id or grant["root_key"] != root
-                or grant["consumer"] != "mailbox_feed" or grant["probe_profile"] != "opaque_v1"
-                or grant["response_profile"] != "selected_slot_service_v1"
-                or grant["parent_authority_ref"] != held["maintenance"]["ref"]
-                or grant["caller_authority_ref"] != held["read"]["ref"]
-                or grant["selector"] != dict(root_key_sha256=budget._hash(wire._canonical(root, budget)),
-                    slot_key_sha256=budget._hash(wire._canonical(slot_key, budget)), feed_ref=slot["feed_ref"],
-                    slot_sha256=held["slot"]["ref"]["raw_sha256"], read_grant_sha256=held["read"]["ref"]["raw_sha256"],
-                    maintenance_root_sha256=held["maintenance"]["ref"]["raw_sha256"])):
-            _mismatch()
-        _ordered(grant["upload_roles"], lambda v: v, _role)
-        if not set(grant["upload_roles"]) <= UPLOAD_ROLES & set(maintenance["allowed_roles"]):
-            _mismatch()
-        bootstrap._limits(grant["limits"])
-        for key, parent_fields in bootstrap._PARENT_CAPS.items():
-            value = grant["limits"][key]
-            if value > s.limits[key] or any(value > parent["budget"][field]
-                    for parent in (maintenance, read) for field in parent_fields):
-                _mismatch()
-        if not (maintenance["issued_at"] <= read["issued_at"] <= slot["issued_at"]
-                <= grant["issued_at"] <= activation["issued_at"] <= now
-                and grant["expires_at"] <= min(maintenance["expires_at"], read["expires_at"])):
-            _mismatch()
-        for key in ("probe_until", "proof_until", "upload_until"):
-            if not now < wire.u53(grant[key]) <= grant["expires_at"]:
-                _mismatch()
-        if any(grant[key] > parent["windows"][window] for key in ("proof_until", "upload_until")
-               for parent in (maintenance, read) for window in ("read_until", "retain_until")):
-            _mismatch()
-        original._opaque(activation["activation_id"])
-        expected_offers = sorted((offer["ref"] for offer in offers.values()), key=history._ref_tuple)
-        expected_authorities = [{"role": KINDS[name], "ref": held[name]["ref"]}
-                                for name in ("maintenance", "read", "slot")]
-        if (activation["subject"] != owner or activation["target_node_key_id"] != s.identity.key_id
-                or activation["target_storage_epoch"] != slot_key["writer_storage_epoch"]
-                or activation["root_key"] != root
-                or activation["scope"] != dict(kind="mailbox_slot", slot_key=slot_key, slot_ref=held["slot"]["ref"])
-                or activation["resource_offer_refs"] != expected_offers
-                or activation["authority_refs"] != expected_authorities):
-            _mismatch()
+        return _check_slot_authority(held,p,slot_key,owner,offers,budget,now,
+            target=self.source.target,epoch=self.source.node["payload"]["storage_epoch"],
+            policy=self.source.policy,limits=self.source.limits)
 
     def activate(self, entries, *, expected_slot, _budget=None, _transaction_guard=None):
         """Commit the empty slot, not root custody or a network-ready result."""
