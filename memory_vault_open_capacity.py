@@ -149,7 +149,7 @@ class CapacityAuthority:
     def reserve(self, service, reservation_id, input_digest, charge_bytes, retain_until, *, owner, operation_id):
         """Reserve repair resources once; legacy inserts use the same totals."""
         self._write_lock()
-        if service not in ("ack", "repair_index", "contact_directory"):
+        if service not in ("ack", "repair_index", "contact_directory", "mailbox"):
             _fail("invalid_service")
         for value in (reservation_id, owner, operation_id):
             if type(value) is not str or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value) is None:
@@ -178,8 +178,8 @@ class CapacityAuthority:
     def collect_released(self, service, *, now, limit=128):
         """Release only absent legacy obligations after their full replay tail.
 
-        ACK release is deliberately absent until its owning persistent lifecycle
-        supplies concrete tables and the complete pin/receipt dependency rules.
+        ACK and mailbox release are absent until their owning lifecycles supply
+        the complete pin, custody and receipt dependency rules.
         """
         self._write_lock()
         _number(now)

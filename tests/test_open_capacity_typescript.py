@@ -129,6 +129,26 @@ class OpenCapacityTypeScriptTests(unittest.TestCase):
         self.assertEqual(again[1]['code'],'open_capacity_exhausted')
         self.assertEqual(again[2]['value'],first[1]['value'])
 
+    def test_mailbox_reservation_cannot_bypass_shared_native_capacity(self):
+        selected = dict(maximum_reserved_bytes=capacity.SERVICE_RESERVE_BYTES+4096,maximum_reservations=2)
+        mailbox = dict(self.reserve('synthetic_mailbox'),service='mailbox')
+        first = self.ts([mailbox,dict(op='usage')],policy=selected)['results']
+        self.assertTrue(first[0]['value'])
+        db, authority = self.initialize_python(); self.addCleanup(db.close)
+        self.assertEqual(authority.usage(),first[1]['value'])
+        db.execute('BEGIN IMMEDIATE')
+        self.assertFalse(authority.reserve('mailbox','synthetic_mailbox','a'*64,4096,200,
+            owner='synthetic_owner',operation_id='synthetic_mailbox'))
+        with self.assertRaisesRegex(MemoryError,'open_capacity_exhausted'):
+            authority.reserve('ack','synthetic_ack', 'b'*64,1,200,
+                owner='synthetic_owner',operation_id='synthetic_ack')
+        db.commit()
+        again = self.ts([mailbox,dict(self.reserve('synthetic_other',1),service='repair_index'),
+            dict(op='usage')],policy=selected)['results']
+        self.assertFalse(again[0]['value'])
+        self.assertEqual(again[1]['code'],'open_capacity_exhausted')
+        self.assertEqual(again[2]['value'],first[1]['value'])
+
     def test_old_oversubscribed_obligations_migrate_without_eviction(self):
         db=sqlite3.connect(self.path);self.addCleanup(db.close)
         for sql in capacity.RESERVATION_TABLES.values():db.execute(sql)
