@@ -1,6 +1,6 @@
 # Memory Vault: connect, remember, exchange, continue
 
-This candidate adds [independent remote source preparation](docs/OPEN_ACK_PROVISIONING.md) and
+This release adds [independent remote source preparation](docs/OPEN_ACK_PROVISIONING.md) and
 [independent consent commands](docs/OPEN_ACK_PREPARATION.md), connecting a new
 selected-memory send to [directory receipt recovery](docs/OPEN_ACK_DIRECTORY.md).
 The same quickstart can fetch and challenge a chosen operator's current node

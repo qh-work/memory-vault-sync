@@ -1,6 +1,6 @@
 # Memory Vault development status
 
-This alpha.0.10 candidate adds independent remote source preparation using
+This alpha.0.10 release adds independent remote source preparation using
 only the sender's configuration and a selected public origin/key, plus durable
 setup and bind recovery across lost replies. The Python Agent can enable contact
 using an already configured node's public key ID. These workflows connect
