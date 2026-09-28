@@ -6,6 +6,7 @@ complete historical/current authority consumers; it is never a bearer token.
 from dataclasses import dataclass
 import weakref
 
+import memory_vault_open_repair_history as history
 import memory_vault_open_repair_ack as ack
 import memory_vault_open_repair_empty as empty
 import memory_vault_open_repair_occupied as occupied
@@ -26,7 +27,11 @@ SOURCE_STATES = {"unbound": (FIXED_ROLES, 1), "empty": (EMPTY_FIXED_ROLES, 2),
                  "occupied": (OCCUPIED_FIXED_ROLES, 3)}
 OFFER_CURRENT_ROLES = (CURRENT_ROLES - {"current.status.ack_read", "current.status.ack_owner_bootstrap"}) | {"current.status.ack_write", "current.status.ack_offer_bootstrap"}
 OFFER_FIXED_ROLES = empty.ROLES | OFFER_CURRENT_ROLES | {"history.ack_empty", "ack.empty_custody", "ack.head"}
-CONSUMER_STATES = {"ack_owner": SOURCE_STATES, "ack_offer": {"empty": (OFFER_FIXED_ROLES, 2)}}
+MAILBOX_CURRENT_ROLES = frozenset("current.status."+name for name in
+    "root root_read root_bootstrap catalog anchor_resource slot read maintenance bootstrap data_resource metadata_resource".split())
+MAILBOX_ROOT_ROLES = history._ROLES["mailbox_root"] | MAILBOX_CURRENT_ROLES | {"history.mailbox_root","root.custody"}
+CONSUMER_STATES = {"ack_owner": SOURCE_STATES, "ack_offer": {"empty": (OFFER_FIXED_ROLES, 2)},
+                   "mailbox_root": {"root": (MAILBOX_ROOT_ROLES,1)}}
 HANDLE_FIELDS = probe._COMMON | {"handle_id", "probe_ref", "challenge_ref", "answer_ref", "service_generation", "manifest_ref", "child_count"}
 CHILD_FIELDS = probe._COMMON | {"request_id", "probe_ref", "handle_ref", "manifest_ref", "service_generation", "child_index", "offset", "requested_bytes"}
 MANIFEST_FIELDS = frozenset("schema_version kind probe_ref subject target target_storage_epoch consumer selector bootstrap_grant_ref service_generation response_profile children".split())
@@ -94,7 +99,7 @@ def _manifest(value, expected, maximum_items, expected_source_state=None):
     wire.u53(payload["service_generation"], 1)
     if not len(fixed_roles) + minimum_packs <= len(children) <= maximum_items:
         _fail()
-    counts, packs = {}, set()
+    counts, packs, identities = {}, set(), set()
     for index, item in enumerate(children):
         item = _fields(item, {"index", "role", "ref"})
         if wire.u53(item["index"]) != index or type(item["role"]) is not str or item["role"] not in service_roles:
@@ -102,12 +107,24 @@ def _manifest(value, expected, maximum_items, expected_source_state=None):
         # Only an actual existing recipient receipt may retain its delivery
         # object's namespace. Every authority, history and pack stays metadata.
         ref = wire.raw_ref(item["ref"]) if item["role"] == "recipient.receipt" else probe._ref(item["ref"])
+        identity = (item["role"],ref)
+        if identity in identities:
+            _fail()
+        identities.add(identity)
         counts[item["role"]] = counts.get(item["role"], 0) + 1
         if item["role"] == "history.raw_pack":
             if ref in packs or ref.key != ref.raw_sha256:
                 _fail()
             packs.add(ref)
-    if any(counts.get(role) != 1 for role in fixed_roles) or len(packs) < minimum_packs:
+    if consumer == "mailbox_root":
+        singleton = {"mailbox.root_authority","mailbox.root_read_grant","mailbox.catalog","bootstrap.mailbox_root",
+            "resource.anchor_allocate","resource.anchor_offer","resource.anchor_activation","resource.anchor_active",
+            "source.descriptor","history.mailbox_root","root.custody"}
+        if any(counts.get(role)!=1 for role in singleton) or any(counts.get(role,0)<1 for role in fixed_roles):
+            _fail()
+    elif any(counts.get(role) != 1 for role in fixed_roles):
+        _fail()
+    if len(packs) < minimum_packs:
         _fail()
     return payload
 

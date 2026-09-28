@@ -59,6 +59,36 @@ class RepairProofTests(unittest.TestCase):
         options.update(changes)
         return proof.verify_bootstrap_proof_response(self.response().raw if raw is None else raw, **options)
 
+    def mailbox_manifest(self):
+        # Manifest-format fixture only; these locators do not assert mailbox
+        # authority. The mailbox source consumer separately validates children.
+        manifest=copy.deepcopy(self.manifest)
+        selector=dict(root_key_sha256="a"*64,anchor_ref=dict(namespace="anchor",key="b"*64),
+            root_authority_sha256="c"*64,read_grant_sha256="d"*64)
+        manifest.update(consumer="mailbox_root",selector=selector,response_profile="mailbox_root_service_v1")
+        reference=self.fixture["entries"]["root"]["ref"]
+        manifest["children"]=[dict(index=i,role=role,ref=reference) for i,role in enumerate(sorted(proof.MAILBOX_ROOT_ROLES))]
+        manifest["children"].append(dict(index=len(manifest["children"]),role="history.raw_pack",ref=self.fixture["packs"][0]["ref"]))
+        return manifest,dict(consumer="mailbox_root",expected_source_state="root",selector=selector)
+
+    def test_mailbox_root_proof_manifest_requires_complete_roles_and_unique_locators(self):
+        manifest,options=self.mailbox_manifest()
+        self.verify(self.response(manifest).raw,**options)
+        duplicate=copy.deepcopy(manifest)
+        row=copy.deepcopy(next(v for v in duplicate["children"] if v["role"]=="mailbox.slot"))
+        row["index"]=len(duplicate["children"]);duplicate["children"].append(row)
+        with self.assertRaises(wire.RepairWireError):
+            self.response(duplicate)
+        another=copy.deepcopy(duplicate);another["children"][-1]["ref"]["key"]="f"*64
+        self.verify(self.response(another).raw,**options)
+        missing=copy.deepcopy(manifest);missing["children"]=[v for v in missing["children"] if v["role"]!="current.status.root_read"]
+        for i,row in enumerate(missing["children"]):
+            row["index"]=i
+        with self.assertRaises(wire.RepairWireError):
+            self.response(missing)
+        with self.assertRaises(wire.RepairWireError):
+            self.verify(self.response(manifest).raw)
+
     def assertCode(self, code, callback, *args, **kwargs):
         with self.assertRaises(wire.RepairWireError) as caught:
             callback(*args, **kwargs)
