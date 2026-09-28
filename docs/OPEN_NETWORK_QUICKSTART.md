@@ -6,7 +6,7 @@ memories. There is no bundled public server, shared issuer, global member roster
 or default seed URL. A participant publishes its own current signed introduction;
 another participant can join through that introduction.
 
-The **v0.28.0-alpha.0.9** Python and native TypeScript clients connect approved
+The **v0.28.0-alpha.0.10** Python and native TypeScript clients connect approved
 delivery to the original accepting node, durable local inboxes and separate
 storage/recipient receipts. Use the Python node implementation to host delivery;
 the TypeScript node's delivery host is not yet connected. The separate
@@ -19,7 +19,8 @@ one original receipt commitment and let its owner discover and read it with
 separate original permissions. A directory lease alone never reports it usable.
 For a new message, the [source preparation command](OPEN_ACK_PROVISIONING.md)
 freezes the explicit selection and binds its ACK source before ordinary `send`.
-It uses the operator's existing sender and source configurations. After the
+It uses A's existing configuration and the selected R's public origin/key; each
+operator keeps its own private source configuration. After the
 recipient saves and shares the receipt, A and B can separately
 [prepare directory consents](OPEN_ACK_PREPARATION.md) with their own identities.
 Validation and publication results are bound to the exact release source.
@@ -189,32 +190,30 @@ an actual returned value; do not send placeholder strings.
 
 ## B enables contact; A requests; B explicitly decides
 
-B first chooses a real resource node R. Use its current signed introduction as an
-object, not a URL or JSON string. This Python invocation constructs the exact
-`connect` request without hand-copying a signature. Run it from the same runtime
-directory, using `-B` as shown:
+B chooses one of its configured resource nodes R. In the Python Agent, replace
+`R_SIGNING_KEY_ID` with that operator's public key ID and send this request through
+the same six-operation interface:
 
-```sh
-python -B - <<'PY'
-import json
-from pathlib import Path
-from memory_vault_agent import Agent
-
-agent = Agent(Path("/absolute/private/client.json"),
-              Path("/absolute/private/open-agent/open-config.json"))
-node = json.loads(Path("/absolute/private/node-introduction.json").read_text())
-print(json.dumps(agent.handle({
+```json
+{
     "op": "connect",
     "invitation": {
         "schema_version": "memory-vault-open-contact-connect/v1",
-        "action": "enable", "node": node,
+        "action": "enable", "node_key_id": "R_SIGNING_KEY_ID",
         "allocation_id": "knock_open_example_01",
         "max_pending": 4, "lease_seconds": 3600, "revision": 1,
-        "maintain_directory": True
+        "maintain_directory": true
     }
-})))
-PY
+}
 ```
+
+The Python client fetches a current introduction from the configured origin and
+challenges that endpoint before acquiring the contact lease. It retains the
+selected public key, origin and storage epoch; an unknown key or changed epoch
+is refused. No introduction file or node private configuration is needed.
+Existing callers may still provide the complete signed `node` object instead of
+`node_key_id`; choose exactly one. Native TypeScript callers use that original
+`node` form and their existing explicit directory publication path.
 
 Keep B's returned `lease_id` and `expires_at`. `directory_state` and
 `confirmed_index_leases` describe actual publication; a degraded count is not
@@ -240,7 +239,7 @@ Repeating the same `enable` request returns the existing job and preserves its
 used budget. A node restart resumes that job, rather than creating fresh authority.
 Nodes enforce revocations and conflicts they have actually observed.
 
-Omit `maintain_directory` or set it to `False` for manual registration. Native
+Omit `maintain_directory` or set it to `false` for manual registration. Native
 TypeScript currently uses that manual path. Directory leases last at most 300
 seconds and can be shorter, so B must repeat the same valid `enable` request
 before `directory_expires_at`. With no confirmed registration, new senders may

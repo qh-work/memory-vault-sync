@@ -81,7 +81,7 @@ class RepairAckState:
             _fail("repair_storage_epoch_mismatch")
 
     @contextmanager
-    def _transaction(self):
+    def _transaction(self, *, guard=None):
         with self._lock:
             if self.db.in_transaction:
                 _fail("repair_storage_transaction")
@@ -89,7 +89,15 @@ class RepairAckState:
             try:
                 self._binding()
                 self.capacity.check_policy()
+                if guard is not None:
+                    code = guard()
+                    if code:
+                        _fail(code)
                 yield self._now()
+                if guard is not None:
+                    code = guard()
+                    if code:
+                        _fail(code)
                 self.db.commit()
             except BaseException:
                 self.db.rollback()
@@ -161,10 +169,11 @@ class RepairAckState:
             _fail("repair_unknown_resource")
         return row
 
-    def allocate(self, allocation_entry, *, expected_owner):
+    def allocate(self, allocation_entry, *, expected_owner, _budget=None, _transaction_guard=None):
         """Reserve node capacity and commit the exact offer before returning it."""
-        with self._transaction() as now:
-            budget = wire.RepairBudget(self.policy)
+        with self._transaction(guard=_transaction_guard) as now:
+            budget = _budget if _budget is not None else wire.RepairBudget(self.policy)
+            wire._context(self.policy, budget)
             owner = wire.build_new_wire(expected_owner, self.policy, budget).value
             resource._dual_key(owner, budget)
             parsed, allocation_ref = self._entry(allocation_entry, budget)
@@ -219,11 +228,12 @@ class RepairAckState:
                  reservation_until, intent["windows"]["retain_until"], metadata))
             return offer
 
-    def activate(self, resource_id, entries, *, expected_ack_slot):
+    def activate(self, resource_id, entries, *, expected_ack_slot, _budget=None, _transaction_guard=None):
         """Commit bounded owner originals and the exact active/status originals."""
-        with self._transaction() as now:
+        with self._transaction(guard=_transaction_guard) as now:
             row = self._row(resource_id)
-            budget = wire.RepairBudget(self.policy)
+            budget = _budget if _budget is not None else wire.RepairBudget(self.policy)
+            wire._context(self.policy, budget)
             resource._fields(entries, {"root", "read", "bootstrap", "activation"})
             snapped, refs = {}, {}
             for name in ("root", "read", "bootstrap", "activation"):
@@ -274,11 +284,12 @@ class RepairAckState:
                 canonical_bytes(active["ref"]), source_status["raw"], canonical_bytes(source_status["ref"]), metadata, resource_id))
             return dict(active=active, status=source_status)
 
-    def finalize_unbound(self, resource_id, manifest_entry, packs, *, expected_ack_slot, read_until, retain_until):
+    def finalize_unbound(self, resource_id, manifest_entry, packs, *, expected_ack_slot, read_until, retain_until, _budget=None, _transaction_guard=None):
         """Atomically pin the complete source closure and return its saved custody."""
-        with self._transaction() as now:
+        with self._transaction(guard=_transaction_guard) as now:
             row = self._row(resource_id)
-            budget = wire.RepairBudget(self.policy)
+            budget = _budget if _budget is not None else wire.RepairBudget(self.policy)
+            wire._context(self.policy, budget)
             manifest, manifest_ref = self._entry(manifest_entry, budget)
             wire.u53(read_until); wire.u53(retain_until)
             slot = ack._fields(wire.build_new_wire(expected_ack_slot, self.policy, budget).value,

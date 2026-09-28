@@ -1,18 +1,20 @@
 # Memory Vault: connect, remember, exchange, continue
 
-This candidate adds [source preparation](docs/OPEN_ACK_PROVISIONING.md) and
+This candidate adds [independent remote source preparation](docs/OPEN_ACK_PROVISIONING.md) and
 [independent consent commands](docs/OPEN_ACK_PREPARATION.md), connecting a new
 selected-memory send to [directory receipt recovery](docs/OPEN_ACK_DIRECTORY.md).
 The same quickstart can fetch and challenge a chosen operator's current node
 introduction by origin and expected public key. Python recipients can explicitly
 authorize finite directory maintenance while offline, within the original
-contact and resource permissions.
+contact and resource permissions. The Python Agent can enable contact using an
+already configured node's public key ID. Sender and source retain their own private
+configurations; interrupted setup and binding recover from durable original requests.
 The source publishes only with separate A/B permission; the owner uses its own
 READ/bootstrap grants to discover and retrieve the original signed receipt.
 The publication and recovery commands retain exact original bytes and durable
 work limits. Message movement and automatic repair remain unfinished.
 
-**v0.28.0-alpha.0.9 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+**v0.28.0-alpha.0.10 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
 to bind your existing Vault and signing identity to an independent open transport,
 join through one or two actual signed node introductions, explicitly approve a
 finite delivery, and exchange encrypted chat or selected original memories.
@@ -34,19 +36,11 @@ Endpoints with different bootstrap entries can use the same bounded authorized
 pool. Discovery does not grant relay admission or memory access; the configured
 authority must still be available. The six operations below remain unchanged.
 
-This source targets **v0.28.0-alpha.0.9**. The earlier first-contact release is
-**[v0.28.0-alpha.0.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)**.
-The open-delivery source additions described above are separate from that
-release's review and validation. Use the release evidence for the exact source
-commit to establish the scope and actual download availability of a package.
-Operators can use its full client package; protocol adopters can use the separate
-protocol package. Verify `SHA256SUMS` and preserve existing private backups.
-For a bounded first test, the separate synthetic network package runs one
-temporary endpoint without Docker or plugin installation. It accepts only the
-release-pinned service identity and a publisher-provided one-time code; it does
-not read an existing Vault. This preview ships with service trust unconfigured and
-fails before setup/network activity until an operator publishes reviewed service
-pins; obsolete alpha.3 trial URLs are not reused.
+Use the full client package linked from the release for the runnable runtime, or
+the protocol package for independent implementations. Follow the open-network
+quickstart with your own selected operator's public origin and key ID. Preserve
+existing private state and compare downloads with `SHA256SUMS`. The release record
+identifies the exact published source and available archive bytes.
 
 **Retained from alpha.5:** [network content/v2](docs/NETWORK_CONTENT_V2.md)
 separates communication from long-term memory. Compatibility and upgrade

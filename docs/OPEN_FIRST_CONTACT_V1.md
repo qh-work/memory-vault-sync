@@ -147,7 +147,7 @@ fields:
 
 | Action | Additional fields |
 | --- | --- |
-| `enable` | `node`, `allocation_id`, `max_pending`, `lease_seconds`, `revision`; Python optionally accepts boolean `maintain_directory` |
+| `enable` | `node`, `allocation_id`, `max_pending`, `lease_seconds`, `revision`; Python optionally accepts boolean `maintain_directory`, or replaces `node` with the public `node_key_id` of an already configured seed |
 | `request` | `recipient_key_id`; use the outer `connect.request_id` for retries |
 | `poll` | `lease_id` |
 | `decide` | `request_ref`, `decision`, `max_items`, `max_bytes` |

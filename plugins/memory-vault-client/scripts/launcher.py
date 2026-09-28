@@ -82,6 +82,10 @@ ALLOWED_MODULES = {
     "memory_vault_open_repair_index_prepare_admin.py",
     "memory_vault_open_repair_provision.py",
     "memory_vault_open_repair_provision_admin.py",
+    "memory_vault_open_repair_bind_journal.py",
+    "memory_vault_open_repair_remote_setup.py",
+    "memory_vault_open_repair_remote_provision.py",
+    "memory_vault_open_repair_remote_provision_admin.py",
     "memory_vault_open_provider_merge.py",
 }
 REQUIRED_MODULES = ALLOWED_MODULES

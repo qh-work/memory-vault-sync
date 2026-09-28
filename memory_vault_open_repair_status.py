@@ -118,7 +118,8 @@ class AuthenticatedStatusOriginal:
 
 
 def _status_original(entry, *, expected_root, expected_signing_key, at,
-                     allowed_scopes, required, policy, budget, enforce_required):
+                     allowed_scopes, required, policy, budget, enforce_required,
+                     on_authenticated=None):
     """Verify one whole original and its required retained observations.
 
     allowed_scopes is the complete set whose originals the enclosing typed
@@ -127,6 +128,8 @@ def _status_original(entry, *, expected_root, expected_signing_key, at,
     that the caller's expected scope list itself is an authorization chain.
     """
     wire._context(policy, budget)
+    if on_authenticated is not None and not callable(on_authenticated):
+        wire._fail("repair_invalid_context")
     with budget._lock:
         _fields(entry, {"raw", "ref"})
         if wire._raw_size(entry["raw"], policy) > MAX_STATUS_BYTES:
@@ -175,7 +178,12 @@ def _status_original(entry, *, expected_root, expected_signing_key, at,
             _fail("repair_status_mismatch")
         _number(payload["revision"], 1)
         issued, until = _number(payload["issued_at"]), _number(payload["valid_until"])
-        if not (1 <= until - issued <= MAX_STATUS_SECONDS and issued <= at + 30 and at < until):
+        # An optional durable observer may retain an expired, fully authentic
+        # original before live use is refused. Future or malformed intervals
+        # remain invalid before observation; the original skew rule is intact.
+        expired = at >= until
+        if not (1 <= until - issued <= MAX_STATUS_SECONDS and issued <= at + 30
+                and (not expired or on_authenticated is not None)):
             _fail("repair_status_mismatch")
         entries = payload["entries"]
         if type(entries) is not wire._DraftList or not 1 <= len(entries) <= 16:
@@ -199,6 +207,14 @@ def _status_original(entry, *, expected_root, expected_signing_key, at,
         canonical_hash = budget._hash(canonical)
         if not seen.keys() <= allowed.keys():
             _fail("repair_status_disclosure")
+        authenticated = AuthenticatedStatusOriginal(document.raw, ref, payload, raw_hash, canonical_hash, at)
+        if on_authenticated is not None:
+            # Every byte/ref, closed shape, expected issuer/root, whole typed
+            # disclosure scope and signature has passed. This is evidence,
+            # not an assertion that the original authorizes anything at at.
+            on_authenticated(authenticated)
+        if expired:
+            _fail("repair_status_mismatch")
         if not obligations.keys() <= seen.keys():
             _fail("repair_status_missing")
         for key, obligation in obligations.items():
@@ -209,11 +225,11 @@ def _status_original(entry, *, expected_root, expected_signing_key, at,
                 _fail("repair_status_revision")
             if observation["operation_mask"] & obligation["operation_mask"] != obligation["operation_mask"]:
                 _fail("repair_status_operation")
-        return AuthenticatedStatusOriginal(document.raw, ref, payload, raw_hash, canonical_hash, at)
+        return authenticated
 
 
 def authenticate_status_original(entry, *, expected_root, expected_signing_key, at,
-                                 allowed_scopes, policy, budget):
+                                 allowed_scopes, policy, budget, on_authenticated=None):
     """Authenticate a whole, currently timed observation, including denials.
 
     The caller must derive the finite disclosure scopes from verified parents.
@@ -222,12 +238,14 @@ def authenticate_status_original(entry, *, expected_root, expected_signing_key, 
     """
     return _status_original(entry, expected_root=expected_root,
         expected_signing_key=expected_signing_key, at=at, allowed_scopes=allowed_scopes,
-        required=[], policy=policy, budget=budget, enforce_required=False)
+        required=[], policy=policy, budget=budget, enforce_required=False,
+        on_authenticated=on_authenticated)
 
 
 def verify_status_original(entry, *, expected_root, expected_signing_key, at,
-                           allowed_scopes, required, policy, budget):
+                           allowed_scopes, required, policy, budget, on_authenticated=None):
     """Authenticate one whole original and enforce its historical requirements."""
     return _status_original(entry, expected_root=expected_root,
         expected_signing_key=expected_signing_key, at=at, allowed_scopes=allowed_scopes,
-        required=required, policy=policy, budget=budget, enforce_required=True)
+        required=required, policy=policy, budget=budget, enforce_required=True,
+        on_authenticated=on_authenticated)

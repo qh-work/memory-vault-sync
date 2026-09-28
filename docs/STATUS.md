@@ -1,9 +1,10 @@
 # Memory Vault development status
 
-This alpha.0.9 candidate adds source preparation from an explicitly selected
-outgoing message and separate local A/B directory-consent commands. These
-connect ordinary memory delivery to one-directory ACK publication and
-independent owner discovery followed by an actual original-receipt read. Source
+This alpha.0.10 candidate adds independent remote source preparation using
+only the sender's configuration and a selected public origin/key, plus durable
+setup and bind recovery across lost replies. The Python Agent can enable contact
+using an already configured node's public key ID. These workflows connect
+ordinary memory delivery to independent original-receipt recovery. Source
 requests, used work, authority observations and exact retry responses survive
 restart. Separate A/B publication consents are required; a directory lease alone
 is never a read capability. See the [directory guide](OPEN_ACK_DIRECTORY.md).
@@ -24,7 +25,7 @@ binding, recipient-authorized upload, three-generation source verification,
 independent signed-receipt reads and a private recovery command. The release
 manifest and uploaded assets establish publication separately.
 
-Current source target: **0.28.0-alpha.0.9**, an open encrypted-delivery preview.
+Current source target: **0.28.0-alpha.0.10**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use

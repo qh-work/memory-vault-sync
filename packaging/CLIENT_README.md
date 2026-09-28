@@ -1,9 +1,10 @@
-# Memory Vault v0.28.0-alpha.0.9 — authorized full client
+# Memory Vault v0.28.0-alpha.0.10 — authorized full client
 
-This alpha.0.9 candidate adds source preparation from an explicitly selected
-outgoing message and separate local A/B directory-consent commands. These
-connect ordinary memory delivery to one-directory ACK publication and
-independent owner discovery followed by an actual original-receipt read. Source
+This alpha.0.10 candidate adds independent remote source preparation using
+only the sender's configuration and a selected public origin/key, plus durable
+setup and bind recovery across lost replies. The Python Agent can enable contact
+using an already configured node's public key ID. These workflows connect
+ordinary memory delivery to independent original-receipt recovery. Source
 requests, used work, authority observations and exact retry responses survive
 restart. Separate A/B publication consents are required; a directory lease alone
 is never a read capability. See the [directory guide](docs/OPEN_ACK_DIRECTORY.md).
@@ -28,7 +29,7 @@ enrolls an author as trusted.
 
 [Open-network quickstart](plugins/memory-vault-client/docs/OPEN_NETWORK_QUICKSTART.md).
 
-This full-client package targets **v0.28.0-alpha.0.9 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.10 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

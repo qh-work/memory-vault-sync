@@ -139,12 +139,13 @@ class AckSourceProvisioner:
     def _scope(self, kind, value):
         return status.status_scope(self.plan['slot']['root_key'],kind,value,self.policy,wire.RepairBudget(self.policy))
 
-    def _status(self, authorities, revision):
+    def _status(self, authorities, revision, *, include_slot=True):
         rows=[dict(scope_kind='authority',scope_id=self._scope('authority',dict(authority_kind=kind,
             authority_sha256=entry['ref']['raw_sha256'])),minimum_document_revision=1,status='active',operation_mask=127)
             for kind,entry in authorities]
-        rows.append(dict(scope_kind='ack_slot',scope_id=self._scope('ack_slot',self.plan['slot']),
-            minimum_document_revision=0,status='active',operation_mask=127))
+        if include_slot:
+            rows.append(dict(scope_kind='ack_slot',scope_id=self._scope('ack_slot',self.plan['slot']),
+                minimum_document_revision=0,status='active',operation_mask=127))
         payload=dict(schema_version=status.SCHEMA,kind='authority.status',signing_key=self.owner['signing_key'],
             scope_key=dict(root_key=self.plan['slot']['root_key'],issuer_key_id=self.delivery.identity.key_id),revision=revision,
             issued_at=self.source._now(),valid_until=self.plan['until'],entries=sorted(rows,key=lambda row:(row['scope_kind'],row['scope_id'])))
@@ -281,6 +282,27 @@ class AckSourceProvisioner:
             if len(row[0])+len(raw)>MAX_RECORD_BYTES:_fail('repair_provision_capacity')
             db.execute('UPDATE open_repair_source_provision SET steps=? WHERE request_id=?',(raw,self.plan['request_id']))
 
+    def _build_owner_setup(self, offer):
+        p=self.plan;slot=p['slot'];rootkey=slot['root_key'];token=p['token'];until=p['until']
+        windows={name:until for name in resource._WINDOWS}
+        op=json.loads(offer['raw'])['payload']
+        now=self.source._now()
+        root=self._sign('ack.root_authority',issued_at=now,expires_at=until,ack_slot=slot,authority_id='authority_'+token,
+            owner=rootkey['owner'],receipt_writer=slot['receipt_writer'],original_resource_ref=op['resource'],
+            original_resource_offer_ref=offer['ref'],maintainers=[{name+'_id':value['key_id'] for name,value in p['target'].items()}] if p['profile']=='receipt-index' else [],
+            operation_mask=91 if p['profile']=='receipt-index' else 75,
+            allowed_roles=sorted(ack.ROLES|empty.ROLES|occupied.ROLES|{'bootstrap.grant','ack_owner_service_v1','ack_offer_service_v1'}),
+            max_bindings=1,max_receipts=1,budget=p['caps'],windows=windows,max_delegate_depth=2,
+            max_destinations_per_job=1,max_concurrent_jobs=1,revision=1)
+        read=self._sign('ack.read_grant',issued_at=now,expires_at=until,grant_id='read_'+token,ack_slot=slot,
+            reader=rootkey['owner'],root_authority_ref=root['ref'],operation_mask=2,budget=p['caps'],windows=windows,revision=1)
+        bootstrap=self._bootstrap(root,read,'ack_owner',rootkey['owner'],now)
+        activation=self._sign('resource.activation',issued_at=now,expires_at=min(until,op['reservation_until']),
+            activation_id='activation_'+token,subject=self.owner,target_node_key_id=p['target']['signing_key']['key_id'],
+            target_storage_epoch=p['epoch'],root_key=rootkey,scope=dict(kind='ack_unbound',ack_slot=slot,root_authority_ref=root['ref']),
+            resource_offer_refs=[offer['ref']],authority_refs=[dict(role='ack.read_grant',ref=read['ref']),dict(role='ack.root_authority',ref=root['ref'])])
+        return dict(root=root,read=read,bootstrap=bootstrap,activation=activation)
+
     def _provision_unbound(self):
         p=self.plan;slot=p['slot'];rootkey=slot['root_key'];token=p['token'];until=p['until']
         windows={name:until for name in resource._WINDOWS}
@@ -289,24 +311,7 @@ class AckSourceProvisioner:
             **self._allocation(windows)))
         offer=self._step('offer',lambda:self.source.allocate(allocation,expected_owner=self.owner))
         op=json.loads(offer['raw'])['payload'];resource_id=op['resource']['resource_id']
-        def owner_setup():
-            now=self.source._now()
-            root=self._sign('ack.root_authority',issued_at=now,expires_at=until,ack_slot=slot,authority_id='authority_'+token,
-                owner=rootkey['owner'],receipt_writer=slot['receipt_writer'],original_resource_ref=op['resource'],
-                original_resource_offer_ref=offer['ref'],maintainers=[{name+'_id':value['key_id'] for name,value in p['target'].items()}] if p['profile']=='receipt-index' else [],
-                operation_mask=91 if p['profile']=='receipt-index' else 75,
-                allowed_roles=sorted(ack.ROLES|empty.ROLES|occupied.ROLES|{'bootstrap.grant','ack_owner_service_v1','ack_offer_service_v1'}),
-                max_bindings=1,max_receipts=1,budget=p['caps'],windows=windows,max_delegate_depth=2,
-                max_destinations_per_job=1,max_concurrent_jobs=1,revision=1)
-            read=self._sign('ack.read_grant',issued_at=now,expires_at=until,grant_id='read_'+token,ack_slot=slot,
-                reader=rootkey['owner'],root_authority_ref=root['ref'],operation_mask=2,budget=p['caps'],windows=windows,revision=1)
-            bootstrap=self._bootstrap(root,read,'ack_owner',rootkey['owner'],now)
-            activation=self._sign('resource.activation',issued_at=now,expires_at=min(until,op['reservation_until']),
-                activation_id='activation_'+token,subject=self.owner,target_node_key_id=p['target']['signing_key']['key_id'],
-                target_storage_epoch=p['epoch'],root_key=rootkey,scope=dict(kind='ack_unbound',ack_slot=slot,root_authority_ref=root['ref']),
-                resource_offer_refs=[offer['ref']],authority_refs=[dict(role='ack.read_grant',ref=read['ref']),dict(role='ack.root_authority',ref=root['ref'])])
-            return dict(root=root,read=read,bootstrap=bootstrap,activation=activation)
-        setup=self._step('setup',owner_setup)
+        setup=self._step('setup',lambda:self._build_owner_setup(offer))
         active=self._step('active',lambda:self.source.activate(resource_id,setup,expected_ack_slot=slot))
         base_authorities=[('ack.root_authority',setup['root']),('ack.read_grant',setup['read']),('bootstrap.grant',setup['bootstrap'])]
         owner_status=self._step('owner_status',lambda:self._status(base_authorities,2))
@@ -326,6 +331,10 @@ class AckSourceProvisioner:
             expected_ack_slot=slot,read_until=until,retain_until=until))
         return dict(resource_id=resource_id,setup=setup,active=active,owner_status=owner_status,custody=custody)
 
+    def _binding_statuses(self, base_authorities, write, bootstrap, active):
+        current=self._status([*base_authorities,('ack.write_grant',write),('bootstrap.grant',bootstrap)],3)
+        return [current,active['status']]
+
     def _provision_bound(self, unbound, envelope_reference):
         p=self.plan;slot=p['slot'];rootkey=slot['root_key'];token=p['token'];until=p['until']
         resource_id=unbound['resource_id'];setup=unbound['setup'];active=unbound['active']
@@ -338,8 +347,8 @@ class AckSourceProvisioner:
                 message_id=p['message_id'],envelope_ref=envelope_reference,operation='receipt.put',max_receipts=1,
                 budget=p['caps'],windows=windows,revision=1)
             bootstrap=self._bootstrap(setup['root'],write,'ack_offer',slot['receipt_writer'],now)
-            current=self._status([*base_authorities,('ack.write_grant',write),('bootstrap.grant',bootstrap)],3)
-            return dict(write=write,bootstrap=bootstrap,statuses=[current,active['status']])
+            return dict(write=write,bootstrap=bootstrap,
+                statuses=self._binding_statuses(base_authorities,write,bootstrap,active))
         write=self._step('write_inputs',write_inputs)
         # Invoke the durable bind on every retry: it revalidates actual pins,
         # current floors and capacity instead of treating journal bytes as proof.

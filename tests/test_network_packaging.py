@@ -72,7 +72,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 115)
+        self.assertEqual(len(allowed), 119)
         self.assertTrue(NEW_MODULES | {"memory_vault_open_capacity.py"} | RUNTIME_DATA <= allowed)
         self.assertEqual({name for name in allowed if not name.endswith(".py")}, RUNTIME_DATA)
         for name in allowed:
@@ -174,6 +174,10 @@ class NetworkPackagingTests(unittest.TestCase):
             "memory_vault_open_repair_index_prepare_admin.py",
             "memory_vault_open_repair_provision.py",
             "memory_vault_open_repair_provision_admin.py",
+            "memory_vault_open_repair_bind_journal.py",
+            "memory_vault_open_repair_remote_setup.py",
+            "memory_vault_open_repair_remote_provision.py",
+            "memory_vault_open_repair_remote_provision_admin.py",
             "memory_vault_open_provider_merge.py",
             "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
             "clients/typescript/network/open-repair-wire.ts", "clients/typescript/network/open-repair-history.ts",

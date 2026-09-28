@@ -53,6 +53,8 @@ MODULES = tuple("tests.test_open_" + name for name in (
     "tests.test_open_repair_index_client", "tests.test_open_repair_index_recovery", "tests.test_open_repair_index_admin",
     "tests.test_open_repair_index_prepare", "tests.test_open_repair_index_prepare_admin",
     "tests.test_open_repair_provision", "tests.test_open_repair_onboarding",
+    "tests.test_open_repair_bind_recovery", "tests.test_open_repair_remote_setup", "tests.test_open_repair_remote_provision",
+    "tests.test_open_repair_status_observer",
     "tests.test_open_provider_merge",
     "tests.test_continuation_trial", "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {
@@ -284,6 +286,10 @@ def initialize(reports, mode, seed):
                     "memory_vault_open_repair_index_prepare_admin.py",
                     "memory_vault_open_repair_provision.py",
                     "memory_vault_open_repair_provision_admin.py",
+                    "memory_vault_open_repair_bind_journal.py",
+                    "memory_vault_open_repair_remote_setup.py",
+                    "memory_vault_open_repair_remote_provision.py",
+                    "memory_vault_open_repair_remote_provision_admin.py",
                     "memory_vault_open_provider_merge.py",
                     "memory_vault.py", "memory_vault_update.py", "memory_vault_trust.py", "memory_vault_network_crypto.py",
                     "memory_vault_network_control.py", "memory_vault_nodes.py",
@@ -440,7 +446,9 @@ def main():
     if args.phase=="finalize":return 0 if finalize(reports) else 1
     def interrupted(signum,frame):raise KeyboardInterrupt
     for signum in (signal.SIGINT,signal.SIGTERM,signal.SIGALRM):signal.signal(signum,interrupted)
-    signal.alarm(26*60)
+    # The expanded real-HTTP suite needs more than its former 26-minute cap.
+    # Keep a finite limit and leave time for finalization and bounded reports.
+    signal.alarm((40 if args.mode == "light" else 26)*60)
     reports.status("running")
     try:
         record_runtime(reports,args.mode,args.seed)

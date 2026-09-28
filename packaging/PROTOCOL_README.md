@@ -1,9 +1,10 @@
-# Memory Vault v0.28.0-alpha.0.9 — independent protocol
+# Memory Vault v0.28.0-alpha.0.10 — independent protocol
 
-This alpha.0.9 candidate adds source preparation from an explicitly selected
-outgoing message and separate local A/B directory-consent commands. These
-connect ordinary memory delivery to one-directory ACK publication and
-independent owner discovery followed by an actual original-receipt read. Source
+This alpha.0.10 candidate adds independent remote source preparation using
+only the sender's configuration and a selected public origin/key, plus durable
+setup and bind recovery across lost replies. The Python Agent can enable contact
+using an already configured node's public key ID. These workflows connect
+ordinary memory delivery to independent original-receipt recovery. Source
 requests, used work, authority observations and exact retry responses survive
 restart. Separate A/B publication consents are required; a directory lease alone
 is never a read capability. See the [directory guide](docs/OPEN_ACK_DIRECTORY.md).
@@ -50,7 +51,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.9;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.10;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility

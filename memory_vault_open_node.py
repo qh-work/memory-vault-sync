@@ -167,9 +167,14 @@ class OpenParticipant:
         if repair_policy is not None and type(repair_policy) is not dict:
             raise MemoryError("open_invalid_repair_policy")
         self.repair_policy = dict(repair_policy or {})
-        if (set(self.repair_policy) - {"enabled", "limit_policy", "capacity_policy"}
+        if (set(self.repair_policy) - {"enabled", "limit_policy", "capacity_policy", "remote_setup"}
                 or type(self.repair_policy.get("enabled", False)) is not bool):
             raise MemoryError("open_invalid_repair_policy")
+        if "remote_setup" in self.repair_policy:
+            from memory_vault_open_repair_remote_setup import remote_policy
+            self.repair_policy["remote_setup"] = remote_policy(self.repair_policy["remote_setup"])
+            if self.repair_policy["remote_setup"]["enabled"] and not self.repair_policy.get("enabled", False):
+                raise MemoryError("open_invalid_repair_policy")
         if self.repair_policy.get("limit_policy") is not None:
             from memory_vault_open_repair_bootstrap import _limits
             from memory_vault_open_repair_state import DEFAULT_POLICY
@@ -226,6 +231,13 @@ class OpenParticipant:
                 if self.repair_policy.get("enabled", False):
                     self._repair_service(db).initialize()
                     self._repair_index_service(db).initialize()
+                    if self.repair_policy.get("remote_setup", {}).get("enabled", False):
+                        self._repair_remote_setup_service(db).initialize()
+
+    def _repair_remote_setup_service(self, db):
+        from memory_vault_open_repair_remote_setup import RepairRemoteSetupService
+        return RepairRemoteSetupService(self._repair_service(db).state,
+            policy=self.repair_policy.get("remote_setup"))
 
     def _repair_index_service(self, db):
         from memory_vault_open_repair_index_state import RepairIndexState
@@ -269,6 +281,9 @@ class OpenParticipant:
         from memory_vault_open_repair_state import DEFAULT_POLICY
         meter = repair_wire.RepairBudget(DEFAULT_POLICY)
         parsed = repair_wire.parse_new_wire(raw, DEFAULT_POLICY, meter)
+        if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "ack.source_allocate":
+            with self.state.db() as db:
+                return self._repair_remote_setup_service(db).handle(parsed.raw), False
         if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "ack.index_allocate":
             with self.state.db() as db:
                 return self._repair_index_service(db).handle("ack.index_allocate", parsed.raw).raw, False
@@ -281,6 +296,9 @@ class OpenParticipant:
         if type(payload) is not repair_wire._DraftDict:
             raise MemoryError("open_invalid_repair_request")
         kind = payload.get("kind")
+        if kind == "ack.source_setup":
+            with self.state.db() as db:
+                return self._repair_remote_setup_service(db).handle(parsed.raw), False
         from memory_vault_open_repair_index_service import KINDS as INDEX_KINDS
         if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "ack.bind_request") and kind not in INDEX_KINDS:
             raise MemoryError("open_invalid_repair_request")

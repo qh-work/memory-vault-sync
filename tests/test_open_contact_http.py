@@ -8,10 +8,11 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from memory_vault import MemoryError, canonical_bytes
 from memory_vault_network_crypto import EncryptionIdentity
-from memory_vault_open_control import REQUEST_SCHEMA, coordinate, verify_response as verify_routing_response
+from memory_vault_open_control import REQUEST_SCHEMA, coordinate, issue_node, verify_response as verify_routing_response
 from memory_vault_open_routing import LookupBudget
 from memory_vault_open_contact_client import CONNECT_SCHEMA, OpenContactClient
 from memory_vault_open_node import OpenParticipant
@@ -83,6 +84,50 @@ class ContactHTTPTests(unittest.TestCase):
         self.assertEqual(leases, [])
         original = owner._load('policy', enabled['lease_id'])
         self.assertEqual(enabled['expires_at'], original['lease']['payload']['expires_at'])
+
+    def test_enable_refreshes_only_selected_configured_node_without_introduction_file(self):
+        host = self.host(1)
+        host.stop(0)
+        original = host.nodes[0]['payload']
+        now = int(time.time())
+        stale = issue_node(host.identities[0], base_url=original['base_url'],
+            storage_epoch=original['storage_epoch'], roles=original['roles'],
+            revision=1, issued_at=now - 601, expires_at=now - 1)
+        config = json.loads(host.configs[0].read_bytes())
+        config['node'] = issue_node(host.identities[0], base_url=original['base_url'],
+            storage_epoch=original['storage_epoch'], roles=original['roles'],
+            revision=2, issued_at=now, expires_at=now + 600)
+        atomic_write(host.configs[0], canonical_bytes(config), replace=True)
+        host.start(0)
+        owner = self.client('selected-owner', [stale])
+        invitation = dict(schema_version=CONNECT_SCHEMA, action='enable',
+            node_key_id=host.identities[0].key_id, allocation_id='selected_knock',
+            max_pending=2, lease_seconds=600, revision=1)
+        enabled = asyncio.run(owner.dispatch(invitation))
+        self.assertEqual(enabled['state'], 'active')
+        saved = owner._load('policy', enabled['lease_id'])
+        self.assertGreater(saved['node']['payload']['revision'], stale['payload']['revision'])
+        self.assertEqual(saved['node']['payload']['storage_epoch'], original['storage_epoch'])
+        refreshed = owner.participant.seeds[0]['payload']
+        for field in ('signing_key', 'storage_epoch', 'base_url', 'roles'):
+            self.assertEqual(refreshed[field], stale['payload'][field])
+        repeated = asyncio.run(owner.dispatch(invitation))
+        self.assertEqual(repeated['lease_id'], enabled['lease_id'])
+        with patch.object(owner.participant.transport, 'request_node',
+                side_effect=AssertionError('unconfigured endpoint accessed')):
+            with self.assertRaisesRegex(MemoryError, 'contact_node_not_configured'):
+                asyncio.run(owner.dispatch(dict(invitation, node_key_id=owner.identity.key_id)))
+        host.stop(0)
+        config['node'] = issue_node(host.identities[0], base_url=original['base_url'],
+            storage_epoch='synthetic_replaced_epoch', roles=original['roles'],
+            revision=3, issued_at=now, expires_at=now + 600)
+        # Serve a signed replacement directly; no replacement is adopted by B.
+        from memory_vault_open_transport import TransportReply
+        with patch.object(owner.participant.transport, 'request_node',
+                return_value=TransportReply(config['node'], '127.0.0.1', len(canonical_bytes(config['node'])))):
+            with self.assertRaisesRegex(MemoryError, 'contact_selected_node_mismatch'):
+                asyncio.run(owner.dispatch(invitation))
+        self.assertEqual(owner._load('policy', enabled['lease_id']), saved)
 
     def test_enable_reports_short_actual_directory_lease_expiry(self):
         host = self.host(1)

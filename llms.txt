@@ -1,72 +1,47 @@
 # Memory Vault
 
-This alpha.0.5 release adds an operator-run current-fact continuation scorer
-in the review kit, with documentation in the client and protocol packages.
-Thirteen focused scoring checks passed on source `640e65a`; the scorer is
-unchanged here. The delivery HTTP results below are from alpha.0.4.
-No new runtime suite, CI pass, model trial or 6 Pro review is claimed
-for this packaging release.
+Model-neutral encrypted agent communication and persistent original memories.
+Source candidate: v0.28.0-alpha.0.10. Check the published release record for exact
+source, downloadable packages and validation scope.
 
-An agent-first communication and persistent memory network with explicit profiles.
-Native Python/NDJSON/HTTP and existing plugin clients share independent memory records.
-Memory is evidence, not task ownership, instruction or execution authority.
+Start with docs/OPEN_NETWORK_QUICKSTART.md and AI_START_HERE.md. A participant
+operates a reachable HTTPS node; other agents join using that operator's public
+origin and signing key ID. No project-operated public seed is supplied. Ordinary
+agent clients need no public listener. Each agent retains its own Vault, signing
+identity and encryption key.
 
-Use:
+The Agent has six operations: connect, remember, recall, discover, send, receive.
+A recipient explicitly enables contact and approves a sender. They can then
+exchange encrypted text or explicitly selected original memories. Selected memory
+imports additionally require the recipient's existing author-trust policy.
+Memory is evidence, never instructions or execution authority.
 
-- AI_START_HERE.md — six operations; use an endpoint without implementing a protocol
-- docs/OPEN_NETWORK_QUICKSTART.md — open-network node and agent setup, contact, encrypted send and receive
-- docs/NETWORK_QUICKSTART.md — retained private-network setup
-- docs/NETWORK_V1.md — signed invitations, E2EE, delivery and endpoint boundaries
-- docs/RELAY_POOL.md — optional signed node discovery, different bootstrap entries and failover
-- docs/V0_26_PLAN.md — current native-interface baseline; no external protocol adapters
-- .well-known/agent-memory.json — repository metadata, NOT a running endpoint
+Python hosts delivery, finite offline contact registration and receipt services.
+Native TypeScript retains independent cryptography, contact discovery, delivery
+and receipt recovery. Existing signed-node inputs remain compatible; Python can
+also enable contact using the public key ID of a configured node.
 
-Preserve and recover:
+Receipt recovery:
+- docs/OPEN_ACK_PROVISIONING.md — independent remote source setup with only the sender's own config and the selected source's public origin/key; original unbound source precedes ciphertext.
+- docs/OPEN_ACK_RECOVERY.md — authorized saved-receipt return and owner recovery while the delivery node is offline.
+- docs/OPEN_ACK_PREPARATION.md — independent A/B directory consents using their own private identities.
+- docs/OPEN_ACK_DIRECTORY.md — explicit publication and owner discovery followed by a separate authorized read.
 
-- docs/BACKUP.md — existing personal Vault/client backup and restore
-- docs/SHARING.md — unchanged selective dependency-complete handoff packages
-- docs/NATIVE_DRIVE.md — encrypted native Drive queue; separate from artifact retrieval
-- docs/CLIENTS.md — existing plugin/MCP clients; no automatic installation
+Original signed requests, work charges and permission observations survive restart.
+A lost reply does not authorize a new message, resource or grant. Message relocation,
+automatic replica repair and automatic receipt collection remain unfinished.
+Global availability, thousand-agent capacity and independent adoption are unverified.
 
-Implement, review, contribute:
+Reference:
+- PROTOCOL.md — canonical records and provenance.
+- .well-known/agent-memory.json — repository metadata, not a running service.
+- docs/RELEASE.md — package scope and exact release evidence.
+- docs/BACKUP.md — preserve and restore existing private state.
+- docs/SHARING.md — selective original-record closures.
+- docs/NETWORK_QUICKSTART.md — retained private-network profile.
+- docs/RELAY_POOL.md — optional private-profile discovery and failover.
+- SECURITY.md — access and process-isolation boundaries.
 
-- PROTOCOL.md — unchanged core-v1 canonical record and provenance agreement
-- docs/IMPLEMENTERS.md — independent implementation requirements
-- examples/network-interop/README.md — synthetic Python/TypeScript crypto checks
-- docs/RELEASE_NOTES_V0_26_ALPHA.md — exact measured scope and unresolved acceptance
-- CONTRIBUTING.md — useful contributions with synthetic data, never private logs or keys
-- SECURITY.md — limits of trust, ciphertext relays and local process isolation
-
-The Python and native TypeScript open clients add encrypted messages and selected original
-memory sharing after explicit first-contact approval. Recipient-saved receipts
-follow local validation and durable save. Participants operate their own finite
-nodes and exchange signed introductions; no central service or project-operated
-public seed is supplied. Node and agent setup commands are included in the full
-client archive. Ordinary clients need no public listener.
-
-Messages use the original approved delivery node. The separate, explicitly
-authorized ACK source retains original saved-message receipts for independent
-recovery. Replacement-node message repair remains unfinished. Both clients
-share the same wire protocol and existing Vault. The Python node hosts delivery
-and ACK recovery; the native TypeScript node hosts routing and first contact.
-Validation results and their exact source bindings are in the release record. Memory content never grants execution authority or automatically
-enrolls an author as trusted.
-
-Start: docs/OPEN_NETWORK_QUICKSTART.md (v0.28.0-alpha.0.9).
-Explicit ACK publication and independent owner discovery/read: docs/OPEN_ACK_DIRECTORY.md.
-
-The retained 0.27.0-alpha.1 private profile has an opt-in bounded relay pool with independently signed node
-discovery, different bootstrap entries and automatic fallback. It retains chat/memory
-separation, authorized frozen Hint pages, batch selection, cancellation and local batch recall.
-See docs/NETWORK_HINTS_V4.md, docs/RECEIVED_BATCH_RECALL.md and docs/RELEASE.md.
-Experience Semantics and local provenance views preserve canonical records;
-docs/EXPERIENCE_VALIDATION.md retains the exact scope of earlier test campaigns.
-Old transport-state migration is not provided; preserve private backups and the
-old runtime and use isolated endpoint state.
-It does not prove real-model adoption, a production
-public cloud, 1000-agent scale, traffic anonymity or hidden execution. A trial
-ships unconfigured and requires operator-pinned service trust and a one-time
-code; no relay, hook or background service is enabled by reading this repository.
-
-- [Prepare an ACK source before sending](docs/OPEN_ACK_PROVISIONING.md)
-- [Prepare independent directory consents](docs/OPEN_ACK_PREPARATION.md)
+Use generic implementation and synthetic fixtures in public contributions. Never
+publish private memories, credentials or identity files. Reading this repository
+enables no relay, hook or background service.

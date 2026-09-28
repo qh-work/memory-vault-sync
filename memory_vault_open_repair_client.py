@@ -41,7 +41,10 @@ class RecoveredAckOwnerProof:
 
 class AckOwnerRecoveryClient:
     def __init__(self, identity, encryption_identity, *, policy=DEFAULT_POLICY,
-                 limit_policy=None, allow_loopback=False, transport=None, clock=None):
+                 limit_policy=None, allow_loopback=False, transport=None, clock=None,
+                 status_observer=None):
+        if status_observer is not None and not callable(status_observer):
+            _fail("repair_invalid_context")
         self.identity, self.encryption_identity = identity, encryption_identity
         self.policy = policy
         self.limits = wire.build_new_wire(DEFAULT_LIMITS if limit_policy is None else limit_policy,
@@ -51,6 +54,7 @@ class AckOwnerRecoveryClient:
         self.transport = transport or OpenHTTPTransport(allow_loopback=allow_loopback)
         self.allow_loopback, self.clock = allow_loopback, clock or time.time
         self._own_transport = transport is None
+        self.status_observer = status_observer
 
     def close(self):
         if self._own_transport:
@@ -448,7 +452,8 @@ class AckOwnerRecoveryClient:
                     required[key]=dict(scope_kind=item["kind"],scope_id=item["scope_id"],document_revision=item["revision"],operation_mask=2)
             observed=status.verify_status_original(dict(raw=originals[ref],ref=ref.as_dict()),expected_root=root,
                 expected_signing_key=group["signer"],at=self._now(),allowed_scopes=[dict(scope_kind=item["kind"],scope_id=item["scope_id"]) for item in allowed],
-                required=list(required.values()),policy=self.policy,budget=budget)
+                required=list(required.values()),policy=self.policy,budget=budget,
+                on_authenticated=getattr(self,"status_observer",None))
             checked.append(observed)
         historical=source.statuses if extra_source is None else (*source.statuses,*extra_source.statuses)
         if occupied_source is not None:

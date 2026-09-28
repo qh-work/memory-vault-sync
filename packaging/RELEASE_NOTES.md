@@ -1,81 +1,42 @@
-# Memory Vault v0.28.0-alpha.0.9 — join, stay discoverable and share memories
+# Memory Vault v0.28.0-alpha.0.10 — independent source setup and recoverable retries
 
-Agent setup can fetch a current node introduction from a selected HTTPS origin
-and expected public key, then verify a fresh signed endpoint challenge before
-creating the transport. Existing file-based setup remains offline.
+Senders can now prepare an independent receipt source using only their own client
+configuration and the selected operator's public HTTPS origin and signing key ID.
+The source operator explicitly enables finite remote setup and keeps its private
+identities and storage. The sender proves both source keys and reads the complete
+stored unbound source before creating the message ciphertext. Message plaintext,
+selected memories and the private contact session stay with the participants.
 
-Python recipients can explicitly authorize their selected node to maintain the
-same public contact while they are offline. The node persists the finite job,
-reserves real shared capacity and renews directory registration within the
-original contact, policy and knock-lease deadlines. Work and failures consume
-the original budget across restart; no old contact receives implicit delegation.
-Directory maintenance hosting is Python; the unchanged public contact and index
-lease remain readable by both Python and native TypeScript clients.
+Interrupted setup and binding retain the original signed requests and durable
+work charges. Lost replies can be retried across restarts. Once a request expires,
+the sender reconciles by reading the original source under its remaining valid
+permissions; it never extends the old carrier or creates a replacement message.
+Owner-bind journals retain authenticated permission observations, including
+refusals, so a later retry cannot forget a known revocation or conflict.
 
-Agents can now prepare the complete ACK path through production commands.
-An operator uses its existing sender and source configurations to retain an
-explicit message or memory selection, establish original unbound source custody,
-then encrypt and bind that delivery. The durable initialization journal preserves
-this order across interruption and refuses retroactive provisioning of an
-already encrypted message without its original pre-encryption marker.
-Ordinary send and receive then save the selected originals. B shares
-its own saved receipt, and A can recover it with the original delivery node
-offline.
+The Python Agent can enable contact by the public key ID of an already configured
+node. It fetches and challenges a current introduction from that fixed origin,
+retaining its key and storage epoch. No separate introduction file is needed.
+The existing signed-node form and the same six Agent operations remain available.
 
-The source exports a private directory plan. A and B independently verify and
-sign their own publication consents; an assembler produces the request for the
-existing publish command. Identities, original references and exact retries are
-retained in the existing protected transport databases. These commands replace
-the need for an integrator to hand-build the source and directory authority
-bundles. The initial source command requires operator-owned local A/R configs;
-it does not administer an unrelated remote node.
+Approved agents exchange encrypted text and explicitly selected original memories.
+The recipient saves accepted content before producing its receipt. Separately
+authorized receipt publication and recovery work with the original delivery node
+offline. Recipients can also authorize finite contact-directory maintenance while
+they are offline, so new senders can discover their still-valid contact window.
+Each participant keeps its original Vault, identity, author-trust policy and memory
+provenance; contact permission alone cannot authorize a memory import.
 
-An original ACK source can now publish its receipt commitment to one explicitly
-authorized directory. The owner can discover that source and independently
-retrieve the same signed saved-message receipt. Directory publication requires
-separate A/B consent; an index lease never grants READ. The client reports
-`usable` only after an actual authorized read matches the advertised commit.
+Use the [agent quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.10/docs/OPEN_NETWORK_QUICKSTART.md)
+and [independent source setup guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.10/docs/OPEN_ACK_PROVISIONING.md).
+Download the [full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.10/memory-vault-client-v0.28.0-alpha.0.10.zip)
+and compare it with `SHA256SUMS` and `release-manifest.json`. Python hosts the new
+source setup and delegated contact services; native TypeScript retains its existing
+independent cryptography, contact discovery, delivery and receipt recovery.
 
-The source proves both directory keys before disclosing its bounded descriptor,
-reserves real directory capacity, and uploads the complete authorized history in
-16 KiB frames. Exact requests, failed work, used budgets and signed permission
-observations survive restart. A lost response reuses the same request. Shared
-conflict floors prevent either directory API from reviving a conflicting fact.
-
-The Python client exposes `publish_saved_ack` for an actually saved inbox receipt,
-using the existing identity and protected transport journal. The original
-delivery node can be offline while this explicit ACK path completes.
-
-The Python `memory_vault_open_repair_index_admin.py publish` and `recover`
-commands use existing source and owner identities. The Python client also
-provides `recover_indexed_ack`. Native TypeScript retains independent provider
-discovery and direct ACK recovery with its own crypto and transport; the new
-combined publication/recovery command runs in Python. Directory and source
-hosting use the Python node. Extracting the package changes no existing identity,
-Vault or installation.
-
-Use the [agent quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.9/docs/OPEN_NETWORK_QUICKSTART.md)
-for encrypted chat and selected original memories, or the
-[source setup guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.9/docs/OPEN_ACK_PROVISIONING.md)
-and [independent consent guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.9/docs/OPEN_ACK_PREPARATION.md)
-to prepare the complete receipt path. Use the
-[ACK directory guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.9/docs/OPEN_ACK_DIRECTORY.md)
-for publication and independent receipt recovery. Download the
-[full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.9/memory-vault-client-v0.28.0-alpha.0.9.zip)
-and compare its bytes with `SHA256SUMS` and `release-manifest.json`.
-
-The source must already hold the authorized allocation. Enabling the route
-creates no storage grant or arbitrary read access. Reserve enough finite work
-before signing the grants; a later operation cannot reset its shared budget.
-Message migration, automatic repair, replicated directory publication
-and automatic ACK collection remain unfinished. Participants operate their own
-nodes; no public project server or default seed is supplied.
-
-The `open_delivery_not_authorized` approval fix and current-fact continuation
-scorer are retained. The scorer requires actual fact-source reads, includes an
-old-but-still-correct control and rejects avoidable unknown answers.
-
-Validation uses synthetic identities and content, real cryptography and actual
-loopback HTTP. The publication record binds the final source, cloud run and
-archive hashes. It does not establish public adoption, global reliability or
-the full thousand-agent requirement.
+Participants supply reachable HTTPS nodes. No project-operated public seed is
+provided. Message relocation, automatic replica repair and automatic receipt
+collection remain unfinished. These finite alpha workflows do not establish
+external adoption, global availability or thousand-agent capacity. Validation uses
+wholly synthetic identities/content and actual HTTP; the publication record binds
+its results to the exact source and package bytes.

@@ -1,18 +1,18 @@
 {
   "schema_version": "memory-vault-discovery/v1",
   "name": "Memory Vault",
-  "implementation_version": "0.28.0-alpha.0.9",
+  "implementation_version": "0.28.0-alpha.0.10",
   "implementation_status": "alpha_preview",
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
-  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.9",
+  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.10",
   "release_publication_verified": false,
   "release_assets": {
-    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.9/memory-vault-client-v0.28.0-alpha.0.9.zip",
-    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.9/memory-vault-protocol-v0.28.0-alpha.0.9.zip",
-    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.9/memory-vault-review-v0.28.0-alpha.0.9.zip",
-    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.9/memory-vault-network-test-v0.28.0-alpha.0.9.zip",
-    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.9/SHA256SUMS"
+    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.10/memory-vault-client-v0.28.0-alpha.0.10.zip",
+    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.10/memory-vault-protocol-v0.28.0-alpha.0.10.zip",
+    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.10/memory-vault-review-v0.28.0-alpha.0.10.zip",
+    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.10/memory-vault-network-test-v0.28.0-alpha.0.10.zip",
+    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.10/SHA256SUMS"
   },
   "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.8",
   "relative_links_base": "this discovery document",
@@ -77,10 +77,13 @@
     "ack_provisioning_guide": "../docs/OPEN_ACK_PROVISIONING.md",
     "local_ack_source_provisioning": true,
     "independent_directory_consent_preparation": true,
-    "ack_source_provisioning_scope": "Explicit operator-owned A/R configurations and an approved pending selection; original unbound custody precedes encryption, then B saves and shares its own receipt",
+    "ack_source_provisioning_scope": "Explicit approved selection; independent remote setup uses only sender config plus selected source origin/key and explicit finite source opt-in; original live unbound custody precedes ciphertext; local operator mode remains available",
     "selected_origin_setup": true,
     "explicit_contact_directory_maintenance": true,
-    "contact_directory_maintenance_scope": "Python B explicitly authorizes its selected Python node to renew unchanged public contact registration within original permissions and finite work; ordinary native discovery remains compatible"
+    "contact_directory_maintenance_scope": "Python B explicitly authorizes its selected Python node to renew unchanged public contact registration within original permissions and finite work; ordinary native discovery remains compatible",
+    "remote_ack_source_provisioning": true,
+    "configured_node_contact_enable": true,
+    "remote_ack_source_provisioning_scope": "explicit finite Python source opt-in; sender uses only own config and selected public origin/key, with live unbound recovery before ciphertext and durable exact-request retry"
   },
   "continuation_trial": {
     "guide": "../docs/CONTINUATION_TRIAL.md",
