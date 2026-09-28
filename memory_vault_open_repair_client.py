@@ -689,6 +689,44 @@ class MailboxSetupBuilder:
             slot_key=self.plan["slot_key"],entries={name:encode_entry(value,self.policy,budget) for name,value in entries.items()}),
             at,expires_at,budget)["raw"]
 
+    def readiness_packet(self, owner_status, *, at, expires_at, read_until, retain_until):
+        from memory_vault_open_repair_bind import encode_entry
+        budget=wire.RepairBudget(self.policy)
+        if not at<wire.u53(read_until)<=wire.u53(retain_until):
+            _fail("repair_resource_expired")
+        return self._sign("mailbox.source_ready",dict(owner=self.owner,root_key=self.plan["root_key"],
+            slot_key=self.plan["slot_key"],entries=dict(owner_status=encode_entry(owner_status,self.policy,budget)),
+            read_until=read_until,retain_until=retain_until),at,expires_at,budget)["raw"]
+
+    def initial_owner_status(self, slot_entries, root_entries, *, at, valid_until, revision=1):
+        """Sign current scopes of the caller's exact original setup documents."""
+        from memory_vault_open_provider import issue_status
+        import memory_vault_open_repair_resource as resource
+        budget=wire.RepairBudget(self.policy);root=self.plan["root_key"];scopes=[]
+        def add(entry, scope_kind):
+            raw,ref=ack._entry(entry)
+            parsed=wire.parse_new_wire(raw,self.policy,budget)
+            if len(raw)!=ref.size or budget._hash(raw)!=ref.raw_sha256:
+                _fail("repair_ref_mismatch")
+            signed=resource._fields(parsed.value,{"payload","proof"});p=signed["payload"]
+            original._verify_control_signature(p,signed["proof"],self.owner["signing_key"],budget)
+            document_root=p["slot_key"]["root_key"] if scope_kind=="mailbox_slot" else p["root_key"]
+            if document_root!=root or not p["issued_at"]<=at<valid_until<=p["expires_at"]:
+                _fail("repair_mailbox_root_mismatch")
+            subject=(dict(authority_kind=p["kind"],authority_sha256=ref.raw_sha256) if scope_kind=="authority"
+                else dict(root_key=root) if scope_kind=="catalog" else p["slot_key"])
+            scopes.append(dict(scope_kind=scope_kind,scope_id=status.status_scope(root,scope_kind,subject,self.policy,budget),
+                minimum_document_revision=p["revision"],status="active",operation_mask=127))
+        for name in ("root","read","bootstrap"):
+            add(root_entries[name],"authority")
+        add(root_entries["catalog"],"catalog");add(slot_entries["slot"],"mailbox_slot")
+        for name in ("read","maintenance","bootstrap"):
+            add(slot_entries[name],"authority")
+        scopes.sort(key=lambda item:(item["scope_kind"],item["scope_id"]))
+        signed=issue_status(self.identity,root=root,revision=revision,entries=scopes,issued_at=at,valid_until=valid_until)
+        raw=wire.build_new_wire(signed,self.policy,budget).raw;digest=budget._hash(raw)
+        return dict(raw=raw,ref=dict(namespace="meta",key=digest,raw_sha256=digest,size=len(raw)))
+
     def _offers(self, allocations, offers, at, budget):
         import memory_vault_open_repair_resource as resource
         import memory_vault_open_repair_history as history

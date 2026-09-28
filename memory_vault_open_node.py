@@ -312,7 +312,7 @@ class OpenParticipant:
         if type(payload) is not repair_wire._DraftDict:
             raise MemoryError("open_invalid_repair_request")
         kind = payload.get("kind")
-        if kind in ("mailbox.source_slot", "mailbox.source_root"):
+        if kind in ("mailbox.source_slot", "mailbox.source_root", "mailbox.source_ready"):
             from memory_vault_open_repair_remote_setup import MailboxRemoteSetupService
             with self.state.db() as db:
                 service = MailboxRemoteSetupService(self._repair_service(db).state,

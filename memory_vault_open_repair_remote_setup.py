@@ -536,8 +536,10 @@ class MailboxRemoteSetupService:
         s=self.state;budget=wire.RepairBudget(s.policy)
         parsed=wire.parse_new_wire(raw,s.policy,budget)
         signed=resource._fields(parsed.value,{'payload','proof'})
-        p=resource._fields(signed['payload'],resource.COMMON|{'issued_at','expires_at','owner','root_key','slot_key','entries'})
-        if p['schema_version']!=SCHEMA or p['kind'] not in ('mailbox.source_slot','mailbox.source_root'):
+        ready=signed['payload'].get('kind')=='mailbox.source_ready'
+        extra={'read_until','retain_until'} if ready else set()
+        p=resource._fields(signed['payload'],resource.COMMON|{'issued_at','expires_at','owner','root_key','slot_key','entries'}|extra)
+        if p['schema_version']!=SCHEMA or p['kind'] not in ('mailbox.source_slot','mailbox.source_root','mailbox.source_ready'):
             wire._fail('repair_remote_setup_mismatch')
         owner=resource._dual_key(p['owner'],budget)
         history._slot(p['slot_key'],p['root_key']);resource._lifetime(p)
@@ -546,9 +548,12 @@ class MailboxRemoteSetupService:
         original._verify_control_signature(p,signed['proof'],p['owner']['signing_key'],budget)
         root_digest=budget._hash(wire._canonical(p['root_key'],budget));digest=budget._hash(raw)
         owner_id=owner['signing_key_id'];kind=p['kind'];allowance=s.policy.max_signature_checks
-        entries={name:decode_entry(value,s.policy,budget) for name,value in resource._fields(p['entries'],
-            {'maintenance','read','slot','bootstrap','activation'} if kind=='mailbox.source_slot' else
-            {'root','read','catalog','bootstrap','activation'}).items()}
+        if ready:
+            if not p['issued_at']<wire.u53(p['read_until'])<=wire.u53(p['retain_until']):
+                wire._fail('repair_resource_expired')
+        fields=({'owner_status'} if ready else {'maintenance','read','slot','bootstrap','activation'} if kind=='mailbox.source_slot'
+            else {'root','read','catalog','bootstrap','activation'})
+        entries={name:decode_entry(value,s.policy,budget) for name,value in resource._fields(p['entries'],fields).items()}
         root=MailboxRootActivation(self.resources);root.initialize()
         with s._transaction() as now:
             allocation=s._one('SELECT * FROM open_repair_mailbox_remote_allocations WHERE owner=? AND root_digest=?',(owner_id,root_digest))
@@ -580,8 +585,22 @@ class MailboxRemoteSetupService:
                     return 'repair_resource_expired'
             if kind=='mailbox.source_slot':
                 result=root.slots.activate(entries,expected_slot=p['slot_key'],_budget=budget,_transaction_guard=guard)
-            else:
+            elif kind=='mailbox.source_root':
                 result={'active':root.activate(entries,expected_root=p['root_key'],slot_keys=[p['slot_key']],_budget=budget,_transaction_guard=guard)}
+            else:
+                from memory_vault_open_repair_mailbox_source import MailboxRootSource
+                source=MailboxRootSource(root);source.initialize()
+                with s._transaction(guard=guard):
+                    held=s._one('SELECT resource_id FROM open_repair_mailbox_roots WHERE root_digest=? AND owner=?',(root_digest,owner_id))
+                    if held is None:
+                        wire._fail('repair_unknown_resource')
+                    rid=held['resource_id']
+                root.observe_owner_status(rid,entries['owner_status'],_budget=budget)
+                observation='setup_'+digest
+                source.observe_resources(rid,observation,valid_until=p['read_until'],_budget=budget,_transaction_guard=guard)
+                source.prepare_history(rid,observation,_budget=budget,_transaction_guard=guard)
+                result={'custody':source.finalize_root(rid,read_until=p['read_until'],retain_until=p['retain_until'],
+                    _budget=budget,_transaction_guard=guard)}
             response=wire.build_new_wire(dict(schema_version=SCHEMA,kind=kind+'_active',request_sha256=digest,
                 originals={name:encode_entry(value,s.policy,budget) for name,value in result.items()}),s.policy,budget).raw
             if len(response)>MAX_BYTES:
