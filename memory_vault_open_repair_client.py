@@ -1206,3 +1206,99 @@ class MailboxMessageDraftStore:
         return dict(envelope=envelope_raw,originals=value,
             attempt=decode_entry(value['attempt'],self.policy,wire.RepairBudget(self.policy)),
             disclosure=decode_entry(value['disclosure'],self.policy,wire.RepairBudget(self.policy)))
+
+
+def read_mailbox_index(head_entry, checkpoint_entry, *, expected_slot, expected_signing_key,
+                       encryption_identity, read_original, at, max_messages,
+                       policy=DEFAULT_POLICY, budget=None):
+    """Read a complete encrypted prefix through a caller-authorized exact-ref reader.
+
+    This verifies enumeration integrity, not current read authority or member
+    provenance. The remote possession service must authorize read_original;
+    each returned member still needs its original admission/history validation.
+    No message IDs, sender state, ambient credentials or local database are used.
+    """
+    import memory_vault_open_repair_resource as resource
+    import memory_vault_open_repair_mailbox_range as ranges
+    from memory_vault_network_crypto import decrypt_bytes, NetworkCryptoError
+    budget=budget or wire.RepairBudget(policy);wire._context(policy,budget)
+    slot=wire.build_new_wire(expected_slot,policy,budget).value
+    key=wire.build_new_wire(expected_signing_key,policy,budget).value
+    wire.u53(at);wire.u53(max_messages,1)
+    if max_messages>ranges.CAPACITY or not callable(read_original):_fail('repair_invalid_context')
+    def checked_raw(raw,reference):
+        ref=wire.raw_ref(reference)
+        if ref.namespace!='meta' or not isinstance(raw,bytes) or len(raw)!=ref.size or budget._hash(raw)!=ref.raw_sha256:
+            _fail('repair_ref_mismatch')
+        return wire.parse_new_wire(raw,policy,budget).value
+    def event(entry,kind,fields):
+        resource._fields(entry,{'raw','ref'})
+        signed=resource._fields(checked_raw(entry['raw'],entry['ref']),{'payload','proof'})
+        p=resource._fields(signed['payload'],resource.COMMON|fields|{'slot_key','committed_at','retain_until'})
+        if p['schema_version']!=resource.SCHEMA or p['kind']!=kind or p['slot_key']!=slot:
+            _fail('repair_mailbox_range_mismatch')
+        original._verify_control_signature(p,signed['proof'],key,budget)
+        if not wire.u53(p['committed_at'])<=at<wire.u53(p['retain_until']):_fail('repair_resource_expired')
+        return p
+    head=event(head_entry,'mailbox.feed_head',{'checkpoint_ref','count','range_root_ref','catalog_generation'})
+    cp=event(checkpoint_entry,'mailbox.checkpoint',{'slot_binding','count','leaf_root','frontier'})
+    count=wire.u53(head['count']);wire.u53(head['catalog_generation'])
+    if (count>max_messages or count!=cp['count'] or head['checkpoint_ref']!=checkpoint_entry['ref']
+            or head['committed_at']!=cp['committed_at'] or head['retain_until']!=cp['retain_until']):
+        _fail('repair_mailbox_range_mismatch')
+    state={name:cp[name] for name in ('slot_binding','count','leaf_root','frontier')}
+    ranges._state(state,slot,policy,budget)
+    accumulated=ranges.empty_state(slot,policy=policy,budget=budget)
+    entries=[];seen=set()
+    def load(reference):
+        ref=wire.raw_ref(reference)
+        if ref.key in seen:_fail('repair_mailbox_range_mismatch')
+        seen.add(ref.key)
+        return checked_raw(read_original(ref.as_dict()),ref.as_dict())
+    def walk(reference,level,start,end):
+        nonlocal accumulated
+        value=load(reference)
+        fields={'schema_version','kind','slot_key','start','end'}
+        fields|={'level','children'} if level>=0 else {'sealed_page_ref','entries'}
+        resource._fields(value,fields)
+        if (value['schema_version']!=resource.SCHEMA or value['slot_key']!=slot
+                or wire.u53(value['start'])!=start or wire.u53(value['end'])!=end):_fail('repair_mailbox_range_mismatch')
+        if level>=0:
+            if (value['kind']!='range.index' or wire.u53(value['level'])!=level
+                    or type(value['children']) is not wire._DraftList or not 1<=len(value['children'])<=16):
+                _fail('repair_mailbox_range_mismatch')
+            cursor=start;span=16**(level+1)
+            for child in value['children']:
+                resource._fields(child,{'start','end','ref'})
+                stop=min(cursor+span,end)
+                if wire.u53(child['start'])!=cursor or wire.u53(child['end'])!=stop or stop<=cursor:_fail('repair_mailbox_range_mismatch')
+                walk(child['ref'],level-1,cursor,stop);cursor=stop
+            if cursor!=end:_fail('repair_mailbox_range_mismatch')
+            return
+        if (value['kind']!='range.repair_page' or type(value['entries']) is not wire._DraftList
+                or len(value['entries'])!=end-start or not 1<=end-start<=16):
+            _fail('repair_mailbox_range_mismatch')
+        for sequence,item in enumerate(value['entries'],start):
+            resource._fields(item,{'sequence','admission_link_ref','sealed_core_ref'})
+            if wire.u53(item['sequence'])!=sequence:_fail('repair_mailbox_range_mismatch')
+            for name in ('admission_link_ref','sealed_core_ref'):
+                if wire.raw_ref(item[name]).namespace!='meta':_fail('repair_ref_mismatch')
+        private=wire.build_new_wire(dict(schema_version=resource.SCHEMA,kind='range.private_page',slot_key=slot,
+            start=start,end=end,entries=value['entries']),policy,budget).raw
+        context=dict(schema_version=resource.SCHEMA,kind='range.sealed_page',slot_key=slot,start=start,end=end,
+            plaintext_sha256=budget._hash(private),plaintext_size=len(private))
+        sealed=load(value['sealed_page_ref'])
+        if len(sealed.get('recipients',()))!=1:_fail('repair_mailbox_range_mismatch')
+        try:plaintext=decrypt_bytes(sealed,encryption_identity,context=context)
+        except NetworkCryptoError:_fail('repair_mailbox_range_mismatch')
+        if plaintext!=private:_fail('repair_mailbox_range_mismatch')
+        for item in value['entries']:
+            accumulated=ranges.append(accumulated,item['sealed_core_ref']['raw_sha256'],expected_slot=slot,policy=policy,budget=budget)
+            entries.append(item)
+    if count:
+        level=0
+        while count>16**(level+2):level+=1
+        walk(head['range_root_ref'],level,0,count)
+    elif head['range_root_ref'] is not None:_fail('repair_mailbox_range_mismatch')
+    if any(accumulated[name]!=state[name] for name in state):_fail('repair_mailbox_range_mismatch')
+    return tuple(entries)

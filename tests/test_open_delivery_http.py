@@ -251,6 +251,23 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         self.assertEqual(json.loads(admitted['head']['raw'])['payload']['count'],1)
         self.assertEqual(db.execute('SELECT phase FROM open_mailbox_message_staging').fetchone()[0],'committed')
         self.assertEqual(db.execute('SELECT count(*) FROM open_mailbox_admissions').fetchone()[0],1)
+        from memory_vault_open_repair_client import read_mailbox_index
+        reads=[]
+        def read_original(reference):
+            reads.append(reference['key'])
+            row=db.execute('SELECT raw FROM open_mailbox_admission_objects WHERE key=?',(reference['key'],)).fetchone()
+            if row is None:raise RepairWireError('repair_original_missing')
+            return bytes(row[0])
+        args=dict(expected_slot=slot,expected_signing_key=self.host.identities[0].public_descriptor(),
+            encryption_identity=owner_encryption,read_original=read_original,at=int(time.time()),max_messages=16)
+        members=read_mailbox_index(admitted['head'],admitted['checkpoint'],**args)
+        self.assertEqual(len(members),1)
+        self.assertEqual(members[0]['admission_link_ref'],admitted['link']['ref'])
+        self.assertEqual(len(reads),3)
+        with self.assertRaisesRegex(RepairWireError,'repair_mailbox_range_mismatch'):
+            read_mailbox_index(admitted['head'],admitted['checkpoint'],**dict(args,encryption_identity=sender_encryption))
+        with self.assertRaisesRegex(RepairWireError,'repair_ref_mismatch'):
+            read_mailbox_index(admitted['head'],admitted['checkpoint'],**dict(args,read_original=lambda ref:b'{}'))
         missing=admitted['sealed_page']['ref']['key']
         db.execute('SAVEPOINT missing_original')
         db.execute('DELETE FROM open_mailbox_admission_objects WHERE key=?',(missing,))
