@@ -102,6 +102,24 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  repair-python310:
+    name: ACK recovery on supported Python 3.10
+    if: github.event_name != 'pull_request' || github.event.action != 'labeled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.10'
+      - name: Install the locked client dependency profile
+        run: python -m pip install --require-hashes --only-binary=:all: -r requirements-network-lock.txt
+      - name: Exercise original proof and real HTTP recovery command
+        run: python -B -m unittest tests.test_open_repair_proof tests.test_open_repair_admin
+
   scale:
     name: Synthetic routing seed ${{ matrix.seed }}
     if: >-

@@ -80,8 +80,13 @@ def _manifest(value, expected, maximum_items):
     return payload
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True)
-class AuthenticatedBootstrapProof:
+class _WeakProof:
+    # A base weakref slot also works on the supported Python 3.10 runtime.
+    __slots__ = ("__weakref__",)
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticatedBootstrapProof(_WeakProof):
     handle: resource.AuthenticatedRepairOriginal
     manifest: wire.DraftJson
     manifest_ref: wire.RawRef
