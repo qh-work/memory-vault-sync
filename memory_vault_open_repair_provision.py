@@ -1,4 +1,4 @@
-"""Local A/R provisioning for one frozen, never-uploaded delivery envelope.
+"""Local A/R provisioning before encrypting one never-uploaded delivery.
 
 The operator supplies its existing sender client and source node. B's public
 keys come from the real approved outbox session; no recipient key is loaded.
@@ -11,11 +11,13 @@ import secrets
 
 from memory_vault import canonical_bytes
 from memory_vault_network_crypto import document
+from memory_vault_open_contact import verify_decision
 from memory_vault_open_delivery import envelope_ref, verify_envelope
 from memory_vault_open_delivery_client import OpenDeliveryClient, _DeliveryBudget, MAX_SESSION_BYTES
 import memory_vault_open_repair_ack as ack
 import memory_vault_open_repair_empty as empty
 from memory_vault_open_repair_empty_state import RepairAckEmptyState
+from memory_vault_open_repair_access import RepairAckAccess
 import memory_vault_open_repair_history as history
 import memory_vault_open_repair_occupied as occupied
 import memory_vault_open_repair_resource as resource
@@ -27,6 +29,7 @@ PROFILES = {'receipt':RECEIPT_WORKFLOW_LIMITS,'receipt-index':INDEX_WORKFLOW_LIM
 MAX_RECORDS = 16
 MAX_RECORD_BYTES = 1048576
 SAVED_REQUEST_SCHEMA = 'memory-vault-open-saved-ack-request/v1'
+PLAN_VERSION = 2
 
 
 def _fail(code):
@@ -149,7 +152,7 @@ class AckSourceProvisioner:
 
     async def queue_and_prepare(self, request_id, recipient, *, text='', memory_ids=None,
             profile='receipt', lifetime=3600):
-        """Freeze an explicit selection, provision its ACK source, never upload E.
+        """Retain a selection, establish unbound custody, then freeze and bind E.
 
         Subsequent ordinary send must use exactly this request ID and selection.
         Contact approval is still required; this operation does not grant it.
@@ -163,22 +166,31 @@ class AckSourceProvisioner:
             _fail('repair_invalid_request_bundle')
         resource._opaque(request_id)
         row=self.delivery._outbox(request_id);self._unsent(row)
-        delivery_budget=_DeliveryBudget()
-        if row['envelope'] is None:
-            session=await self.delivery._sending_session(row['recipient'],delivery_budget)
-            row=self.delivery._encrypt_outbox(row,session)
-        self._unsent(row)
-        session=document(bytes(row['session']),maximum=MAX_SESSION_BYTES)
+        held=self._load(request_id)
+        if held is not None and held[0].get('plan_version')!=PLAN_VERSION:
+            _fail('repair_provision_legacy_order')
+        if held is None:
+            if row['envelope'] is not None or row['session'] is not None:
+                _fail('repair_provision_preexisting_envelope')
+            session=await self.delivery._sending_session(row['recipient'],_DeliveryBudget())
+            session_raw=canonical_bytes(session)
+        else:
+            session_raw=held[0]['session']
+            session=document(session_raw,maximum=MAX_SESSION_BYTES)
+            decision=verify_decision(session['decision'],request=session['request'],policy=session['policy'],
+                lease=session['lease'],node=session['node'],now=held[0]['created_at'])
+            if decision['decision']!='approved' or decision['grant'] is None:
+                _fail('repair_provision_outbox_mismatch')
+            if row['envelope'] is not None and 'encryption_authorized' not in held[1]:
+                _fail('repair_provision_preexisting_envelope')
         keys=self.delivery._keys(session)
-        raw=bytes(row['envelope'])
-        checked=verify_envelope(raw,**keys)
         if (keys['sender_signing_key']!=self.owner['signing_key'] or keys['sender_encryption_key']!=self.owner['encryption_key']
-                or keys['recipient_signing_key']['key_id']!=row['recipient'] or checked['context']['message_id']!=row['message_id']):
+                or keys['recipient_signing_key']['key_id']!=row['recipient']):
             _fail('repair_provision_outbox_mismatch')
         writer=dict(signing_key=keys['recipient_signing_key'],encryption_key=keys['recipient_encryption_key'])
-        stable=dict(request_id=request_id,input_sha256=row['input_sha256'],message_id=row['message_id'],envelope_ref=envelope_ref(raw),
+        stable=dict(request_id=request_id,input_sha256=row['input_sha256'],message_id=row['message_id'],
+            body_sha256=hashlib.sha256(bytes(row['body'])).hexdigest(),session=session_raw,
             owner=self.owner,writer=writer,target=self.source.target,epoch=self.source.node['payload']['storage_epoch'],profile=profile,lifetime=lifetime)
-        held=self._load(request_id)
         if held is None:
             now=self.source._now();until=min(now+lifetime,self.source.node['payload']['expires_at'])
             if until-now<120:_fail('repair_provision_expiring_source')
@@ -192,24 +204,84 @@ class AckSourceProvisioner:
             caps=dict(max_live_bytes=16384,max_meta_bytes=limits['max_proof_bytes'],max_items=128,
                 max_requests=limits['max_signature_checks'],max_pending=limits['max_pending'],max_replay_records=limits['max_replay_records'],
                 max_jobs=16,max_job_bytes=limits['max_proof_bytes'])
-            plan=dict(stable,slot=dict(root_key=root,slot_id='slot_'+token,receipt_writer=writer_id,grant_id='write_'+token),
+            plan=dict(stable,plan_version=PLAN_VERSION,slot=dict(root_key=root,slot_id='slot_'+token,receipt_writer=writer_id,grant_id='write_'+token),
                 created_at=now,until=until,token=token,limits=limits,caps=caps,node=_entry(canonical_bytes(self.source.node)))
             encoded=canonical_bytes(_encoded(plan))
             with self.delivery.participant.state.db() as db:
                 db.execute('BEGIN IMMEDIATE')
                 if db.execute('SELECT count(*) FROM open_repair_source_provision').fetchone()[0]>=MAX_RECORDS:_fail('repair_provision_capacity')
-                self._unsent(db.execute('SELECT * FROM open_delivery_outbox WHERE request_id=?',(request_id,)).fetchone())
+                actual=db.execute('SELECT * FROM open_delivery_outbox WHERE request_id=?',(request_id,)).fetchone()
+                self._unsent(actual)
+                if actual['envelope'] is not None or actual['session'] is not None:
+                    _fail('repair_provision_preexisting_envelope')
                 db.execute('INSERT OR IGNORE INTO open_repair_source_provision VALUES(?,?,?)',(request_id,encoded,b'{}'))
             held=self._load(request_id)
         self.plan=held[0]
+        if self.plan.get('plan_version')!=PLAN_VERSION:_fail('repair_provision_legacy_order')
         if any(self.plan.get(name)!=value for name,value in stable.items()):_fail('repair_provision_conflict')
         if self.source._now()>=self.plan['until']:_fail('repair_provision_expired')
-        result=self._provision()
+        unbound=self._provision_unbound()
+        self._authorize_encryption(unbound)
+        row=self.delivery._outbox(request_id);self._unsent(row)
+        row=self.delivery._encrypt_outbox(row,session)
+        self._unsent(row)
+        raw=bytes(row['envelope'])
+        checked=verify_envelope(raw,**keys)
+        if checked['context']['message_id']!=self.plan['message_id'] or bytes(row['session'])!=session_raw:
+            _fail('repair_provision_outbox_mismatch')
+        reference=envelope_ref(raw)
+        frozen=self._step('envelope',lambda:reference)
+        if frozen!=reference:_fail('repair_provision_outbox_mismatch')
+        result=self._provision_bound(unbound,reference)
         current=self.delivery._outbox(request_id);self._unsent(current)
         if bytes(current['envelope'])!=raw or bytes(current['session'])!=bytes(row['session']):_fail('repair_provision_outbox_mismatch')
         return result
 
-    def _provision(self):
+    def _authorize_encryption(self, unbound):
+        """Commit the pre-E boundary while the actual outbox still has no E."""
+        marker=dict(resource_id=unbound['resource_id'],custody_ref=unbound['custody']['ref'],
+            session_sha256=hashlib.sha256(self.plan['session']).hexdigest())
+        held=self._load(self.plan['request_id'])
+        if held is None or held[0]!=self.plan:_fail('repair_provision_conflict')
+        if 'encryption_authorized' in held[1]:
+            if held[1]['encryption_authorized']!=marker:_fail('repair_provision_conflict')
+            actual=self.delivery._outbox(self.plan['request_id']);self._unsent(actual)
+            if actual['envelope'] is not None:
+                return
+            # A pre-E crash leaves the marker but creates no ciphertext. First
+            # encryption still requires a live complete unbound source now.
+        # Authenticate the actual durable pins and current source floors before
+        # permitting any ciphertext creation, not merely journaled result bytes.
+        access=RepairAckAccess(self.source);access.initialize()
+        prepared=access.prepare(unbound['resource_id'],action='challenge',
+            current_statuses=[unbound['owner_status'],unbound['active']['status']])
+        with self.source._transaction():
+            decision=access.check_locked(prepared)
+            actual=self.source._row(unbound['resource_id'])
+            if bytes(actual['custody'])!=unbound['custody']['raw'] or json.loads(bytes(actual['custody_ref']))!=marker['custody_ref']:
+                _fail('repair_provision_conflict')
+        if not decision.allowed:_fail(decision.code)
+        with self.delivery.participant.state.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT plan,steps FROM open_repair_source_provision WHERE request_id=?',(self.plan['request_id'],)).fetchone()
+            if row is None or _decoded(json.loads(bytes(row[0])))!=self.plan:_fail('repair_provision_conflict')
+            steps=_decoded(json.loads(bytes(row[1])))
+            actual=db.execute('SELECT * FROM open_delivery_outbox WHERE request_id=?',(self.plan['request_id'],)).fetchone()
+            self._unsent(actual)
+            if 'encryption_authorized' in steps:
+                if steps['encryption_authorized']!=marker:_fail('repair_provision_conflict')
+                return
+            if actual['envelope'] is not None or actual['session'] is not None:
+                _fail('repair_provision_preexisting_envelope')
+            if (actual['input_sha256']!=self.plan['input_sha256'] or actual['message_id']!=self.plan['message_id']
+                    or hashlib.sha256(bytes(actual['body'])).hexdigest()!=self.plan['body_sha256']):
+                _fail('repair_provision_outbox_mismatch')
+            steps['encryption_authorized']=marker
+            raw=canonical_bytes(_encoded(steps))
+            if len(row[0])+len(raw)>MAX_RECORD_BYTES:_fail('repair_provision_capacity')
+            db.execute('UPDATE open_repair_source_provision SET steps=? WHERE request_id=?',(raw,self.plan['request_id']))
+
+    def _provision_unbound(self):
         p=self.plan;slot=p['slot'];rootkey=slot['root_key'];token=p['token'];until=p['until']
         windows={name:until for name in resource._WINDOWS}
         allocation=self._step('allocation',lambda:self._sign('resource.allocate',issued_at=p['created_at'],expires_at=until,
@@ -250,13 +322,20 @@ class AckSourceProvisioner:
                     pack_ref=pack.ref.as_dict(),entry_index=positions[entry['ref']['raw_sha256']]) for role,entry in sorted(roles.items())])
             return dict(manifest=_entry(canonical_bytes(manifest)),packs=[dict(raw=pack.raw,ref=pack.ref.as_dict())])
         inputs=self._step('historical',historical)
-        self._step('custody',lambda:self.source.finalize_unbound(resource_id,inputs['manifest'],inputs['packs'],
+        custody=self._step('custody',lambda:self.source.finalize_unbound(resource_id,inputs['manifest'],inputs['packs'],
             expected_ack_slot=slot,read_until=until,retain_until=until))
+        return dict(resource_id=resource_id,setup=setup,active=active,owner_status=owner_status,custody=custody)
+
+    def _provision_bound(self, unbound, envelope_reference):
+        p=self.plan;slot=p['slot'];rootkey=slot['root_key'];token=p['token'];until=p['until']
+        resource_id=unbound['resource_id'];setup=unbound['setup'];active=unbound['active']
+        windows={name:until for name in resource._WINDOWS}
+        base_authorities=[('ack.root_authority',setup['root']),('ack.read_grant',setup['read']),('bootstrap.grant',setup['bootstrap'])]
         def write_inputs():
             now=self.source._now()
             write=self._sign('ack.write_grant',issued_at=now,expires_at=until,grant_id=slot['grant_id'],ack_slot=slot,
                 root_authority_ref=setup['root']['ref'],owner=rootkey['owner'],receipt_writer=slot['receipt_writer'],
-                message_id=p['message_id'],envelope_ref=p['envelope_ref'],operation='receipt.put',max_receipts=1,
+                message_id=p['message_id'],envelope_ref=envelope_reference,operation='receipt.put',max_receipts=1,
                 budget=p['caps'],windows=windows,revision=1)
             bootstrap=self._bootstrap(setup['root'],write,'ack_offer',slot['receipt_writer'],now)
             current=self._status([*base_authorities,('ack.write_grant',write),('bootstrap.grant',bootstrap)],3)
@@ -265,20 +344,20 @@ class AckSourceProvisioner:
         # Invoke the durable bind on every retry: it revalidates actual pins,
         # current floors and capacity instead of treating journal bytes as proof.
         bound=self.empty.bind(resource_id,write['write'],write['bootstrap'],expected_receipt_writer=p['writer'],
-            expected_message_id=p['message_id'],expected_envelope_ref=p['envelope_ref'],current_statuses=write['statuses'],
+            expected_message_id=p['message_id'],expected_envelope_ref=envelope_reference,current_statuses=write['statuses'],
             read_until=until,retain_until=until)
         self._step('bound',lambda:bound)
         owner_bundle=dict(schema_version='memory-vault-open-ack-occupied-recovery-request/v1',target=p['target'],ack_slot=slot,
             node=encode_original(p['node']),root=encode_original(setup['root']),read=encode_original(setup['read']),
             bootstrap=encode_original(setup['bootstrap']),known_statuses=[encode_original(item) for item in write['statuses']],
-            receipt_writer=p['writer'],message_id=p['message_id'],envelope_ref=p['envelope_ref'])
-        request=dict(message_id=p['message_id'],envelope_ref=p['envelope_ref'],ack_slot=slot,owner=p['owner'],target=p['target'],
+            receipt_writer=p['writer'],message_id=p['message_id'],envelope_ref=envelope_reference)
+        request=dict(message_id=p['message_id'],envelope_ref=envelope_reference,ack_slot=slot,owner=p['owner'],target=p['target'],
             target_node_entry=p['node'],root_entry=setup['root'],write_entry=write['write'],bootstrap_entry=write['bootstrap'],
             binding_entry=bound['binding'],current_statuses=write['statuses'],read_until=until,retain_until=until)
         recipient=dict(schema_version=SAVED_REQUEST_SCHEMA,base_url=json.loads(p['node']['raw'])['payload']['base_url'],repair_profile=p['profile'],
             request={name:([encode_original(item) for item in value] if name=='current_statuses' else
                 encode_original(value) if name.endswith('_entry') else value) for name,value in request.items()})
-        return dict(state='empty',resource_id=resource_id,message_id=p['message_id'],envelope_ref=p['envelope_ref'],
+        return dict(state='empty',resource_id=resource_id,message_id=p['message_id'],envelope_ref=envelope_reference,
             owner_request=owner_bundle,recipient_request=recipient,delivery_uploaded=False,recipient_saved=False)
 
     def _allocation(self,windows):

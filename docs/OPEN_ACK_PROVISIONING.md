@@ -1,7 +1,7 @@
 # Prepare a receipt source before sending
 
-Freeze one explicitly selected message or memory transfer, create its ACK source,
-then use ordinary delivery. After B saves the delivery, B can explicitly publish
+Select one message or memory transfer, create its ACK source, then encrypt and
+bind the delivery before ordinary sending. After B saves it, B can explicitly publish
 its original receipt to R. A can recover it from R even when the original delivery
 node is offline.
 
@@ -38,6 +38,11 @@ Preparation may fetch the existing contact approval but never uploads the encryp
 delivery. Its result has `state: empty`, message/resource IDs, `owner_request` and
 `recipient_request`.
 
+The source commits the original root/read permissions and unbound custody before
+the client creates any message ciphertext. A durable local marker records this
+boundary. Only afterward does the client freeze the envelope, sign its exact
+write grant and bind it to the slot.
+
 Outputs are new-only, including retries: an existing file is never replaced.
 Before sending, resume interrupted preparation with the same identities, request
 ID, profile and lifetime, using a fresh output path:
@@ -55,6 +60,10 @@ python -B memory_vault_open_repair_provision_admin.py resume \
 use its existing retry path; do not provision a new ACK slot for that delivery.
 Preparation cannot retrofit a receipt B may already have saved. Expired preparation
 is refused rather than silently renewing old authority.
+An interrupted current preparation can resume before encryption or reuse its
+existing ciphertext after the recorded boundary. An already encrypted outbox
+without that marker, or a legacy preparation journal, is refused and preserved;
+it is never relabeled as having the required earlier authorization.
 
 Retain `owner_request` as A's private recovery request. Give only `recipient_request`
 to B through an independently authorized private channel. This recipe splits the

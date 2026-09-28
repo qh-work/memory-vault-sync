@@ -1,7 +1,8 @@
 """Prepare one ACK source before sending, using existing local A/R identities.
 
-The prepare command freezes only explicitly selected content, then allocates and
-binds its ACK slot. No delivery upload occurs. The private result contains A's
+The prepare command retains explicitly selected content, establishes unbound ACK
+custody, then encrypts the delivery and binds its slot. No delivery upload occurs.
+The private result contains A's
 recovery request and B's saved-receipt publication request, never B's secret key.
 """
 import argparse
@@ -63,11 +64,11 @@ def prepare_source(network_config, node_config, output, *, request_id, recipient
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     commands=parser.add_subparsers(dest='command',required=True)
-    prepare=commands.add_parser('prepare',help='freeze selected content and provision its ACK slot')
+    prepare=commands.add_parser('prepare',help='establish the ACK source, then encrypt and bind selected content')
     prepare.add_argument('--recipient',required=True)
     prepare.add_argument('--text',default='')
     prepare.add_argument('--memory-id',action='append',default=[])
-    resume=commands.add_parser('resume',help='resume the exact never-uploaded frozen outbox item')
+    resume=commands.add_parser('resume',help='resume an unfinished prepared outbox item before upload')
     for command in (prepare,resume):
         command.add_argument('--network-config',required=True,type=Path)
         command.add_argument('--node-config',required=True,type=Path)
