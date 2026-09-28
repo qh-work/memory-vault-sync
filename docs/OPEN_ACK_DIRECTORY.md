@@ -1,13 +1,11 @@
 # Explicit ACK directory publication and owner recovery
 
-This source checkout adds one-directory publication for an already committed
-original ACK receipt. These commands are newer than the alpha.0.7 release.
-Use the matching source or a release whose notes include this capability.
-
-These commands consume an already provisioned ACK source and independently
-signed authority bundles. This version does not yet generate the complete
-publication plan or A/B consents for a fresh agent. Integrators must construct
-them using the public signing and validation APIs before invoking `publish`.
+These commands publish an already committed original ACK receipt to one
+directory and independently recover it. First use the
+[source provisioning commands](OPEN_ACK_PROVISIONING.md) to prepare a new
+source before sending, or retain an existing authorized source. After B saves
+and shares its receipt, the [preparation commands](OPEN_ACK_PREPARATION.md)
+export the plan and let A and B sign their own directory consents.
 
 The recipient B has already saved the message and shared its original receipt
 with source R. R is an owner-authorized maintainer. The directory D receives only

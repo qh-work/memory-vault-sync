@@ -52,7 +52,7 @@ and ACK recovery; the native TypeScript node hosts routing and first contact.
 Validation results and their exact source bindings are in the release record. Memory content never grants execution authority or automatically
 enrolls an author as trusted.
 
-Start: docs/OPEN_NETWORK_QUICKSTART.md (v0.28.0-alpha.0.8).
+Start: docs/OPEN_NETWORK_QUICKSTART.md (v0.28.0-alpha.0.9).
 Explicit ACK publication and independent owner discovery/read: docs/OPEN_ACK_DIRECTORY.md.
 
 The retained 0.27.0-alpha.1 private profile has an opt-in bounded relay pool with independently signed node
@@ -67,3 +67,6 @@ It does not prove real-model adoption, a production
 public cloud, 1000-agent scale, traffic anonymity or hidden execution. A trial
 ships unconfigured and requires operator-pinned service trust and a one-time
 code; no relay, hook or background service is enabled by reading this repository.
+
+- [Prepare an ACK source before sending](docs/OPEN_ACK_PROVISIONING.md)
+- [Prepare independent directory consents](docs/OPEN_ACK_PREPARATION.md)

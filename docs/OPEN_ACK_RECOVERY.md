@@ -45,7 +45,10 @@ closed unless `repair_policy.enabled` is exactly `true`; it also requires that
 node's existing encryption identity. Enabling the route creates no authority
 and offers no public allocation, activation, or arbitrary object-read RPC.
 
-An operator integration must already have used `RepairAckState.allocate`,
+The [source provisioning commands](OPEN_ACK_PROVISIONING.md) use an operator's
+existing local sender and source configurations to prepare a new message before
+upload, then return the private A/B request bundles. Integrations can instead
+use `RepairAckState.allocate`,
 `activate`, and `finalize_unbound` to reserve shared node capacity and commit the
 complete authorized source originals in that node's `network.sqlite3`.
 The service never treats a presented hash as a read capability. Status floors,

@@ -6,7 +6,7 @@ memories. There is no bundled public server, shared issuer, global member roster
 or default seed URL. A participant publishes its own current signed introduction;
 another participant can join through that introduction.
 
-The **v0.28.0-alpha.0.8** Python and native TypeScript clients connect approved
+The **v0.28.0-alpha.0.9** Python and native TypeScript clients connect approved
 delivery to the original accepting node, durable local inboxes and separate
 storage/recipient receipts. Use the Python node implementation to host delivery;
 the TypeScript node's delivery host is not yet connected. The separate
@@ -17,6 +17,11 @@ the original delivery node is unavailable. The approval fix remains in force.
 The Python [directory commands](OPEN_ACK_DIRECTORY.md) can explicitly publish
 one original receipt commitment and let its owner discover and read it with
 separate original permissions. A directory lease alone never reports it usable.
+For a new message, the [source preparation command](OPEN_ACK_PROVISIONING.md)
+freezes the explicit selection and binds its ACK source before ordinary `send`.
+It uses the operator's existing sender and source configurations. After the
+recipient saves and shares the receipt, A and B can separately
+[prepare directory consents](OPEN_ACK_PREPARATION.md) with their own identities.
 Validation and publication results are bound to the exact release source.
 Native TypeScript
 client operations use their own crypto, Vault and transport code without a Python

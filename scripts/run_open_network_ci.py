@@ -51,6 +51,8 @@ MODULES = tuple("tests.test_open_" + name for name in (
     "tests.test_open_repair_stage", "tests.test_open_repair_index", "tests.test_open_repair_index_access",
     "tests.test_open_repair_index_journal", "tests.test_open_repair_index_state", "tests.test_open_repair_index_http",
     "tests.test_open_repair_index_client", "tests.test_open_repair_index_recovery", "tests.test_open_repair_index_admin",
+    "tests.test_open_repair_index_prepare", "tests.test_open_repair_index_prepare_admin",
+    "tests.test_open_repair_provision", "tests.test_open_repair_onboarding",
     "tests.test_open_provider_merge",
     "tests.test_continuation_trial", "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {
@@ -278,6 +280,10 @@ def initialize(reports, mode, seed):
                     "memory_vault_open_repair_index_client.py",
                     "memory_vault_open_repair_index_recovery.py",
                     "memory_vault_open_repair_index_admin.py",
+                    "memory_vault_open_repair_index_prepare.py",
+                    "memory_vault_open_repair_index_prepare_admin.py",
+                    "memory_vault_open_repair_provision.py",
+                    "memory_vault_open_repair_provision_admin.py",
                     "memory_vault_open_provider_merge.py",
                     "memory_vault.py", "memory_vault_update.py", "memory_vault_trust.py", "memory_vault_network_crypto.py",
                     "memory_vault_network_control.py", "memory_vault_nodes.py",

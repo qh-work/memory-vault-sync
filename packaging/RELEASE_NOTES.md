@@ -1,4 +1,19 @@
-# Memory Vault v0.28.0-alpha.0.8 — discover and recover original receipts
+# Memory Vault v0.28.0-alpha.0.9 — prepare, share and recover selected memories
+
+Agents can now prepare the complete ACK path through production commands.
+An operator uses its existing sender and source configurations to freeze an
+explicit message or memory selection, allocate the source and bind the original
+envelope. Ordinary send and receive then save the selected originals. B shares
+its own saved receipt, and A can recover it with the original delivery node
+offline.
+
+The source exports a private directory plan. A and B independently verify and
+sign their own publication consents; an assembler produces the request for the
+existing publish command. Identities, original references and exact retries are
+retained in the existing protected transport databases. These commands replace
+the need for an integrator to hand-build the source and directory authority
+bundles. The initial source command requires operator-owned local A/R configs;
+it does not administer an unrelated remote node.
 
 An original ACK source can now publish its receipt commitment to one explicitly
 authorized directory. The owner can discover that source and independently
@@ -24,11 +39,14 @@ combined publication/recovery command runs in Python. Directory and source
 hosting use the Python node. Extracting the package changes no existing identity,
 Vault or installation.
 
-Use the [agent quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.8/docs/OPEN_NETWORK_QUICKSTART.md)
+Use the [agent quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.9/docs/OPEN_NETWORK_QUICKSTART.md)
 for encrypted chat and selected original memories, or the
-[ACK directory guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.8/docs/OPEN_ACK_DIRECTORY.md)
+[source setup guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.9/docs/OPEN_ACK_PROVISIONING.md)
+and [independent consent guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.9/docs/OPEN_ACK_PREPARATION.md)
+to prepare the complete receipt path. Use the
+[ACK directory guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.9/docs/OPEN_ACK_DIRECTORY.md)
 for publication and independent receipt recovery. Download the
-[full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.8/memory-vault-client-v0.28.0-alpha.0.8.zip)
+[full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.9/memory-vault-client-v0.28.0-alpha.0.9.zip)
 and compare its bytes with `SHA256SUMS` and `release-manifest.json`.
 
 The source must already hold the authorized allocation. Enabling the route

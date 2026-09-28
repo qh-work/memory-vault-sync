@@ -1,6 +1,8 @@
-# Memory Vault v0.28.0-alpha.0.8 independent review kit
+# Memory Vault v0.28.0-alpha.0.9 independent review kit
 
-This alpha.0.8 candidate adds explicit one-directory ACK publication and
+This alpha.0.9 candidate adds source preparation from an explicitly selected
+outgoing message and separate local A/B directory-consent commands. These
+connect ordinary memory delivery to one-directory ACK publication and
 independent owner discovery followed by an actual original-receipt read. Source
 requests, used work, authority observations and exact retry responses survive
 restart. Separate A/B publication consents are required; a directory lease alone
