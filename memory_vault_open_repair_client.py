@@ -689,6 +689,36 @@ class MailboxSetupBuilder:
             slot_key=self.plan["slot_key"],entries={name:encode_entry(value,self.policy,budget) for name,value in entries.items()}),
             at,expires_at,budget)["raw"]
 
+    def destination_document(self, slot_entries, contact_originals, *, at, expires_at):
+        from memory_vault_open_repair_mailbox_activation import FIELDS,KINDS
+        import memory_vault_open_repair_resource as resource
+        budget=wire.RepairBudget(self.policy);p=self.plan
+        held=original.verify_contact_originals(contact_originals,sender_key_id=p["sender"]["signing_key_id"],
+            sender_encryption_key_id=p["sender"]["encryption_key_id"],recipient_key_id=self.identity.key_id,
+            recipient_encryption_key_id=self.owner["encryption_key"]["key_id"],node_key_id=p["target"]["signing_key"]["key_id"],
+            storage_epoch=p["slot_key"]["writer_storage_epoch"],at=at,policy=self.policy,budget=budget)
+        slot=None
+        for name in ("slot","read","maintenance"):
+            raw,ref=ack._entry(slot_entries[name]);parsed=wire.parse_new_wire(raw,self.policy,budget)
+            if len(raw)!=ref.size or budget._hash(raw)!=ref.raw_sha256:_fail("repair_ref_mismatch")
+            signed=resource._fields(parsed.value,{"payload","proof"})
+            value=resource._fields(signed["payload"],resource.COMMON|set(FIELDS[name].split()))
+            original._verify_control_signature(value,signed["proof"],self.owner["signing_key"],budget)
+            if (value["schema_version"]!=proof.SCHEMA or value["kind"]!=KINDS[name] or value["slot_key"]!=p["slot_key"]
+                    or not value["issued_at"]<=at<expires_at<=value["expires_at"]):_fail("repair_message_mismatch")
+            if name=="slot":slot=value
+        if (slot["sender"]!=p["sender"] or slot["recipient"]!=probe._dual(self.owner)
+                or expires_at>held.originals["grant"].payload["expires_at"]):_fail("repair_message_mismatch")
+        refs={}
+        for field,role in (("contact_request_ref","request"),("contact_policy_ref","policy"),("contact_knock_lease_ref","knock_lease"),
+                ("contact_decision_ref","decision"),("store_grant_ref","grant")):
+            raw=held.originals[role].document.raw;digest=budget._hash(raw)
+            refs[field]=dict(namespace="meta",key=digest,raw_sha256=digest,size=len(raw))
+        fields={name:slot[name] for name in ("data_resource_ref","data_resource_offer_ref","metadata_resource_ref",
+            "metadata_resource_offer_ref","read_grant_ref","maintenance_root_ref","budget","windows")}
+        return self._sign("delivery.destination",dict(destination_id=self._id("destination"),sender=p["sender"],recipient=probe._dual(self.owner),
+            slot_key=p["slot_key"],slot_ref=slot_entries["slot"]["ref"],**refs,**fields),at,expires_at,budget)
+
     def readiness_packet(self, owner_status, *, at, expires_at, read_until, retain_until):
         from memory_vault_open_repair_bind import encode_entry
         budget=wire.RepairBudget(self.policy)
@@ -1044,3 +1074,135 @@ class MailboxSetupClient(MailboxRootRecoveryClient):
         if result.source['custody'].raw!=custody['raw'] or result.source['custody'].ref.as_dict()!=custody['ref']:
             _fail('repair_proof_mismatch')
         return result
+
+
+class MailboxMessageDraftStore:
+    """Persist one immutable outgoing E and its sender's repair consent.
+
+    This is a sender draft, not admission, sender dual possession, current
+    resource permission or custody. The node must check those before storage.
+    """
+    def __init__(self, db, identity, encryption_identity, *, policy=DEFAULT_POLICY):
+        self.db,self.identity,self.encryption_identity,self.policy=db,identity,encryption_identity,policy
+
+    def prepare(self, envelope_raw, *, recipient, slot_entries, destination_entry, contact_originals,
+                at, attempt_until, consent_until):
+        import hashlib
+        from memory_vault import canonical_bytes
+        from memory_vault_open_delivery import verify_envelope,MAX_ENVELOPE_BYTES
+        import memory_vault_open_repair_history as history
+        import memory_vault_open_repair_resource as resource
+        from memory_vault_open_repair_bind import encode_entry,decode_entry
+        budget=wire.RepairBudget(self.policy)
+        if type(envelope_raw) is not bytes or not 0<len(envelope_raw)<=MAX_ENVELOPE_BYTES:
+            _fail('repair_invalid_message')
+        sender=dict(signing_key=self.identity.public_descriptor(),encryption_key=self.encryption_identity.public_descriptor())
+        sender_ids=resource._dual_key(sender,budget);recipient_ids=resource._dual_key(recipient,budget)
+        envelope=verify_envelope(envelope_raw,sender_signing_key=sender['signing_key'],sender_encryption_key=sender['encryption_key'],
+            recipient_signing_key=recipient['signing_key'],recipient_encryption_key=recipient['encryption_key'],now=at)
+        context=envelope['context'];reference=dict(namespace='object',key=context['object_ref']['key'],
+            raw_sha256=hashlib.sha256(envelope_raw).hexdigest(),size=len(envelope_raw))
+        def check(entry,kind,fields):
+            raw,ref=ack._entry(entry);parsed=wire.parse_new_wire(raw,self.policy,budget)
+            if len(raw)!=ref.size or budget._hash(raw)!=ref.raw_sha256:_fail('repair_ref_mismatch')
+            signed=resource._fields(parsed.value,{'payload','proof'})
+            payload=resource._fields(signed['payload'],resource.COMMON|set(fields.split()))
+            if payload['schema_version']!=proof.SCHEMA or payload['kind']!=kind:_fail('repair_invalid_message')
+            original._verify_control_signature(payload,signed['proof'],recipient['signing_key'],budget)
+            resource._lifetime(payload)
+            return payload
+        from memory_vault_open_repair_mailbox_activation import FIELDS,KINDS
+        resource._fields(slot_entries,{'slot','read','maintenance'})
+        slot=check(slot_entries['slot'],KINDS['slot'],FIELDS['slot'])
+        read=check(slot_entries['read'],KINDS['read'],FIELDS['read'])
+        maintenance=check(slot_entries['maintenance'],KINDS['maintenance'],FIELDS['maintenance'])
+        key=slot['slot_key'];root=key['root_key'];history._slot(key,root)
+        names='issued_at expires_at destination_id sender recipient contact_request_ref contact_policy_ref contact_knock_lease_ref contact_decision_ref store_grant_ref slot_key slot_ref data_resource_ref data_resource_offer_ref metadata_resource_ref metadata_resource_offer_ref read_grant_ref maintenance_root_ref budget windows'
+        destination=check(destination_entry,'delivery.destination',names)
+        if (root['owner']!=recipient_ids or any(p['sender']!=sender_ids or p['recipient']!=recipient_ids for p in (slot,maintenance,destination))
+                or read['reader']!=recipient_ids or any(p['slot_key']!=key for p in (read,maintenance,destination))
+                or read['root_key']!=root or maintenance['root_key']!=root
+                or read['serving_authority_id']!=maintenance['authority_id']
+                or destination['slot_ref']!=slot_entries['slot']['ref']
+                or slot['read_grant_ref']!=slot_entries['read']['ref'] or slot['maintenance_root_ref']!=slot_entries['maintenance']['ref']):
+            _fail('repair_message_mismatch')
+        for name in ('data_resource_ref','data_resource_offer_ref','metadata_resource_ref','metadata_resource_offer_ref','read_grant_ref','maintenance_root_ref'):
+            if destination[name]!=slot[name]:_fail('repair_message_mismatch')
+        resource._budget(destination['budget']);resource._windows(destination['windows'])
+        if any(destination['budget'][name]>slot['budget'][name] for name in destination['budget']) or any(
+                destination['windows'][name]>slot['windows'][name] for name in destination['windows']):
+            _fail('repair_message_mismatch')
+        held=original.verify_contact_originals(contact_originals,sender_key_id=self.identity.key_id,
+            sender_encryption_key_id=self.encryption_identity.key_id,recipient_key_id=recipient_ids['signing_key_id'],
+            recipient_encryption_key_id=recipient_ids['encryption_key_id'],node_key_id=key['writer']['signing_key_id'],
+            storage_epoch=key['writer_storage_epoch'],at=destination['issued_at'],policy=self.policy,budget=budget)
+        for name,role in (('contact_request_ref','request'),('contact_policy_ref','policy'),('contact_knock_lease_ref','knock_lease'),
+                ('contact_decision_ref','decision'),('store_grant_ref','grant')):
+            ref=resource._ref(destination[name]);doc=held.originals[role].document
+            if ref.raw_sha256!=budget._hash(doc.raw) or ref.size!=len(doc.raw):_fail('repair_ref_mismatch')
+        wire.u53(at);wire.u53(attempt_until);wire.u53(consent_until)
+        originals=dict(slot=slot_entries,destination=destination_entry,
+            contact={name:dict(raw=raw,ref=dict(namespace='meta',key=hashlib.sha256(raw).hexdigest(),raw_sha256=hashlib.sha256(raw).hexdigest(),size=len(raw)))
+                     for name,raw in contact_originals.items()})
+        # Binding is independent of retry time; it preserves one exact E and
+        # original authority selection instead of quietly renewing an attempt.
+        binding=hashlib.sha256(canonical_bytes(dict(envelope=reference,recipient=recipient,
+            slot_refs={name:value['ref'] for name,value in slot_entries.items()},destination_ref=destination_entry['ref'],
+            contact_hashes={name:hashlib.sha256(raw).hexdigest() for name,raw in contact_originals.items()},
+            attempt_until=attempt_until,consent_until=consent_until))).hexdigest()
+        journal=MailboxSetupJournal(self.db)
+        def save():
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_mailbox_message_drafts(
+                sender TEXT NOT NULL,message_id TEXT NOT NULL,binding TEXT NOT NULL,root_digest TEXT NOT NULL,status_revision INTEGER NOT NULL,
+                envelope BLOB NOT NULL,originals BLOB NOT NULL,PRIMARY KEY(sender,message_id))''')
+            old=self.db.execute('SELECT binding,envelope,originals FROM open_mailbox_message_drafts WHERE sender=? AND message_id=?',
+                (self.identity.key_id,context['message_id'])).fetchone()
+            if old is not None:
+                if old[0]!=binding or bytes(old[1])!=envelope_raw:_fail('repair_message_conflict')
+                return bytes(old[2])
+            if self.db.execute('SELECT count(*) FROM open_mailbox_message_drafts').fetchone()[0]>=16:
+                _fail('repair_message_capacity')
+            if (not context['created_at']<=at<attempt_until<=min(destination['expires_at'],held.originals['grant'].payload['expires_at'])
+                    or not at<consent_until<=min(slot['expires_at'],maintenance['expires_at'],slot['windows']['retain_until'],maintenance['windows']['retain_until'])
+                    or any(not p['issued_at']<=at<p['expires_at'] for p in (slot,read,maintenance,destination))):
+                _fail('repair_resource_expired')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_mailbox_message_status_revisions(
+                sender TEXT NOT NULL,root_digest TEXT NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(sender,root_digest))''')
+            root_digest=budget._hash(wire._canonical(root,budget))
+            prior=self.db.execute('SELECT revision FROM open_mailbox_message_status_revisions WHERE sender=? AND root_digest=?',
+                (self.identity.key_id,root_digest)).fetchone()
+            maximum=self.db.execute('SELECT max(status_revision) FROM open_mailbox_message_drafts WHERE sender=? AND root_digest=?',
+                (self.identity.key_id,root_digest)).fetchone()[0]
+            if (None if prior is None else prior[0])!=maximum:_fail('repair_message_ledger_missing')
+            status_revision=wire.u53((maximum or 0)+1,1)
+            self.db.execute('INSERT OR REPLACE INTO open_mailbox_message_status_revisions VALUES(?,?,?)',(self.identity.key_id,root_digest,status_revision))
+            def sign(kind,fields,until):
+                payload=wire.build_new_wire(dict(schema_version=proof.SCHEMA,kind=kind,signing_key=sender['signing_key'],
+                    issued_at=at,expires_at=until,**fields),self.policy,budget).value
+                return _entry(probe._sign(payload,self.identity,self.policy,budget))
+            consent=sign('message.disclosure',dict(consent_id='consent_'+binding,root_key=root,slot_key=key,sender=sender_ids,
+                recipient=recipient_ids,envelope_ref=reference,maintenance_root_ref=slot_entries['maintenance']['ref'],
+                allowed_roles=sorted(['contact.request','delivery.attempt','message.disclosure','authority.status.disclosure']),
+                operation_mask=127,consent_until=consent_until,bootstrap_return=dict(subject=recipient_ids,consumer='mailbox_feed',
+                    roles=['authority.status.disclosure','message.disclosure'],until=consent_until),revision=1),consent_until)
+            attempt=sign('delivery.attempt',dict(attempt_id='attempt_'+binding,message_id=context['message_id'],envelope_ref=reference,
+                sender=sender_ids,recipient=recipient_ids,destination_ref=destination_entry['ref'],slot_key=key,
+                operation='message.store',disclosure_ref=consent['ref'],ack_grant_ref=None),attempt_until)
+            from memory_vault_open_provider import issue_status
+            scope=status.status_scope(root,'authority',dict(authority_kind='message.disclosure',authority_sha256=consent['ref']['raw_sha256']),self.policy,budget)
+            observation=issue_status(self.identity,root=root,revision=status_revision,entries=[dict(scope_kind='authority',scope_id=scope,
+                minimum_document_revision=1,status='active',operation_mask=127)],issued_at=at,valid_until=consent_until)
+            observed_raw=wire.build_new_wire(observation,self.policy,budget).raw;observed_hash=budget._hash(observed_raw)
+            observed=dict(raw=observed_raw,ref=dict(namespace='meta',key=observed_hash,raw_sha256=observed_hash,size=len(observed_raw)))
+            bundle=dict(disclosure=encode_entry(consent,self.policy,budget),disclosure_status=encode_entry(observed,self.policy,budget),attempt=encode_entry(attempt,self.policy,budget),
+                destination=encode_entry(destination_entry,self.policy,budget),slot={name:encode_entry(value,self.policy,budget) for name,value in slot_entries.items()},
+                contact={name:encode_entry(value,self.policy,budget) for name,value in originals['contact'].items()})
+            raw=wire.build_new_wire(bundle,self.policy,budget).raw
+            if len(raw)>131072:_fail('repair_message_capacity')
+            self.db.execute('INSERT INTO open_mailbox_message_drafts VALUES(?,?,?,?,?,?,?)',(self.identity.key_id,context['message_id'],binding,root_digest,status_revision,envelope_raw,raw))
+            return raw
+        raw=journal._transaction(save)
+        value=wire.parse_new_wire(raw,self.policy,wire.RepairBudget(self.policy)).value
+        return dict(envelope=envelope_raw,originals=value,
+            attempt=decode_entry(value['attempt'],self.policy,wire.RepairBudget(self.policy)),
+            disclosure=decode_entry(value['disclosure'],self.policy,wire.RepairBudget(self.policy)))

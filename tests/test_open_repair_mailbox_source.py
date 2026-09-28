@@ -554,9 +554,48 @@ class MailboxSourceTests(unittest.TestCase):
             custody=self.source.finalize_root(rid,read_until=h.now+100,retain_until=h.now+100)
         self.assertEqual(json.loads(custody["raw"])["payload"]["root_key"],root)
         self.assertEqual(builder.allocation_requests(at=h.now,expires_at=h.now+60),allocations)
+        if "message_draft" in self._testMethodName:
+            from unittest.mock import patch
+            self.enterContext(patch("time.time",side_effect=lambda:h.now))
+            from tests.test_open_repair_original import contact_fixture
+            from memory_vault_open_repair_client import MailboxMessageDraftStore
+            from memory_vault_open_delivery import create_envelope,decrypt_envelope
+            from memory_vault import canonical_bytes
+            import sqlite3
+            docs,_,_=contact_fixture(identities=(h.f["signers"]["writer"],h.f["signers"]["owner"],h.f["signers"]["target"]),
+                encryption=(h.f["encryption"]["writer"],h.f["encryption"]["owner"]),now=h.now,storage_epoch=slot["writer_storage_epoch"])
+            contact={name:canonical_bytes(doc) for name,doc in docs.items()}
+            destination=builder.destination_document(entries,contact,at=h.now,expires_at=h.now+60)
+            content=canonical_bytes(dict(schema_version="memory-vault-network-content/v2",kind="message",text="synthetic offline message"))
+            envelope_options=dict(signer=h.f["signers"]["writer"],sender_encryption_key=h.f["encryption"]["writer"].public_descriptor(),
+                recipient_signing_key=h.owner["signing_key"],recipient_encryption_key=h.owner["encryption_key"],
+                message_id="msg_"+"a"*64,object_key="b"*64,created_at=h.now)
+            envelope=canonical_bytes(create_envelope(content,**envelope_options))
+            path=h.path.parent/"sender-drafts.sqlite3";path.touch(mode=0o600)
+            db=sqlite3.connect(path);self.addCleanup(db.close)
+            options=dict(recipient=h.owner,slot_entries={name:entries[name] for name in ("slot","read","maintenance")},
+                destination_entry=destination,contact_originals=contact,attempt_until=h.now+60,consent_until=h.now+100)
+            store=MailboxMessageDraftStore(db,h.f["signers"]["writer"],h.f["encryption"]["writer"])
+            saved=store.prepare(envelope,at=h.now,**options)
+            db.close();db=sqlite3.connect(path);self.addCleanup(db.close)
+            store=MailboxMessageDraftStore(db,h.f["signers"]["writer"],h.f["encryption"]["writer"])
+            self.assertEqual(store.prepare(envelope,at=h.now+1,**options),saved)
+            self.assertEqual(decrypt_envelope(saved["envelope"],encryption_identity=h.f["encryption"]["owner"],
+                sender_signing_key=h.f["signers"]["writer"].public_descriptor(),
+                sender_encryption_key=envelope_options["sender_encryption_key"],recipient_signing_key=h.owner["signing_key"],
+                recipient_encryption_key=h.owner["encryption_key"]),content)
+            with self.assertRaisesRegex(RepairWireError,"repair_message_conflict"):
+                store.prepare(canonical_bytes(create_envelope(content,**envelope_options)),at=h.now,**options)
+            self.assertEqual(db.execute("SELECT count(*) FROM open_mailbox_message_drafts").fetchone()[0],1)
+            second=store.prepare(canonical_bytes(create_envelope(content,**dict(envelope_options,message_id="msg_"+"c"*64))),at=h.now,**options)
+            self.assertNotEqual(second["attempt"],saved["attempt"])
+            self.assertEqual([row[0] for row in db.execute("SELECT status_revision FROM open_mailbox_message_drafts ORDER BY status_revision")],[1,2])
         wrong=dict(offers);wrong["mailbox_data"]=offers["feed_metadata"]
         with self.assertRaises(RepairWireError):
             builder.slot_documents(allocations,wrong,at=h.now,expires_at=h.now+600)
+
+    def test_custody_message_draft_preserves_ciphertext_and_sender_originals_after_restart(self):
+        self.test_custody_setup_builder_creates_actual_root_without_handwritten_authorities()
 
     def test_custody_recovery_remote_provision_resumes_after_process_restart(self):
         self.test_custody_setup_builder_creates_actual_root_without_handwritten_authorities()
