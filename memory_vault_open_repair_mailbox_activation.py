@@ -67,14 +67,14 @@ class MailboxSlotActivation:
                 head BLOB NOT NULL,head_ref BLOB NOT NULL,committed_at INTEGER NOT NULL,
                 retain_until INTEGER NOT NULL)''')
 
-    def _originals(self, entries, owner, budget, now):
-        resource._fields(entries, FIELDS)
+    def _originals(self, entries, owner, budget, now, *, fields=FIELDS, kinds=KINDS):
+        resource._fields(entries, fields)
         held, payloads = {}, {}
-        for name in FIELDS:
+        for name in fields:
             parsed, ref = self.source._entry(entries[name], budget)
             signed = resource._fields(parsed.value, {"payload", "proof"})
-            p = resource._fields(signed["payload"], resource.COMMON | set(FIELDS[name].split()))
-            if p["schema_version"] != resource.SCHEMA or p["kind"] != KINDS[name]:
+            p = resource._fields(signed["payload"], resource.COMMON | set(fields[name].split()))
+            if p["schema_version"] != resource.SCHEMA or p["kind"] != kinds[name]:
                 _mismatch()
             resource._lifetime(p)
             if not p["issued_at"] <= now < p["expires_at"]:
