@@ -1128,8 +1128,32 @@ sequence; interior/empty domains remain distinct. Checkpoint commits the
 accepted prefix only. **It has no active_tail_ref, page, link, head, custody or
 capsule reference.** Inclusion proofs and prefix extension proofs use the
 existing deterministic alignment/padding rules; unknown/forked heads are not
-made trustworthy by a higher count. The full-count frontier case must be
-specified identically in both runtimes.
+made trustworthy by a higher count. The implemented candidate fixes these byte
+domains identically in Python and native TypeScript (all hashes are SHA-256):
+
+- `B = H(ASCII("memory-vault-mailbox-slot/v1") || NUL || canonical(SlotKey))`.
+- An empty leaf is `H(ASCII("memory-vault-mailbox-empty/v1") || NUL || B)`.
+- A populated leaf is `H(ASCII("memory-vault-mailbox-leaf/v1") || NUL || B ||
+  uint32_be(sequence) || sealed_core_sha256)`.
+- A height-h parent is `H(ASCII("memory-vault-mailbox-node/v1") || NUL || B ||
+  uint8(h) || left_hash || right_hash)`, for heights 1 through 16.
+
+Hash operands above are the 32 decoded bytes, not their hexadecimal text.
+Empty subtrees are obtained recursively from two equal empty children with
+the parent rule. An inclusion path contains exactly 16 sibling hashes in
+ascending height order and cannot name a sequence at or beyond `count`.
+The frontier has exactly 17 entries indexed by height. Entry h is a hash
+exactly when bit h of `count` is set, otherwise null. At count 65536 only
+entry 16 is present and equals `leaf_root`; another append is refused.
+At smaller counts, the root pads the accepted prefix with empty subtrees.
+These conventions apply only to this new repair profile; they do not change
+legacy message bytes or make an old message repairable.
+
+Original slot activation now commits both resource-active originals and the
+signed count-zero checkpoint/head in one protected-database transaction. The
+initial head has a null range root and catalog generation zero. This local
+slot commit is still not root custody, a current service proof, or S1; the
+remaining root setup must finish before the node advertises a usable cold entry.
 
 After link exists, each B-private page has exact plaintext
 `schema_version,kind,slot_key,start,end,entries`; each of at most 16 entries is

@@ -109,7 +109,13 @@ class MailboxActivationTests(unittest.TestCase):
     def test_pair_and_originals_survive_restart_without_reactivation(self):
         entries = self.setup_entries()
         result = self.activate(entries)
-        self.assertEqual(set(result), {"data","metadata"})
+        self.assertEqual(set(result), {"data","metadata","checkpoint","head"})
+        checkpoint, head = (json.loads(result[name]["raw"])["payload"] for name in ("checkpoint","head"))
+        self.assertEqual(checkpoint["count"],0)
+        self.assertEqual(checkpoint["frontier"],[None]*17)
+        self.assertEqual(head["count"],0)
+        self.assertIsNone(head["range_root_ref"])
+        self.assertEqual(head["checkpoint_ref"],result["checkpoint"]["ref"])
         self.assertEqual(self.db.execute("SELECT status FROM open_repair_mailbox_resources").fetchall(), [("active",),("active",)])
         inputs = json.loads(self.db.execute("SELECT inputs FROM open_repair_mailbox_slot_activations").fetchone()[0])
         self.assertEqual({k:v["raw"].encode() for k,v in inputs.items()}, {k:v["raw"] for k,v in entries.items()})
@@ -138,6 +144,7 @@ class MailboxActivationTests(unittest.TestCase):
             self.activate(_transaction_guard=guard)
         self.assertEqual(self.db.execute("SELECT DISTINCT status FROM open_repair_mailbox_resources").fetchall(),[("pending",)])
         self.assertEqual(self.db.execute("SELECT count(*) FROM open_repair_mailbox_slot_activations").fetchone()[0],0)
+        self.assertEqual(self.db.execute("SELECT count(*) FROM open_repair_mailbox_genesis").fetchone()[0],0)
         first = self.activate()
         with self.assertRaisesRegex(RepairWireError,"repair_activation_conflict"):
             self.activate(self.setup_entries({"read":{"grant_id":"different"}}))
@@ -170,6 +177,7 @@ class MailboxActivationTests(unittest.TestCase):
             self.activate(_transaction_guard=guard)
         self.assertEqual(self.db.execute("SELECT DISTINCT status FROM open_repair_mailbox_resources").fetchall(),[("pending",)])
         self.assertEqual(self.db.execute("SELECT count(*) FROM open_repair_mailbox_slot_activations").fetchone()[0],0)
+        self.assertEqual(self.db.execute("SELECT count(*) FROM open_repair_mailbox_genesis").fetchone()[0],0)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 """Atomic original data/metadata resource activation for one mailbox slot.
 
-This local setup stage persists the exact owner chain and both node activation
-events together. It is not a ready mailbox: genesis, current observations and
-root custody must commit before a caller can publish or use a cold entry.
+This local setup stage persists the exact owner chain, both node activation
+events and the count-zero checkpoint/head together. Current observations and
+root custody must still commit before a caller can publish or use a cold entry.
 """
 import json
 
@@ -12,6 +12,7 @@ import memory_vault_open_repair_history as history
 import memory_vault_open_repair_original as original
 import memory_vault_open_repair_resource as resource
 import memory_vault_open_repair_wire as wire
+import memory_vault_open_repair_mailbox_range as mailbox_range
 from memory_vault_open_repair_state import ROW_CHARGE
 
 
@@ -61,6 +62,10 @@ class MailboxSlotActivation:
                 data_active BLOB NOT NULL,data_active_ref BLOB NOT NULL,
                 metadata_active BLOB NOT NULL,metadata_active_ref BLOB NOT NULL,
                 activated_at INTEGER NOT NULL,UNIQUE(owner,activation_id))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_repair_mailbox_genesis(
+                slot_digest TEXT PRIMARY KEY,checkpoint BLOB NOT NULL,checkpoint_ref BLOB NOT NULL,
+                head BLOB NOT NULL,head_ref BLOB NOT NULL,committed_at INTEGER NOT NULL,
+                retain_until INTEGER NOT NULL)''')
 
     def _originals(self, entries, owner, budget, now):
         resource._fields(entries, FIELDS)
@@ -187,7 +192,7 @@ class MailboxSlotActivation:
             _mismatch()
 
     def activate(self, entries, *, expected_slot, _budget=None, _transaction_guard=None):
-        """Persist the stage, not a genesis/head/custody or network-ready result."""
+        """Commit the empty slot, not root custody or a network-ready result."""
         s = self.source
         deadlines = []
         def guard():
@@ -230,7 +235,13 @@ class MailboxSlotActivation:
             if old is not None:
                 if old["input_digest"] != digest:
                     wire._fail("repair_activation_conflict")
-                return {name: s._saved(old, name+"_active") for name in ("data", "metadata")}
+                genesis = s._one("SELECT * FROM open_repair_mailbox_genesis WHERE slot_digest=?", (slot_digest,))
+                if genesis is None:
+                    # Older, unfinished local activation stages cannot silently
+                    # become a new current promise using expired authority.
+                    wire._fail("repair_mailbox_genesis_incomplete")
+                return {**{name: s._saved(old, name+"_active") for name in ("data", "metadata")},
+                        **{name: s._saved(genesis, name) for name in ("checkpoint", "head")}}
             held, payloads = self._originals(entries, owner, budget, now)
             self._check(held, payloads, slot_key, owner, offers, budget, now)
             activation = payloads["activation"]
@@ -241,12 +252,13 @@ class MailboxSlotActivation:
                 wire._fail("repair_resource_inactive")
             inputs = wire.build_new_wire({k: dict(raw=v["raw"].decode(), ref=v["ref"])
                 for k, v in held.items()}, s.policy, budget).raw
-            result = {}
+            result, offer_payloads, metadata_usage = {}, {}, {}
             deadlines.extend(row["reservation_until"] for row in rows.values())
             deadlines += [p["expires_at"] for p in payloads.values()]
             deadlines += [payloads["bootstrap"][key] for key in ("probe_until", "proof_until", "upload_until")]
             for name, row in rows.items():
                 offer = wire.parse_new_wire(offers[name]["raw"], s.policy, budget).value["payload"]
+                offer_payloads[name] = offer
                 deadlines.extend(offer["windows"].values())
                 result[name] = s._sign(dict(schema_version=resource.SCHEMA, kind="resource.active",
                     signing_key=s.identity.public_descriptor(), activated_at=now,
@@ -259,11 +271,33 @@ class MailboxSlotActivation:
                 metadata = row["metadata_bytes"] + len(inputs) + len(result[name]["raw"]) + 8*ROW_CHARGE
                 if metadata > offer["budget"]["max_meta_bytes"]:
                     wire._fail("repair_insufficient_capacity")
+                metadata_usage[name] = metadata
                 self.db.execute("UPDATE open_repair_mailbox_resources SET status='active',metadata_bytes=? WHERE resource_id=?",
                                 (metadata, row["resource_id"]))
+            initial = mailbox_range.empty_state(slot_key, policy=s.policy, budget=budget)
+            retain_until = min(payloads["slot"]["windows"]["retain_until"],
+                               *(value["windows"]["retain_until"] for value in offer_payloads.values()))
+            result["checkpoint"] = s._sign(dict(schema_version=resource.SCHEMA, kind="mailbox.checkpoint",
+                signing_key=s.identity.public_descriptor(), slot_key=slot_key, **initial,
+                committed_at=now, retain_until=retain_until), "mailbox_checkpoint", budget)
+            result["head"] = s._sign(dict(schema_version=resource.SCHEMA, kind="mailbox.feed_head",
+                signing_key=s.identity.public_descriptor(), slot_key=slot_key,
+                checkpoint_ref=result["checkpoint"]["ref"], count=0, range_root_ref=None,
+                catalog_generation=0, committed_at=now, retain_until=retain_until), "mailbox_feed_head", budget)
+            extra = sum(len(result[name]["raw"]) for name in ("checkpoint", "head")) + 3*ROW_CHARGE
+            for name, row in rows.items():
+                total = metadata_usage[name] + extra
+                if total > offer_payloads[name]["budget"]["max_meta_bytes"]:
+                    wire._fail("repair_insufficient_capacity")
+                self.db.execute("UPDATE open_repair_mailbox_resources SET metadata_bytes=? WHERE resource_id=?",
+                                (total, row["resource_id"]))
+            deadlines.append(retain_until)
             self.db.execute('''INSERT INTO open_repair_mailbox_slot_activations VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (slot_digest, owner["signing_key"]["key_id"], activation["activation_id"], digest, inputs,
                  rows["data"]["resource_id"], rows["metadata"]["resource_id"], result["data"]["raw"],
                  canonical_bytes(result["data"]["ref"]), result["metadata"]["raw"],
                  canonical_bytes(result["metadata"]["ref"]), now))
+            self.db.execute("INSERT INTO open_repair_mailbox_genesis VALUES(?,?,?,?,?,?,?)",
+                (slot_digest, result["checkpoint"]["raw"], canonical_bytes(result["checkpoint"]["ref"]),
+                 result["head"]["raw"], canonical_bytes(result["head"]["ref"]), now, retain_until))
             return result

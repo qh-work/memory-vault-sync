@@ -46,7 +46,7 @@ TS_NETWORK = {"clients/typescript/network/" + name for name in
                "open-repair-original.ts",
                "open-repair-resource.ts",
                "open-repair-bootstrap.ts",
-               "open-repair-status.ts",
+               "open-repair-status.ts", "open-repair-mailbox-range.ts",
                "open-repair-ack.ts",
                "open-repair-probe.ts",
                "open-repair-proof.ts", "open-repair-client.ts", "open-repair-bound.ts", "open-repair-empty.ts", "open-repair-occupied.ts")}
@@ -72,7 +72,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 121)
+        self.assertEqual(len(allowed), 122)
         self.assertTrue(NEW_MODULES | {"memory_vault_open_capacity.py"} | RUNTIME_DATA <= allowed)
         self.assertEqual({name for name in allowed if not name.endswith(".py")}, RUNTIME_DATA)
         for name in allowed:
@@ -102,7 +102,7 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
         self.assertGreaterEqual(len(review), 39)
-        self.assertEqual(len(TS_NETWORK), 52)
+        self.assertEqual(len(TS_NETWORK), 53)
         self.assertTrue(RUNTIME_DATA <= set(documents))
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
@@ -121,7 +121,7 @@ class NetworkPackagingTests(unittest.TestCase):
                          "tests/test_open_repair_bootstrap.py", "tests/test_open_repair_bootstrap_typescript.py",
                          "tests/test_open_repair_status.py", "tests/test_open_repair_status_typescript.py",
                          "tests/open_repair_ack_fixtures.py", "tests/test_open_repair_ack.py",
-                         "tests/test_open_repair_ack_typescript.py", "tests/test_open_repair_state.py", "tests/test_open_repair_mailbox_resources.py", "tests/test_open_repair_mailbox_activation.py",
+                         "tests/test_open_repair_ack_typescript.py", "tests/test_open_repair_state.py", "tests/test_open_repair_mailbox_resources.py", "tests/test_open_repair_mailbox_activation.py", "tests/test_open_repair_mailbox_range.py",
                          "tests/test_open_repair_probe.py",
                          "tests/test_open_repair_probe_typescript.py",
                          "tests/test_open_repair_proof.py",
@@ -139,7 +139,7 @@ class NetworkPackagingTests(unittest.TestCase):
             "memory_vault_open_repair_original.py", "memory_vault_open_repair_resource.py",
             "memory_vault_open_repair_bootstrap.py", "memory_vault_open_repair_status.py",
             "memory_vault_open_repair_ack.py", "memory_vault_open_repair_state.py",
-            "memory_vault_open_repair_mailbox_resources.py", "memory_vault_open_repair_mailbox_activation.py",
+            "memory_vault_open_repair_mailbox_resources.py", "memory_vault_open_repair_mailbox_activation.py", "memory_vault_open_repair_mailbox_range.py",
             "memory_vault_open_repair_probe.py",
             "memory_vault_open_repair_proof.py",
             "memory_vault_open_repair_access.py",
@@ -184,6 +184,7 @@ class NetworkPackagingTests(unittest.TestCase):
             "clients/typescript/network/open-repair-wire.ts", "clients/typescript/network/open-repair-history.ts",
             "clients/typescript/network/open-repair-original.ts", "clients/typescript/network/open-repair-resource.ts",
             "clients/typescript/network/open-repair-bootstrap.ts", "clients/typescript/network/open-repair-status.ts",
+            "clients/typescript/network/open-repair-mailbox-range.ts",
             "clients/typescript/network/open-repair-ack.ts", "clients/typescript/network/open-capacity.ts",
             "clients/typescript/network/open-repair-probe.ts", "clients/typescript/network/open-repair-proof.ts",
             "clients/typescript/network/open-repair-client.ts",
