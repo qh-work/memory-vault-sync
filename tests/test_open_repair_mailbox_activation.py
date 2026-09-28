@@ -42,6 +42,7 @@ class MailboxActivationTests(unittest.TestCase):
         self.now += 1
 
     def connect(self):
+        self.path.touch(mode=0o600,exist_ok=True)
         self.db = sqlite3.connect(self.path)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")

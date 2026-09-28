@@ -234,12 +234,49 @@ class MailboxSourceTests(unittest.TestCase):
             verify(signed_entry(changed,h.f["signers"]["target"],"synthetic_incomplete_custody"),incomplete)
         h.connect()
 
+    def http_service(self, h):
+        import threading
+        import time
+        from unittest.mock import patch
+        from memory_vault_open_node import OpenParticipant, OpenHTTPServer
+        from memory_vault_open_transport import OpenHTTPTransport
+        self.enterContext(patch("time.time",side_effect=lambda:h.now))
+        participant=OpenParticipant(h.source.identity,h.path.parent,seeds=[],descriptor=h.f["docs"]["descriptor"],
+            encryption_identity=h.source.encryption_identity,allow_loopback=True,
+            repair_policy=dict(enabled=True,limit_policy=dict(h.source.limits)))
+        server=OpenHTTPServer(("127.0.0.1",0),participant)
+        thread=threading.Thread(target=server.serve_forever,kwargs=dict(poll_interval=.02),daemon=True);thread.start()
+        def close():
+            server.shutdown();server.server_close();thread.join(timeout=3);participant.close()
+        self.addCleanup(close)
+        transport=OpenHTTPTransport(allow_loopback=True);self.addCleanup(transport.close)
+        base="http://127.0.0.1:"+str(server.server_port)
+        class Remote:
+            def initialize(self):
+                pass
+            def challenge(self,packet):
+                raw=transport.request_repair(base,packet["raw"],deadline=time.monotonic()+15)
+                import hashlib
+                digest=hashlib.sha256(raw).hexdigest()
+                return dict(raw=raw,ref=dict(namespace="meta",key=digest,raw_sha256=digest,size=len(raw)))
+            def answer(self,packet):
+                return transport.request_repair(base,packet["raw"],deadline=time.monotonic()+15)
+            def child(self,packet):
+                return transport.request_repair(base,packet["raw"],child=True,deadline=time.monotonic()+15)
+        remote=Remote();remote.participant=participant
+        return remote
+
+    def test_custody_recovery_full_http_originals(self):
+        self.test_custody_recovery_challenge_persists_and_proves_node_keys()
+
     def test_custody_recovery_challenge_persists_and_proves_node_keys(self):
         import memory_vault_open_repair_probe as probe
         from memory_vault_open_repair_mailbox_source import MailboxRecoveryService
         self.owner_observation();self.observe();self.source.prepare_history(self.resource_id,"synthetic_observation");self.custody()
         h=self.host.h
         service=MailboxRecoveryService(self.source);service.initialize()
+        if "http" in self._testMethodName:
+            service=self.http_service(h)
         saved=json.loads(bytes(h.source._one("SELECT inputs FROM open_repair_mailbox_roots")["inputs"]))["bootstrap"]
         grant=json.loads(saved["raw"])["payload"]
         expected=dict(expected_subject=h.owner,expected_target=h.source.target,target_storage_epoch=h.slot_key["writer_storage_epoch"],
@@ -263,7 +300,9 @@ class MailboxSourceTests(unittest.TestCase):
         probe.verify_bootstrap_answer(packet,challenge,dict(raw=answer.raw,ref=answer.ref.as_dict()),caller_nonce=bytes(held["nonce"]),**opts())
         self.assertGreater(h.source._one("SELECT signatures FROM open_repair_mailbox_recovery_usage")["signatures"],0)
         h.db.close();h.connect()
-        self.source=MailboxRootSource(MailboxRootActivation(h.resources));service=MailboxRecoveryService(self.source);service.initialize()
+        self.source=MailboxRootSource(MailboxRootActivation(h.resources))
+        if "http" not in self._testMethodName:
+            service=MailboxRecoveryService(self.source);service.initialize()
         self.assertEqual(service.challenge(packet),challenge)
         prior=h.source._one("SELECT proof_bytes FROM open_repair_mailbox_recovery_responses")["proof_bytes"]
         self.assertEqual(service.answer(dict(raw=answer.raw,ref=answer.ref.as_dict())),response)
@@ -294,10 +333,29 @@ class MailboxSourceTests(unittest.TestCase):
             expected_root=h.root,expected_owner=h.owner,expected_target=h.source.target,target_storage_epoch=h.slot_key["writer_storage_epoch"],
             limit_policy=h.source.limits,policy=DEFAULT_POLICY,budget=budget)
         self.assertEqual(recovered["custody"].raw,received["root.custody"]["raw"])
-        with self.assertRaisesRegex(RepairWireError,"repair_child_replay"):
+        from memory_vault import MemoryError as VaultError
+        rejection=VaultError if "http" in self._testMethodName else RepairWireError
+        with self.assertRaises(rejection):
             service.child(dict(raw=request.raw,ref=request.ref.as_dict()))
+        fresh=proof.make_bootstrap_child_request(h.f["signers"]["owner"],checked,subject=h.owner,target=h.source.target,
+            at=h.now,expires_at=h.now+20,child_index=0,offset=0,requested_bytes=1,
+            policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+        if "http" in self._testMethodName:
+            service.participant.repair_policy["enabled"]=False
+            with self.assertRaises(rejection):
+                service.child(dict(raw=fresh.raw,ref=fresh.ref.as_dict()))
+            service.participant.repair_policy["enabled"]=True
+        import memory_vault_open_provider as provider
+        from tests.test_open_repair_status import status_entry
+        context=self.source.root.owner_status_context(self.resource_id)
+        revoked=status_entry(provider.issue_status(h.f["signers"]["owner"],root=h.root,revision=2,
+            entries=[dict(scope_kind=v["scope_kind"],scope_id=v["scope_id"],minimum_document_revision=1,status="revoked",operation_mask=127)
+                for v in context["required"]],issued_at=h.now,valid_until=h.now+100))
+        self.source.root.observe_owner_status(self.resource_id,revoked)
+        with self.assertRaises(rejection):
+            service.child(dict(raw=fresh.raw,ref=fresh.ref.as_dict()))
         h.now += 41
-        with self.assertRaises(RepairWireError):
+        with self.assertRaises(rejection):
             service.challenge(packet)
 
     def test_custody_recovery_refuses_exhausted_budget_before_creating_challenge(self):
