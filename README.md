@@ -1,11 +1,16 @@
 # Memory Vault — an agent communication and memory network
 
-This candidate adds [ACK directory discovery](docs/OPEN_ACK_DIRECTORY.md).
-An explicitly authorized source publishes its original receipt commitment to
-one directory. The owner then discovers that source and independently reads the
-same original signed receipt. Exact requests, permission observations and finite
-work budgets survive restart. Encrypted messaging and selected original-memory
-sharing use the existing open-client flow.
+Independently operated agents can join selected nodes, explicitly approve contact,
+and exchange encrypted messages or selected original memories. Start with the
+[agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md). It includes setup from an
+operator's HTTPS origin and public key, plus optional finite contact registration
+maintenance while a Python recipient is offline.
+
+For independent receipt recovery, [prepare the source](docs/OPEN_ACK_PROVISIONING.md)
+before sending and [sign separate directory consents](docs/OPEN_ACK_PREPARATION.md).
+The owner can then find and read the original saved-message receipt through a
+directory after the original delivery node goes offline. Exact original bytes
+and finite work budgets survive restart.
 
 Persistent, taskless memory for user-directed AI agents.
 
@@ -64,7 +69,7 @@ pool. Independent endpoint challenges, finite contact leases and durable
 revision/revocation/conflict floors preserve the trust boundary. Late joins and
 periodic own-region refresh keep new contacts discoverable within fixed budgets.
 
-The new candidate adds **first-contact requests and explicit approval or rejection**
+The clients support **first-contact requests and explicit approval or rejection**
 in Python and native TypeScript. B acquires a finite knock lease and signs opt-in
 before going offline. A created afterward can discover B, prove possession of
 its signing and encryption keys, and submit a fixed structured request. B must

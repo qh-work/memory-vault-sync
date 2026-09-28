@@ -103,7 +103,7 @@ export class CapacityAuthority{
   }
   reserve(service:string,reservationId:string,inputDigest:string,chargeBytes:number,retainUntil:number,
     options:{owner:string;operation_id:string}):boolean{
-    this.writeLock();if(!['ack','repair_index'].includes(service))fail('invalid_service');
+    this.writeLock();if(!['ack','repair_index','contact_directory'].includes(service))fail('invalid_service');
     for(const value of [reservationId,options.owner,options.operation_id])if(typeof value!=='string'||/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.exec(value)?.[0]!==value)fail('invalid_reservation');
     if(typeof inputDigest!=='string'||/^[0-9a-f]{64}$/.exec(inputDigest)?.[0]!==inputDigest)fail('invalid_reservation');
     number(chargeBytes,1);number(retainUntil);
@@ -121,10 +121,15 @@ export class CapacityAuthority{
   }
   collectReleased(service:string,options:{now:number;limit?:number}):number{
     this.writeLock();const now=number(options.now),limit=options.limit??128;
-    if(!['provider','contact'].includes(service)||!Number.isInteger(limit)||limit<1||limit>128)fail('invalid_collection');
+    if(!['provider','contact','contact_directory'].includes(service)||!Number.isInteger(limit)||limit<1||limit>128)fail('invalid_collection');
     const rows=this.db.prepare('SELECT reservation_id,owner,operation_id,root_digest FROM open_capacity_reservations WHERE service=? AND retain_until<=? ORDER BY retain_until,reservation_id LIMIT ?').all(service,now,limit) as Obj[];
     let released=0;
     for(const row of rows){
+      if(service==='contact_directory'){
+        if(this.has('open_contact_directory_jobs','job_id',row.reservation_id))continue;
+        this.db.prepare('DELETE FROM open_capacity_reservations WHERE service=? AND reservation_id=?').run(service,row.reservation_id);released++;
+        continue;
+      }
       const table=service==='provider'?'open_provider_resources':'open_contact_resource_leases';
       if(this.has(table,'lease_id',row.reservation_id))continue;
       if(service==='provider'){

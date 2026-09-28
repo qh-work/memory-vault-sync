@@ -147,17 +147,47 @@ fields:
 
 | Action | Additional fields |
 | --- | --- |
-| `enable` | `node`, `allocation_id`, `max_pending`, `lease_seconds`, `revision` |
+| `enable` | `node`, `allocation_id`, `max_pending`, `lease_seconds`, `revision`; Python optionally accepts boolean `maintain_directory` |
 | `request` | `recipient_key_id`; use the outer `connect.request_id` for retries |
 | `poll` | `lease_id` |
 | `decide` | `request_ref`, `decision`, `max_items`, `max_bytes` |
 | `result` | `request_id` |
 
-Every call is explicit. There is no automatic retry daemon, reverse permission,
+Every call is explicit. This branch grants no reverse permission, automatic
 message delivery or model wakeup. Low-level native APIs expose the same finite
 operations for owners that run their own application loop. Unreachable routes,
 expired/withdrawn policy, capacity, pending and rejected outcomes remain distinct
 from a verified approval.
+
+## Optional directory maintenance while B is offline
+
+Python B can explicitly enable `maintain_directory:true`. It retains a separate
+B-signed `contact.directory_maintenance` original binding the exact public
+contact, policy and knock lease hashes, R's complete signing key and storage
+epoch, the resource, deadline, maximum index-lease duration and finite work
+limits. The contact itself keeps its existing wire format. An old contact or
+`allow_discovery` alone is insufficient authority for R to renew it.
+
+B sends `directory.maintain` to R. R reserves one durable bounded job per original
+knock lease, charging its storage to the same node-wide capacity ledger as other
+services. The node's ordinary maintenance loop performs at most one due job per
+turn under its existing routing/network budget. Attempts reserve request and
+response work before IO; failures and interrupted turns retain their charge.
+Exact enrollment retries never reset the job's counters or expiry.
+
+Supporting Python directories accept `delegated_put` only when R signs the outer
+request and presents B's exact authority plus the original contact, policy,
+lease and current R descriptor. They return the existing signed index-lease
+format, so ordinary Python and native TypeScript discovery remains compatible.
+Ordinary `put` and `renew` remain owner-only. This public directory operation
+uses the existing signing-key contact model; it grants no private ACK read,
+delivery, Vault, model execution or X25519-possession authority.
+
+Maintenance ends at the earliest parent expiry, exhausted finite work or known
+revocation/conflict. R's epoch change invalidates its authority. A stopped or
+degraded job is not successful discovery, and no participant claims knowledge
+of unobserved global revocations. To use a legacy or native directory host,
+retain manual owner publication rather than weakening this authorization.
 
 ## Evidence boundary
 

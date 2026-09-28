@@ -142,6 +142,35 @@ class OpenCapacityTypeScriptTests(unittest.TestCase):
         self.assertEqual(db.execute('SELECT count(*) FROM open_contact_resource_leases').fetchone()[0],1)
         self.assertEqual(db.execute('SELECT count(*) FROM open_provider_resources').fetchone()[0],1)
 
+    def test_contact_directory_reservation_survives_restart_and_live_job_until_retention(self):
+        selected=dict(maximum_reserved_bytes=capacity.SERVICE_RESERVE_BYTES+65536,maximum_reservations=2)
+        job=dict(self.reserve('synthetic_directory',65536),service='contact_directory')
+        first=self.ts([job,job,dict(op='usage')],policy=selected)['results']
+        self.assertTrue(first[0]['value']);self.assertFalse(first[1]['value'])
+        db,authority=self.initialize_python();self.addCleanup(db.close)
+        self.assertEqual(authority.usage(),first[2]['value'])
+        db.execute('BEGIN IMMEDIATE')
+        self.assertFalse(authority.reserve('contact_directory','synthetic_directory','a'*64,65536,200,
+            owner='synthetic_owner',operation_id='synthetic_directory'))
+        self.assertEqual(authority.collect_released('contact_directory',now=199),0)
+        db.execute('CREATE TABLE open_contact_directory_jobs(job_id TEXT PRIMARY KEY)')
+        db.execute("INSERT INTO open_contact_directory_jobs VALUES('synthetic_directory')")
+        self.assertEqual(authority.collect_released('contact_directory',now=200),0)
+        db.commit()
+        held=self.ts([dict(op='collect',service='contact_directory',at=200),
+            dict(self.reserve('synthetic_other',1),service='ack'),
+            dict(job,bytes=65535),dict(op='usage')])['results']
+        self.assertEqual(held[0]['value'],0)
+        self.assertEqual(held[1]['code'],'open_capacity_exhausted')
+        self.assertEqual(held[2]['code'],'open_capacity_reservation_conflict')
+        self.assertEqual(held[3]['value'],first[2]['value'])
+        db.execute("DELETE FROM open_contact_directory_jobs WHERE job_id='synthetic_directory'");db.commit()
+        released=self.ts([dict(op='collect',service='contact_directory',at=199),
+            dict(op='collect',service='contact_directory',at=200),dict(op='usage')])['results']
+        self.assertEqual([item['value'] for item in released[:2]],[0,1])
+        self.assertEqual(released[2]['value']['reserved_bytes'],capacity.SERVICE_RESERVE_BYTES)
+        self.assertEqual(authority.usage(),released[2]['value'])
+
     def test_oversubscribed_migration_preserves_totals_above_safe_integer_exactly(self):
         db=sqlite3.connect(self.path);self.addCleanup(db.close)
         for sql in capacity.RESERVATION_TABLES.values():db.execute(sql)

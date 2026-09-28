@@ -27,7 +27,7 @@ NEW_MODULES = {"memory_vault_nodes.py", "memory_vault_node.py", "memory_vault_ne
                "memory_vault_topics.py", "memory_vault_topic_store.py", "memory_vault_network_hints.py",
                "memory_vault_open_control.py", "memory_vault_open_routing.py", "memory_vault_open_index.py",
                "memory_vault_open_state.py", "memory_vault_open_transport.py", "memory_vault_open_node.py", "memory_vault_open_client.py",
-               "memory_vault_open_contact.py", "memory_vault_open_contact_state.py", "memory_vault_open_contact_client.py",
+               "memory_vault_open_contact.py", "memory_vault_open_contact_state.py", "memory_vault_open_contact_client.py", "memory_vault_open_contact_directory.py",
                "memory_vault_open_blob.py", "memory_vault_open_delivery.py", "memory_vault_open_delivery_state.py",
                "memory_vault_open_delivery_client.py", "memory_vault_open_provider.py", "memory_vault_open_provider_state.py",
                "memory_vault_open_provider_client.py", "memory_vault_open_setup.py", "memory_vault_open_agent_setup.py"}
@@ -72,7 +72,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 114)
+        self.assertEqual(len(allowed), 115)
         self.assertTrue(NEW_MODULES | {"memory_vault_open_capacity.py"} | RUNTIME_DATA <= allowed)
         self.assertEqual({name for name in allowed if not name.endswith(".py")}, RUNTIME_DATA)
         for name in allowed:

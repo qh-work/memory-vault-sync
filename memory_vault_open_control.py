@@ -144,10 +144,11 @@ def issue_contact(signer: Identity, *, encryption_key: Mapping[str, Any], revisi
 
 
 def _request_body(action: Any, value: Any, now: int | None) -> dict[str, Any]:
-    if not isinstance(action, str) or action not in {"hello", "find", "get", "put", "renew"}:
+    if not isinstance(action, str) or action not in {"hello", "find", "get", "put", "renew", "delegated_put"}:
         raise OpenControlError("open_unsupported_action")
     fields = {"hello": {"node"}, "find": {"target", "view"}, "get": {"key"},
-              "put": {"contact", "lease_seconds"}, "renew": {"contact", "lease_id", "lease_seconds"}}[action]
+              "put": {"contact", "lease_seconds"}, "renew": {"contact", "lease_id", "lease_seconds"},
+              "delegated_put": {"contact", "lease_seconds", "authorization", "lease", "policy", "publisher_node"}}[action]
     raw = object_fields(value, fields)
     if action == "hello":
         if raw["node"] is not None:
@@ -160,6 +161,9 @@ def _request_body(action: Any, value: Any, now: int | None) -> dict[str, Any]:
         digest(raw["key"])
     else:
         verify_contact(raw["contact"], now=now)
+        if action == "delegated_put":
+            from memory_vault_open_contact_directory import verify_delegated_put
+            verify_delegated_put(raw, now=now)
         if integer(raw["lease_seconds"], minimum=1) > MAX_LEASE_SECONDS:
             raise OpenControlError("open_invalid_lease")
         if action == "renew":
@@ -194,6 +198,9 @@ def verify_request(value: Mapping[str, Any] | bytes, *, node: Mapping[str, Any],
         raise OpenControlError("open_wrong_node")
     _window(raw, maximum=MAX_REQUEST_SECONDS, now=now)
     body = _request_body(raw["action"], raw["body"], now)
+    if raw["action"] == "delegated_put":
+        from memory_vault_open_contact_directory import verify_delegated_put
+        verify_delegated_put(body, signer=raw["signer"], now=now)
     if (raw["action"] == "hello" and body["node"] is not None
             and body["node"]["payload"]["signing_key"] != raw["signer"]):
         raise OpenControlError("open_sender_mismatch")
@@ -281,6 +288,10 @@ def _response_body(value: Any, request: Mapping[str, Any], node: Mapping[str, An
         lease = verify_lease(raw["lease"], node=node, contact=request["body"]["contact"], now=now)
         if lease["request_id"] != request["request_id"]:
             raise OpenControlError("open_lease_mismatch")
+        if action == "delegated_put" and (
+                lease["expires_at"] > request["body"]["authorization"]["payload"]["expires_at"]
+                or lease["expires_at"] - lease["issued_at"] > request["body"]["lease_seconds"]):
+            raise OpenControlError("open_lease_mismatch")
     return raw
 
 
@@ -314,7 +325,7 @@ def verify_response(value: Mapping[str, Any] | bytes, *, request: Mapping[str, A
         raise OpenControlError("open_response_mismatch")
     _verify(signed, PublicKeyTrust([target["signing_key"]]))
     _response_body(raw["body"], original, node, now)
-    if original["action"] in {"put", "renew"} and "lease" in raw["body"]:
+    if original["action"] in {"put", "renew", "delegated_put"} and "lease" in raw["body"]:
         if raw["body"]["lease"]["payload"]["request_sha256"] != document_sha256(request):
             raise OpenControlError("open_lease_mismatch")
     return raw

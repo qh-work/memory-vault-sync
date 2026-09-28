@@ -214,6 +214,8 @@ class OpenParticipant:
                 OpenCheckpoints(db).accept(self.descriptor)
                 OpenIndex(db, identity, self.descriptor, **self.index_policy).initialize()
                 ContactState(db, identity, self.descriptor, **self.contact_policy).initialize()
+                from memory_vault_open_contact_directory import DirectoryMaintenanceState
+                DirectoryMaintenanceState(ContactState(db, identity, self.descriptor, **self.contact_policy)).initialize()
                 if self.delivery_policy:
                     from memory_vault_open_delivery_state import DeliveryState
                     DeliveryState(db, identity, self.descriptor, **self.delivery_policy).initialize()
@@ -494,6 +496,13 @@ class OpenParticipant:
             except (MemoryError, sqlite3.Error) as exc:
                 cleanup_errors.append(getattr(exc, "code", "open_storage_unavailable"))
         budget = LookupBudget(maximum_requests=16, maximum_bytes=1024 * 1024, maximum_seconds=5)
+        directory_maintenance = None
+        if self.descriptor is not None and self.contact_policy.get("enabled") is True:
+            from memory_vault_open_contact_directory import maintain_directory
+            try:
+                directory_maintenance = await maintain_directory(self, budget)
+            except MemoryError as exc:
+                cleanup_errors.append(exc.code)
         pending = []
         with self._pending_lock:
             for _ in range(min(2, len(self._pending))):
@@ -522,7 +531,8 @@ class OpenParticipant:
                 except MemoryError as exc:
                     errors.append(exc.code)
         result = await self._lookup(target, "general", budget)
-        return {"state": result["state"], "metrics": self._metrics(budget), "errors": errors}
+        return {"state": result["state"], "metrics": self._metrics(budget), "errors": errors,
+                "directory_maintenance": directory_maintenance}
 
     async def find_contact(self, owner_key_id: str, *, budget=None):
         key = contact_key(owner_key_id)
@@ -636,7 +646,12 @@ class OpenParticipant:
             verify_rpc(request, node=self.descriptor)
             try:
                 with self.state.db() as db:
-                    result = ContactState(db, self.identity, self.descriptor, **self.contact_policy).handle(request)
+                    state = ContactState(db, self.identity, self.descriptor, **self.contact_policy)
+                    if payload.get("action") == "directory.maintain":
+                        from memory_vault_open_contact_directory import DirectoryMaintenanceState
+                        result = DirectoryMaintenanceState(state).enroll(request)
+                    else:
+                        result = state.handle(request)
             except MemoryError as exc:
                 result = {"error": {"code": exc.code, "retryable": bool(exc.retryable)}}
             return contact_response(self.identity, request=request, node=self.descriptor, body=result)

@@ -30,7 +30,7 @@ FILES = ("settings.json", "status.json", "progress.jsonl", "errors.jsonl", "resu
 MAX_REPORT_BYTES = 900_000  # All explicitly uploadable files together, <1 MiB.
 MODULES = tuple("tests.test_open_" + name for name in (
     "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "agent_setup", "typescript", "typescript_state", "typescript_http", "network_ci",
-    "contact", "contact_state", "contact_http", "contact_typescript", "contact_typescript_http",
+    "contact", "contact_state", "contact_http", "contact_directory_maintenance", "contact_typescript", "contact_typescript_http",
     "delivery_http", "provider_typescript", "provider_typescript_http", "provider_status", "provider_status_typescript",
     "repair_wire", "repair_typescript", "repair_pack", "repair_pack_typescript",
     "repair_history", "repair_history_typescript", "repair_original", "repair_original_typescript", "repair_contact_inputs",
@@ -238,7 +238,7 @@ def initialize(reports, mode, seed):
             "open-delivery.ts", "open-delivery-control.ts", "open-delivery-client.ts",
             "agent.ts", "peer.ts", "io.ts", "crypto.ts", "nodes.ts")]
         sources += ["requirements-network-server-lock.txt", "tests/test_open_typescript.py", "tests/test_open_typescript_http.py", "tests/test_open_typescript_state.py",
-                    "memory_vault_open_contact.py", "memory_vault_open_contact_state.py", "memory_vault_open_contact_client.py",
+                    "memory_vault_open_contact.py", "memory_vault_open_contact_state.py", "memory_vault_open_contact_client.py", "memory_vault_open_contact_directory.py",
                     "memory_vault_open_client.py", "memory_vault_open_node.py", "memory_vault_open_transport.py", "memory_vault_open_setup.py",
                     "tests/test_open_contact.py", "tests/test_open_contact_state.py", "tests/test_open_contact_http.py",
                     "tests/test_open_contact_typescript.py", "tests/test_open_contact_typescript_http.py",

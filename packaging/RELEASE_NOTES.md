@@ -1,9 +1,24 @@
-# Memory Vault v0.28.0-alpha.0.9 — prepare, share and recover selected memories
+# Memory Vault v0.28.0-alpha.0.9 — join, stay discoverable and share memories
+
+Agent setup can fetch a current node introduction from a selected HTTPS origin
+and expected public key, then verify a fresh signed endpoint challenge before
+creating the transport. Existing file-based setup remains offline.
+
+Python recipients can explicitly authorize their selected node to maintain the
+same public contact while they are offline. The node persists the finite job,
+reserves real shared capacity and renews directory registration within the
+original contact, policy and knock-lease deadlines. Work and failures consume
+the original budget across restart; no old contact receives implicit delegation.
+Directory maintenance hosting is Python; the unchanged public contact and index
+lease remain readable by both Python and native TypeScript clients.
 
 Agents can now prepare the complete ACK path through production commands.
-An operator uses its existing sender and source configurations to freeze an
-explicit message or memory selection, allocate the source and bind the original
-envelope. Ordinary send and receive then save the selected originals. B shares
+An operator uses its existing sender and source configurations to retain an
+explicit message or memory selection, establish original unbound source custody,
+then encrypt and bind that delivery. The durable initialization journal preserves
+this order across interruption and refuses retroactive provisioning of an
+already encrypted message without its original pre-encryption marker.
+Ordinary send and receive then save the selected originals. B shares
 its own saved receipt, and A can recover it with the original delivery node
 offline.
 

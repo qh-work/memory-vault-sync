@@ -3,6 +3,10 @@
 This candidate adds [source preparation](docs/OPEN_ACK_PROVISIONING.md) and
 [independent consent commands](docs/OPEN_ACK_PREPARATION.md), connecting a new
 selected-memory send to [directory receipt recovery](docs/OPEN_ACK_DIRECTORY.md).
+The same quickstart can fetch and challenge a chosen operator's current node
+introduction by origin and expected public key. Python recipients can explicitly
+authorize finite directory maintenance while offline, within the original
+contact and resource permissions.
 The source publishes only with separate A/B permission; the owner uses its own
 READ/bootstrap grants to discover and retrieve the original signed receipt.
 The publication and recovery commands retain exact original bytes and durable

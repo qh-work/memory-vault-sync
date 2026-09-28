@@ -148,11 +148,13 @@ class OpenContactClient:
         except MemoryError:
             return await self._resolve({"node_key_id": old["signing_key"]["key_id"], "base_url": old["base_url"], "storage_epoch": old["storage_epoch"]}, budget)
 
-    async def enable(self, node, *, allocation_id, max_pending=4, lease_seconds=600, revision=1):
+    async def enable(self, node, *, allocation_id, max_pending=4, lease_seconds=600, revision=1, maintain_directory=False):
         """B explicitly acquires resource permission and signs opt-in before publishing."""
         limit(max_pending, 32)
         limit(lease_seconds, 86400)
         limit(revision, 9007199254740991)
+        if type(maintain_directory) is not bool:
+            raise ContactError("contact_invalid_directory_opt_in")
         opaque(allocation_id)
         budget = LookupBudget()
         allocation = {"encryption_key": self.encryption.public_descriptor(),
@@ -185,10 +187,27 @@ class OpenContactClient:
             "base_url": node["payload"]["base_url"], "storage_epoch": raw["storage_epoch"]}],
             issued_at=now, expires_at=min(now + 3600, raw["expires_at"]))
         published = await self.participant.publish_contact(contact, lease_seconds=min(300, lease_seconds))
+        maintenance = None
+        if maintain_directory:
+            from memory_vault_open_contact_directory import issue_authorization
+            try:
+                maintained = self._load("directory", raw["lease_id"])
+            except ContactError as exc:
+                if exc.code != "contact_local_missing":
+                    raise
+                self._reserve([("directory", raw["lease_id"])], contact["payload"]["expires_at"])
+                maintained = {"contact": contact, "policy": policy, "lease": lease,
+                    "authorization": issue_authorization(self.identity, contact=contact, policy=policy,
+                                                         lease=lease, node=node)}
+                self._save("directory", raw["lease_id"], maintained, contact["payload"]["expires_at"])
+            if any(maintained[name] != value for name, value in (("contact", contact), ("policy", policy), ("lease", lease))):
+                raise ContactError("contact_local_conflict")
+            maintenance = await self.call(node, "directory.maintain", maintained, budget)
         directory_expires_at = min((confirmed["payload"]["expires_at"] for confirmed in published["leases"]), default=None)
         return {"state": "active", "lease_id": raw["lease_id"], "expires_at": raw["expires_at"],
                 "directory_state": published["state"], "confirmed_index_leases": published["confirmed_leases"],
                 "directory_expires_at": directory_expires_at,
+                "directory_maintenance": maintenance,
                 "open_messaging_supported": False}
 
     async def request(self, recipient_key_id, *, request_id):
@@ -334,6 +353,8 @@ class OpenContactClient:
                     "decide": {"request_ref", "decision", "max_items", "max_bytes"}, "result": {"request_id"}}
         if raw.get("schema_version") != CONNECT_SCHEMA or not isinstance(action, str) or action not in variants:
             raise ContactError("contact_invalid_connect")
+        if action == "enable" and "maintain_directory" in raw:
+            variants[action] = variants[action] | {"maintain_directory"}
         object_fields(raw, {"schema_version", "action"} | variants[action])
         values = {k: raw[k] for k in variants[action]}
         if action == "request":

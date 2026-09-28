@@ -77,7 +77,10 @@
     "ack_provisioning_guide": "../docs/OPEN_ACK_PROVISIONING.md",
     "local_ack_source_provisioning": true,
     "independent_directory_consent_preparation": true,
-    "ack_source_provisioning_scope": "Explicit operator-owned A/R configurations and an approved unsent envelope; B saves and shares its own receipt later"
+    "ack_source_provisioning_scope": "Explicit operator-owned A/R configurations and an approved pending selection; original unbound custody precedes encryption, then B saves and shares its own receipt",
+    "selected_origin_setup": true,
+    "explicit_contact_directory_maintenance": true,
+    "contact_directory_maintenance_scope": "Python B explicitly authorizes its selected Python node to renew unchanged public contact registration within original permissions and finite work; ordinary native discovery remains compatible"
   },
   "continuation_trial": {
     "guide": "../docs/CONTINUATION_TRIAL.md",

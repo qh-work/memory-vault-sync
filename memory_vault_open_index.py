@@ -46,6 +46,8 @@ class OpenIndex:
         self._lock = threading.RLock()
 
     def initialize(self) -> None:
+        from memory_vault_open_state import OpenCheckpoints
+        OpenCheckpoints(self.connection).initialize()
         with self._lock:
             db = self.connection
             if db.in_transaction:
@@ -107,6 +109,13 @@ class OpenIndex:
             "SELECT record,lease FROM open_contacts WHERE owner=? AND expires_at>?", (floor[0], now)).fetchone()
         if row is None:
             return {"state": "not_found"}
+        known = self.connection.execute("SELECT revision,digest,status FROM open_control_floors WHERE kind='contact' AND key_id=?", (floor[0],)).fetchone()
+        if known is not None:
+            if known[2] in {"revoked", "conflict"}:
+                return {"state": known[2]}
+            held = document(bytes(row[0]))
+            if known[0] > held["payload"]["revision"] or (known[0] == held["payload"]["revision"] and known[1] != document_sha256(held)):
+                return {"state": "not_found"}
         return {"state": "found", "contact": document(bytes(row[0])), "lease": document(bytes(row[1]))}
 
     def handle(self, request: Mapping[str, Any] | bytes, *, now: int | None = None) -> dict[str, Any]:
@@ -118,10 +127,15 @@ class OpenIndex:
         current = int(time.time()) if now is None else integer(now)
         signed_request = document(request, maximum=MAX_CONTROL_BYTES)
         checked = verify_request(signed_request, node=self.node, now=current)
-        if checked["action"] not in {"get", "put", "renew"}:
+        if checked["action"] not in {"get", "put", "renew", "delegated_put"}:
             raise OpenControlError("open_unsupported_action")
         if not self.enabled or "directory" not in self.node["payload"]["roles"]:
             raise OpenControlError("open_index_closed")
+        if checked["action"] == "delegated_put":
+            from memory_vault_open_state import OpenCheckpoints
+            # Publisher forks are authenticated and retained independently of
+            # the later index capacity/write transaction.
+            OpenCheckpoints(self.connection).accept(checked["body"]["publisher_node"], now=current)
         failure = None
         with self._lock:
             db = self.connection
@@ -151,7 +165,12 @@ class OpenIndex:
         contact = document(body["contact"])
         payload = verify_contact(contact, now=now)
         owner = payload["signing_key"]["key_id"]
-        if request["signer"] != payload["signing_key"]:
+        authorization = None
+        if request["action"] == "delegated_put":
+            from memory_vault_open_contact_directory import verify_delegated_put, check_observed, check_resource_observed
+            authorization = verify_delegated_put(body, signer=request["signer"], now=now)
+            check_resource_observed(db, body)
+        elif request["signer"] != payload["signing_key"]:
             raise OpenControlError("open_index_not_owner")
         request_digest, contact_digest = document_sha256(signed), document_sha256(contact)
         old_request = db.execute("SELECT digest,response FROM open_index_replay WHERE owner=? AND request_id=?",
@@ -177,6 +196,10 @@ class OpenIndex:
                            (contact_digest, canonical_bytes(contact), max(floor[4], now + FLOOR_RETENTION_SECONDS), owner))
                 db.execute("DELETE FROM open_contacts WHERE owner=?", (owner,))
                 return {}, OpenControlError("open_contact_conflict")
+        if authorization is not None:
+            # Observe contact forks using the durable branch above before
+            # consulting other adapters' known floors; never discard a fork.
+            check_observed(db, body["contact"], body["publisher_node"])
         if request["action"] == "renew":
             previous = db.execute("SELECT record,lease_id FROM open_contacts WHERE owner=?", (owner,)).fetchone()
             if (previous is None or previous[1] != body["lease_id"]
@@ -187,7 +210,8 @@ class OpenIndex:
             lease_id = "lease_" + hashlib.sha256((self.signer.key_id + ":" + request_digest).encode("ascii")).hexdigest()
         lease = issue_lease(self.signer, node=self.node, contact=contact, request=signed,
                             lease_id=lease_id, issued_at=now,
-                            expires_at=min(now + body["lease_seconds"], payload["expires_at"]))
+                            expires_at=min(now + body["lease_seconds"], payload["expires_at"],
+                                           authorization["expires_at"] if authorization else payload["expires_at"]))
         state = "active" if payload["status"] == "active" and payload["allow_discovery"] else "revoked"
         retained = max(payload["expires_at"] + MAX_REQUEST_SECONDS + 30, now + FLOOR_RETENTION_SECONDS,
                        floor[4] if floor is not None else 0)

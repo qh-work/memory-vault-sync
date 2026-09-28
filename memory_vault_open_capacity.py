@@ -149,7 +149,7 @@ class CapacityAuthority:
     def reserve(self, service, reservation_id, input_digest, charge_bytes, retain_until, *, owner, operation_id):
         """Reserve repair resources once; legacy inserts use the same totals."""
         self._write_lock()
-        if service not in ("ack", "repair_index"):
+        if service not in ("ack", "repair_index", "contact_directory"):
             _fail("invalid_service")
         for value in (reservation_id, owner, operation_id):
             if type(value) is not str or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value) is None:
@@ -183,11 +183,16 @@ class CapacityAuthority:
         """
         self._write_lock()
         _number(now)
-        if service not in ("provider", "contact") or type(limit) is not int or not 1 <= limit <= 128:
+        if service not in ("provider", "contact", "contact_directory") or type(limit) is not int or not 1 <= limit <= 128:
             _fail("invalid_collection")
         rows = self.db.execute("SELECT reservation_id,owner,operation_id,root_digest FROM open_capacity_reservations WHERE service=? AND retain_until<=? ORDER BY retain_until,reservation_id LIMIT ?", (service, now, limit)).fetchall()
         released = 0
         for reservation_id, owner, operation, root_digest in rows:
+            if service == "contact_directory":
+                if not self._has("open_contact_directory_jobs", "job_id", reservation_id):
+                    self.db.execute("DELETE FROM open_capacity_reservations WHERE service=? AND reservation_id=?", (service, reservation_id))
+                    released += 1
+                continue
             table = "open_provider_resources" if service == "provider" else "open_contact_resource_leases"
             if self._has(table, "lease_id", reservation_id):
                 continue
