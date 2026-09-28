@@ -47,7 +47,7 @@ class MailboxActivationTests(unittest.TestCase):
         self.db.execute("PRAGMA synchronous=FULL")
         self.db.execute("PRAGMA trusted_schema=OFF")
         self.source = RepairAckState(self.db, self.f["signers"]["target"], self.f["docs"]["descriptor"],
-            encryption_identity=self.f["encryption"]["target"], clock=lambda: self.now)
+            encryption_identity=self.f["encryption"]["target"], limit_policy=getattr(self,"source_limit_policy",None), clock=lambda: self.now)
         self.resources = RepairMailboxResources(self.source)
         self.state = MailboxSlotActivation(self.resources)
         self.state.initialize()

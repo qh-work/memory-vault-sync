@@ -15,6 +15,7 @@ from tests import test_open_repair_mailbox_activation as slot_fixture
 class MailboxRootTests(unittest.TestCase):
     def setUp(self):
         self.h = slot_fixture.MailboxActivationTests("test_pair_and_originals_survive_restart_without_reactivation")
+        self.h.source_limit_policy = getattr(self,"source_limit_policy",None)
         self.h.setUp(); self.addCleanup(self.h.doCleanups)
         h = self.h
         self.slot_entries = h.setup_entries()

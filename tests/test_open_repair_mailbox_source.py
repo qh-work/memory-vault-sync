@@ -17,8 +17,10 @@ class MailboxSourceTests(unittest.TestCase):
             self.host.anchor_budget_overrides = dict(max_meta_bytes=1048576)
         if "recovery" in self._testMethodName:
             from tests.open_repair_ack_fixtures import LIMITS
-            self.host.bootstrap_limits = dict(LIMITS,max_probe_bytes=8192,max_signature_checks=512)
-            self.host.owner_budget_overrides = dict(max_requests=512)
+            self.host.bootstrap_limits = dict(LIMITS,max_probe_bytes=8192,max_signature_checks=512,max_proof_bytes=524288)
+            self.host.owner_budget_overrides = dict(max_requests=512,max_job_bytes=524288,max_meta_bytes=524288)
+            from memory_vault_open_repair_state import DEFAULT_LIMITS
+            self.host.source_limit_policy = dict(DEFAULT_LIMITS,max_proof_bytes=524288)
         self.host.setUp();self.addCleanup(self.host.doCleanups)
         active = self.host.activate()
         self.resource_id = json.loads(active["raw"])["payload"]["resource"]["resource_id"]
@@ -254,7 +256,7 @@ class MailboxSourceTests(unittest.TestCase):
         checked=proof.verify_bootstrap_proof_response(response,expected_subject=h.owner,expected_target=h.source.target,
             target_storage_epoch=h.slot_key["writer_storage_epoch"],selector=grant["selector"],bootstrap_grant_ref=saved["ref"],
             probe_ref=packet["ref"],challenge_ref=challenge["ref"],answer_ref=answer.ref.as_dict(),at=h.now,
-            max_proof_items=64,max_proof_bytes=131072,consumer="mailbox_root",expected_source_state="root",
+            max_proof_items=64,max_proof_bytes=524288,consumer="mailbox_root",expected_source_state="root",
             policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
         self.assertIn("root.custody",{v["role"] for v in checked.manifest.value["children"]})
         held=h.source._one("SELECT * FROM open_repair_mailbox_recovery_challenges")
@@ -267,6 +269,33 @@ class MailboxSourceTests(unittest.TestCase):
         self.assertEqual(service.answer(dict(raw=answer.raw,ref=answer.ref.as_dict())),response)
         self.assertGreater(h.source._one("SELECT proof_bytes FROM open_repair_mailbox_recovery_responses")["proof_bytes"],prior)
         self.assertEqual(h.source._one("SELECT requests FROM open_repair_mailbox_recovery_usage")["requests"],4)
+        import hashlib
+        received={}
+        for child in checked.manifest.value["children"]:
+            chunks=[]
+            for offset in range(0,child["ref"]["size"],65536):
+                request=proof.make_bootstrap_child_request(h.f["signers"]["owner"],checked,subject=h.owner,target=h.source.target,
+                    at=h.now,expires_at=h.now+20,child_index=child["index"],offset=offset,
+                    requested_bytes=min(65536,child["ref"]["size"]-offset),policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+                try:
+                    chunks.append(service.child(dict(raw=request.raw,ref=request.ref.as_dict())))
+                except RepairWireError as exc:
+                    usage=h.source._one("SELECT metadata_bytes FROM open_repair_mailbox_resources WHERE resource_id=?",(self.resource_id,))
+                    transferred=h.source._one("SELECT sum(proof_bytes) AS total FROM open_repair_mailbox_recovery_responses")
+                    self.fail(f"{exc.code}: role={child['role']} metadata={usage['metadata_bytes']} transferred={transferred['total']}")
+            raw=b"".join(chunks)
+            self.assertEqual(hashlib.sha256(raw).hexdigest(),child["ref"]["raw_sha256"])
+            received[child["role"]]=dict(raw=raw,ref=child["ref"])
+        from memory_vault_open_repair_mailbox_root import verify_mailbox_root_source_event
+        import memory_vault_open_repair_wire as wire
+        budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
+        pack=received["history.raw_pack"];resolver.put("meta",pack["ref"]["key"],pack["raw"])
+        recovered=verify_mailbox_root_source_event(received["history.mailbox_root"],resolver,received["root.custody"],
+            expected_root=h.root,expected_owner=h.owner,expected_target=h.source.target,target_storage_epoch=h.slot_key["writer_storage_epoch"],
+            limit_policy=h.source.limits,policy=DEFAULT_POLICY,budget=budget)
+        self.assertEqual(recovered["custody"].raw,received["root.custody"]["raw"])
+        with self.assertRaisesRegex(RepairWireError,"repair_child_replay"):
+            service.child(dict(raw=request.raw,ref=request.ref.as_dict()))
         h.now += 41
         with self.assertRaises(RepairWireError):
             service.challenge(packet)
