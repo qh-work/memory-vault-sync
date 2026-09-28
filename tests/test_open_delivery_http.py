@@ -264,6 +264,35 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         self.assertEqual(len(members),1)
         self.assertEqual(members[0]['admission_link_ref'],admitted['link']['ref'])
         self.assertEqual(len(reads),3)
+        from memory_vault_open_repair_client import read_mailbox_admission
+        from memory_vault_open_delivery import decrypt_envelope
+        def read_member_original(reference):
+            if reference==saved['manifest']['ref']:return saved['manifest']['raw']
+            if reference==saved['pack']['ref']:return saved['pack']['raw']
+            if reference==resolved.manifest.value['envelope_ref']:
+                return bytes(db.execute('SELECT envelope FROM open_mailbox_message_staging').fetchone()[0])
+            return read_original(reference)
+        member_args=dict(expected_slot=slot,expected_signing_key=self.host.identities[0].public_descriptor(),
+            encryption_identity=owner_encryption,read_original=read_member_original,at=int(time.time()))
+        recovered=read_mailbox_admission(members[0],**member_args)
+        self.assertEqual(recovered['envelope'],envelope)
+        plain=decrypt_envelope(recovered['envelope'],encryption_identity=owner_encryption,
+            sender_signing_key=self.ai.public_descriptor(),sender_encryption_key=sender_encryption.public_descriptor(),
+            recipient_signing_key=self.bi.public_descriptor(),recipient_encryption_key=owner_encryption.public_descriptor())
+        self.assertIn(b'Synthetic mailbox staging message',plain)
+        self.assertEqual(len(recovered['history'].roles),29)
+        attempted=[]
+        def corrupt_envelope(reference):
+            attempted.append(reference['namespace'])
+            if reference['namespace']=='object':return b'{}'
+            return read_member_original(reference)
+        with self.assertRaisesRegex(RepairWireError,'repair_mailbox_member_mismatch'):
+            read_mailbox_admission(members[0],**dict(member_args,encryption_identity=sender_encryption,read_original=corrupt_envelope))
+        self.assertNotIn('object',attempted)
+        with self.assertRaisesRegex(RepairWireError,'repair_ref_mismatch'):
+            read_mailbox_admission(members[0],**dict(member_args,read_original=corrupt_envelope))
+        with self.assertRaisesRegex(RepairWireError,'repair_mailbox_member_mismatch'):
+            read_mailbox_admission(dict(members[0],sequence=1),**member_args)
         with self.assertRaisesRegex(RepairWireError,'repair_mailbox_range_mismatch'):
             read_mailbox_index(admitted['head'],admitted['checkpoint'],**dict(args,encryption_identity=sender_encryption))
         with self.assertRaisesRegex(RepairWireError,'repair_ref_mismatch'):

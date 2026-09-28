@@ -1302,3 +1302,79 @@ def read_mailbox_index(head_entry, checkpoint_entry, *, expected_slot, expected_
     elif head['range_root_ref'] is not None:_fail('repair_mailbox_range_mismatch')
     if any(accumulated[name]!=state[name] for name in state):_fail('repair_mailbox_range_mismatch')
     return tuple(entries)
+
+
+def read_mailbox_admission(member, *, expected_slot, expected_signing_key,
+                           encryption_identity, read_original, at,
+                           policy=DEFAULT_POLICY, budget=None):
+    """Fetch original admission bytes for an entry from read_mailbox_index.
+
+    Authenticates the source event graph and encrypted core before fetching E.
+    The returned historical inputs still require typed authority/status checks;
+    this function neither imports memories nor grants trust to their contents.
+    """
+    import memory_vault_open_repair_resource as resource
+    import memory_vault_open_repair_history as history
+    import memory_vault_open_repair_mailbox_range as ranges
+    from memory_vault_network_crypto import decrypt_bytes, NetworkCryptoError
+    from memory_vault_open_delivery import MAX_ENVELOPE_BYTES
+    budget=budget or wire.RepairBudget(policy);wire._context(policy,budget)
+    slot=wire.build_new_wire(expected_slot,policy,budget).value
+    key=wire.build_new_wire(expected_signing_key,policy,budget).value
+    item=wire.build_new_wire(member,policy,budget).value
+    resource._fields(item,{'sequence','admission_link_ref','sealed_core_ref'})
+    sequence=wire.u53(item['sequence']);wire.u53(at)
+    if sequence>=ranges.CAPACITY or not callable(read_original):_fail('repair_invalid_context')
+    originals={}
+    def load(reference,namespace='meta'):
+        ref=wire.raw_ref(reference)
+        if ref.namespace!=namespace or (namespace=='object' and ref.size>MAX_ENVELOPE_BYTES):_fail('repair_ref_mismatch')
+        raw=read_original(ref.as_dict())
+        if not isinstance(raw,bytes) or len(raw)!=ref.size or budget._hash(raw)!=ref.raw_sha256:_fail('repair_ref_mismatch')
+        originals[(ref.namespace,ref.key)]=dict(raw=raw,ref=ref.as_dict())
+        return raw
+    def event(reference,kind,fields):
+        raw=load(reference);signed=resource._fields(wire.parse_new_wire(raw,policy,budget).value,{'payload','proof'})
+        p=resource._fields(signed['payload'],resource.COMMON|fields|{'slot_key'})
+        if p['schema_version']!=resource.SCHEMA or p['kind']!=kind or p['slot_key']!=slot:_fail('repair_mailbox_member_mismatch')
+        original._verify_control_signature(p,signed['proof'],key,budget)
+        return raw,p
+    _,link=event(item['admission_link_ref'],'admission.link',{'sequence','message_id','envelope_ref','core_ref',
+        'sealed_core_ref','historical_manifest_ref','checkpoint_ref','inclusion_path'})
+    if wire.u53(link['sequence'])!=sequence or link['sealed_core_ref']!=item['sealed_core_ref']:_fail('repair_mailbox_member_mismatch')
+    core_raw,core=event(link['core_ref'],'admission.core',{'core_id','sequence','message_id','envelope_ref','attempt_ref',
+        'historical_manifest_ref','data_resource_ref','metadata_resource_ref','accepted_at','object_until','enum_until'})
+    original._opaque(core['core_id']);original._opaque(core['message_id'])
+    if (wire.u53(core['sequence'])!=sequence or any(core[name]!=link[name] for name in ('message_id','envelope_ref','historical_manifest_ref'))
+            or not wire.u53(core['accepted_at'])<=at<wire.u53(core['object_until'])<=wire.u53(core['enum_until'])):
+        _fail('repair_mailbox_member_mismatch')
+    for name in ('data_resource_ref','metadata_resource_ref'):
+        history._resource(core[name])
+        if core[name]['node_key_id']!=slot['writer']['signing_key_id'] or core[name]['storage_epoch']!=slot['writer_storage_epoch']:
+            _fail('repair_mailbox_member_mismatch')
+    context=dict(schema_version=resource.SCHEMA,kind='admission.sealed_core',slot_key=slot,sequence=sequence,
+        plaintext_sha256=link['core_ref']['raw_sha256'],plaintext_size=len(core_raw))
+    sealed_raw=load(item['sealed_core_ref']);sealed=wire.parse_new_wire(sealed_raw,policy,budget).value
+    if len(sealed.get('recipients',()))!=1:_fail('repair_mailbox_member_mismatch')
+    try:plain=decrypt_bytes(sealed,encryption_identity,context=context)
+    except NetworkCryptoError:_fail('repair_mailbox_member_mismatch')
+    if plain!=core_raw:_fail('repair_mailbox_member_mismatch')
+    _,checkpoint=event(link['checkpoint_ref'],'mailbox.checkpoint',{'slot_binding','count','leaf_root','frontier','committed_at','retain_until'})
+    if (wire.u53(checkpoint['count'])!=sequence+1 or not core['accepted_at']<=wire.u53(checkpoint['committed_at'])<=at
+            or wire.u53(checkpoint['retain_until'])<core['enum_until']):_fail('repair_mailbox_member_mismatch')
+    state={name:checkpoint[name] for name in ('slot_binding','count','leaf_root','frontier')}
+    ranges.verify_inclusion(state,sequence,item['sealed_core_ref']['raw_sha256'],link['inclusion_path'],expected_slot=slot,policy=policy,budget=budget)
+    manifest_raw=load(core['historical_manifest_ref']);manifest=history.parse_historical_manifest(manifest_raw,policy,budget)
+    m=manifest.value
+    if (m['variant']!='mailbox_member' or m['root_key']!=slot['root_key'] or m['slot_key']!=slot
+            or any(m[name]!=core[name] for name in ('message_id','envelope_ref','attempt_ref'))):_fail('repair_mailbox_member_mismatch')
+    resolver=wire.LocalRawResolver(policy,budget);packs={}
+    for role in m['roles']:
+        ref=wire.raw_ref(role['pack_ref']);previous=packs.get(ref.key)
+        if previous is not None and previous!=ref.as_dict():_fail('repair_ref_mismatch')
+        if previous is None:
+            resolver.put('meta',ref.key,load(ref.as_dict()));packs[ref.key]=ref.as_dict()
+    resolved=history.resolve_historical_inputs(manifest_raw,resolver,policy,budget)
+    envelope=load(core['envelope_ref'],'object')
+    return dict(core=core,link=link,checkpoint=checkpoint,history=resolved,envelope=envelope,
+        originals=MappingProxyType(originals))
