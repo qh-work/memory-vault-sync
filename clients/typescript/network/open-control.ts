@@ -23,7 +23,7 @@ export const MAX_REPLY_NODES = 8;
 type Obj = Record<string, any>;
 export type OpenView = 'general' | 'directory';
 export type OpenAction = 'hello' | 'find' | 'get' | 'put' | 'renew';
-export interface SignedOpen<T = Obj> {readonly payload: T; readonly proof: MessageProof;}
+export type SignedOpen<T = Obj> = {readonly payload: T; readonly proof: MessageProof;};
 export interface OpenNode extends Obj {
   readonly schema_version: typeof CONTROL_SCHEMA; readonly kind: 'node';
   readonly signing_key: SigningPublicDescriptor; readonly coordinate: string;
@@ -98,8 +98,9 @@ function descriptorPayload(value: unknown,kind: 'node'|'contact',options: Verifi
   if(kind==='node'){
     if(raw.coordinate!==coordinate(signing.key_id))fail('open_coordinate_mismatch');
     url(raw.base_url);opaqueId(raw.storage_epoch);
-    if(!Array.isArray(raw.roles)||!raw.roles.length||raw.roles.some((role,index)=>
-      !['router','directory'].includes(role)||(index>0&&role<=raw.roles[index-1])))fail('open_invalid_roles');
+    const roles=raw.roles;
+    if(!Array.isArray(roles)||!roles.length||roles.some((role,index)=>
+      !['router','directory'].includes(role)||(index>0&&role<=roles[index-1])))fail('open_invalid_roles');
   }else{
     validateEncryptionPublic(raw.encryption_key as DocumentInput);
     if(typeof raw.allow_discovery!=='boolean')fail('open_invalid_discovery');
@@ -182,14 +183,14 @@ export function verifyRequest(value:unknown,options:{node:SignedNode;now?:number
   const wrapper=signed(value,MAX_CONTROL_BYTES),raw=objectFields(wrapper.payload,
     ['schema_version','action','request_id','signer','node_key_id','storage_epoch','issued_at','expires_at','body']);
   if(raw.schema_version!==REQUEST_SCHEMA)fail('open_unsupported_request');
-  opaqueId(raw.request_id);validateSigningPublic(raw.signer as DocumentInput);
+  opaqueId(raw.request_id);const signer=validateSigningPublic(raw.signer as DocumentInput);
   const target=verifyNode(options.node,{now:options.now});
   if(target.status!=='active'||raw.node_key_id!==target.signing_key.key_id||raw.storage_epoch!==target.storage_epoch)fail('open_wrong_node');
   window(raw,MAX_REQUEST_SECONDS,{now:options.now});
   const body=requestBody(raw.action,raw.body,options.now);
   if(raw.action==='hello'&&body.node!==null&&
     Buffer.compare(Buffer.from(canonicalBytes(body.node.payload.signing_key)),Buffer.from(canonicalBytes(raw.signer))))fail('open_sender_mismatch');
-  verifyProof(raw,wrapper.proof,raw.signer);return raw;
+  verifyProof(raw,wrapper.proof,signer);return raw;
 }
 export interface LeaseOptions {
   node:SignedNode;contact:SignedContact;request:SignedOpen;lease_id:string;issued_at:number;expires_at:number;
@@ -263,9 +264,9 @@ export function verifyResponse(value:unknown,options:{request:SignedOpen;node:Si
     raw.request_sha256!==documentSha256(options.request as DocumentInput)||raw.node_key_id!==target.signing_key.key_id||
     raw.storage_epoch!==target.storage_epoch)fail('open_response_mismatch');
   window(raw,MAX_REQUEST_SECONDS,{now:options.now});
-  if(raw.expires_at>original.expires_at)fail('open_response_mismatch');
-  verifyProof(raw,wrapper.proof,target.signing_key);responseBody(raw.body,original,options.node,options.now);
-  if(['put','renew'].includes(original.action)&&Object.hasOwn(raw.body,'lease')&&
-    raw.body.lease.payload.request_sha256!==documentSha256(options.request as DocumentInput))fail('open_lease_mismatch');
+  if(safeInteger(raw.expires_at)>original.expires_at)fail('open_response_mismatch');
+  verifyProof(raw,wrapper.proof,target.signing_key);const body=responseBody(raw.body,original,options.node,options.now);
+  if(['put','renew'].includes(original.action)&&Object.hasOwn(body,'lease')&&
+    body.lease.payload.request_sha256!==documentSha256(options.request as DocumentInput))fail('open_lease_mismatch');
   return raw;
 }

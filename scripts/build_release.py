@@ -23,7 +23,7 @@ from build_client_plugin import (
     build as build_plugin,
     plain,
 )
-from release_source import ReleaseSource, SourceError
+from release_source import MAX_SELECTED_FILES, ReleaseSource, SourceError
 
 
 ROOT = Path(__file__).absolute().parent.parent
@@ -48,6 +48,13 @@ PROTOCOL_DOCUMENTS = (
     "docs/NETWORK_TOPICS.md",
     "docs/OPEN_CONTROL_V1.md", "docs/OPEN_ROUTING_RUNTIME.md", "docs/NATIVE_OPEN_HTTP.md",
     "docs/OPEN_FIRST_CONTACT_V1.md",
+    "docs/OPEN_NETWORK_QUICKSTART.md",
+    "docs/OPEN_ACK_RECOVERY.md",
+    "docs/OPEN_ACK_DIRECTORY.md",
+    "docs/OPEN_ACK_PREPARATION.md",
+    "docs/OPEN_ACK_PROVISIONING.md",
+    "docs/CONTINUATION_TRIAL.md",
+    "docs/NATIVE_OPEN_PROVIDER.md",
     "docs/DEPENDENCIES_NETWORK.md",
     "docs/NETWORK_RECOVERY.md", "docs/NETWORK_NODE_TRANSFER.md", "docs/NETWORK_TYPESCRIPT.md",
 )
@@ -57,10 +64,84 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_open_control.py", "tests/test_open_state.py", "tests/test_open_index.py",
     "tests/test_open_routing.py", "tests/test_open_transport.py", "tests/test_open_node.py",
     "tests/test_open_join_progress.py", "tests/test_open_network_ci.py",
-    "tests/test_open_agent.py", "tests/test_open_typescript.py", "tests/test_open_typescript_state.py",
+    "tests/test_open_agent.py", "tests/test_open_agent_setup.py", "tests/test_open_typescript.py", "tests/test_open_typescript_state.py",
     "tests/test_open_typescript_http.py",
     "tests/test_open_contact.py", "tests/test_open_contact_state.py", "tests/test_open_contact_http.py",
+    "tests/test_open_contact_directory_maintenance.py",
     "tests/test_open_contact_typescript.py", "tests/test_open_contact_typescript_http.py",
+    "tests/test_open_delivery_http.py",
+    "tests/test_open_provider_typescript_http.py",
+    "tests/test_open_provider_typescript.py",
+    "tests/test_open_provider_status.py", "tests/test_open_provider_status_typescript.py",
+    "tests/test_open_repair_wire.py", "tests/test_open_repair_typescript.py",
+    "tests/test_open_repair_pack.py", "tests/test_open_repair_pack_typescript.py",
+    "tests/test_open_repair_history.py", "tests/test_open_repair_history_typescript.py",
+    "tests/test_open_repair_original.py", "tests/test_open_repair_original_typescript.py",
+    "tests/test_open_repair_contact_inputs.py",
+    "tests/open_repair_resource_fixtures.py", "tests/test_open_repair_resource.py",
+    "tests/test_open_repair_resource_typescript.py", "tests/test_open_repair_resource_inputs.py",
+    "tests/test_open_repair_bootstrap.py", "tests/test_open_repair_bootstrap_typescript.py",
+    "tests/test_open_repair_status.py", "tests/test_open_repair_status_typescript.py",
+    "tests/open_repair_ack_fixtures.py", "tests/test_open_repair_ack.py",
+    "tests/test_open_repair_ack_typescript.py", "tests/test_open_repair_state.py",
+    "tests/test_open_repair_probe.py",
+    "tests/test_open_repair_probe_typescript.py",
+    "tests/test_open_repair_proof.py",
+    "tests/test_open_repair_proof_typescript.py",
+    "tests/test_open_repair_access.py",
+    "tests/test_open_repair_service.py",
+    "tests/test_open_repair_service_budget.py",
+    "tests/test_open_repair_http.py",
+    "tests/test_open_repair_client.py",
+    "tests/test_open_repair_client_typescript.py",
+    "tests/test_open_repair_admin.py",
+    "tests/test_open_repair_runtime_review.py",
+    "tests/test_open_repair_bound.py",
+    "tests/test_open_repair_bound_typescript.py",
+    "tests/test_open_repair_empty.py",
+    "tests/test_open_repair_empty_typescript.py",
+    "tests/test_open_repair_empty_review.py",
+    "tests/test_open_repair_empty_access.py",
+    "tests/test_open_repair_empty_http.py",
+    "tests/test_open_repair_empty_client.py",
+    "tests/test_open_repair_empty_client_typescript.py",
+    "tests/test_open_repair_bind_http.py",
+    "tests/test_open_repair_offer_access.py",
+    "tests/test_open_repair_offer_http.py",
+    "tests/test_open_repair_offer_client.py",
+    "tests/test_open_repair_offer_http_typescript.py",
+    "tests/test_open_repair_occupied.py",
+    "tests/test_open_repair_occupied_typescript.py",
+    "tests/test_open_repair_occupied_access.py",
+    "tests/test_open_repair_occupied_client.py",
+    "tests/test_open_repair_put_http.py",
+    "tests/test_open_repair_put_client.py",
+    "tests/test_open_repair_put_recovery.py",
+    "tests/test_open_repair_roundtrip.py",
+    "tests/test_open_repair_receipt.py",
+    "tests/open_repair_index_fixtures.py",
+    "tests/test_open_repair_stage.py",
+    "tests/test_open_repair_index.py",
+    "tests/test_open_repair_index_access.py",
+    "tests/test_open_repair_index_journal.py",
+    "tests/test_open_repair_index_state.py",
+    "tests/test_open_repair_index_http.py",
+    "tests/test_open_repair_index_client.py",
+    "tests/test_open_repair_index_recovery.py",
+    "tests/test_open_repair_index_admin.py",
+    "tests/test_open_repair_index_prepare.py",
+    "tests/test_open_repair_index_prepare_admin.py",
+    "tests/test_open_repair_provision.py",
+    "tests/test_open_repair_bind_recovery.py",
+    "tests/test_open_repair_remote_setup.py",
+    "tests/test_open_repair_remote_provision.py",
+    "tests/test_open_repair_status_observer.py",
+    "tests/test_open_repair_onboarding.py",
+    "tests/test_open_provider_merge.py",
+    "tests/test_open_repair_occupied_client_typescript.py",
+    "tests/open_repair_bound_fixtures.py",
+    "tests/test_open_capacity.py", "tests/test_open_capacity_typescript.py",
+    "tests/test_continuation_trial.py",
     "tests/open_routing_acceptance.py",
     "tests/test_experience.py", "tests/test_experience_edges.py", "tests/test_experience_typescript.py", "tests/test_cross_author_state.py",
     "tests/test_experience_origin_identity.py", "tests/test_experience_origin_typescript.py", "tests/test_experience_int64.py",
@@ -91,6 +172,73 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_network_trial.py",
     "tests/test_network_trial_coordinator.py",
     "tests/test_network_trial_packaging.py",
+)
+# Select repair and shared capacity sources explicitly for review. This list
+# does not enroll any source in the separate client runtime allowlist.
+LOCAL_REPAIR_REVIEW_SOURCES = (
+    "memory_vault_open_repair_wire.py",
+    "memory_vault_open_repair_history.py",
+    "memory_vault_open_repair_original.py",
+    "memory_vault_open_repair_resource.py",
+    "memory_vault_open_repair_bootstrap.py",
+    "memory_vault_open_repair_status.py",
+    "memory_vault_open_repair_ack.py",
+    "memory_vault_open_repair_state.py",
+    "memory_vault_open_repair_probe.py",
+    "memory_vault_open_repair_proof.py",
+    "memory_vault_open_repair_access.py",
+    "memory_vault_open_repair_service.py",
+    "memory_vault_open_repair_client.py",
+    "memory_vault_open_repair_admin.py",
+    "memory_vault_open_repair_bound.py",
+    "memory_vault_open_repair_empty.py",
+    "memory_vault_open_repair_empty_state.py",
+    "memory_vault_open_repair_empty_access.py",
+    "memory_vault_open_repair_empty_service.py",
+    "memory_vault_open_repair_bind.py",
+    "memory_vault_open_repair_bind_client.py",
+    "memory_vault_open_repair_offer_access.py",
+    "memory_vault_open_repair_offer_service.py",
+    "memory_vault_open_repair_offer_client.py",
+    "memory_vault_open_repair_occupied.py",
+    "memory_vault_open_repair_occupied_state.py",
+    "memory_vault_open_repair_occupied_access.py",
+    "memory_vault_open_repair_put.py",
+    "memory_vault_open_repair_put_client.py",
+    "memory_vault_open_repair_receipt.py",
+    "memory_vault_open_repair_stage.py",
+    "memory_vault_open_repair_index.py",
+    "memory_vault_open_repair_index_access.py",
+    "memory_vault_open_repair_index_journal.py",
+    "memory_vault_open_repair_index_state.py",
+    "memory_vault_open_repair_index_service.py",
+    "memory_vault_open_repair_index_client.py",
+    "memory_vault_open_repair_index_recovery.py",
+    "memory_vault_open_repair_index_admin.py",
+    "memory_vault_open_repair_index_prepare.py",
+    "memory_vault_open_repair_index_prepare_admin.py",
+    "memory_vault_open_repair_provision.py",
+    "memory_vault_open_repair_provision_admin.py",
+    "memory_vault_open_repair_bind_journal.py",
+    "memory_vault_open_repair_remote_setup.py",
+    "memory_vault_open_repair_remote_provision.py",
+    "memory_vault_open_repair_remote_provision_admin.py",
+    "memory_vault_open_provider_merge.py",
+    "memory_vault_open_capacity.py",
+    "memory_vault_open_capacity_schema.json",
+    "clients/typescript/network/open-repair-wire.ts",
+    "clients/typescript/network/open-repair-history.ts",
+    "clients/typescript/network/open-repair-original.ts",
+    "clients/typescript/network/open-repair-resource.ts",
+    "clients/typescript/network/open-repair-bootstrap.ts",
+    "clients/typescript/network/open-repair-status.ts",
+    "clients/typescript/network/open-repair-ack.ts",
+    "clients/typescript/network/open-repair-probe.ts",
+    "clients/typescript/network/open-repair-proof.ts",
+    "clients/typescript/network/open-repair-client.ts",
+    "clients/typescript/network/open-repair-bound.ts",
+    "clients/typescript/network/open-repair-empty.ts", "clients/typescript/network/open-repair-occupied.ts",
+    "clients/typescript/network/open-capacity.ts",
 )
 TRIAL_EXTRA_MODULES = ("memory_vault_trial.py",)
 TRIAL_RUNTIME_MODULES = REQUIRED_MODULES + TRIAL_EXTRA_MODULES
@@ -159,12 +307,17 @@ def review_sources(material: list[Path], source_tree: ReleaseSource) -> list[Pat
     paths.extend(ROOT / name for name in (
         "scripts/build_client_plugin.py", "scripts/build_release.py", "scripts/release_source.py",
         "scripts/verify_client_package.py",
+        "scripts/continuation_trial.py",
+        "docs/proposals/OPEN_DELIVERY_REPAIR_R3.md",
+        "docs/OPEN_NETWORK_ARCHITECTURE.md", "docs/OPEN_NETWORK_LIFECYCLE.md", "docs/OPEN_NETWORK_ACCEPTANCE.md",
+        "docs/OPEN_NETWORK_ROADMAP.md",
         "scripts/run_open_network_ci.py", ".github/workflows/open-network.yml",
         "packaging/marketplace.json", "packaging/PROTOCOL_README.md", "packaging/CLIENT_README.md",
         "tests/test_memory_vault.py", "tests/test_release_source_gate.py", "packaging/REVIEW_README.md",
     ))
     paths.extend(sorted((ROOT / "tests").glob("test_v025_*.py")))
     paths.extend(ROOT / name for name in NETWORK_REVIEW_TESTS)
+    paths.extend(ROOT / name for name in LOCAL_REPAIR_REVIEW_SOURCES)
     paths.extend(ROOT / source for _, source in TRIAL_PACKAGE_SOURCES)
     paths.extend(ROOT / name for name in TRIAL_RUNTIME_MODULES)
     paths.extend(ROOT / name for name in TRIAL_REVIEW_SERVER_MODULES)
@@ -215,7 +368,7 @@ def trial_service_configured(source_tree: ReleaseSource) -> bool:
 
 
 def inspect_sources(material: list[Path], review: list[Path], source_tree: ReleaseSource) -> tuple[str, dict[str, int]]:
-    modules = [ROOT / name for name in (*REQUIRED_MODULES, *OPTIONAL_MODULES)]
+    modules = [ROOT / name for name in (*REQUIRED_MODULES, *OPTIONAL_MODULES) if name.endswith(".py")]
     modules.extend(sorted((ROOT / "scripts").glob("*.py")))
     modules.append(ROOT / "plugins/memory-vault-client/scripts/launcher.py")
     modules.extend(path for path in review if path.suffix == ".py")
@@ -296,7 +449,7 @@ def client_inventory(source_tree: ReleaseSource, material: list[Path]) -> dict[s
 def archive(directory: Path, output: Path, expected: Mapping[str, str]) -> dict[str, object]:
     """Archive only declared source/generated bytes; reject staging pollution."""
     expected = dict(expected)
-    if not 1 <= len(expected) <= 512 or any(
+    if not 1 <= len(expected) <= MAX_SELECTED_FILES or any(
         not isinstance(name, str) or not name or PurePosixPath(name).is_absolute()
         or any(char in name for char in "\\:\x00") or any(part in {"", ".", ".."} for part in name.split("/"))
         or not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None
@@ -328,7 +481,7 @@ def archive(directory: Path, output: Path, expected: Mapping[str, str]) -> dict[
                 raise ValueError("release_member_source_mismatch")
             total += len(data)
             files += 1
-            if total > MAX_PACKAGE_BYTES or files > 512:
+            if total > MAX_PACKAGE_BYTES or files > MAX_SELECTED_FILES:
                 raise ValueError("release_inventory_too_large")
             info = zipfile.ZipInfo(directory.name + "/" + name, (1980, 1, 1, 0, 0, 0))
             info.create_system = 3

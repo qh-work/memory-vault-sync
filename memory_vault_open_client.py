@@ -1,8 +1,8 @@
 """Explicit open profile for the same six-operation Agent facade.
 
-This first runtime supplies contact discovery, not open encrypted mailboxes.
-Unsupported message operations fail explicitly and never select a private
-authority or downgrade encryption. Remember/recall stay in the existing Vault.
+Contact discovery and explicitly approved encrypted delivery share the existing
+open participant. Remember/recall stay in the existing Vault; no private network
+authority or encryption downgrade is selected by a failed open operation.
 """
 from __future__ import annotations
 
@@ -60,10 +60,11 @@ class OpenNetworkClient:
             if not isinstance(invitation, dict) or invitation.get("schema_version") != CONNECT_SCHEMA:
                 raise MemoryError("open_private_invitation_unsupported")
             result = asyncio.run(OpenContactClient(self.participant, self.encryption).dispatch(invitation, request_id))
-            return {**result, "profile": "open-routing-v1", "network_accessed": True}
+            return {**result, "profile": "open-routing-v1", "network_accessed": True,
+                    "open_messaging_supported": True}
         result = asyncio.run(self.participant.join())
         return {**result, "profile": "open-routing-v1", "network_accessed": True,
-                "open_messaging_supported": False}
+                "open_messaging_supported": True}
 
     def discover(self, *, online=True, key_id=None):
         if online is not True:
@@ -82,13 +83,54 @@ class OpenNetworkClient:
         return {**result, "profile": "open-routing-v1", "network_accessed": True}
 
     def send(self, **arguments):
-        raise MemoryError("open_messaging_unsupported")
+        return asyncio.run(self._delivery().send(**arguments))
 
     def receive(self, **arguments):
-        raise MemoryError("open_messaging_unsupported")
+        return asyncio.run(self._delivery().receive(**arguments))
 
     def read_message(self, **arguments):
-        raise MemoryError("open_messaging_unsupported")
+        return self._delivery().read_message(**arguments)
+
+    def recover_indexed_ack(self, **arguments):
+        """Discover a consented source and read its original receipt as owner.
+
+        Directory observations do not authorize this read. The caller supplies
+        its independent original READ/bootstrap grants and exact A/B/source
+        identities; success requires a real read matching the advertised commit.
+        """
+        from memory_vault_open_provider_client import OpenProviderClient
+        from memory_vault_open_repair_client import AckOwnerRecoveryClient
+        from memory_vault_open_repair_index_recovery import DiscoveredAckRecoveryClient
+        from memory_vault_open_repair_state import INDEX_WORKFLOW_LIMITS
+        reader = AckOwnerRecoveryClient(self.identity, self.encryption,
+            limit_policy=INDEX_WORKFLOW_LIMITS, transport=self.participant.transport,
+            allow_loopback=self.participant.transport.allow_loopback)
+        discovered = DiscoveredAckRecoveryClient(OpenProviderClient(self.participant, self.encryption), reader)
+        return asyncio.run(discovered.recover(**arguments))
+
+    def publish_saved_ack(self, base_url, request, *, timeout=30, repair_profile="receipt"):
+        """Explicitly share one actually saved receipt through an ACK source.
+
+        The closed request supplies retained original authorities and binding.
+        This call signs B's bounded receipt-return consent; receive() never
+        invokes it automatically. The result distinguishes retained history
+        from a newly verified network commit.
+        """
+        from memory_vault_open_repair_put_client import AckReceiptClient
+        from memory_vault_open_repair_receipt import SavedAckReceiptPublisher
+        from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS, INDEX_WORKFLOW_LIMITS
+        profiles = {"receipt": RECEIPT_WORKFLOW_LIMITS, "receipt-index": INDEX_WORKFLOW_LIMITS}
+        if type(repair_profile) is not str or repair_profile not in profiles:
+            raise MemoryError("open_invalid_repair_policy")
+        client = AckReceiptClient(self.identity, self.encryption,
+            limit_policy=profiles[repair_profile],
+            allow_loopback=self.participant.transport.allow_loopback,
+            transport=self.participant.transport)
+        return SavedAckReceiptPublisher(self._delivery(), client).publish_saved(base_url, request, timeout=timeout)
+
+    def _delivery(self):
+        from memory_vault_open_delivery_client import OpenDeliveryClient
+        return OpenDeliveryClient(self.participant, self.encryption, self.client_config)
 
     def respond_to(self, *arguments):
-        raise MemoryError("open_messaging_unsupported")
+        raise MemoryError("open_hint_exchange_unsupported")

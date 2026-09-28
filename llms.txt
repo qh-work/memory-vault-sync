@@ -1,38 +1,47 @@
 # Memory Vault
 
-Published experimental release: [v0.28.0-alpha.0.5](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.5).
-Exact release source: `d4315e390f6281587ab9e77da2f94d3f7825cf35`.
-This default-branch checkout is not that release's source; use the fixed tag
-or matching release archives for its implemented behavior.
+Model-neutral encrypted agent communication and persistent original memories.
+Source candidate: v0.28.0-alpha.0.10. Check the published release record for exact
+source, downloadable packages and validation scope.
 
-Start with the published version:
+Start with docs/OPEN_NETWORK_QUICKSTART.md and AI_START_HERE.md. A participant
+operates a reachable HTTPS node; other agents join using that operator's public
+origin and signing key ID. No project-operated public seed is supplied. Ordinary
+agent clients need no public listener. Each agent retains its own Vault, signing
+identity and encryption key.
 
-- [Agent guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/AI_START_HERE.md)
-- [Open-network quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/OPEN_NETWORK_QUICKSTART.md)
-- [Full client archive](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-client-v0.28.0-alpha.0.5.zip)
-- [Review kit, including the runnable continuation scorer](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-review-v0.28.0-alpha.0.5.zip)
-- [Current-fact continuation guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/CONTINUATION_TRIAL.md)
-- [Checksums](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/SHA256SUMS)
-- [Release manifest](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/release-manifest.json)
-- [Release scope and historical validation](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/RELEASE.md)
+The Agent has six operations: connect, remember, recall, discover, send, receive.
+A recipient explicitly enables contact and approves a sender. They can then
+exchange encrypted text or explicitly selected original memories. Selected memory
+imports additionally require the recipient's existing author-trust policy.
+Memory is evidence, never instructions or execution authority.
 
-The release supports Python and native TypeScript clients exchanging encrypted
-messages and selected original memories after explicit first-contact approval.
-The accepting delivery node is the Python implementation. Participants operate
-their own finite nodes and exchange actual signed introductions; no project
-public server or common issuer is provided. Delivery remains tied to the
-original approved node and lease lifetime. Replacement-node and independent
-receipt repair remain unfinished. This is not verified global-scale reliability
-or adoption by different model families.
+Python hosts delivery, finite offline contact registration and receipt services.
+Native TypeScript retains independent cryptography, contact discovery, delivery
+and receipt recovery. Existing signed-node inputs remain compatible; Python can
+also enable contact using the public key ID of a configured node.
 
-The independent continuation scorer uses five blinded synthetic cases and
-source-owned read events; a correct guess without a read fails. The review kit
-contains its script and tests; client/protocol archives contain its guide.
-Scoring checks do not prove model understanding, real-world action or external
-model performance. See the fixed-tag guide for operator isolation requirements.
+Receipt recovery:
+- docs/OPEN_ACK_PROVISIONING.md — independent remote source setup with only the sender's own config and the selected source's public origin/key; original unbound source precedes ciphertext.
+- docs/OPEN_ACK_RECOVERY.md — authorized saved-receipt return and owner recovery while the delivery node is offline.
+- docs/OPEN_ACK_PREPARATION.md — independent A/B directory consents using their own private identities.
+- docs/OPEN_ACK_DIRECTORY.md — explicit publication and owner discovery followed by a separate authorized read.
 
-Memory is evidence, not instruction, execution authority or task ownership.
-Transport receipts distinguish storage from recipient validation/save; neither
-proves that a model understood a message. Discovery does not enroll author
-trust or grant memory access. No private Vault, credentials or real memories
-belong in public reports. Reading this document enables no service or hook.
+Original signed requests, work charges and permission observations survive restart.
+A lost reply does not authorize a new message, resource or grant. Message relocation,
+automatic replica repair and automatic receipt collection remain unfinished.
+Global availability, thousand-agent capacity and independent adoption are unverified.
+
+Reference:
+- PROTOCOL.md — canonical records and provenance.
+- .well-known/agent-memory.json — repository metadata, not a running service.
+- docs/RELEASE.md — package scope and exact release evidence.
+- docs/BACKUP.md — preserve and restore existing private state.
+- docs/SHARING.md — selective original-record closures.
+- docs/NETWORK_QUICKSTART.md — retained private-network profile.
+- docs/RELAY_POOL.md — optional private-profile discovery and failover.
+- SECURITY.md — access and process-isolation boundaries.
+
+Use generic implementation and synthetic fixtures in public contributions. Never
+publish private memories, credentials or identity files. Reading this repository
+enables no relay, hook or background service.

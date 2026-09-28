@@ -29,9 +29,34 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = ("settings.json", "status.json", "progress.jsonl", "errors.jsonl", "results.json")
 MAX_REPORT_BYTES = 900_000  # All explicitly uploadable files together, <1 MiB.
 MODULES = tuple("tests.test_open_" + name for name in (
-    "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "typescript", "typescript_state", "typescript_http", "network_ci",
-    "contact", "contact_state", "contact_http", "contact_typescript", "contact_typescript_http")) + (
-    "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
+    "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "agent_setup", "typescript", "typescript_state", "typescript_http", "network_ci",
+    "contact", "contact_state", "contact_http", "contact_directory_maintenance", "contact_typescript", "contact_typescript_http",
+    "delivery_http", "provider_typescript", "provider_typescript_http", "provider_status", "provider_status_typescript",
+    "repair_wire", "repair_typescript", "repair_pack", "repair_pack_typescript",
+    "repair_history", "repair_history_typescript", "repair_original", "repair_original_typescript", "repair_contact_inputs",
+    "repair_resource", "repair_resource_typescript", "repair_resource_inputs",
+    "repair_bootstrap", "repair_bootstrap_typescript", "repair_status", "repair_status_typescript",
+    "repair_ack", "repair_ack_typescript", "repair_state", "capacity", "capacity_typescript",
+    "repair_probe",
+    "repair_probe_typescript",
+    "repair_proof",
+    "repair_proof_typescript",
+    "repair_access",
+    "repair_service",
+    "repair_service_budget",
+    "repair_http",
+    "repair_client", "repair_client_typescript", "repair_admin", "repair_runtime_review", "repair_bound",
+    "repair_bound_typescript", "repair_empty", "repair_empty_typescript", "repair_empty_review", "repair_empty_access", "repair_empty_http", "repair_empty_client", "repair_empty_client_typescript",
+    "repair_bind_http", "repair_offer_access", "repair_offer_http", "repair_offer_client", "repair_offer_http_typescript", "repair_occupied", "repair_occupied_typescript", "repair_occupied_access", "repair_occupied_client", "repair_put_http", "repair_put_client", "repair_put_recovery", "repair_roundtrip", "repair_receipt", "repair_occupied_client_typescript")) + (
+    "tests.test_open_repair_stage", "tests.test_open_repair_index", "tests.test_open_repair_index_access",
+    "tests.test_open_repair_index_journal", "tests.test_open_repair_index_state", "tests.test_open_repair_index_http",
+    "tests.test_open_repair_index_client", "tests.test_open_repair_index_recovery", "tests.test_open_repair_index_admin",
+    "tests.test_open_repair_index_prepare", "tests.test_open_repair_index_prepare_admin",
+    "tests.test_open_repair_provision", "tests.test_open_repair_onboarding",
+    "tests.test_open_repair_bind_recovery", "tests.test_open_repair_remote_setup", "tests.test_open_repair_remote_provision",
+    "tests.test_open_repair_status_observer",
+    "tests.test_open_provider_merge",
+    "tests.test_continuation_trial", "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {
     "schema_version": "memory-vault-open-routing-acceptance/v2", "logical_nodes": 100,
     "profile": "routing_core_table_initial_no_restart_cache", "checkpoints": False,
@@ -208,13 +233,75 @@ def initialize(reports, mode, seed):
             "open-transport.ts", "open-participant.ts", "open-node.ts", "open-client.ts",
             "open-control.ts", "open-routing.ts", "open-state.ts", "client-config.ts", "transport-state.ts",
             "open-contact.ts", "open-contact-state.ts", "open-contact-client.ts",
-            "agent.ts", "peer.ts", "io.ts", "crypto.ts")]
+            "open-provider.ts", "open-provider-client.ts", "open-blob.ts", "open-repair-wire.ts", "open-repair-history.ts", "open-repair-original.ts", "open-repair-resource.ts",
+            "open-repair-bootstrap.ts", "open-repair-status.ts", "open-repair-ack.ts", "open-capacity.ts",
+            "open-repair-probe.ts", "open-repair-proof.ts", "open-repair-client.ts",
+            "open-repair-bound.ts", "open-repair-empty.ts", "open-repair-occupied.ts",
+            "open-delivery.ts", "open-delivery-control.ts", "open-delivery-client.ts",
+            "agent.ts", "peer.ts", "io.ts", "crypto.ts", "nodes.ts")]
         sources += ["requirements-network-server-lock.txt", "tests/test_open_typescript.py", "tests/test_open_typescript_http.py", "tests/test_open_typescript_state.py",
-                    "memory_vault_open_contact.py", "memory_vault_open_contact_state.py", "memory_vault_open_contact_client.py",
-                    "memory_vault_open_client.py", "memory_vault_open_node.py",
+                    "memory_vault_open_contact.py", "memory_vault_open_contact_state.py", "memory_vault_open_contact_client.py", "memory_vault_open_contact_directory.py",
+                    "memory_vault_open_client.py", "memory_vault_open_node.py", "memory_vault_open_transport.py", "memory_vault_open_setup.py",
                     "tests/test_open_contact.py", "tests/test_open_contact_state.py", "tests/test_open_contact_http.py",
                     "tests/test_open_contact_typescript.py", "tests/test_open_contact_typescript_http.py",
                     "tests/test_network_typescript_agent_network.py", "tests/test_network_packaging.py"]
+        sources += ["memory_vault_open_provider.py", "memory_vault_open_provider_client.py", "memory_vault_open_provider_state.py",
+                    "memory_vault_open_repair_wire.py", "memory_vault_open_repair_history.py",
+                    "memory_vault_open_repair_original.py",
+                    "memory_vault_open_repair_resource.py", "tests/open_repair_resource_fixtures.py",
+                    "memory_vault_open_repair_bootstrap.py", "memory_vault_open_repair_status.py",
+                    "memory_vault_open_repair_ack.py", "tests/open_repair_ack_fixtures.py",
+                    "memory_vault_open_repair_state.py", "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
+                    "memory_vault_open_repair_probe.py",
+                    "memory_vault_open_repair_proof.py",
+                    "memory_vault_open_repair_access.py",
+                    "memory_vault_open_repair_service.py",
+                    "memory_vault_open_repair_client.py", "memory_vault_open_repair_admin.py",
+                    "memory_vault_open_repair_bound.py", "tests/open_repair_bound_fixtures.py", "tests/open_repair_index_fixtures.py",
+                    "memory_vault_open_repair_empty.py",
+                    "memory_vault_open_repair_empty_state.py",
+                    "memory_vault_open_repair_empty_access.py",
+                    "memory_vault_open_repair_empty_service.py",
+                    "memory_vault_open_repair_bind.py",
+                    "memory_vault_open_repair_bind_client.py",
+                    "memory_vault_open_repair_offer_access.py",
+                    "memory_vault_open_repair_offer_service.py",
+                    "memory_vault_open_repair_offer_client.py",
+                    "memory_vault_open_repair_occupied.py",
+                    "memory_vault_open_repair_occupied_state.py",
+                    "memory_vault_open_repair_occupied_access.py",
+                    "memory_vault_open_repair_put.py",
+                    "memory_vault_open_repair_put_client.py",
+                    "memory_vault_open_repair_receipt.py",
+                    "memory_vault_open_repair_stage.py",
+                    "memory_vault_open_repair_index.py",
+                    "memory_vault_open_repair_index_access.py",
+                    "memory_vault_open_repair_index_journal.py",
+                    "memory_vault_open_repair_index_state.py",
+                    "memory_vault_open_repair_index_service.py",
+                    "memory_vault_open_repair_index_client.py",
+                    "memory_vault_open_repair_index_recovery.py",
+                    "memory_vault_open_repair_index_admin.py",
+                    "memory_vault_open_repair_index_prepare.py",
+                    "memory_vault_open_repair_index_prepare_admin.py",
+                    "memory_vault_open_repair_provision.py",
+                    "memory_vault_open_repair_provision_admin.py",
+                    "memory_vault_open_repair_bind_journal.py",
+                    "memory_vault_open_repair_remote_setup.py",
+                    "memory_vault_open_repair_remote_provision.py",
+                    "memory_vault_open_repair_remote_provision_admin.py",
+                    "memory_vault_open_provider_merge.py",
+                    "memory_vault.py", "memory_vault_update.py", "memory_vault_trust.py", "memory_vault_network_crypto.py",
+                    "memory_vault_network_control.py", "memory_vault_nodes.py",
+                    "examples/protocol/open-repair-wire-v1.json",
+                    "memory_vault_open_blob.py", "memory_vault_open_delivery.py", "memory_vault_open_delivery_client.py",
+                    "memory_vault_open_delivery_state.py", "scripts/continuation_trial.py",
+                    "scripts/build_client_plugin.py", "scripts/build_release.py", "scripts/verify_client_package.py",
+                    "plugins/memory-vault-client/scripts/launcher.py", "clients/typescript/network/package.json"]
+        # The executed module inventory is also the test-source inventory. New
+        # test modules must not silently lack a pre-run byte fingerprint.
+        sources += [name.replace(".", "/") + ".py" for name in MODULES]
+    sources = sorted(set(sources))
     settings = {"schema_version":"memory-vault-open-ci-settings/v1", "commit_sha":sha, "mode":mode,
         "seed":seed if mode == "scale" else None, "source_sha256":{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in sources},
         "bootstrap_python":sys.version.split()[0], "expected_node":"22.19.0" if mode=="light" else None,
@@ -359,7 +446,9 @@ def main():
     if args.phase=="finalize":return 0 if finalize(reports) else 1
     def interrupted(signum,frame):raise KeyboardInterrupt
     for signum in (signal.SIGINT,signal.SIGTERM,signal.SIGALRM):signal.signal(signum,interrupted)
-    signal.alarm(26*60 if args.mode=="scale" else 12*60)
+    # The expanded real-HTTP suite needs more than its former 26-minute cap.
+    # Keep a finite limit and leave time for finalization and bounded reports.
+    signal.alarm((40 if args.mode == "light" else 26)*60)
     reports.status("running")
     try:
         record_runtime(reports,args.mode,args.seed)

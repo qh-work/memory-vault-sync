@@ -34,17 +34,24 @@ syncBuiltinESMExports();
 """
 DRIVER = GUARD + r"""
 const {Agent}=await import('./agent.ts');
+const {OpenNetworkClient}=await import('./open-client.ts');
 const {OpenParticipant}=await import('./open-participant.ts');
 const {OpenHTTPTransport,endpoint,permittedAddress}=await import('./open-transport.ts');
 const {performance}=await import('node:perf_hooks');
 const chunks=[];let size=0;
 for await(const chunk of process.stdin){size+=chunk.length;if(size>1048576)throw Error('synthetic input limit');chunks.push(chunk);}
-const input=JSON.parse(Buffer.concat(chunks).toString('utf8')),results=[],calls=[];
+const input=JSON.parse(Buffer.concat(chunks).toString('utf8')),results=[],calls=[],operationNetwork=[];
+let httpAttempts=0,blobAttempts=0,privateFallbacks=0;
 const original=OpenHTTPTransport.prototype.request;
 OpenHTTPTransport.prototype.request=async function(base,value,deadline){
+  httpAttempts++;
   const response=await original.call(this,base,value,deadline);
   calls.push({base,request:value,response:response.response,observed_address:response.observed_address});
   return response;
+};
+const originalBlob=OpenHTTPTransport.prototype.requestBlob;
+OpenHTTPTransport.prototype.requestBlob=async function(...args){
+  blobAttempts++;return originalBlob.apply(this,args);
 };
 let participant;
 try{
@@ -69,7 +76,17 @@ try{
     results.push({lookups});
   }else if(input.mode==='agent'){
     const agent=new Agent(input.client_config,input.network_config);
-    for(const request of input.requests)results.push(await agent.handle(request));
+    const select=agent.networkPeer.bind(agent);
+    agent.networkPeer=(...args)=>{
+      const peer=select(...args);
+      if(!(peer instanceof OpenNetworkClient)){privateFallbacks++;throw Error('unexpected private profile fallback');}
+      return peer;
+    };
+    for(const request of input.requests){
+      const priorHTTP=httpAttempts,priorBlob=blobAttempts;
+      results.push(await agent.handle(request));
+      operationNetwork.push({http_attempts:httpAttempts-priorHTTP,blob_attempts:blobAttempts-priorBlob});
+    }
   }else if(input.mode==='transport'){
     const transport=new OpenHTTPTransport({allow_loopback:true});
     try{for(const operation of input.operations){try{
@@ -89,7 +106,7 @@ try{
     }catch(error){results.push({ok:false,code:error.code,retryable:error.retryable??false});}}
   }
 }finally{participant?.close();}
-process.stdout.write(JSON.stringify({results,calls,subprocessCalls}));
+process.stdout.write(JSON.stringify({results,calls,subprocessCalls,operationNetwork,privateFallbacks}));
 """
 NODE_DRIVER = GUARD + r"""
 const {startOpenNode}=await import('./open-node.ts');
@@ -133,6 +150,7 @@ class OpenTypeScriptHTTPTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace")[-6000:])
         payload = json.loads(result.stdout)
         self.assertEqual(payload["subprocessCalls"], 0)
+        self.assertEqual(payload["privateFallbacks"], 0)
         return payload
 
     def participant(self, identity, state, seeds, operations):
@@ -193,16 +211,30 @@ class OpenTypeScriptHTTPTests(unittest.TestCase):
             "state_directory": str(self.root / "owner-state"), "encryption_key_path": str(self.root / "owner" / "encryption.json"), "seeds": host.nodes, "allow_loopback": True}), replace=False)
         requests = [{"op": "connect"}, {"op": "discover", "online": True, "key_id": reader.key_id},
                     {"op": "discover", "online": True}, {"op": "send", "request_id": "req_synthetic_open_send", "recipients": [reader.key_id], "text": "synthetic"},
-                    {"op": "receive"}, {"op": "connect", "invitation": {"synthetic": True}}]
+                    {"op": "receive"}, {"op": "connect", "invitation": {"synthetic": True}},
+                    {"op": "receive", "message_id": "msg_" + "a" * 64},
+                    {"op": "receive", "respond_to": "msg_" + "b" * 64}]
+        preserved = [client, config, self.root / "owner" / "identity.json", self.root / "owner" / "encryption.json"]
+        before = {path: path.read_bytes() for path in preserved}
         result = self.ts(mode="agent", client_config=str(client), network_config=str(config), requests=requests)
         self.assertTrue(result["results"][0]["ok"], result)
+        self.assertTrue(result["results"][0]["result"]["open_messaging_supported"])
         self.assertEqual(canonical_bytes(result["results"][1]["result"]["contact"]), canonical_bytes(second))
         self.assertEqual(result["results"][2]["result"]["state"], "target_key_required")
-        self.assertEqual([r["error"]["code"] for r in result["results"][3:]],
-                         ["open_messaging_unsupported", "open_messaging_unsupported", "open_private_invitation_unsupported"])
+        for index, code in [(3, "open_contact_approval_required"), (5, "open_private_invitation_unsupported"),
+                            (6, "network_message_not_found"), (7, "open_hint_exchange_unsupported")]:
+            self.assertFalse(result["results"][index]["ok"], result["results"][index])
+            self.assertEqual(result["results"][index]["error"]["code"], code)
+        self.assertTrue(result["results"][4]["ok"], result["results"][4])
+        self.assertEqual(result["results"][4]["result"]["messages"], [])
+        self.assertEqual(result["results"][4]["result"]["errors"], [])
+        self.assertFalse(result["results"][4]["result"]["network_accessed"])
+        self.assertEqual(result["operationNetwork"][2:], [{"http_attempts": 0, "blob_attempts": 0}] * 6)
         for response in result["results"]:
             self.assertLessEqual(len(canonical_bytes(response)), 8192)
             self.assertFalse(response["authority"]["authorization_eligible"])
+            self.assertFalse(response["authority"]["execution_eligible"])
+        self.assertEqual({path: path.read_bytes() for path in preserved}, before)
         self.assertFalse((self.root / "vault.sqlite3").exists())
         self.assertFalse((self.root / "trust.json").exists())
 
@@ -307,7 +339,7 @@ class OpenTypeScriptHTTPTests(unittest.TestCase):
         saved = python.handle({"op": "remember", "request_id": "req_synthetic_prior_memory", "kind": "observation", "text": "Synthetic original provenance retained."})
         self.assertTrue(saved["ok"], saved)
         config = ClientConfig.load(python.client_config)
-        paths = [config.path, config.identity_path, config.trust_path, config.vault_path, encryption_path]
+        paths = [config.path, python.network_config, config.identity_path, config.trust_path, config.vault_path, encryption_path]
         before = {path: path.read_bytes() for path in paths}
         remote = Identity.generate(self.root / "remote" / "identity.json")
         contact = host.contact(remote, EncryptionIdentity.generate()); host.put_only_last(remote, contact)
@@ -315,14 +347,22 @@ class OpenTypeScriptHTTPTests(unittest.TestCase):
                       {"op": "receive"}, {"op": "recall", "memory_id": saved["result"]["memory_id"]}]
         result = self.ts(mode="agent", client_config=str(config.path), network_config=str(python.network_config), requests=operations)
         self.assertEqual(result["results"][1]["result"]["state"], "found", result)
-        self.assertEqual(result["results"][2]["error"]["code"], "open_messaging_unsupported")
+        self.assertTrue(result["results"][0]["ok"], result)
+        self.assertTrue(result["results"][0]["result"]["open_messaging_supported"])
+        self.assertTrue(result["results"][2]["ok"], result)
+        self.assertEqual(result["results"][2]["result"]["messages"], [])
+        self.assertEqual(result["results"][2]["result"]["errors"], [])
+        self.assertFalse(result["results"][2]["result"]["network_accessed"])
+        self.assertEqual(result["operationNetwork"][2:], [{"http_attempts": 0, "blob_attempts": 0}] * 2)
         self.assertTrue(result["results"][3]["ok"], result)
+        self.assertEqual(result["results"][3]["result"]["hits"][0]["text"], "Synthetic original provenance retained.")
         self.assertEqual({path: path.read_bytes() for path in paths}, before)
         for index in range(2): host.stop(index)
         local = self.ts(mode="agent", client_config=str(config.path), network_config=str(python.network_config), requests=[
             {"op": "remember", "request_id": "req_synthetic_native_offline", "kind": "observation", "text": "Synthetic native offline memory."},
             {"op": "discover", "online": False}])
         self.assertEqual(local["calls"], [])
+        self.assertEqual(local["operationNetwork"], [{"http_attempts": 0, "blob_attempts": 0}] * 2)
         self.assertTrue(local["results"][0]["ok"], local)
         recalled = python.handle({"op": "recall", "memory_id": local["results"][0]["result"]["memory_id"]})
         self.assertEqual(recalled["result"]["hits"][0]["text"], "Synthetic native offline memory.")

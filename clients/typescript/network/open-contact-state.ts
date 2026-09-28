@@ -6,6 +6,8 @@ import {canonicalBytes,document,documentSha256,safeInteger,sha256,decodeBase64ur
 import type {DocumentInput,SigningIdentityDocument} from './crypto.ts';
 import {verifyNode} from './open-control.ts';
 import type {SignedNode} from './open-control.ts';
+import {CapacityAuthority,translateCapacityError} from './open-capacity.ts';
+import type {CapacityPolicy} from './open-capacity.ts';
 import {ContactError,MAX_REQUEST_BYTES,fail,issueChallenge,signDocument,verifyChallenge,
   verifyDecision,verifyDocument,verifyLease,verifyPolicy,verifyRequest,verifyRpc} from './open-contact.ts';
 
@@ -17,13 +19,14 @@ const challengeSlots:Record<string,number>={submit:0,result:0};
 export interface ContactStateOptions {
   enabled?:boolean;maximum_leases?:number;maximum_knock_items?:number;maximum_knock_bytes?:number;
   maximum_delivery_items?:number;maximum_delivery_bytes?:number;maximum_challenges?:number;
-  maximum_challenge_bytes?:number;clock?:()=>number;
+  maximum_challenge_bytes?:number;clock?:()=>number;capacity_policy?:CapacityPolicy;
 }
 const parsed=(value:Uint8Array):Obj=>document(value) as Obj;
 const same=(a:unknown,b:unknown)=>Buffer.from(canonicalBytes(a)).equals(Buffer.from(canonicalBytes(b)));
 
 export class ContactState {
   readonly db:DatabaseSync;readonly identity:SigningIdentityDocument;readonly node:SignedNode;
+  readonly capacity:CapacityAuthority;
   enabled:boolean;clock:()=>number;
   maximum_leases!:number;maximum_knock_items!:number;maximum_knock_bytes!:number;
   maximum_delivery_items!:number;maximum_delivery_bytes!:number;maximum_challenges!:number;maximum_challenge_bytes!:number;
@@ -32,7 +35,7 @@ export class ContactState {
     this.enabled=options.enabled===undefined?false:options.enabled;if(typeof this.enabled!=='boolean')fail('contact_invalid_local_policy');
     const ceilings={maximum_leases:128,maximum_knock_items:1024,maximum_knock_bytes:16*1024*1024,
       maximum_delivery_items:1024,maximum_delivery_bytes:64*1024*1024,maximum_challenges:128,maximum_challenge_bytes:1024*1024};
-    if(Object.keys(options).some(name=>!['enabled','clock',...Object.keys(ceilings)].includes(name)))fail('contact_invalid_local_policy');
+    if(Object.keys(options).some(name=>!['enabled','clock','capacity_policy',...Object.keys(ceilings)].includes(name)))fail('contact_invalid_local_policy');
     for(const [name,ceiling] of Object.entries(ceilings)){
       const supplied=(options as Obj)[name],value=supplied===undefined?ceiling:supplied;if(safeInteger(value,1)>ceiling)fail('contact_invalid_local_policy');
       (this as any)[name]=value;
@@ -40,6 +43,7 @@ export class ContactState {
     const target=verifyNode(node,{now:node.payload.issued_at});
     if(!same(target.signing_key,validateSigningIdentity(identity)))fail('contact_wrong_node');
     this.db=db;this.identity=document(identity as unknown as DocumentInput) as unknown as SigningIdentityDocument;
+    this.capacity=new CapacityAuthority(db,options.capacity_policy);
     this.node=document(node as unknown as DocumentInput) as unknown as SignedNode;
     this.clock=options.clock??(()=>Date.now()/1000);
   }
@@ -53,9 +57,9 @@ export class ContactState {
     if(this.db.isTransaction)fail('contact_storage_transaction');
     this.db.exec('BEGIN IMMEDIATE');let result:any;
     try{
-      const now=this.now();this.binding();if(rpc!==undefined)verifyRpc(rpc,{node:this.node,now});
+      const now=this.now();this.binding();this.capacity.checkPolicy();if(rpc!==undefined)verifyRpc(rpc,{node:this.node,now});
       this.prune(now);result=operation(now);this.db.exec('COMMIT');
-    }catch(error){this.db.exec('ROLLBACK');throw error;}
+    }catch(error){this.db.exec('ROLLBACK');throw translateCapacityError(error);}
     if(result instanceof ContactError)throw result;return result;
   }
   initialize():void{
@@ -91,8 +95,8 @@ export class ContactState {
           .some(table=>this.one('SELECT 1 FROM '+table+' LIMIT 1')))fail('contact_storage_binding_missing');
         this.db.prepare("INSERT INTO open_contact_state VALUES('binding',?)").run(this.identity.key_id+':'+this.node.payload.storage_epoch);
       }
-      this.binding();this.db.exec('COMMIT');
-    }catch(error){this.db.exec('ROLLBACK');throw error;}
+      this.binding();this.capacity.initialize();this.db.exec('COMMIT');
+    }catch(error){this.db.exec('ROLLBACK');throw translateCapacityError(error);}
   }
   private prune(now:number):void{
     for(const table of ['open_contact_challenges','open_contact_requests'])
@@ -105,6 +109,7 @@ export class ContactState {
       SELECT rowid FROM open_contact_resource_leases WHERE retain_until<=? AND lease_id NOT IN
       (SELECT lease_id FROM open_contact_requests) AND lease_id NOT IN
       (SELECT lease_id FROM open_contact_policies) ORDER BY retain_until LIMIT ?)`).run(now,GC_BATCH);
+    this.capacity.collectReleased('contact',{now,limit:GC_BATCH});
   }
   gc():Obj{return this.tx(()=>({state:'collected'}));}
   /** Explicit local node-owner action, never available through the public RPC. */

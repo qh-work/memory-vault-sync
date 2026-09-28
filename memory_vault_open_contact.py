@@ -28,6 +28,7 @@ MAX_SECONDS = 86400
 CHALLENGE_SECONDS = 60
 SLOT_BYTES = MAX_REQUEST_BYTES + MAX_DECISION_BYTES + 512
 KINDS = {
+    "contact.directory_maintenance": {"grant_id", "contact_sha256", "publisher_signing_key", "publisher_storage_epoch", "lease_id", "lease_sha256", "policy_sha256", "resource_id", "max_lease_seconds", "max_attempts", "max_requests", "max_bytes"},
     "resource.lease": {"node_key_id", "storage_epoch", "owner_key_id", "owner_encryption_key", "lease_id", "resource_id", "purpose", "max_items", "max_bytes"},
     "contact.policy": {"node_key_id", "storage_epoch", "lease_id", "lease_sha256", "resource_id", "encryption_key", "revision", "status", "max_pending"},
     "contact.request": {"request_id", "encryption_key", "recipient_key_id", "recipient_encryption_key_id", "node_key_id", "storage_epoch", "lease_id", "resource_id", "policy_sha256", "request_class"},
@@ -39,6 +40,7 @@ KINDS = {
 }
 COMMON = {"schema_version", "kind", "signing_key", "issued_at", "expires_at"}
 ACTIONS = {
+    "directory.maintain": {"contact", "policy", "lease", "authorization"},
     "lease": {"encryption_key", "purpose", "max_items", "max_bytes", "lease_seconds", "allocation_id"},
     "policy.put": {"lease", "policy"},
     "policy.get": {"recipient_key_id"},
@@ -100,9 +102,13 @@ def _body(action, value, now):
         _limits(raw)
         limit(raw["lease_seconds"], MAX_SECONDS)
         opaque(raw["allocation_id"])
-    elif action == "policy.put":
+    elif action in {"policy.put", "directory.maintain"}:
         verify_document(raw["lease"], "resource.lease", now=now)
         verify_document(raw["policy"], "contact.policy", now=now)
+        if action == "directory.maintain":
+            from memory_vault_open_control import verify_contact
+            verify_contact(raw["contact"], now=now)
+            verify_document(raw["authorization"], "contact.directory_maintenance", now=now)
     elif action == "policy.get":
         key(raw["recipient_key_id"])
     elif action == "poll":
@@ -145,7 +151,16 @@ def verify_document(value, kind, *, now=None):
     for name in ("encryption_key", "owner_encryption_key"):
         if name in raw:
             encryption_public_descriptor(raw[name])
-    if kind == "resource.lease":
+    if kind == "contact.directory_maintenance":
+        opaque(raw["grant_id"])
+        opaque(raw["publisher_storage_epoch"])
+        public_signing_key(raw["publisher_signing_key"])
+        digest(raw["contact_sha256"])
+        limit(raw["max_lease_seconds"], 300)
+        limit(raw["max_attempts"], 32)
+        limit(raw["max_requests"], 256)
+        limit(raw["max_bytes"], 16 * 1024 * 1024)
+    elif kind == "resource.lease":
         _limits(raw)
         if raw["signing_key"]["key_id"] != raw["node_key_id"]:
             fail("contact_wrong_node")
@@ -321,8 +336,8 @@ def verify_rpc(value, *, node, now=None):
     body = raw["body"]
     if raw["action"] in {"challenge", "submit", "result"} and body["request"]["payload"]["signing_key"] != raw["signing_key"]:
         fail("contact_wrong_subject")
-    if raw["action"] in {"policy.put", "decide"}:
-        inner = body["policy"] if raw["action"] == "policy.put" else body["decision"]
+    if raw["action"] in {"policy.put", "directory.maintain", "decide"}:
+        inner = body["policy"] if raw["action"] == "policy.put" else body["authorization"] if raw["action"] == "directory.maintain" else body["decision"]
         if inner["payload"]["signing_key"] != raw["signing_key"]:
             fail("contact_wrong_subject")
     return raw
@@ -351,11 +366,23 @@ def verify_response(value, *, request, node, now=None):
             fail("contact_invalid_document")
     else:
         action = original["action"]
-        expected = {"lease": {"lease"}, "policy.put": {"state"}, "policy.get": {"lease", "policy"},
+        expected = {"directory.maintain": {"state", "job_id", "expires_at", "attempts", "requests", "bytes", "directory_expires_at", "last_error"},
+                    "lease": {"lease"}, "policy.put": {"state"}, "policy.get": {"lease", "policy"},
                     "challenge": {"challenge"}, "submit": {"state", "request_sha256"},
                     "poll": {"requests"}, "decide": {"state", "request_sha256"}, "result": {"state", "decision"}}[action]
         fields(body, expected)
-        if action == "lease":
+        if action == "directory.maintain":
+            grant = original["body"]["authorization"]["payload"]
+            one_of(body["state"], {"pending", "running", "leased", "degraded", "stopped", "exhausted"})
+            if body["job_id"] != grant["grant_id"] or body["expires_at"] != grant["expires_at"]:
+                fail("contact_directory_response_mismatch")
+            for name, maximum in (("attempts", "max_attempts"), ("requests", "max_requests"), ("bytes", "max_bytes")):
+                limit(body[name], grant[maximum], minimum=0)
+            if body["directory_expires_at"] is not None:
+                limit(body["directory_expires_at"], grant["expires_at"])
+            if body["last_error"] is not None and (not isinstance(body["last_error"], str) or re.fullmatch(r"[a-z][a-z0-9_]{1,63}", body["last_error"]) is None):
+                fail("contact_invalid_document")
+        elif action == "lease":
             lease = verify_lease(body["lease"], node=node, now=now)
             wanted = original["body"]
             if (lease["owner_key_id"] != original["signing_key"]["key_id"] or lease["owner_encryption_key"] != wanted["encryption_key"]

@@ -1,19 +1,35 @@
-# Memory Vault v0.28.0-alpha.0.2 — authorized full client
+# Memory Vault v0.28.0-alpha.0.10 — authorized full client
 
-The 0.28.0-alpha.0.2 candidate adds explicit first-contact requests, approval
-and rejection in Python and native TypeScript. B signs opt-in backed by a finite
-knock lease before going offline. A proves both keys, submits a fixed request,
-and later pulls a result bound to the original request, parties, resource,
-operation and expiry. Approval requires a real finite delivery reservation.
-Open encrypted messaging, receipts and sender-offline repair remain unsupported;
-a grant does not create Vault access, author trust or execution authority.
-See [first-contact controls](plugins/memory-vault-client/docs/OPEN_FIRST_CONTACT_V1.md) and [routing setup and historical evidence](plugins/memory-vault-client/docs/OPEN_ROUTING_RUNTIME.md).
-At candidate preparation, 6 Pro review, cloud CI and publication were pending.
-Their final status requires the release evidence for the exact source commit.
-The full 0.28.0-alpha.1 delivery/receipt/repair milestone remains ahead. The existing
-private network profile retains its separate encrypted relay-pool exchange.
+This alpha.0.10 candidate adds independent remote source preparation using
+only the sender's configuration and a selected public origin/key, plus durable
+setup and bind recovery across lost replies. The Python Agent can enable contact
+using an already configured node's public key ID. These workflows connect
+ordinary memory delivery to independent original-receipt recovery. Source
+requests, used work, authority observations and exact retry responses survive
+restart. Separate A/B publication consents are required; a directory lease alone
+is never a read capability. See the [directory guide](docs/OPEN_ACK_DIRECTORY.md).
+Message movement, automatic repair and global reliability remain unfinished.
+The earlier encrypted delivery, selected-memory sharing and current-fact scorer
+are retained. Exact validation belongs to the source-bound release record.
 
-This full-client package targets **v0.28.0-alpha.0.2 first-contact source**,
+The Python and native TypeScript open clients add encrypted messages and selected original
+memory sharing after explicit first-contact approval. Recipient-saved receipts
+follow local validation and durable save. Participants operate their own finite
+nodes and exchange signed introductions; no central service or project-operated
+public seed is supplied. Node and agent setup commands are included in the full
+client archive. Ordinary clients need no public listener.
+
+Messages use the original approved delivery node. The separate, explicitly
+authorized ACK source retains original saved-message receipts for independent
+recovery. Replacement-node message repair remains unfinished. Both clients
+share the same wire protocol and existing Vault. The Python node hosts delivery
+and ACK recovery; the native TypeScript node hosts routing and first contact.
+Validation results and their exact source bindings are in the release record. Memory content never grants execution authority or automatically
+enrolls an author as trusted.
+
+[Open-network quickstart](plugins/memory-vault-client/docs/OPEN_NETWORK_QUICKSTART.md).
+
+This full-client package targets **v0.28.0-alpha.0.10 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under
@@ -45,7 +61,7 @@ sources, environment and counterevidence. See
 [Hint v4](plugins/memory-vault-client/docs/NETWORK_HINTS_V4.md) and
 [local batch reads](plugins/memory-vault-client/docs/RECEIVED_BATCH_RECALL.md).
 
-This is a bounded first-contact candidate with a separate retained private messaging profile.
+This is an open-delivery preview with a retained private messaging profile.
 It is not a complete global communication network or unlimited-capacity claim.
 Current controls use Hint v4 and content/v2; old preview forms are not replayed
 or silently migrated. Extraction does not replace an installed plugin or

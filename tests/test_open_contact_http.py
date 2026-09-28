@@ -8,10 +8,11 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from memory_vault import MemoryError, canonical_bytes
 from memory_vault_network_crypto import EncryptionIdentity
-from memory_vault_open_control import coordinate
+from memory_vault_open_control import REQUEST_SCHEMA, coordinate, issue_node, verify_response as verify_routing_response
 from memory_vault_open_routing import LookupBudget
 from memory_vault_open_contact_client import CONNECT_SCHEMA, OpenContactClient
 from memory_vault_open_node import OpenParticipant
@@ -43,6 +44,135 @@ class ContactHTTPTests(unittest.TestCase):
         participant = OpenParticipant(identity, self.root / name / "transport", seeds=seeds, allow_loopback=True)
         self.addCleanup(participant.close)
         return OpenContactClient(participant, encryption)
+
+    def capture_directory_leases(self, owner, host, *, separate_seconds=False):
+        leases = []
+        original = owner.participant.transport.request
+        known = {node['payload']['signing_key']['key_id']: node for node in host.nodes}
+        def capture(base, request, **kwargs):
+            payload = request['payload']
+            publication = payload['schema_version'] == REQUEST_SCHEMA and payload['action'] == 'put'
+            if publication and separate_seconds and leases:
+                # Separate real node issuance times; never alter a signed reply
+                # or the service clock to manufacture differing expirations.
+                delay = leases[-1]['payload']['issued_at'] + 1.05 - time.time()
+                if delay > 0:
+                    time.sleep(delay)
+            reply = original(base, request, **kwargs)
+            if publication:
+                checked = verify_routing_response(reply.response, request=request, node=known[payload['node_key_id']])
+                if 'lease' in checked['body']:
+                    leases.append(checked['body']['lease'])
+            return reply
+        owner.participant.transport.request = capture
+        return leases
+
+    def test_enable_reports_no_directory_expiry_without_confirmed_publication(self):
+        host = self.host(1)
+        host.stop(0)
+        config = json.loads(host.configs[0].read_bytes())
+        config['index_policy'] = {'enabled': False}
+        atomic_write(host.configs[0], canonical_bytes(config), replace=True)
+        host.start(0)
+        owner = self.client('unpublished-owner', host.nodes)
+        leases = self.capture_directory_leases(owner, host)
+        enabled = asyncio.run(owner.enable(host.nodes[0], allocation_id='unpublished_knock', lease_seconds=600))
+        self.assertEqual(enabled['state'], 'active')
+        self.assertEqual(enabled['directory_state'], 'degraded')
+        self.assertEqual(enabled['confirmed_index_leases'], 0)
+        self.assertIsNone(enabled['directory_expires_at'])
+        self.assertEqual(leases, [])
+        original = owner._load('policy', enabled['lease_id'])
+        self.assertEqual(enabled['expires_at'], original['lease']['payload']['expires_at'])
+
+    def test_enable_refreshes_only_selected_configured_node_without_introduction_file(self):
+        host = self.host(1)
+        host.stop(0)
+        original = host.nodes[0]['payload']
+        now = int(time.time())
+        stale = issue_node(host.identities[0], base_url=original['base_url'],
+            storage_epoch=original['storage_epoch'], roles=original['roles'],
+            revision=1, issued_at=now - 601, expires_at=now - 1)
+        config = json.loads(host.configs[0].read_bytes())
+        config['node'] = issue_node(host.identities[0], base_url=original['base_url'],
+            storage_epoch=original['storage_epoch'], roles=original['roles'],
+            revision=2, issued_at=now, expires_at=now + 600)
+        atomic_write(host.configs[0], canonical_bytes(config), replace=True)
+        host.start(0)
+        owner = self.client('selected-owner', [stale])
+        invitation = dict(schema_version=CONNECT_SCHEMA, action='enable',
+            node_key_id=host.identities[0].key_id, allocation_id='selected_knock',
+            max_pending=2, lease_seconds=600, revision=1)
+        enabled = asyncio.run(owner.dispatch(invitation))
+        self.assertEqual(enabled['state'], 'active')
+        saved = owner._load('policy', enabled['lease_id'])
+        self.assertGreater(saved['node']['payload']['revision'], stale['payload']['revision'])
+        self.assertEqual(saved['node']['payload']['storage_epoch'], original['storage_epoch'])
+        refreshed = owner.participant.seeds[0]['payload']
+        for field in ('signing_key', 'storage_epoch', 'base_url', 'roles'):
+            self.assertEqual(refreshed[field], stale['payload'][field])
+        repeated = asyncio.run(owner.dispatch(invitation))
+        self.assertEqual(repeated['lease_id'], enabled['lease_id'])
+        with patch.object(owner.participant.transport, 'request_node',
+                side_effect=AssertionError('unconfigured endpoint accessed')):
+            with self.assertRaisesRegex(MemoryError, 'contact_node_not_configured'):
+                asyncio.run(owner.dispatch(dict(invitation, node_key_id=owner.identity.key_id)))
+        host.stop(0)
+        config['node'] = issue_node(host.identities[0], base_url=original['base_url'],
+            storage_epoch='synthetic_replaced_epoch', roles=original['roles'],
+            revision=3, issued_at=now, expires_at=now + 600)
+        # Serve a signed replacement directly; no replacement is adopted by B.
+        from memory_vault_open_transport import TransportReply
+        with patch.object(owner.participant.transport, 'request_node',
+                return_value=TransportReply(config['node'], '127.0.0.1', len(canonical_bytes(config['node'])))):
+            with self.assertRaisesRegex(MemoryError, 'contact_selected_node_mismatch'):
+                asyncio.run(owner.dispatch(invitation))
+        self.assertEqual(owner._load('policy', enabled['lease_id']), saved)
+
+    def test_enable_reports_short_actual_directory_lease_expiry(self):
+        host = self.host(1)
+        owner = self.client('short-owner', host.nodes)
+        leases = self.capture_directory_leases(owner, host)
+        enabled = asyncio.run(owner.enable(host.nodes[0], allocation_id='short_knock', lease_seconds=30))
+        self.assertEqual(enabled['confirmed_index_leases'], 1)
+        self.assertEqual(len(leases), 1)
+        actual = leases[0]['payload']
+        self.assertEqual(enabled['directory_expires_at'], actual['expires_at'])
+        self.assertLessEqual(actual['expires_at'] - actual['issued_at'], 30)
+        self.assertLess(actual['expires_at'] - actual['issued_at'], 300)
+        self.assertEqual(enabled['expires_at'], owner._load('policy', enabled['lease_id'])['lease']['payload']['expires_at'])
+
+    def test_repeated_enable_reports_earliest_confirmed_expiry_without_replacing_knock_policy(self):
+        host = self.host(2)
+        owner = self.client('renewing-owner', host.nodes)
+        leases = self.capture_directory_leases(owner, host, separate_seconds=True)
+        options = {'allocation_id': 'refresh_directory_knock', 'lease_seconds': 600, 'max_pending': 2, 'revision': 1}
+        enabled = asyncio.run(owner.enable(host.nodes[-1], **options))
+        self.assertEqual(enabled['confirmed_index_leases'], 2)
+        self.assertEqual(len(leases), 2)
+        first_expiries = [lease['payload']['expires_at'] for lease in leases]
+        self.assertLess(min(first_expiries), max(first_expiries))
+        self.assertEqual(enabled['directory_expires_at'], min(first_expiries))
+        original = canonical_bytes(owner._load('policy', enabled['lease_id']))
+        remote = self.root / 'node_1/transport/network.sqlite3'
+        with sqlite3.connect(remote) as db:
+            original_knock = db.execute('SELECT record FROM open_contact_resource_leases WHERE lease_id=?', (enabled['lease_id'],)).fetchone()[0]
+            original_policy = db.execute('SELECT record FROM open_contact_policies WHERE owner=?', (owner.identity.key_id,)).fetchone()[0]
+        repeated = asyncio.run(owner.enable(host.nodes[-1], **options))
+        self.assertEqual(repeated['lease_id'], enabled['lease_id'])
+        self.assertEqual(repeated['expires_at'], enabled['expires_at'])
+        self.assertEqual(canonical_bytes(owner._load('policy', enabled['lease_id'])), original)
+        self.assertEqual(repeated['confirmed_index_leases'], 2)
+        self.assertEqual(len(leases), 4)
+        current_expiries = [lease['payload']['expires_at'] for lease in leases[2:]]
+        self.assertLess(min(current_expiries), max(current_expiries))
+        self.assertEqual(repeated['directory_expires_at'], min(current_expiries))
+        self.assertGreater(repeated['directory_expires_at'], enabled['directory_expires_at'])
+        self.assertLess(repeated['directory_expires_at'], repeated['expires_at'])
+        with sqlite3.connect(remote) as db:
+            self.assertEqual(db.execute('SELECT record FROM open_contact_resource_leases WHERE lease_id=?', (enabled['lease_id'],)).fetchone()[0], original_knock)
+            self.assertEqual(db.execute('SELECT record FROM open_contact_policies WHERE owner=?', (owner.identity.key_id,)).fetchone()[0], original_policy)
+            self.assertEqual(db.execute('SELECT count(*) FROM open_contact_resource_leases WHERE owner=?', (owner.identity.key_id,)).fetchone()[0], 1)
 
     def test_current_policy_poll_and_decide_survive_old_queue_and_http_restart(self):
         host = self.host(1)

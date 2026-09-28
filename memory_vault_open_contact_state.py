@@ -20,6 +20,7 @@ from memory_vault_open_contact import (
     verify_request, verify_rpc,
 )
 from memory_vault_open_control import verify_node
+from memory_vault_open_capacity import CapacityAuthority, translate_error
 
 RETENTION_SECONDS = 30
 GC_BATCH = 128
@@ -41,7 +42,8 @@ class ContactState:
     def __init__(self, db, identity, node, *, enabled=False, maximum_leases=128,
                  maximum_knock_items=1024, maximum_knock_bytes=16 * 1024 * 1024,
                  maximum_delivery_items=1024, maximum_delivery_bytes=64 * 1024 * 1024,
-                 maximum_challenges=128, maximum_challenge_bytes=1024 * 1024, clock=None):
+                 maximum_challenges=128, maximum_challenge_bytes=1024 * 1024, clock=None,
+                 capacity_policy=None):
         if type(enabled) is not bool:
             fail("contact_invalid_local_policy")
         limits = ((maximum_leases, 128), (maximum_knock_items, 1024),
@@ -60,6 +62,7 @@ class ContactState:
         self.maximum_delivery_items, self.maximum_delivery_bytes = maximum_delivery_items, maximum_delivery_bytes
         self.maximum_challenges, self.maximum_challenge_bytes = maximum_challenges, maximum_challenge_bytes
         self._lock = threading.RLock()
+        self.capacity = CapacityAuthority(db, policy=capacity_policy)
 
     def _now(self):
         return integer(int(self.clock()))
@@ -83,14 +86,15 @@ class ContactState:
             try:
                 now = self._now()
                 self._binding()
+                self.capacity.check_policy()
                 if rpc is not None:
                     verify_rpc(rpc, node=self.node, now=now)
                 self._prune(now)
                 result = operation(now)
                 self.db.commit()
-            except BaseException:
+            except BaseException as error:
                 self.db.rollback()
-                raise
+                raise translate_error(error)
         # Security floors may have to commit before their typed refusal.
         if isinstance(result, ContactError):
             raise result
@@ -142,10 +146,11 @@ class ContactState:
                         fail("contact_storage_binding_missing")
                     self.db.execute("INSERT INTO open_contact_state VALUES('binding',?)", (expected,))
                 self._binding()
+                self.capacity.initialize()
                 self.db.commit()
-            except BaseException:
+            except BaseException as error:
                 self.db.rollback()
-                raise
+                raise translate_error(error)
 
     def _prune(self, now):
         # Bounded indexed batches. Never remove a live obligation or its tail.
@@ -159,6 +164,7 @@ class ContactState:
             SELECT rowid FROM open_contact_resource_leases WHERE retain_until<=? AND lease_id NOT IN
             (SELECT lease_id FROM open_contact_requests) AND lease_id NOT IN
             (SELECT lease_id FROM open_contact_policies) ORDER BY retain_until LIMIT ?)""", (now, GC_BATCH))
+        self.capacity.collect_released("contact", now=now, limit=GC_BATCH)
 
     def gc(self):
         """One bounded local collection step, available even when admission closes."""

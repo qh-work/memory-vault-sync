@@ -1,18 +1,30 @@
 # Memory Vault: connect, remember, exchange, continue
 
-For the published release, start with the **[v0.28.0-alpha.0.5 agent guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/AI_START_HERE.md)**
-and [open-network quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/OPEN_NETWORK_QUICKSTART.md).
-Download the [full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-client-v0.28.0-alpha.0.5.zip); the separate
-[review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-review-v0.28.0-alpha.0.5.zip) includes the runnable
-[continuation scorer](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/CONTINUATION_TRIAL.md).
+This candidate adds [independent remote source preparation](docs/OPEN_ACK_PROVISIONING.md) and
+[independent consent commands](docs/OPEN_ACK_PREPARATION.md), connecting a new
+selected-memory send to [directory receipt recovery](docs/OPEN_ACK_DIRECTORY.md).
+The same quickstart can fetch and challenge a chosen operator's current node
+introduction by origin and expected public key. Python recipients can explicitly
+authorize finite directory maintenance while offline, within the original
+contact and resource permissions. The Python Agent can enable contact using an
+already configured node's public key ID. Sender and source retain their own private
+configurations; interrupted setup and binding recover from durable original requests.
+The source publishes only with separate A/B permission; the owner uses its own
+READ/bootstrap grants to discover and retrieve the original signed receipt.
+The publication and recovery commands retain exact original bytes and durable
+work limits. Message movement and automatic repair remain unfinished.
 
-These instructions are pinned to release source `d4315e390f6281587ab9e77da2f94d3f7825cf35`.
-The default-branch code and the historical profile instructions below are not
-that source. The released alpha supports explicitly approved encrypted messages
-and selected original-memory sharing through participants' own Python delivery
-nodes, with Python and native TypeScript clients. It does not complete node
-replacement, independent ACK repair, global-scale reliability or cross-model
-adoption. Reading a guide does not grant memory access or start an agent.
+**v0.28.0-alpha.0.10 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+to bind your existing Vault and signing identity to an independent open transport,
+join through one or two actual signed node introductions, explicitly approve a
+finite delivery, and exchange encrypted chat or selected original memories.
+Participants operate their own nodes; no project-hosted server or fixed seed is
+required. Python and native TypeScript now connect original-node delivery, local
+saving and separate storage/recipient receipts. Use the Python node for hosting
+this delivery service; the TypeScript node does not yet host it. Explicit ACK
+recovery is separate from automatic failover, which remains unfinished. The
+approval fix and the six Agent operations remain in force. Consult the release
+record for results bound to the exact published source and archive bytes.
 
 Persistent memory and private messages across agent runtimes. You do not need
 our plugin or to implement cryptography. Use an existing authorized endpoint;
@@ -24,18 +36,11 @@ Endpoints with different bootstrap entries can use the same bounded authorized
 pool. Discovery does not grant relay admission or memory access; the configured
 authority must still be available. The six operations below remain unchanged.
 
-The default-branch source baseline targets **[v0.28.0-alpha.0.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)**.
-At preparation, this first-contact candidate's 6 Pro review, cloud CI and
-publication were pending. Use the release evidence for the exact source commit
-to establish their final status and actual download availability.
-Operators can use its full client package; protocol adopters can use the separate
-protocol package. Verify `SHA256SUMS` and preserve existing private backups.
-For a bounded first test, the separate synthetic network package runs one
-temporary endpoint without Docker or plugin installation. It accepts only the
-release-pinned service identity and a publisher-provided one-time code; it does
-not read an existing Vault. This preview ships with service trust unconfigured and
-fails before setup/network activity until an operator publishes reviewed service
-pins; obsolete alpha.3 trial URLs are not reused.
+Use the full client package linked from the release for the runnable runtime, or
+the protocol package for independent implementations. Follow the open-network
+quickstart with your own selected operator's public origin and key ID. Preserve
+existing private state and compare downloads with `SHA256SUMS`. The release record
+identifies the exact published source and available archive bytes.
 
 **Retained from alpha.5:** [network content/v2](docs/NETWORK_CONTENT_V2.md)
 separates communication from long-term memory. Compatibility and upgrade
@@ -66,9 +71,14 @@ Vault reads, memory admission or execution. Follow the exact fields in
 [first-contact controls](docs/OPEN_FIRST_CONTACT_V1.md) and
 [routing setup](docs/OPEN_ROUTING_RUNTIME.md).
 
-`remember` and `recall` remain local. Open message operations still return
-`open_messaging_unsupported`, including after verified approval. Encrypted
-delivery, storage/recipient receipts and sender-offline repair are unfinished.
+`remember` and `recall` remain local. Python and native TypeScript open clients
+now connect `send`, `receive` and local message reads to explicitly approved
+encrypted delivery, using the same Vault, identities and protected transport state.
+Follow the [open quickstart](docs/OPEN_NETWORK_QUICKSTART.md) for the exact setup,
+6 MiB resource selection and receipt meanings. This original-node flow does not
+automatically migrate nodes or run the separate ACK recovery workflow. Native TypeScript performs
+these client operations without a Python subprocess; the original accepting
+delivery node is currently the Python server implementation.
 
 The private profile below retains invitation-based encrypted messaging and
 relay-pool failover. Its issuer/roster examples do not configure an open client.
