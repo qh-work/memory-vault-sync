@@ -590,6 +590,31 @@ class MailboxSourceTests(unittest.TestCase):
             second=store.prepare(canonical_bytes(create_envelope(content,**dict(envelope_options,message_id="msg_"+"c"*64))),at=h.now,**options)
             self.assertNotEqual(second["attempt"],saved["attempt"])
             self.assertEqual([row[0] for row in db.execute("SELECT status_revision FROM open_mailbox_message_drafts ORDER BY status_revision")],[1,2])
+            from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
+            from memory_vault_open_repair_bind import decode_entry
+            import memory_vault_open_repair_wire as wire
+            ledger=MailboxStatusLedger(h.resources);ledger.initialize()
+            observation=decode_entry(saved["originals"]["disclosure_status"],DEFAULT_POLICY,wire.RepairBudget(DEFAULT_POLICY))
+            data_id=json.loads(slot_result["data"]["raw"])["payload"]["resource"]["resource_id"]
+            metadata_id=json.loads(slot_result["metadata"]["raw"])["payload"]["resource"]["resource_id"]
+            with self.assertRaisesRegex(RepairWireError,"repair_wrong_issuer"):
+                ledger.observe(data_id,observation,expected_signing_key=h.f["signers"]["writer"].public_descriptor(),allowed_scopes=[])
+            from tests.open_repair_ack_fixtures import signed_entry
+            foreign=dict(json.loads(saved["disclosure"]["raw"])["payload"],signing_key=h.owner["signing_key"])
+            with self.assertRaisesRegex(RepairWireError,"repair_wrong_issuer"):
+                ledger.observe_message_consent(data_id,signed_entry(foreign,h.f["signers"]["owner"],"synthetic_foreign_consent"),observation)
+            authenticated=ledger.observe_message_consent(data_id,saved["disclosure"],observation)
+            item=authenticated.payload["entries"][0]
+            required=[dict(issuer=h.f["signers"]["writer"].key_id,scope_kind="authority",scope_id=item["scope_id"],document_revision=1,operation_mask=2)]
+            with h.source._transaction():
+                self.assertIsNone(ledger.check_locked(metadata_id,required))
+            revoked=status_entry(provider.issue_status(h.f["signers"]["writer"],root=root,revision=3,
+                entries=[dict(item,status="revoked")],issued_at=h.now,valid_until=h.now+100))
+            h.now+=101
+            with self.assertRaisesRegex(RepairWireError,"repair_status_mismatch"):
+                ledger.observe_message_consent(data_id,saved["disclosure"],revoked)
+            with h.source._transaction():
+                self.assertEqual(ledger.check_locked(metadata_id,required),"repair_authority_revoked")
         wrong=dict(offers);wrong["mailbox_data"]=offers["feed_metadata"]
         with self.assertRaises(RepairWireError):
             builder.slot_documents(allocations,wrong,at=h.now,expires_at=h.now+600)

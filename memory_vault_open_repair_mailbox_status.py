@@ -157,6 +157,58 @@ class MailboxStatusLedger:
             raise error
         return observed
 
+    def observe_message_consent(self, resource_id, consent_entry, status_entry, *, _budget=None):
+        """Retain A's whole consent status only for the committed slot's sender.
+
+        This records current evidence; no upload, append or custody is granted.
+        Expired or revoked observations remain durable before use is refused.
+        """
+        import memory_vault_open_repair_resource as resource
+        import memory_vault_open_repair_history as history
+        s=self.source;budget=_budget if _budget is not None else wire.RepairBudget(s.policy)
+        wire._context(s.policy,budget);error=None;recorded=[];observed=None
+        with s._transaction() as now:
+            row,offer,root,root_digest=self._context(resource_id,budget)
+            slot_row=s._one("SELECT inputs FROM open_repair_mailbox_slot_activations WHERE data_resource_id=? OR metadata_resource_id=?",
+                (resource_id,resource_id))
+            if slot_row is None:wire._fail("repair_unknown_resource")
+            entries=wire.parse_new_wire(bytes(slot_row['inputs']),s.policy,budget).value
+            slot=wire.parse_new_wire(entries['slot']['raw'].encode(),s.policy,budget).value['payload']
+            maintenance=wire.parse_new_wire(entries['maintenance']['raw'].encode(),s.policy,budget).value['payload']
+            parsed,ref=s._entry(consent_entry,budget)
+            signed=resource._fields(parsed.value,{'payload','proof'})
+            p=resource._fields(signed['payload'],resource.COMMON|set('issued_at expires_at consent_id root_key slot_key sender recipient envelope_ref maintenance_root_ref allowed_roles operation_mask consent_until bootstrap_return revision'.split()))
+            if p['schema_version']!=resource.SCHEMA or p['kind']!='message.disclosure':wire._fail('repair_invalid_message')
+            resource._lifetime(p);status.original._opaque(p['consent_id']);wire.u53(p['revision'],1)
+            envelope_ref=wire.raw_ref(p['envelope_ref']);status._mask(p['operation_mask'])
+            if envelope_ref.namespace!='object':wire._fail('repair_message_mismatch')
+            history._dual(p['sender']);history._dual(p['recipient'])
+            if (p['root_key']!=root or p['slot_key']!=slot['slot_key'] or p['sender']!=slot['sender'] or p['recipient']!=slot['recipient']
+                    or p['maintenance_root_ref']!=entries['maintenance']['ref']
+                    or not p['issued_at']<wire.u53(p['consent_until'])<=p['expires_at']<=min(slot['expires_at'],maintenance['expires_at'])
+                    or p['consent_until']>min(slot['windows']['retain_until'],maintenance['windows']['retain_until'])):
+                wire._fail('repair_message_mismatch')
+            allowed={'contact.request','delivery.attempt','message.disclosure','authority.status.disclosure','ack.root_authority','ack.write_grant',
+                'bootstrap.ack_offer','historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'}
+            roles=p['allowed_roles']
+            if type(roles) is not wire._DraftList or not roles or any(type(v) is not str or v not in allowed for v in roles) or list(roles)!=sorted(set(roles)):
+                wire._fail('repair_status_disclosure')
+            returned=resource._fields(p['bootstrap_return'],{'subject','consumer','roles','until'})
+            if (returned['subject']!=slot['recipient'] or returned['consumer']!='mailbox_feed'
+                    or returned['roles']!=['authority.status.disclosure','message.disclosure']
+                    or not p['issued_at']<wire.u53(returned['until'])<=p['consent_until']):
+                wire._fail('repair_status_disclosure')
+            status.original._verify_control_signature(p,signed['proof'],slot['sender']['signing_key_id'],budget)
+            scope=status.status_scope(root,'authority',dict(authority_kind='message.disclosure',authority_sha256=ref.raw_sha256),s.policy,budget)
+            def retain(value):recorded.append(self._record(row,offer,root_digest,value,budget))
+            try:
+                observed=status.authenticate_status_original(status_entry,expected_root=root,expected_signing_key=p['signing_key'],at=now,
+                    allowed_scopes=[dict(scope_kind='authority',scope_id=scope)],policy=s.policy,budget=budget,on_authenticated=retain)
+            except wire.RepairWireError as caught:error=caught
+        if any(recorded):wire._fail(next(code for code in recorded if code))
+        if error is not None:raise error
+        return observed
+
     def check_locked(self, resource_id, required, *, _budget=None):
         """Return a refusal code under the caller's transaction; grant nothing."""
         s = self.source
