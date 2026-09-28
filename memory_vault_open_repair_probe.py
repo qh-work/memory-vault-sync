@@ -32,7 +32,9 @@ _FIELDS = {
 }
 _SELECTOR = frozenset("root_key_sha256 ack_slot_sha256 root_authority_sha256 read_grant_sha256".split())
 _SELECTORS = {"ack_owner": _SELECTOR,
-              "ack_offer": (_SELECTOR - {"read_grant_sha256"}) | {"write_grant_sha256"}}
+              "ack_offer": (_SELECTOR - {"read_grant_sha256"}) | {"write_grant_sha256"},
+              "mailbox_root": frozenset("root_key_sha256 anchor_ref root_authority_sha256 read_grant_sha256".split()),
+              "mailbox_feed": frozenset("root_key_sha256 slot_key_sha256 feed_ref slot_sha256 read_grant_sha256 maintenance_root_sha256".split())}
 
 
 def _fail(code="repair_invalid_probe"):
@@ -68,8 +70,14 @@ def _expected(subject, target, epoch, grant, selector, at, policy, budget, *, co
     _shape(wire.u53, value["at"])
     _shape(original._opaque, value["epoch"])
     _shape(original._digest, value["grant"])
-    for digest in _fields(value["selector"], _SELECTORS[consumer]).values():
-        _shape(original._digest, digest)
+    for name,selected in _fields(value["selector"], _SELECTORS[consumer]).items():
+        if name in ("anchor_ref","feed_ref"):
+            locator = _fields(selected,{"namespace","key"})
+            if locator["namespace"] != ("anchor" if name=="anchor_ref" else "feed"):
+                _fail()
+            _shape(original._digest,locator["key"])
+        else:
+            _shape(original._digest, selected)
     for name in ("subject", "target"):
         key = _shape(resource._dual_key_shape, value[name])
         original._descriptor(key["signing_key"], budget)

@@ -21,7 +21,9 @@ const BINDING=['subject','target','target_storage_epoch','purpose','consumer','b
 const OPTIONS=['expectedSubject','expectedTarget','targetStorageEpoch','bootstrapGrantSha256','selector','at','policy','budget'];
 const SELECTOR=['root_key_sha256','ack_slot_sha256','root_authority_sha256','read_grant_sha256'];
 const OFFER_SELECTOR=['root_key_sha256','ack_slot_sha256','root_authority_sha256','write_grant_sha256'];
-export type BootstrapConsumer='ack_owner'|'ack_offer';
+const MAILBOX_ROOT_SELECTOR=['root_key_sha256','anchor_ref','root_authority_sha256','read_grant_sha256'];
+const MAILBOX_FEED_SELECTOR=['root_key_sha256','slot_key_sha256','feed_ref','slot_sha256','read_grant_sha256','maintenance_root_sha256'];
+export type BootstrapConsumer='ack_owner'|'ack_offer'|'mailbox_root'|'mailbox_feed';
 const byteLength=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),'byteLength')!.get!;
 export interface BootstrapProbeOptions{
   readonly expectedSubject:unknown;readonly expectedTarget:unknown;readonly targetStorageEpoch:string;
@@ -54,15 +56,20 @@ function clone(value:unknown,context:Context):Obj{return buildNewWire(value,cont
 function context(options:unknown,extra:readonly string[]=[]):{args:Obj;ctx:Context}{
   if(options===null||typeof options!=='object'||isProxy(options))fail();
   const args=fields(options,[...OPTIONS,...extra,...(Object.hasOwn(options,'consumer')?['consumer']:[])]),policy=args.policy as RepairPolicy,budget=args.budget as RepairBudget;
-  const consumer=Object.hasOwn(args,'consumer')?args.consumer:'ack_owner';if(consumer!=='ack_owner'&&consumer!=='ack_offer')fail();
+  const consumer=Object.hasOwn(args,'consumer')?args.consumer:'ack_owner';if(consumer!=='ack_owner'&&consumer!=='ack_offer'&&consumer!=='mailbox_root'&&consumer!=='mailbox_feed')fail();
   const value=buildNewWire({subject:args.expectedSubject,target:args.expectedTarget,target_storage_epoch:args.targetStorageEpoch,
     bootstrap_grant_sha256:args.bootstrapGrantSha256,selector:args.selector,at:args.at},policy,budget).value as Obj;
-  const expected:Obj={...value,consumer},selector=consumer==='ack_owner'?SELECTOR:OFFER_SELECTOR;
+  const expected:Obj={...value,consumer},selector=consumer==='ack_owner'?SELECTOR:consumer==='ack_offer'?OFFER_SELECTOR:consumer==='mailbox_root'?MAILBOX_ROOT_SELECTOR:MAILBOX_FEED_SELECTOR;
   for(const key of ['subject','target']){
     const dual=fields(expected[key],['signing_key','encryption_key']);
     originalPublicDescriptor(dual.signing_key,budget);originalPublicDescriptor(dual.encryption_key,budget,true);
   }
-  fields(expected.selector,selector);for(const name of selector)digest(expected.selector[name]);
+  fields(expected.selector,selector);for(const name of selector){
+    if(name==='anchor_ref'||name==='feed_ref'){
+      const locator=fields(expected.selector[name],['namespace','key']);
+      if(locator.namespace!==(name==='anchor_ref'?'anchor':'feed'))fail();digest(locator.key);
+    }else digest(expected.selector[name]);
+  }
   opaque(expected.target_storage_epoch);digest(expected.bootstrap_grant_sha256);const at=number(expected.at);
   return {args,ctx:{expected,policy,budget,at}};
 }

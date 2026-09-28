@@ -80,6 +80,24 @@ class OpenRepairProbeTests(unittest.TestCase):
             function(*args, **kwargs)
         self.assertEqual(caught.exception.code, code)
 
+    def test_mailbox_root_and_feed_mutual_possession_bind_closed_selectors(self):
+        for consumer in ("mailbox_root","mailbox_feed"):
+            with self.subTest(consumer=consumer):
+                selector={name:"a"*64 for name in probe._SELECTORS[consumer]}
+                locator="anchor_ref" if consumer=="mailbox_root" else "feed_ref"
+                selector[locator]=dict(namespace="anchor" if consumer=="mailbox_root" else "feed",key="b"*64)
+                self.expected.update(consumer=consumer,selector=selector)
+                first,second,third,first_entry=self.exchange()
+                self.verify(first_entry,entry(second.original),entry(third),second.nonce)
+                wrong=copy.deepcopy(selector);wrong[locator]["namespace"]="meta"
+                with self.assertRaises(wire.RepairWireError):
+                    self.make(selector=wrong)
+                wrong=copy.deepcopy(selector);wrong[locator]["key"]="c"*64
+                with self.assertRaises(wire.RepairWireError):
+                    self.challenge(first_entry,selector=wrong)
+                with self.assertRaises(wire.RepairWireError):
+                    self.challenge(first_entry,consumer="ack_owner")
+
     def test_real_mutual_exchange_counts_every_actual_outer_hash_and_verification(self):
         local = policy(max_signature_checks=6, max_hashes=44)
         meter = wire.RepairBudget(local)

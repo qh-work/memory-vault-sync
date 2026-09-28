@@ -102,6 +102,23 @@ class OpenRepairProbeTypeScriptTests(unittest.TestCase):
             input=json.dumps(calls).encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
         self.assertEqual(process.returncode,0,process.stderr.decode(errors='replace')[-6000:]);return json.loads(process.stdout)
 
+    def test_mailbox_native_exchange_is_independently_verified_by_python(self):
+        import memory_vault_open_repair_probe as probe
+        for consumer in ("mailbox_root","mailbox_feed"):
+            with self.subTest(consumer=consumer):
+                selector={name:"a"*64 for name in probe._SELECTORS[consumer]}
+                locator="anchor_ref" if consumer=="mailbox_root" else "feed_ref"
+                selector[locator]=dict(namespace="anchor" if consumer=="mailbox_root" else "feed",key="b"*64)
+                call=self.call();call["options"].update(consumer=consumer,selector=selector)
+                result=self.ts([call])[0];self.assertTrue(result["ok"],result)
+                held=result["result"]
+                options=self.py_options()|dict(consumer=consumer,selector=selector)
+                probe.verify_bootstrap_answer(*(self.entry(held[name]) for name in ("probe","challenge","answer")),
+                    caller_nonce=base64.b64decode(held["callerNonce"]),**options,
+                    policy=wire.RepairPolicy(**POLICY),budget=wire.RepairBudget(wire.RepairPolicy(**POLICY)))
+                wrong=copy.deepcopy(call);wrong["options"]["selector"][locator]["namespace"]="meta"
+                self.assertEqual(self.ts([wrong])[0]["code"],"repair_invalid_probe")
+
     def test_actual_native_mutual_possession_uses_six_verifications_and_opaque_refs(self):
         result=self.ts([self.call(opaque=True)])[0];self.assertTrue(result['ok'],result)
         self.assertEqual(result['work']['signature_checks'],6);self.assertTrue(result['result']['frozen'])
