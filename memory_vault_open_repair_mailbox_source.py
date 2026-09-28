@@ -836,3 +836,172 @@ class MailboxRecoveryService:
                 self._usage_locked(rid)
                 self.db.execute("UPDATE open_repair_mailbox_recovery_usage SET signatures=signatures-? WHERE resource_id=?",(allowance-actual,rid))
                 self._mark_usage_locked(rid)
+
+
+class MailboxMessageStaging:
+    """Reserve a cold-mailbox admission job for an actually delivered E.
+
+    The existing delivery commit supplies the original sender dual-possession
+    exchange. This stage retains exact E and originals but releases no new
+    custody or feed head until the complete admission closure is committed.
+    """
+    def __init__(self, resources, delivery_state):
+        from memory_vault_open_delivery_state import DeliveryState
+        if not isinstance(delivery_state,DeliveryState) or delivery_state.db is not resources.db or delivery_state.identity.key_id!=resources.source.identity.key_id:
+            wire._fail('repair_invalid_context')
+        self.resources,self.delivery,self.source,self.db=resources,delivery_state,resources.source,resources.db
+
+    def initialize(self):
+        from memory_vault_open_repair_mailbox_root import MailboxRootActivation
+        self.root_source=MailboxRootSource(MailboxRootActivation(self.resources));self.root_source.initialize()
+        from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
+        MailboxStatusLedger(self.resources).initialize()
+        with self.source._transaction():
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_mailbox_message_staging(
+                sender TEXT NOT NULL,message_id TEXT NOT NULL,attempt_id TEXT NOT NULL,input_digest TEXT NOT NULL,
+                data_id TEXT NOT NULL,metadata_id TEXT NOT NULL,envelope BLOB NOT NULL,originals BLOB NOT NULL,
+                owner_status BLOB NOT NULL,resource_status BLOB NOT NULL,staged_at INTEGER NOT NULL,retain_until INTEGER NOT NULL,
+                phase TEXT NOT NULL CHECK(phase IN ('pending','committed')),
+                PRIMARY KEY(sender,message_id),UNIQUE(sender,attempt_id))''')
+
+    def stage_delivered(self, draft_raw, owner_status_entry):
+        from memory_vault_open_repair_bind import decode_entry
+        from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
+        from memory_vault_open_delivery import verify_envelope
+        if not self.delivery.enabled:wire._fail('repair_remote_setup_closed')
+        s=self.source;budget=wire.RepairBudget(s.policy);now=s._now()
+        if type(draft_raw) is not bytes or not 0<len(draft_raw)<=131072:wire._fail('repair_message_capacity')
+        draft=wire.parse_new_wire(draft_raw,s.policy,budget)
+        fields=resource._fields(draft.value,{'disclosure','disclosure_status','attempt','destination','slot','contact'})
+        def decode(value):return decode_entry(value,s.policy,budget)
+        attempt,destination,consent,consent_status=(decode(fields[name]) for name in ('attempt','destination','disclosure','disclosure_status'))
+        def control(entry,kind,names,signer):
+            doc,ref=s._entry(entry,budget);signed=resource._fields(doc.value,{'payload','proof'})
+            p=resource._fields(signed['payload'],resource.COMMON|set(names.split()))
+            if p['schema_version']!=resource.SCHEMA or p['kind']!=kind:wire._fail('repair_invalid_message')
+            original._verify_control_signature(p,signed['proof'],signer,budget);resource._lifetime(p)
+            if not p['issued_at']<=now<p['expires_at']:wire._fail('repair_resource_expired')
+            return p,ref
+        preview,_=s._entry(destination,budget)
+        key=preview.value['payload']['slot_key'];history._slot(key,key['root_key'])
+        slot_digest=budget._hash(wire._canonical(key,budget))
+        root_digest=budget._hash(wire._canonical(key['root_key'],budget))
+        with s._transaction():
+            anchor=s._one('SELECT resource_id,slots FROM open_repair_mailbox_roots WHERE root_digest=?',(root_digest,))
+            if anchor is None:wire._fail('repair_mailbox_history_missing')
+            custody=s._one('SELECT read_until FROM open_repair_mailbox_root_custody WHERE resource_id=?',(anchor['resource_id'],))
+            if custody is None or custody['read_until']<=now:wire._fail('repair_mailbox_history_missing')
+            catalog=wire.parse_new_wire(bytes(anchor['slots']),s.policy,budget).value
+            if key not in [item['slot_key'] for item in catalog]:wire._fail('repair_mailbox_slot_incomplete')
+            slot_row=s._one('SELECT * FROM open_repair_mailbox_slot_activations WHERE slot_digest=?',(slot_digest,))
+            if slot_row is None:wire._fail('repair_unknown_resource')
+            local=wire.parse_new_wire(bytes(slot_row['inputs']),s.policy,budget).value
+            inputs={name:dict(raw=value['raw'].encode(),ref=value['ref']) for name,value in local.items()}
+            supplied=resource._fields(fields['slot'],{'slot','read','maintenance'})
+            if any(decode(value)!=inputs[name] for name,value in supplied.items()):wire._fail('repair_original_mismatch')
+            slot=wire.parse_new_wire(inputs['slot']['raw'],s.policy,budget).value['payload']
+            data_id,metadata_id=slot_row['data_resource_id'],slot_row['metadata_resource_id']
+            data=s._one('SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?',(data_id,))
+            metadata=s._one('SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?',(metadata_id,))
+            if data is None or metadata is None:wire._fail('repair_unknown_resource')
+            owner=json.loads(bytes(data['owner_keys']))
+        dp,destination_ref=control(destination,'delivery.destination',
+            'issued_at expires_at destination_id sender recipient contact_request_ref contact_policy_ref contact_knock_lease_ref contact_decision_ref store_grant_ref slot_key slot_ref data_resource_ref data_resource_offer_ref metadata_resource_ref metadata_resource_offer_ref read_grant_ref maintenance_root_ref budget windows',owner['signing_key'])
+        ap,attempt_ref=control(attempt,'delivery.attempt',
+            'issued_at expires_at attempt_id message_id envelope_ref sender recipient destination_ref slot_key operation disclosure_ref ack_grant_ref',slot['sender']['signing_key_id'])
+        original._opaque(ap['attempt_id']);original._opaque(dp['destination_id'])
+        if (ap['ack_grant_ref'] is not None or ap['operation']!='message.store' or ap['disclosure_ref']!=consent['ref']
+                or ap['destination_ref']!=destination_ref.as_dict() or dp['slot_ref']!=inputs['slot']['ref']
+                or any(p['slot_key']!=key or p['sender']!=slot['sender'] or p['recipient']!=slot['recipient'] for p in (ap,dp))):
+            wire._fail('repair_message_mismatch')
+        for name in ('data_resource_ref','metadata_resource_ref','data_resource_offer_ref','metadata_resource_offer_ref','read_grant_ref','maintenance_root_ref'):
+            if dp[name]!=slot[name]:wire._fail('repair_message_mismatch')
+        resource._budget(dp['budget']);resource._windows(dp['windows'])
+        if any(dp['budget'][k]>slot['budget'][k] for k in dp['budget']) or any(dp['windows'][k]>slot['windows'][k] for k in dp['windows']):
+            wire._fail('repair_message_mismatch')
+        cp=wire.parse_new_wire(consent['raw'],s.policy,budget).value['payload']
+        envelope_ref=wire.raw_ref(ap['envelope_ref'])
+        if (cp['envelope_ref']!=ap['envelope_ref'] or cp['issued_at']>ap['issued_at'] or not cp['issued_at']<=now<cp['consent_until']):wire._fail('repair_message_mismatch')
+        contact_entries={name:decode(value) for name,value in fields['contact'].items()}
+        contact={name:value['raw'] for name,value in contact_entries.items()}
+        checked=original.verify_contact_originals(contact,sender_key_id=slot['sender']['signing_key_id'],sender_encryption_key_id=slot['sender']['encryption_key_id'],
+            recipient_key_id=slot['recipient']['signing_key_id'],recipient_encryption_key_id=slot['recipient']['encryption_key_id'],
+            node_key_id=s.identity.key_id,storage_epoch=key['writer_storage_epoch'],at=now,policy=s.policy,budget=budget)
+        for field,name in (('contact_request_ref','request'),('contact_policy_ref','policy'),('contact_knock_lease_ref','knock_lease'),('contact_decision_ref','decision'),('store_grant_ref','grant')):
+            ref=wire.raw_ref(dp[field]);raw=checked.originals[name].document.raw
+            if dp[field]!=contact_entries[name]['ref'] or ref.raw_sha256!=budget._hash(raw) or ref.size!=len(raw):wire._fail('repair_original_mismatch')
+        delivered=s._one('SELECT * FROM open_delivery_messages WHERE sender=? AND message_id=?',(slot['sender']['signing_key_id'],ap['message_id']))
+        if delivered is None:wire._fail('repair_message_delivery_missing')
+        envelope=bytes(delivered['envelope']);intent=json.loads(bytes(delivered['intent']))
+        if (json.loads(bytes(delivered['ref']))!=envelope_ref.as_dict() or len(envelope)!=envelope_ref.size
+                or budget._hash(envelope)!=envelope_ref.raw_sha256 or delivered['recipient']!=slot['recipient']['signing_key_id']):
+            wire._fail('repair_message_mismatch')
+        for name,role in (('request','request'),('policy','policy'),('lease','knock_lease'),('decision','decision')):
+            if canonical_bytes(intent['payload']['authority'][name])!=contact[role]:wire._fail('repair_original_mismatch')
+        self.delivery._authority(intent,now)
+        verified=verify_envelope(envelope,sender_signing_key=checked.originals['request'].payload['signing_key'],
+            sender_encryption_key=checked.originals['request'].payload['encryption_key'],recipient_signing_key=owner['signing_key'],
+            recipient_encryption_key=owner['encryption_key'],now=now)
+        if verified['context']['message_id']!=ap['message_id']:wire._fail('repair_message_mismatch')
+        requirements=[];deadlines=[ap['expires_at'],dp['expires_at'],cp['consent_until'],dp['windows']['admit_until'],dp['windows']['retain_until']]
+        deadlines.extend(value.payload['expires_at'] for value in checked.originals.values())
+        def requirement(kind,subject,revision,mask,issuer):
+            scope=status.status_scope(key['root_key'],kind,subject,s.policy,budget)
+            requirements.append(dict(issuer=issuer,scope_kind=kind,scope_id=scope,document_revision=revision,operation_mask=mask))
+        requirement('mailbox_slot',key,slot['revision'],65,slot['recipient']['signing_key_id'])
+        requirement('authority',dict(authority_kind='delivery.destination',authority_sha256=destination_ref.raw_sha256),1,1,slot['recipient']['signing_key_id'])
+        for name,mask in (('read',2),('maintenance',65),('bootstrap',10)):
+            value=wire.parse_new_wire(inputs[name]['raw'],s.policy,budget).value['payload'];deadlines.append(value['expires_at'])
+            if name=='maintenance' and value['operation_mask']&65!=65:wire._fail('repair_message_mismatch')
+            requirement('authority',dict(authority_kind=value['kind'],authority_sha256=inputs[name]['ref']['raw_sha256']),value['revision'],mask,slot['recipient']['signing_key_id'])
+        owner_scopes=[dict(scope_kind=v['scope_kind'],scope_id=v['scope_id']) for v in requirements]
+        requirement('authority',dict(authority_kind='message.disclosure',authority_sha256=consent['ref']['raw_sha256']),cp['revision'],65,slot['sender']['signing_key_id'])
+        if cp['operation_mask']&65!=65:wire._fail('repair_message_mismatch')
+        ledger=MailboxStatusLedger(self.resources)
+        ledger.observe_message_consent(data_id,consent,consent_status,_budget=budget)
+        owner_observation=ledger.observe(metadata_id,owner_status_entry,expected_signing_key=owner['signing_key'],allowed_scopes=owner_scopes,_budget=budget)
+        if {(value['scope_kind'],value['scope_id']) for value in owner_observation.payload['entries']}!={(value['scope_kind'],value['scope_id']) for value in owner_scopes}:
+            wire._fail('repair_status_missing')
+        owner_doc,_=s._entry(owner_status_entry,budget)
+        digest=budget._hash(draft.raw+owner_doc.raw)
+        root_guard=self.root_source.root.owner_status_guard(anchor['resource_id'],_budget=budget)
+        deadlines.append(custody['read_until'])
+        def guard():
+            if s._now()>=min(deadlines):return 'repair_resource_expired'
+            return root_guard() or ledger.check_locked(data_id,requirements,_budget=budget)
+        with s._transaction(guard=guard):pass
+        observations=self.root_source.observe_resources(anchor['resource_id'],'stage_'+attempt_ref.raw_sha256,
+            valid_until=min(deadlines),slot_keys=[key],_budget=budget,_transaction_guard=guard)
+        resource_scopes=[]
+        for row in (data,metadata):
+            offer=wire.parse_new_wire(s._saved(row,'offer')['raw'],s.policy,budget).value['payload']
+            requirement('resource',offer['resource'],offer['reservation_generation'],67,s.identity.key_id)
+            resource_scopes.append(dict(scope_kind='resource',scope_id=requirements[-1]['scope_id']))
+        for observation in observations:
+            ledger.observe(metadata_id,observation,expected_signing_key=s.identity.public_descriptor(),allowed_scopes=resource_scopes,_budget=budget)
+        resource_raw=wire.build_new_wire([dict(raw=value['raw'].decode(),ref=value['ref']) for value in observations],s.policy,budget).raw
+        with s._transaction(guard=guard) as committed_at:
+            self.delivery._authority_current(intent['payload'],committed_at)
+            old=s._one('SELECT * FROM open_mailbox_message_staging WHERE sender=? AND (message_id=? OR attempt_id=?)',
+                (slot['sender']['signing_key_id'],ap['message_id'],ap['attempt_id']))
+            if old is not None:
+                if old['input_digest']!=digest:wire._fail('repair_message_conflict')
+                return dict(state='staged',message_id=ap['message_id'],attempt_id=ap['attempt_id'],staged_at=old['staged_at'])
+            charge=len(draft.raw)+len(owner_doc.raw)+len(resource_raw)+3*ROW_CHARGE
+            for rid in (data_id,metadata_id):
+                row=s._one('SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?',(rid,))
+                offer=wire.parse_new_wire(s._saved(row,'offer')['raw'],s.policy,budget).value['payload']
+                caps={name:min(value,dp['budget'][name]) for name,value in offer['budget'].items()}
+                if row['status']!='active' or committed_at>=min(offer['windows'][name] for name in ('admit_until','retain_until')):
+                    wire._fail('repair_resource_expired')
+                used=self.db.execute('SELECT count(*),coalesce(sum(length(envelope)),0) FROM open_mailbox_message_staging WHERE data_id=?',(data_id,)).fetchone()
+                pending=self.db.execute("SELECT count(*),coalesce(sum(length(originals)+length(owner_status)+length(resource_status)),0) FROM open_mailbox_message_staging WHERE data_id=? AND phase='pending'",(data_id,)).fetchone()
+                if (used[0]>=min(slot['max_live_items'],slot['max_appends'],caps['max_items']) or pending[0]>=min(caps['max_pending'],caps['max_jobs'])
+                        or pending[1]+pending[0]*3*ROW_CHARGE+charge>caps['max_job_bytes']):wire._fail('repair_message_capacity')
+                if rid==data_id and used[1]+len(envelope)>caps['max_live_bytes']:wire._fail('repair_message_capacity')
+                if rid==metadata_id and row['metadata_bytes']+charge>caps['max_meta_bytes']:wire._fail('repair_message_capacity')
+            until=min(cp['consent_until'],slot['windows']['retain_until'],dp['windows']['retain_until'])
+            self.db.execute('INSERT INTO open_mailbox_message_staging VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (slot['sender']['signing_key_id'],ap['message_id'],ap['attempt_id'],digest,data_id,metadata_id,envelope,draft.raw,owner_doc.raw,resource_raw,committed_at,until,'pending'))
+            self.db.execute('UPDATE open_repair_mailbox_resources SET metadata_bytes=metadata_bytes+? WHERE resource_id=?',(charge,metadata_id))
+        return dict(state='staged',message_id=ap['message_id'],attempt_id=ap['attempt_id'],staged_at=committed_at)

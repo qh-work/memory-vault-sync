@@ -126,3 +126,97 @@ class DeliveryHTTPTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class MailboxStagingHTTPTests(unittest.TestCase):
+    def setUp(self):
+        fixture=DeliveryHTTPTests("test_approved_memory_saved_receipt_and_restart_recall")
+        fixture.setUp();self.addCleanup(fixture.doCleanups)
+        for name in ("root","host","a","b","ai","bi","call","request_contact","decide"):
+            setattr(self,name,getattr(fixture,name))
+
+    def test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources(self):
+        import time
+        import hashlib
+        from memory_vault_network_crypto import EncryptionIdentity
+        from memory_vault_open_repair_state import RepairAckState,DEFAULT_LIMITS,DEFAULT_POLICY
+        from memory_vault_open_repair_mailbox_resources import RepairMailboxResources
+        from memory_vault_open_repair_mailbox_activation import MailboxSlotActivation
+        from memory_vault_open_repair_mailbox_root import MailboxRootActivation
+        from memory_vault_open_repair_mailbox_source import MailboxRootSource,MailboxMessageStaging
+        from memory_vault_open_repair_client import MailboxSetupBuilder,MailboxMessageDraftStore
+        from memory_vault_open_delivery_state import DeliveryState
+        from memory_vault_open_repair_wire import RepairBudget,RepairWireError
+        import memory_vault_open_repair_status as status
+        import memory_vault_open_repair_wire as wire
+        from memory_vault_open_provider import issue_status
+        from tests.test_open_repair_status import status_entry
+        _,reference=self.request_contact();self.decide(reference,'approved')
+        sent=self.call(self.a,op='send',request_id='req_mailbox_stage',recipients=[self.bi.key_id],text='Synthetic mailbox staging message')
+        self.assertTrue(sent['storage_accepted'])
+        with self.a._network() as network:
+            sender_encryption=network.encryption
+            with network.participant.state.db() as sender_db:
+                row=sender_db.execute('SELECT envelope,session FROM open_delivery_outbox WHERE request_id=?',('req_mailbox_stage',)).fetchone()
+                envelope=bytes(row[0]);session=json.loads(bytes(row[1]))
+        with self.b._network() as network:owner_encryption=network.encryption
+        self.host.stop(0)
+        db=sqlite3.connect(self.root/'node_0/transport/network.sqlite3');db.row_factory=sqlite3.Row;self.addCleanup(db.close)
+        source=RepairAckState(db,self.host.identities[0],self.host.nodes[0],encryption_identity=EncryptionIdentity.generate())
+        resources=RepairMailboxResources(source);activation=MailboxRootActivation(resources);activation.initialize()
+        now=int(time.time());owner=dict(signing_key=self.bi.public_descriptor(),encryption_key=owner_encryption.public_descriptor())
+        dual=lambda value:dict(signing_key_id=value['signing_key']['key_id'],encryption_key_id=value['encryption_key']['key_id'])
+        root=dict(owner=dual(owner),root_kind='mailbox',anchor_ref=dict(namespace='anchor',key='b'*64),owner_epoch='synthetic_owner',root_id='synthetic_mailbox')
+        slot=dict(root_key=root,slot_id='synthetic_slot',writer=dual(source.target),writer_storage_epoch=source.node['payload']['storage_epoch'])
+        caps=dict(max_live_bytes=131072,max_meta_bytes=1048576,max_items=64,max_requests=512,max_pending=8,max_replay_records=128,max_jobs=16,max_job_bytes=262144)
+        windows={name:now+600 for name in ('admit_until','read_until','copy_until','publish_until','retain_until')}
+        plan=dict(root_key=root,slot_key=slot,sender=dict(signing_key_id=self.ai.key_id,encryption_key_id=sender_encryption.key_id),target=source.target,
+            budget=caps,windows=windows,limits=DEFAULT_LIMITS,max_appends=16,max_live_items=16)
+        builder=MailboxSetupBuilder(self.bi,owner_encryption,plan)
+        requests=builder.allocation_requests(at=now,expires_at=now+60)
+        offers=resources.allocate_initial(list(requests.values()),expected_owner=owner)
+        now=int(time.time())
+        slot_entries=builder.slot_documents(requests,offers,at=now,expires_at=windows['retain_until'])
+        slot_result=activation.slots.activate(slot_entries,expected_slot=slot)
+        now=int(time.time())
+        root_entries=builder.root_documents(requests,offers,slot_entries,slot_result,at=now,expires_at=windows['retain_until'])
+        active=activation.activate(root_entries,expected_root=root,slot_keys=[slot]);rid=json.loads(active['raw'])['payload']['resource']['resource_id']
+        root_source=MailboxRootSource(activation);root_source.initialize()
+        activation.observe_owner_status(rid,builder.initial_owner_status(slot_entries,root_entries,at=now,valid_until=now+100))
+        root_source.observe_resources(rid,'synthetic_setup',valid_until=now+100);root_source.prepare_history(rid,'synthetic_setup')
+        root_source.finalize_root(rid,read_until=now+100,retain_until=now+100)
+        docs={name:session[name] for name in ('node','policy','request','decision')}
+        docs.update(knock_lease=session['lease'],grant=session['decision']['payload']['grant'],delivery_lease=session['decision']['payload']['grant']['payload']['resource_lease'])
+        contact={name:canonical_bytes(value) for name,value in docs.items()}
+        destination=builder.destination_document(slot_entries,contact,at=now,expires_at=now+60)
+        with self.a._network() as network:
+            with network.participant.state.db() as sender_db:
+                draft=MailboxMessageDraftStore(sender_db,self.ai,sender_encryption).prepare(envelope,recipient=owner,
+                    slot_entries={name:slot_entries[name] for name in ('slot','read','maintenance')},destination_entry=destination,
+                    contact_originals=contact,at=now,attempt_until=now+60,consent_until=now+100)
+        scoped=[]
+        for name,value in [('destination',destination),*[(name,slot_entries[name]) for name in ('slot','read','maintenance','bootstrap')]]:
+            payload=json.loads(value['raw'])['payload'];kind='mailbox_slot' if name=='slot' else 'authority'
+            subject=slot if name=='slot' else dict(authority_kind=payload['kind'],authority_sha256=value['ref']['raw_sha256'])
+            scope=status.status_scope(root,kind,subject,DEFAULT_POLICY,RepairBudget(DEFAULT_POLICY))
+            scoped.append(dict(scope_kind=kind,scope_id=scope,minimum_document_revision=1,status='active',operation_mask=127))
+        scoped.sort(key=lambda value:(value['scope_kind'],value['scope_id']))
+        owner_status=status_entry(issue_status(self.bi,root=root,revision=2,entries=scoped,issued_at=now,valid_until=now+100))
+        delivery=DeliveryState(db,self.host.identities[0],self.host.nodes[0],enabled=True)
+        staging=MailboxMessageStaging(resources,delivery);staging.initialize()
+        raw=wire.build_new_wire(draft['originals'],DEFAULT_POLICY,RepairBudget(DEFAULT_POLICY)).raw
+        first=staging.stage_delivered(raw,owner_status)
+        self.assertEqual(first['state'],'staged');self.assertEqual(staging.stage_delivered(raw,owner_status),first)
+        encryption=source.encryption_identity
+        db.close();db=sqlite3.connect(self.root/'node_0/transport/network.sqlite3');db.row_factory=sqlite3.Row;self.addCleanup(db.close)
+        source=RepairAckState(db,self.host.identities[0],self.host.nodes[0],encryption_identity=encryption)
+        resources=RepairMailboxResources(source)
+        staging=MailboxMessageStaging(resources,DeliveryState(db,self.host.identities[0],self.host.nodes[0],enabled=True));staging.initialize()
+        self.assertEqual(staging.stage_delivered(raw,owner_status),first)
+        stored=db.execute('SELECT envelope,phase FROM open_mailbox_message_staging').fetchone()
+        self.assertEqual(bytes(stored[0]),envelope);self.assertEqual(stored[1],'pending')
+        self.assertEqual(db.execute('SELECT count(*) FROM open_mailbox_message_staging').fetchone()[0],1)
+        revoked=status_entry(issue_status(self.bi,root=root,revision=3,entries=[dict(value,status='revoked') for value in scoped],issued_at=now,valid_until=now+100))
+        with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
+            staging.stage_delivered(raw,revoked)
+        with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
+            staging.stage_delivered(raw,owner_status)
