@@ -388,3 +388,163 @@ class MailboxSlotActivation:
                 (slot_digest, result["checkpoint"]["raw"], canonical_bytes(result["checkpoint"]["ref"]),
                  result["head"]["raw"], canonical_bytes(result["head"]["ref"]), now, retain_until))
             return result
+
+
+def verify_mailbox_member_setup(resolved, *, expected_slot, expected_owner, expected_sender,
+        expected_target, target_storage_epoch, accepted_at, limit_policy, policy, budget):
+    """Authenticate original contact and activated resources for a selected member.
+
+    Message-specific disclosure, destination, attempt and status obligations are
+    separate checks. This is an offline consumer of originals, not a new grant.
+    """
+    wire._context(policy,budget)
+    expected=wire.build_new_wire(dict(slot=expected_slot,owner=expected_owner,sender=expected_sender,
+        target=expected_target,epoch=target_storage_epoch,at=accepted_at,limits=limit_policy),policy,budget).value
+    slot,owner,sender,target=(expected[k] for k in ('slot','owner','sender','target'))
+    history._slot(slot,slot['root_key']);wire.u53(accepted_at)
+    for keys in (owner,sender,target):resource._dual_key(keys,budget)
+    m=resolved.manifest.value
+    if m['variant']!='mailbox_member' or m['slot_key']!=slot or m['root_key']!=slot['root_key'] or resolved.predecessors:
+        _mismatch()
+    roles={}
+    for item in resolved.roles:
+        if item.role in roles:_mismatch()
+        roles[item.role]=dict(raw=item.original.raw,ref=item.original.ref.as_dict())
+    def get(role):
+        if role not in roles:wire._fail('repair_original_missing')
+        return roles[role]
+    entries={name:get(role) for name,role in dict(slot='mailbox.slot',read='mailbox.read_grant',
+        maintenance='mailbox.maintenance_root',bootstrap='bootstrap.mailbox_feed',activation='resource.slot_activation').items()}
+    resources={name:{part:get('resource.'+name+'_'+part) for part in ('allocate','offer','active')} for name in ('data','metadata')}
+    active=[wire.parse_new_wire(resources[name]['active']['raw'],policy,budget).value['payload'] for name in ('data','metadata')]
+    activated_at=wire.u53(active[0]['activated_at'])
+    if active[1]['activated_at']!=activated_at or activated_at>accepted_at:_mismatch()
+    checked=verify_mailbox_slot_owner_inputs(entries,expected_slot=slot,expected_owner=owner,expected_target=target,
+        target_storage_epoch=expected['epoch'],offers={name:values['offer'] for name,values in resources.items()},
+        limit_policy=expected['limits'],at=activated_at,policy=policy,budget=budget)
+    p=checked['slot'].payload
+    if p['sender']!=resource._dual_key(sender,budget) or p['recipient']!=resource._dual_key(owner,budget):_mismatch()
+    for name in ('slot','read','maintenance','bootstrap'):
+        value=checked[name].payload
+        if not value['issued_at']<=accepted_at<value['expires_at']:wire._fail('repair_resource_expired')
+        if 'windows' in value and accepted_at>=min(value['windows'][field] for field in ('admit_until','retain_until')):
+            wire._fail('repair_resource_expired')
+    activation=checked['activation'].payload
+    checked_resources={}
+    for name,purpose in (('data','mailbox_data'),('metadata','feed_metadata')):
+        group=resource.verify_mailbox_resource_inputs(dict(resources[name],activation=entries['activation']),
+            expected_root=slot['root_key'],expected_owner=owner,expected_target=target,target_storage_epoch=expected['epoch'],
+            expected_purpose=purpose,expected_scope=activation['scope'],expected_authority_refs=activation['authority_refs'],
+            expected_offer_refs=activation['resource_offer_refs'],at=accepted_at,policy=policy,budget=budget)
+        if group['active'].payload['resource']!=p[name+'_resource_ref']:_mismatch()
+        checked_resources[name]=group
+    contact={name:get(role)['raw'] for name,role in dict(node='source.descriptor',request='contact.request',
+        policy='contact.policy',decision='contact.decision',grant='contact.store_grant',
+        knock_lease='contact.knock_lease',delivery_lease='contact.delivery_lease').items()}
+    verified=original.verify_contact_originals(contact,sender_key_id=sender['signing_key']['key_id'],
+        sender_encryption_key_id=sender['encryption_key']['key_id'],recipient_key_id=owner['signing_key']['key_id'],
+        recipient_encryption_key_id=owner['encryption_key']['key_id'],node_key_id=target['signing_key']['key_id'],
+        storage_epoch=expected['epoch'],at=accepted_at,policy=policy,budget=budget)
+    return dict(originals=checked,resources=checked_resources,contact=verified,roles=roles,accepted_at=accepted_at)
+
+
+def verify_mailbox_member_inputs(resolved, *, expected_slot, expected_owner, expected_sender,
+        expected_target, target_storage_epoch, accepted_at, limit_policy, policy, budget):
+    """Verify the original non-ACK message authority at its actual admission.
+
+    Current revocations, custody and the source event graph remain separate.
+    """
+    import memory_vault_open_repair_status as status
+    graph=verify_mailbox_member_setup(resolved,expected_slot=expected_slot,expected_owner=expected_owner,
+        expected_sender=expected_sender,expected_target=expected_target,target_storage_epoch=target_storage_epoch,
+        accepted_at=accepted_at,limit_policy=limit_policy,policy=policy,budget=budget)
+    roles=graph['roles'];m=resolved.manifest.value;root=m['root_key'];key=m['slot_key'];at=accepted_at
+    expected_roles=history._ROLES['mailbox_member']-{'ack.root_authority','ack.write_grant','bootstrap.ack_offer',
+        'historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'}
+    if set(roles)!=expected_roles:_mismatch()
+    def control(role,kind,fields,signer):
+        entry=roles[role];signed=resource._fields(wire.parse_new_wire(entry['raw'],policy,budget).value,{'payload','proof'})
+        p=resource._fields(signed['payload'],resource.COMMON|set(fields.split()))
+        if p['schema_version']!=resource.SCHEMA or p['kind']!=kind:_mismatch()
+        resource._lifetime(p)
+        if not p['issued_at']<=at<p['expires_at']:wire._fail('repair_resource_expired')
+        original._verify_control_signature(p,signed['proof'],signer,budget)
+        return p
+    dp=control('delivery.destination','delivery.destination',
+        'issued_at expires_at destination_id sender recipient contact_request_ref contact_policy_ref contact_knock_lease_ref contact_decision_ref store_grant_ref slot_key slot_ref data_resource_ref data_resource_offer_ref metadata_resource_ref metadata_resource_offer_ref read_grant_ref maintenance_root_ref budget windows',expected_owner['signing_key'])
+    ap=control('delivery.attempt','delivery.attempt',
+        'issued_at expires_at attempt_id message_id envelope_ref sender recipient destination_ref slot_key operation disclosure_ref ack_grant_ref',expected_sender['signing_key'])
+    cp=control('message.disclosure','message.disclosure',
+        'issued_at expires_at consent_id root_key slot_key sender recipient envelope_ref maintenance_root_ref allowed_roles operation_mask consent_until bootstrap_return revision',expected_sender['signing_key'])
+    originals=graph['originals'];slot=originals['slot'].payload;maintenance=originals['maintenance'].payload
+    for p,identifier in ((dp,'destination_id'),(ap,'attempt_id'),(cp,'consent_id')):
+        original._opaque(p[identifier])
+        if p['slot_key']!=key or p['sender']!=slot['sender'] or p['recipient']!=slot['recipient']:_mismatch()
+    if (ap['operation']!='message.store' or ap['ack_grant_ref'] is not None or ap['message_id']!=m['message_id']
+            or ap['envelope_ref']!=m['envelope_ref'] or cp['envelope_ref']!=m['envelope_ref']
+            or m['attempt_ref']!=roles['delivery.attempt']['ref'] or ap['destination_ref']!=roles['delivery.destination']['ref']
+            or ap['disclosure_ref']!=roles['message.disclosure']['ref'] or dp['slot_ref']!=roles['mailbox.slot']['ref']):_mismatch()
+    for name in ('data_resource_ref','metadata_resource_ref','data_resource_offer_ref','metadata_resource_offer_ref','read_grant_ref','maintenance_root_ref'):
+        if dp[name]!=slot[name]:_mismatch()
+    resource._budget(dp['budget']);resource._windows(dp['windows'])
+    if (any(dp['budget'][k]>slot['budget'][k] for k in dp['budget'])
+            or any(dp['windows'][k]>slot['windows'][k] for k in dp['windows'])
+            or at>=min(dp['windows']['admit_until'],dp['windows']['retain_until'])):_mismatch()
+    for field,name in (('contact_request_ref','request'),('contact_policy_ref','policy'),('contact_knock_lease_ref','knock_lease'),('contact_decision_ref','decision'),('store_grant_ref','grant')):
+        role={'request':'contact.request','policy':'contact.policy','knock_lease':'contact.knock_lease','decision':'contact.decision','grant':'contact.store_grant'}[name]
+        if dp[field]!=roles[role]['ref']:_mismatch()
+    wire.u53(cp['revision'],1);status._mask(cp['operation_mask'])
+    if (cp['root_key']!=root or cp['maintenance_root_ref']!=roles['mailbox.maintenance_root']['ref']
+            or cp['issued_at']>ap['issued_at'] or cp['operation_mask']&65!=65
+            or not at<wire.u53(cp['consent_until'])<=cp['expires_at']<=min(slot['expires_at'],maintenance['expires_at'])
+            or cp['consent_until']>min(slot['windows']['retain_until'],maintenance['windows']['retain_until'])):_mismatch()
+    required_roles={'contact.request','delivery.attempt','message.disclosure','authority.status.disclosure'}
+    allowed_roles=required_roles|{'ack.root_authority','ack.write_grant','bootstrap.ack_offer',
+        'historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'}
+    allowed=cp['allowed_roles']
+    if (type(allowed) is not wire._DraftList or any(type(v) is not str for v in allowed)
+            or list(allowed)!=sorted(set(allowed)) or not required_roles<=set(allowed)<=allowed_roles):wire._fail('repair_status_disclosure')
+    returned=resource._fields(cp['bootstrap_return'],{'subject','consumer','roles','until'})
+    if (returned['subject']!=slot['recipient'] or returned['consumer']!='mailbox_feed'
+            or returned['roles']!=['authority.status.disclosure','message.disclosure']
+            or not at<wire.u53(returned['until'])<=cp['consent_until']):wire._fail('repair_status_disclosure')
+    obligations=[]
+    def add(role,kind,subject,revision,bits,signer):
+        obligations.append(dict(role=role,scope_kind=kind,scope_id=status.status_scope(root,kind,subject,policy,budget),
+            document_revision=revision,operation_mask=bits,signer=signer))
+    add('slot','mailbox_slot',key,slot['revision'],65,expected_owner['signing_key'])
+    authorities=[('read','mailbox.read_grant',originals['read'].payload,2,expected_owner['signing_key']),
+        ('maintenance','mailbox.maintenance_root',maintenance,65,expected_owner['signing_key']),
+        ('bootstrap','bootstrap.mailbox_feed',originals['bootstrap'].payload,10,expected_owner['signing_key']),
+        ('destination','delivery.destination',dp,1,expected_owner['signing_key']),
+        ('disclosure','message.disclosure',cp,65,expected_sender['signing_key'])]
+    for name,role,p,bits,signer in authorities:
+        add(name,'authority',dict(authority_kind=p['kind'],authority_sha256=roles[role]['ref']['raw_sha256']),p.get('revision',1),bits,signer)
+    for name in ('data','metadata'):
+        p=graph['resources'][name]['active'].payload
+        add(name+'_resource','resource',p['resource'],p['reservation_generation'],65,expected_target['signing_key'])
+    statuses=[];revisions={};floors={}
+    for obligation in obligations:
+        signer=obligation['signer'];permitted=[v for v in obligations if v['signer']==signer]
+        entry=roles['historical.status.'+obligation['role']]
+        required={k:obligation[k] for k in ('scope_kind','scope_id','document_revision','operation_mask')}
+        preview=original.parse_original_control(entry['raw'],policy,budget).value['payload']
+        present={(v['scope_kind'],v['scope_id']) for v in preview['entries']}
+        requirements=[{k:v[k] for k in ('scope_kind','scope_id','document_revision','operation_mask')}
+            for v in permitted if (v['scope_kind'],v['scope_id']) in present]
+        if required not in requirements:wire._fail('repair_status_missing')
+        observed=status.verify_status_original(entry,expected_root=root,expected_signing_key=signer,at=at,
+            allowed_scopes=[{k:v[k] for k in ('scope_kind','scope_id')} for v in permitted],required=requirements,policy=policy,budget=budget)
+        identity=(signer['key_id'],observed.payload['revision'])
+        if identity in revisions and revisions[identity]!=observed.canonical_sha256:wire._fail('repair_status_conflict')
+        revisions[identity]=observed.canonical_sha256;statuses.append(observed)
+        for value in observed.payload['entries']:
+            floors.setdefault((signer['key_id'],value['scope_kind'],value['scope_id']),[]).append(
+                (observed.payload['revision'],value['minimum_document_revision']))
+    for observations in floors.values():
+        minimum=0
+        for _,value in sorted(observations):
+            if value<minimum:wire._fail('repair_status_rollback')
+            minimum=value
+    graph.update(destination=dp,attempt=ap,disclosure=cp,statuses=tuple(statuses),obligations=tuple(obligations))
+    return graph

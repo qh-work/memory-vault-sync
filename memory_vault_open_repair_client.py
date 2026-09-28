@@ -1305,12 +1305,13 @@ def read_mailbox_index(head_entry, checkpoint_entry, *, expected_slot, expected_
 
 
 def read_mailbox_admission(member, *, expected_slot, expected_signing_key,
-                           encryption_identity, read_original, at,
+                           expected_owner, expected_sender, expected_target,
+                           encryption_identity, read_original, at, limit_policy=DEFAULT_LIMITS,
                            policy=DEFAULT_POLICY, budget=None):
     """Fetch original admission bytes for an entry from read_mailbox_index.
 
     Authenticates the source event graph and encrypted core before fetching E.
-    The returned historical inputs still require typed authority/status checks;
+    The returned inputs still require current status and custody checks;
     this function neither imports memories nor grants trust to their contents.
     """
     import memory_vault_open_repair_resource as resource
@@ -1375,6 +1376,23 @@ def read_mailbox_admission(member, *, expected_slot, expected_signing_key,
         if previous is None:
             resolver.put('meta',ref.key,load(ref.as_dict()));packs[ref.key]=ref.as_dict()
     resolved=history.resolve_historical_inputs(manifest_raw,resolver,policy,budget)
+    from memory_vault_open_repair_mailbox_activation import verify_mailbox_member_inputs
+    if key!=expected_target['signing_key']:_fail('repair_mailbox_member_mismatch')
+    setup=verify_mailbox_member_inputs(resolved,expected_slot=slot,expected_owner=expected_owner,
+        expected_sender=expected_sender,expected_target=expected_target,target_storage_epoch=slot['writer_storage_epoch'],
+        accepted_at=core['accepted_at'],limit_policy=limit_policy,policy=policy,budget=budget)
+    for name in ('data','metadata'):
+        if core[name+'_resource_ref']!=setup['resources'][name]['active'].payload['resource']:_fail('repair_mailbox_member_mismatch')
+    deadlines=[setup['disclosure']['consent_until'],setup['disclosure']['bootstrap_return']['until'],
+        setup['destination']['windows']['retain_until']]
+    for name in ('slot','read','maintenance','bootstrap'):
+        p=setup['originals'][name].payload;deadlines.append(p['expires_at'])
+        if 'windows' in p:deadlines.extend(p['windows'][field] for field in ('read_until','retain_until'))
+        if name=='bootstrap':deadlines.extend(p[field] for field in ('probe_until','proof_until','upload_until'))
+    for name in ('data','metadata'):
+        p=setup['resources'][name]['active'].payload
+        deadlines.extend(p['windows'][field] for field in ('read_until','retain_until'))
+    if core['enum_until']>min(deadlines):_fail('repair_mailbox_member_mismatch')
     envelope=load(core['envelope_ref'],'object')
-    return dict(core=core,link=link,checkpoint=checkpoint,history=resolved,envelope=envelope,
+    return dict(core=core,link=link,checkpoint=checkpoint,history=resolved,setup=setup,envelope=envelope,
         originals=MappingProxyType(originals))

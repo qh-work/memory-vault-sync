@@ -273,6 +273,8 @@ class MailboxStagingHTTPTests(unittest.TestCase):
                 return bytes(db.execute('SELECT envelope FROM open_mailbox_message_staging').fetchone()[0])
             return read_original(reference)
         member_args=dict(expected_slot=slot,expected_signing_key=self.host.identities[0].public_descriptor(),
+            expected_owner=owner,expected_sender=dict(signing_key=self.ai.public_descriptor(),encryption_key=sender_encryption.public_descriptor()),
+            expected_target=source.target,
             encryption_identity=owner_encryption,read_original=read_member_original,at=int(time.time()))
         recovered=read_mailbox_admission(members[0],**member_args)
         self.assertEqual(recovered['envelope'],envelope)
@@ -281,6 +283,14 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             recipient_signing_key=self.bi.public_descriptor(),recipient_encryption_key=owner_encryption.public_descriptor())
         self.assertIn(b'Synthetic mailbox staging message',plain)
         self.assertEqual(len(recovered['history'].roles),29)
+        self.assertEqual(len(recovered['setup']['statuses']),8)
+        authority_reads=[]
+        def traced_original(reference):
+            authority_reads.append(reference['namespace'])
+            return read_member_original(reference)
+        with self.assertRaises(RepairWireError):
+            read_mailbox_admission(members[0],**dict(member_args,expected_sender=owner,read_original=traced_original))
+        self.assertNotIn('object',authority_reads)
         attempted=[]
         def corrupt_envelope(reference):
             attempted.append(reference['namespace'])
@@ -307,6 +317,23 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         db.execute('INSERT INTO open_mailbox_admission_objects VALUES(?,?,?,?)',(missing,ref['raw_sha256'],ref['size'],value['raw']))
         db.commit()
         revoked=status_entry(issue_status(self.bi,root=root,revision=3,entries=[dict(value,status='revoked') for value in scoped],issued_at=now,valid_until=now+100))
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_member_inputs
+        altered={value.role:dict(raw=value.original.raw,ref=value.original.ref.as_dict()) for value in recovered['history'].roles}
+        for name in ('slot','read','maintenance','bootstrap','destination'):
+            altered['historical.status.'+name]=revoked
+        budget=RepairBudget(DEFAULT_POLICY)
+        changed_pack=wire.build_raw_pack([value['raw'] for value in altered.values()],DEFAULT_POLICY,budget)
+        indices={(value.raw_sha256,value.size):i for i,value in enumerate(changed_pack.entries)}
+        changed_manifest=dict(json.loads(saved['manifest']['raw']),roles=[dict(role=role,document_ref=value['ref'],
+            pack_ref=changed_pack.ref.as_dict(),entry_index=indices[(value['ref']['raw_sha256'],value['ref']['size'])])
+            for role,value in sorted(altered.items())])
+        changed=history.build_historical_manifest(changed_manifest,DEFAULT_POLICY,budget)
+        resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget);resolver.put('meta',changed_pack.ref.key,changed_pack.raw)
+        changed=history.resolve_historical_inputs(changed.raw,resolver,DEFAULT_POLICY,budget)
+        with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
+            verify_mailbox_member_inputs(changed,expected_slot=slot,expected_owner=owner,expected_sender=member_args['expected_sender'],
+                expected_target=source.target,target_storage_epoch=slot['writer_storage_epoch'],accepted_at=recovered['core']['accepted_at'],
+                limit_policy=DEFAULT_LIMITS,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
         with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
             staging.stage_delivered(raw,revoked)
         with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
