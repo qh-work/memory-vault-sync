@@ -64,7 +64,7 @@ NETWORK_REVIEW_TESTS = (
     "tests/test_open_control.py", "tests/test_open_state.py", "tests/test_open_index.py",
     "tests/test_open_routing.py", "tests/test_open_transport.py", "tests/test_open_node.py",
     "tests/test_open_join_progress.py", "tests/test_open_network_ci.py",
-    "tests/test_open_agent.py", "tests/test_open_typescript.py", "tests/test_open_typescript_state.py",
+    "tests/test_open_agent.py", "tests/test_open_agent_setup.py", "tests/test_open_typescript.py", "tests/test_open_typescript_state.py",
     "tests/test_open_typescript_http.py",
     "tests/test_open_contact.py", "tests/test_open_contact_state.py", "tests/test_open_contact_http.py",
     "tests/test_open_contact_typescript.py", "tests/test_open_contact_typescript_http.py",

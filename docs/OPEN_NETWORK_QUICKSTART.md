@@ -149,6 +149,25 @@ It refuses an existing destination. It never opens the Vault or makes a network
 request. Retain this directory across restarts: it contains the encryption key,
 approval sessions, outbox, inbox and receipts. Do not rerun setup to retry a send.
 
+The agent setup command also accepts an operator's HTTPS origin and expected public
+signing key ID directly, so a saved introduction cannot expire before setup:
+
+```sh
+python -B memory_vault_open_agent_setup.py --client-config /absolute/private/client.json --directory /absolute/private/open-agent --seed-endpoint "$MV_NODE_ORIGIN" "$MV_NODE_KEY_ID"
+```
+
+Obtain both values from the operator you selected. Node initialization prints
+`base_url` and `node_key_id`; these values are public. Repeat `--seed-endpoint`
+at most once for a second operator, and choose either endpoint mode or file mode.
+Endpoint mode fetches a current signed introduction, checks its exact origin and
+expected key, then verifies a fresh signed challenge response before creating
+the new transport directory. It permits no redirects or private destinations
+and uses one 15-second deadline for both operators. A failed fetch or challenge
+creates no transport directory; retry after the operator resolves the problem.
+This check adds no author trust, contact approval or memory-sharing permission.
+The ordinary `connect` below still performs the bounded network join. File mode
+remains offline.
+
 The generated config has the exact `memory-vault-open-client-config/v1` fields:
 `schema_version`, `client_config_path`, `state_directory`,
 `encryption_key_path`, `seeds` (signed objects), and `allow_loopback:false`.

@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FILES = ("settings.json", "status.json", "progress.jsonl", "errors.jsonl", "results.json")
 MAX_REPORT_BYTES = 900_000  # All explicitly uploadable files together, <1 MiB.
 MODULES = tuple("tests.test_open_" + name for name in (
-    "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "typescript", "typescript_state", "typescript_http", "network_ci",
+    "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "agent_setup", "typescript", "typescript_state", "typescript_http", "network_ci",
     "contact", "contact_state", "contact_http", "contact_typescript", "contact_typescript_http",
     "delivery_http", "provider_typescript", "provider_typescript_http", "provider_status", "provider_status_typescript",
     "repair_wire", "repair_typescript", "repair_pack", "repair_pack_typescript",
