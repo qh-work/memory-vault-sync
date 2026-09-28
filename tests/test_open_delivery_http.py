@@ -215,6 +215,16 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         stored=db.execute('SELECT envelope,phase FROM open_mailbox_message_staging').fetchone()
         self.assertEqual(bytes(stored[0]),envelope);self.assertEqual(stored[1],'pending')
         self.assertEqual(db.execute('SELECT count(*) FROM open_mailbox_message_staging').fetchone()[0],1)
+        saved=staging.prepare_member_history(self.ai.key_id,sent['message_id'])
+        self.assertEqual(staging.prepare_member_history(self.ai.key_id,sent['message_id']),saved)
+        import memory_vault_open_repair_history as history
+        budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
+        resolver.put('meta',saved['pack']['ref']['key'],saved['pack']['raw'])
+        resolved=history.resolve_historical_inputs(saved['manifest']['raw'],resolver,DEFAULT_POLICY,budget)
+        self.assertEqual(len(resolved.roles),29)
+        self.assertEqual(next(value.original.raw for value in resolved.roles if value.role=='delivery.attempt'),draft['attempt']['raw'])
+        self.assertNotIn('mailbox.root_authority',{value.role for value in resolved.roles})
+        self.assertEqual(resolved.manifest.value['envelope_ref']['raw_sha256'],hashlib.sha256(envelope).hexdigest())
         revoked=status_entry(issue_status(self.bi,root=root,revision=3,entries=[dict(value,status='revoked') for value in scoped],issued_at=now,valid_until=now+100))
         with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
             staging.stage_delivered(raw,revoked)
