@@ -429,6 +429,55 @@ class MailboxSourceTests(unittest.TestCase):
             windows={name:h.now+600 for name in h.f["docs"]["allocate"]["payload"]["intent"]["windows"]},
             limits=getattr(self.host,"bootstrap_limits",LIMITS),max_appends=16,max_live_items=16)
         builder=MailboxSetupBuilder(h.f["signers"]["owner"],h.f["encryption"]["owner"],plan)
+        if "provision" in self._testMethodName:
+            from memory_vault_open_repair_client import MailboxSetupClient,MailboxSetupJournal
+            from tests.open_repair_ack_fixtures import signed_entry
+            from memory_vault_open_transport import OpenHTTPTransport
+            from memory_vault import MemoryError
+            import sqlite3
+            remote=self.http_service(h,remote_setup=True)
+            node_entry=signed_entry(dict(h.f["docs"]["descriptor"]["payload"],base_url=remote.base_url),
+                h.f["signers"]["target"],"synthetic_provision_node")
+            path=h.path.parent/"recipient-setup.sqlite3";path.touch(mode=0o600)
+            db=sqlite3.connect(path);self.addCleanup(db.close)
+            journal=MailboxSetupJournal(db)
+            transport=OpenHTTPTransport(allow_loopback=True);self.addCleanup(transport.close)
+            original_request=transport.request_repair;lost=[]
+            def request(base,raw,**options):
+                result=original_request(base,raw,**options)
+                if json.loads(raw).get("payload",{}).get("kind")=="mailbox.source_root" and not lost:
+                    lost.append(raw);raise MemoryError("open_network_unavailable")
+                return result
+            transport.request_repair=request
+            client=MailboxSetupClient(h.f["signers"]["owner"],h.f["encryption"]["owner"],limit_policy=dict(h.source.limits),
+                allow_loopback=True,transport=transport,clock=lambda:h.now)
+            options=dict(target_node_entry=node_entry,plan=plan,setup_until=h.now+60,read_until=h.now+100,retain_until=h.now+100)
+            with self.assertRaisesRegex(MemoryError,"open_network_unavailable"):
+                client.provision(remote.base_url,journal=journal,**options)
+            db.close();db=sqlite3.connect(path);self.addCleanup(db.close)
+            client=MailboxSetupClient(h.f["signers"]["owner"],h.f["encryption"]["owner"],limit_policy=dict(h.source.limits),
+                allow_loopback=True,transport=transport,clock=lambda:h.now)
+            result=client.provision(remote.base_url,journal=MailboxSetupJournal(db),**options)
+            self.assertEqual(result.source["custody"].payload["root_key"],root)
+            rows=db.execute("SELECT stage,request,response FROM open_mailbox_setup_steps ORDER BY stage").fetchall()
+            self.assertEqual(len(rows),4);self.assertTrue(all(row[2] for row in rows))
+            self.assertEqual(next(bytes(row[1]) for row in rows if row[0]=="root"),lost[0])
+            self.assertGreater(db.execute("SELECT count(*) FROM open_mailbox_setup_statuses").fetchone()[0],0)
+            from unittest.mock import patch
+            from memory_vault_open_repair_bind import decode_entry
+            import memory_vault_open_repair_wire as wire
+            ready=json.loads(next(bytes(row[1]) for row in rows if row[0]=="ready"))["payload"]
+            state=decode_entry(wire.build_new_wire(ready["entries"]["owner_status"],DEFAULT_POLICY,wire.RepairBudget(DEFAULT_POLICY)).value,
+                DEFAULT_POLICY,wire.RepairBudget(DEFAULT_POLICY))
+            status_payload=json.loads(state["raw"])["payload"]
+            revoked=status_entry(provider.issue_status(h.f["signers"]["owner"],root=root,revision=2,
+                entries=[dict(value,status="revoked") for value in status_payload["entries"]],issued_at=h.now,valid_until=h.now+100))
+            with patch.object(transport,"request_repair",side_effect=AssertionError("network after retained revocation")):
+                with self.assertRaisesRegex(RepairWireError,"repair_authority_revoked"):
+                    client.provision(remote.base_url,journal=MailboxSetupJournal(db),known_statuses=[revoked],**options)
+                with self.assertRaisesRegex(RepairWireError,"repair_authority_revoked"):
+                    client.provision(remote.base_url,journal=MailboxSetupJournal(db),**options)
+            return
         allocations=builder.allocation_requests(at=h.now,expires_at=h.now+60)
         if "remote" in self._testMethodName:
             from memory_vault_open_repair_bind import decode_entry
@@ -508,6 +557,9 @@ class MailboxSourceTests(unittest.TestCase):
         wrong=dict(offers);wrong["mailbox_data"]=offers["feed_metadata"]
         with self.assertRaises(RepairWireError):
             builder.slot_documents(allocations,wrong,at=h.now,expires_at=h.now+600)
+
+    def test_custody_recovery_remote_provision_resumes_after_process_restart(self):
+        self.test_custody_setup_builder_creates_actual_root_without_handwritten_authorities()
 
     def test_custody_recovery_remote_setup_builder_allocates_over_real_http(self):
         self.test_custody_setup_builder_creates_actual_root_without_handwritten_authorities()

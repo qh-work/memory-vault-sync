@@ -856,3 +856,191 @@ class MailboxSetupBuilder:
         verify_mailbox_root_bootstrap({name:result[name] for name in ("root","read","bootstrap")},expected_root=p["root_key"],expected_owner=self.owner,
             limit_policy=p["limits"],at=at,policy=self.policy,budget=budget)
         return result
+
+
+class MailboxSetupJournal:
+    """Finite exact setup exchanges in the caller's existing protected database."""
+    def __init__(self, db):
+        self.db=db
+
+    def _transaction(self, callback):
+        if self.db.in_transaction:
+            _fail("repair_setup_journal_transaction")
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            result=callback();self.db.commit();return result
+        except BaseException:
+            self.db.rollback();raise
+
+    def initialize(self):
+        def create():
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_mailbox_setup_jobs(
+                job_key TEXT PRIMARY KEY,plan BLOB NOT NULL,blocked INTEGER NOT NULL DEFAULT 0)''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_mailbox_setup_steps(
+                job_key TEXT NOT NULL,stage TEXT NOT NULL,request BLOB NOT NULL,response BLOB,
+                PRIMARY KEY(job_key,stage))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_mailbox_setup_statuses(
+                job_key TEXT NOT NULL,digest TEXT NOT NULL,raw BLOB NOT NULL,
+                PRIMARY KEY(job_key,digest))''')
+        self._transaction(create);return self
+
+    def start(self, job_key, plan):
+        import re
+        if type(job_key) is not str or re.fullmatch('[0-9a-f]{64}',job_key) is None or type(plan) is not bytes or not 0<len(plan)<=65536:
+            _fail("repair_invalid_context")
+        def save():
+            old=self.db.execute('SELECT plan,blocked FROM open_mailbox_setup_jobs WHERE job_key=?',(job_key,)).fetchone()
+            if old is not None:
+                if bytes(old[0])!=plan:
+                    _fail("repair_setup_journal_conflict")
+                if old[1]:
+                    _fail("repair_setup_journal_capacity")
+                return
+            if self.db.execute('SELECT count(*) FROM open_mailbox_setup_jobs').fetchone()[0]>=16:
+                _fail("repair_setup_journal_capacity")
+            self.db.execute('INSERT INTO open_mailbox_setup_jobs(job_key,plan) VALUES(?,?)',(job_key,plan))
+        self._transaction(save)
+
+    def _check(self, key):
+        row=self.db.execute('SELECT blocked FROM open_mailbox_setup_jobs WHERE job_key=?',(key,)).fetchone()
+        if row is None or row[0]:
+            _fail("repair_setup_journal_unavailable")
+
+    def step(self, key, stage, request=None, response=None):
+        if stage not in ('allocate','slot','root','ready'):
+            _fail("repair_invalid_context")
+        for raw in (request,response):
+            if raw is not None and (type(raw) is not bytes or not 0<len(raw)<=65536):
+                _fail("repair_setup_journal_capacity")
+        def save():
+            self._check(key)
+            row=self.db.execute('SELECT request,response FROM open_mailbox_setup_steps WHERE job_key=? AND stage=?',(key,stage)).fetchone()
+            if row is None:
+                if request is None:
+                    if response is not None:_fail("repair_setup_journal_missing")
+                    return None
+                self.db.execute('INSERT INTO open_mailbox_setup_steps VALUES(?,?,?,?)',(key,stage,request,response))
+                return request,response
+            old_request,old_response=bytes(row[0]),None if row[1] is None else bytes(row[1])
+            if (request is not None and request!=old_request) or (response is not None and old_response is not None and response!=old_response):
+                _fail("repair_setup_journal_conflict")
+            if response is not None and old_response is None:
+                self.db.execute('UPDATE open_mailbox_setup_steps SET response=? WHERE job_key=? AND stage=?',(response,key,stage))
+                old_response=response
+            return old_request,old_response
+        return self._transaction(save)
+
+    def observe(self, key, authenticated):
+        if not isinstance(authenticated,status.AuthenticatedStatusOriginal):
+            _fail("repair_invalid_context")
+        raw=authenticated.raw;digest=authenticated.raw_sha256
+        def save():
+            self._check(key)
+            if self.db.execute('SELECT 1 FROM open_mailbox_setup_statuses WHERE job_key=? AND digest=?',(key,digest)).fetchone():
+                return True
+            count,size=self.db.execute('SELECT count(*),coalesce(sum(length(raw)),0) FROM open_mailbox_setup_statuses WHERE job_key=?',(key,)).fetchone()
+            if count>=32 or size+len(raw)>262144:
+                self.db.execute('UPDATE open_mailbox_setup_jobs SET blocked=1 WHERE job_key=?',(key,));return False
+            self.db.execute('INSERT INTO open_mailbox_setup_statuses VALUES(?,?,?)',(key,digest,raw));return True
+        if not self._transaction(save):
+            _fail("repair_setup_journal_capacity")
+
+    def statuses(self, key):
+        self._check(key)
+        rows=self.db.execute('SELECT digest,raw FROM open_mailbox_setup_statuses WHERE job_key=? ORDER BY digest',(key,)).fetchall()
+        if len(rows)>32 or sum(len(row[1]) for row in rows)>262144:
+            _fail("repair_setup_journal_capacity")
+        return tuple(dict(raw=bytes(raw),ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw))) for digest,raw in rows)
+
+
+class MailboxSetupClient(MailboxRootRecoveryClient):
+    """Provision and independently recover a mailbox using durable exact steps."""
+    def provision(self, base_url, *, target_node_entry, plan, journal, setup_until, read_until, retain_until,
+                  known_statuses=(), timeout=60):
+        import hashlib
+        from memory_vault_open_repair_bind import decode_entry
+        import memory_vault_open_repair_resource as resource
+        if not isinstance(journal,MailboxSetupJournal) or type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=60:
+            _fail("repair_invalid_context")
+        builder=MailboxSetupBuilder(self.identity,self.encryption_identity,plan,policy=self.policy)
+        p=builder.plan;budget=wire.RepairBudget(self.policy);started=self._now();deadline=time.monotonic()+timeout
+        if not 0<wire.u53(setup_until)<=wire.u53(read_until)<=wire.u53(retain_until)<=min(p['windows'].values()) or started>=read_until:
+            _fail("repair_resource_expired")
+        raw,ref=ack._entry(target_node_entry)
+        node=original.verify_original_control(raw,expected_signing_key=p['target']['signing_key'],expected_schema='memory-vault-open-control/v1',
+            expected_kind='node',at=started,policy=self.policy,budget=budget)
+        original._node_shape(node,started,budget)
+        base=base_url;address=endpoint(base_url,allow_loopback=self.allow_loopback)
+        if (len(raw)!=ref.size or node.raw_sha256!=ref.raw_sha256 or node.payload['storage_epoch']!=p['slot_key']['writer_storage_epoch']
+                or address!=endpoint(node.payload['base_url'],allow_loopback=self.allow_loopback)):
+            _fail('repair_proof_mismatch')
+        binding=wire.build_new_wire(dict(base_url=base,owner=self.subject,plan=p,setup_until=setup_until,
+            read_until=read_until,retain_until=retain_until),self.policy,budget).raw
+        key=hashlib.sha256(wire.build_new_wire(dict(owner=self.subject,root_key=p['root_key']),self.policy,budget).raw).hexdigest()
+        journal.initialize();journal.start(key,binding)
+        for entry in (*known_statuses,*journal.statuses(key)):
+            preview=original.parse_original_control(entry['raw'],self.policy,budget)
+            payload=status._fields(status._fields(preview.value,{'payload','proof'})['payload'],status._PAYLOAD)
+            signer=payload['signing_key']
+            if signer not in (self.subject['signing_key'],p['target']['signing_key']) or payload['issued_at']>started:
+                _fail('repair_status_mismatch')
+            values=self._status_entries(payload)
+            authenticated=status.authenticate_status_original(entry,expected_root=p['root_key'],expected_signing_key=signer,
+                at=payload['issued_at'],allowed_scopes=[dict(scope_kind=v['scope_kind'],scope_id=v['scope_id']) for v in values],
+                policy=self.policy,budget=budget,on_authenticated=lambda item:journal.observe(key,item))
+            if any(v['status']=='revoked' for v in authenticated.payload['entries']):
+                _fail('repair_authority_revoked')
+        def parse(raw):
+            return wire.parse_new_wire(raw,self.policy,wire.RepairBudget(self.policy)).value
+        def decode(values):
+            meter=wire.RepairBudget(self.policy)
+            return {name:decode_entry(value,self.policy,meter) for name,value in values.items()}
+        def exchange(stage,make):
+            saved=journal.step(key,stage)
+            if saved is None:
+                packet=make();saved=journal.step(key,stage,request=packet)
+            packet,response=saved
+            if response is None:
+                if time.monotonic()>=deadline:_fail('repair_probe_expired')
+                response=self.transport.request_repair(base,packet,deadline=deadline)
+                value=parse(response)
+                if stage=='allocate':
+                    resource._fields(value,{'schema_version','kind','root_key','offers'})
+                    if value['kind']!='mailbox.source_offers' or value['root_key']!=p['root_key']:_fail('repair_proof_mismatch')
+                else:
+                    resource._fields(value,{'schema_version','kind','request_sha256','originals'})
+                    if value['kind']!='mailbox.source_'+stage+'_active' or value['request_sha256']!=hashlib.sha256(packet).hexdigest():
+                        _fail('repair_proof_mismatch')
+                if value['schema_version']!=proof.SCHEMA:_fail('repair_proof_mismatch')
+                journal.step(key,stage,response=response)
+            return parse(packet),parse(response)
+        request,response=exchange('allocate',lambda:builder.allocation_packet(builder.allocation_requests(at=self._now(),expires_at=setup_until)))
+        allocations={}
+        for entry in request['allocations']:
+            item=decode_entry(entry,self.policy,wire.RepairBudget(self.policy))
+            allocations[parse(item['raw'])['payload']['intent']['purpose']]=item
+        offers=decode(response['offers'])
+        request,response=exchange('slot',lambda:builder.activation_packet('slot',builder.slot_documents(allocations,offers,
+            at=self._now(),expires_at=min(p['windows'].values())),at=self._now(),expires_at=setup_until))
+        slot_entries=decode(request['payload']['entries']);slot_result=decode(response['originals'])
+        request,response=exchange('root',lambda:builder.activation_packet('root',builder.root_documents(allocations,offers,slot_entries,slot_result,
+            at=self._now(),expires_at=min(p['windows'].values())),at=self._now(),expires_at=setup_until))
+        root_entries=decode(request['payload']['entries'])
+        def ready():
+            state=builder.initial_owner_status(slot_entries,root_entries,at=self._now(),valid_until=read_until)
+            return builder.readiness_packet(state,at=self._now(),expires_at=setup_until,read_until=read_until,retain_until=retain_until)
+        request,response=exchange('ready',ready)
+        owner_status=decode(request['payload']['entries'])['owner_status'];custody=decode(response['originals'])['custody']
+        def observed(item):
+            journal.observe(key,item)
+            if self.status_observer is not None:self.status_observer(item)
+        client=MailboxRootRecoveryClient(self.identity,self.encryption_identity,policy=self.policy,limit_policy=self.limits,
+            allow_loopback=self.allow_loopback,transport=self.transport,clock=self.clock,status_observer=observed)
+        remaining=deadline-time.monotonic()
+        if remaining<=0:_fail('repair_probe_expired')
+        result=client.recover(base,target_node_entry=target_node_entry,expected_target=p['target'],expected_root=p['root_key'],
+            **{name+'_entry':root_entries[name] for name in ('root','read','bootstrap')},
+            known_statuses=(*known_statuses,owner_status),archive_statuses=journal.statuses(key),timeout=min(60,remaining))
+        if result.source['custody'].raw!=custody['raw'] or result.source['custody'].ref.as_dict()!=custody['ref']:
+            _fail('repair_proof_mismatch')
+        return result
