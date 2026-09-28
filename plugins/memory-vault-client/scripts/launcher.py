@@ -52,6 +52,7 @@ ALLOWED_MODULES = {
     "memory_vault_open_repair_mailbox_range.py",
     "memory_vault_open_repair_mailbox_root.py",
     "memory_vault_open_repair_mailbox_status.py",
+    "memory_vault_open_repair_mailbox_source.py",
     "memory_vault_open_repair_probe.py",
     "memory_vault_open_repair_proof.py",
     "memory_vault_open_repair_access.py",

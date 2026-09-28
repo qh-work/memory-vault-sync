@@ -54,7 +54,7 @@ MODULES = tuple("tests.test_open_" + name for name in (
     "tests.test_open_repair_index_prepare", "tests.test_open_repair_index_prepare_admin",
     "tests.test_open_repair_provision", "tests.test_open_repair_onboarding",
     "tests.test_open_repair_bind_recovery", "tests.test_open_repair_remote_setup", "tests.test_open_repair_remote_provision",
-    "tests.test_open_repair_status_observer", "tests.test_open_repair_mailbox_resources", "tests.test_open_repair_mailbox_activation", "tests.test_open_repair_mailbox_range", "tests.test_open_repair_mailbox_root", "tests.test_open_repair_mailbox_status",
+    "tests.test_open_repair_status_observer", "tests.test_open_repair_mailbox_resources", "tests.test_open_repair_mailbox_activation", "tests.test_open_repair_mailbox_range", "tests.test_open_repair_mailbox_root", "tests.test_open_repair_mailbox_status", "tests.test_open_repair_mailbox_source",
     "tests.test_open_provider_merge",
     "tests.test_continuation_trial", "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {
@@ -251,7 +251,7 @@ def initialize(reports, mode, seed):
                     "memory_vault_open_repair_resource.py", "tests/open_repair_resource_fixtures.py",
                     "memory_vault_open_repair_bootstrap.py", "memory_vault_open_repair_status.py",
                     "memory_vault_open_repair_ack.py", "tests/open_repair_ack_fixtures.py",
-                    "memory_vault_open_repair_state.py", "memory_vault_open_repair_mailbox_resources.py", "memory_vault_open_repair_mailbox_activation.py", "memory_vault_open_repair_mailbox_range.py", "memory_vault_open_repair_mailbox_root.py", "memory_vault_open_repair_mailbox_status.py", "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
+                    "memory_vault_open_repair_state.py", "memory_vault_open_repair_mailbox_resources.py", "memory_vault_open_repair_mailbox_activation.py", "memory_vault_open_repair_mailbox_range.py", "memory_vault_open_repair_mailbox_root.py", "memory_vault_open_repair_mailbox_status.py", "memory_vault_open_repair_mailbox_source.py", "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
                     "memory_vault_open_repair_probe.py",
                     "memory_vault_open_repair_proof.py",
                     "memory_vault_open_repair_access.py",
