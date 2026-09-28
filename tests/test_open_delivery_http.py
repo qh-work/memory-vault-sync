@@ -286,6 +286,21 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         self.assertIn(b'Synthetic mailbox staging message',plain)
         self.assertEqual(len(recovered['history'].roles),29)
         self.assertEqual(len(recovered['setup']['statuses']),8)
+        held_page=admitted['sealed_page'];ref=held_page['ref']
+        metadata_before=db.execute('SELECT sum(metadata_bytes) FROM open_repair_mailbox_resources').fetchone()[0]
+        db.execute('DELETE FROM open_mailbox_admission_objects WHERE key=?',(ref['key'],));db.commit()
+        with self.assertRaisesRegex(RepairWireError,'repair_original_missing'):
+            staging.prepare_feed_history(slot)
+        self.assertEqual(db.execute('SELECT sum(metadata_bytes) FROM open_repair_mailbox_resources').fetchone()[0],metadata_before)
+        db.execute('INSERT INTO open_mailbox_admission_objects VALUES(?,?,?,?)',(ref['key'],ref['raw_sha256'],ref['size'],held_page['raw']));db.commit()
+        feed_history=staging.prepare_feed_history(slot)
+        self.assertEqual(staging.prepare_feed_history(slot),feed_history)
+        budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
+        for value in (saved['pack'],feed_history['pack']):resolver.put('meta',value['ref']['key'],value['raw'])
+        feed_inputs=history.resolve_historical_inputs(feed_history['manifest']['raw'],resolver,DEFAULT_POLICY,budget)
+        self.assertEqual(feed_inputs.manifest.value['covered_interval'],dict(start=0,end=1))
+        self.assertEqual(len(feed_inputs.predecessors),1)
+        self.assertEqual(feed_inputs.manifest.value['members'][0]['source_custody_ref'],admitted['custody']['ref'])
         authority_reads=[]
         def traced_original(reference):
             authority_reads.append(reference['namespace'])
