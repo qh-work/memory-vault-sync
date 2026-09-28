@@ -4,6 +4,7 @@ import sqlite3
 import unittest
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 
 from memory_vault_open_repair_wire import RepairWireError
 from tests import test_open_repair_service as service_fixture
@@ -48,12 +49,22 @@ class RepairServiceBudgetTests(unittest.TestCase):
         payload = json.loads(answer.raw)['payload']
         payload['expires_at'] -= 1
         changed = signed_entry(payload, c.source.fixture['signers']['owner'], 'conflicting_answer_budget')
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        key_type = type(Ed25519PublicKey.from_public_bytes(b'a'*32))
+        verify = key_type.verify
+        checks = []
+        def count(key,signature,data):
+            checks.append(1)
+            return verify(key,signature,data)
         for _ in range(2):
             before = self.usage()
-            self.refusal('repair_probe_replay_conflict', c.service.answer, changed)
+            checks.clear()
+            with patch.object(key_type,'verify',new=count):
+                self.refusal('repair_probe_replay_conflict', c.service.answer, changed)
             after = self.usage()
             self.assertEqual(after[0], before[0] + 1)
-            self.assertGreater(after[1] - before[1], 30)
+            self.assertGreater(len(checks), 0)
+            self.assertEqual(after[1] - before[1], len(checks))
             self.assertEqual(after[2], before[2])
         rows = c.source.db.execute('SELECT signature_allowance,signature_checks FROM open_repair_bootstrap_work').fetchall()
         self.assertTrue(all(actual is not None and 0 < actual <= reserved for reserved, actual in rows))

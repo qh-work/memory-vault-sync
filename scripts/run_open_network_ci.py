@@ -420,7 +420,7 @@ def main():
     if args.phase=="finalize":return 0 if finalize(reports) else 1
     def interrupted(signum,frame):raise KeyboardInterrupt
     for signum in (signal.SIGINT,signal.SIGTERM,signal.SIGALRM):signal.signal(signum,interrupted)
-    signal.alarm(26*60 if args.mode=="scale" else 12*60)
+    signal.alarm(26*60)
     reports.status("running")
     try:
         record_runtime(reports,args.mode,args.seed)
