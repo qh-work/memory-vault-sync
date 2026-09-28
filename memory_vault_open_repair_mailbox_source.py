@@ -33,6 +33,140 @@ class MailboxRootSource:
                 manifest BLOB NOT NULL,manifest_ref BLOB NOT NULL,pack BLOB NOT NULL,
                 pack_ref BLOB NOT NULL,created_at INTEGER NOT NULL)''')
 
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_repair_mailbox_root_custody(
+                resource_id TEXT PRIMARY KEY,input_digest TEXT NOT NULL,
+                custody BLOB NOT NULL,custody_ref BLOB NOT NULL,stored_at INTEGER NOT NULL,
+                read_until INTEGER NOT NULL,retain_until INTEGER NOT NULL)''')
+
+    def finalize_root(self, resource_id, *, read_until, retain_until, _budget=None, _transaction_guard=None):
+        """Commit the node's original custody over its already pinned root.
+
+        All source inputs come from local activation and status transactions.
+        This does not expose a remote endpoint or replace a client's independent
+        verification of the root source event and current read permission.
+        """
+        s = self.source
+        wire.u53(read_until);wire.u53(retain_until)
+        budget = _budget if _budget is not None else wire.RepairBudget(s.policy)
+        wire._context(s.policy,budget)
+        digest = budget._hash(wire.build_new_wire(dict(resource_id=resource_id,
+            read_until=read_until,retain_until=retain_until),s.policy,budget).raw)
+        with s._transaction():
+            old = s._one("SELECT * FROM open_repair_mailbox_root_custody WHERE resource_id=?",(resource_id,))
+            marker = s._one("SELECT value FROM open_repair_state WHERE name=?",("mailbox_root_custody:"+resource_id,))
+            if (old is None) != (marker is None):
+                wire._fail("repair_mailbox_custody_missing")
+            if old is not None:
+                saved = s._saved(old,"custody")
+                if marker["value"] != s._expected_binding()+"|"+old["input_digest"]+"|"+saved["ref"]["raw_sha256"]:
+                    wire._fail("repair_storage_corrupt")
+                if old["input_digest"] != digest:
+                    wire._fail("repair_custody_conflict")
+                return s._saved(old,"custody")
+        context = self.root.owner_status_context(resource_id,_budget=budget)
+        owner_guard = self.root.owner_status_guard(resource_id,_budget=budget)
+        deadlines = [read_until,retain_until]
+        def guard():
+            if _transaction_guard is not None:
+                code = _transaction_guard()
+                if code:
+                    return code
+            code = owner_guard()
+            if code:
+                return code
+            if s._now() >= min(deadlines):
+                return "repair_resource_expired"
+        with s._transaction(guard=guard) as now:
+            if (s._one("SELECT 1 FROM open_repair_mailbox_root_custody WHERE resource_id=?",(resource_id,))
+                    or s._one("SELECT 1 FROM open_repair_state WHERE name=?",("mailbox_root_custody:"+resource_id,))):
+                wire._fail("repair_custody_conflict")
+            row = s._one("SELECT * FROM open_repair_mailbox_root_history WHERE resource_id=?",(resource_id,))
+            if row is None:
+                wire._fail("repair_mailbox_history_missing")
+            anchor,root_key,resources = self._resources(resource_id,None,budget)
+            manifest,pack = s._saved(row,"manifest"),s._saved(row,"pack")
+            resolver = wire.LocalRawResolver(s.policy,budget)
+            resolver.put(pack["ref"]["namespace"],pack["ref"]["key"],pack["raw"])
+            resolved = history.resolve_historical_inputs(manifest["raw"],resolver,s.policy,budget)
+            m = resolved.manifest.value
+            if (m["variant"] != "mailbox_root" or m["root_key"] != root_key
+                    or {v.role for v in resolved.roles} != history._ROLES["mailbox_root"]):
+                wire._fail("repair_mailbox_root_mismatch")
+            held = wire.parse_new_wire(bytes(anchor["inputs"]),s.policy,budget).value
+            if m["root_authority_ref"] != held["root"]["ref"] or m["catalog_ref"] != held["catalog"]["ref"]:
+                wire._fail("repair_mailbox_root_mismatch")
+            if not now < read_until <= retain_until <= context["deadline"]:
+                wire._fail("repair_resource_expired")
+            for _,offer in resources.values():
+                if read_until > offer["windows"]["read_until"] or retain_until > offer["windows"]["retain_until"]:
+                    wire._fail("repair_resource_expired")
+            # Historical T must cover this original storage event, even if a
+            # later observation has independently refreshed the live ledger.
+            for role in resolved.roles:
+                if role.role.startswith("historical.status."):
+                    payload = original.parse_original_control(role.original.raw,s.policy,budget).value["payload"]
+                    if not payload["issued_at"] <= row["created_at"] <= now < payload["valid_until"]:
+                        wire._fail("repair_status_mismatch")
+                    deadlines.append(payload["valid_until"])
+            slots = wire.parse_new_wire(bytes(anchor["slots"]),s.policy,budget).value
+            feeds = []
+            for item in slots:
+                refs = {}
+                for name in ("data","metadata"):
+                    value = item["entries"][name+"_active"]
+                    parsed,_ = s._entry(dict(raw=value["raw"].encode(),ref=value["ref"]),budget)
+                    refs[name] = parsed.value["payload"]["resource"]
+                feeds.append(dict(slot_key=item["slot_key"],**refs))
+            custody = s._sign(dict(schema_version=history.SCHEMA,kind="root.custody",signing_key=s.identity.public_descriptor(),
+                root_key=root_key,root_authority_ref=m["root_authority_ref"],catalog_ref=m["catalog_ref"],
+                genesis_head_refs=m["genesis_head_refs"],historical_manifest_ref=manifest["ref"],
+                resource_refs=dict(anchor=resources[resource_id][1]["resource"],feeds=feeds),stored_at=now,
+                read_until=read_until,retain_until=retain_until),"mailbox_root_custody",budget)
+            resource_row,offer = resources[resource_id]
+            charge = len(custody["raw"])+2*ROW_CHARGE
+            if (resource_row["metadata_bytes"]+charge > offer["budget"]["max_meta_bytes"]
+                    or len({v.original.ref for v in resolved.roles})+3 > offer["budget"]["max_items"]):
+                wire._fail("repair_insufficient_capacity")
+            self.db.execute("INSERT INTO open_repair_state VALUES(?,?)",("mailbox_root_custody:"+resource_id,
+                s._expected_binding()+"|"+digest+"|"+custody["ref"]["raw_sha256"]))
+            self.db.execute("INSERT INTO open_repair_mailbox_root_custody VALUES(?,?,?,?,?,?,?)",
+                (resource_id,digest,custody["raw"],canonical_bytes(custody["ref"]),now,read_until,retain_until))
+            self.db.execute("UPDATE open_repair_mailbox_resources SET metadata_bytes=metadata_bytes+? WHERE resource_id=?",(charge,resource_id))
+            return custody
+
+    def read_local_original(self, resource_id, reference, *, _budget=None):
+        """Read only exact originals pinned by this committed root.
+
+        Local storage primitive only: transport callers must separately enforce
+        the subject's original bootstrap and current authorization.
+        """
+        s = self.source
+        budget = _budget if _budget is not None else wire.RepairBudget(s.policy)
+        wire._context(s.policy,budget)
+        ref = wire.raw_ref(wire.build_new_wire(reference,s.policy,budget).value)
+        with s._transaction() as now:
+            custody_row = s._one("SELECT * FROM open_repair_mailbox_root_custody WHERE resource_id=?",(resource_id,))
+            row = s._one("SELECT * FROM open_repair_mailbox_root_history WHERE resource_id=?",(resource_id,))
+            if custody_row is None or row is None:
+                wire._fail("repair_mailbox_history_missing")
+            if now >= min(custody_row["read_until"],custody_row["retain_until"]):
+                wire._fail("repair_resource_expired")
+            custody,manifest,pack = s._saved(custody_row,"custody"),s._saved(row,"manifest"),s._saved(row,"pack")
+            payload = wire.parse_new_wire(custody["raw"],s.policy,budget).value["payload"]
+            if payload["historical_manifest_ref"] != manifest["ref"]:
+                wire._fail("repair_storage_corrupt")
+            for value in (custody,manifest,pack):
+                if value["ref"] == ref.as_dict():
+                    return value["raw"]
+            parsed = history.parse_historical_manifest(manifest["raw"],s.policy,budget)
+            for role in parsed.value["roles"]:
+                if role["document_ref"] == ref.as_dict():
+                    if role["pack_ref"] != pack["ref"]:
+                        wire._fail("repair_storage_corrupt")
+                    packed = wire.parse_raw_pack(pack["raw"],pack["ref"],s.policy,budget)
+                    return packed.entry(role["entry_index"],ref).raw
+            wire._fail("repair_ref_missing")
+
     def prepare_history(self, resource_id, observation_id, *, _budget=None, _transaction_guard=None):
         """Pin the complete local root history before a future custody event.
 

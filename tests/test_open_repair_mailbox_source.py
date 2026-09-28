@@ -13,7 +13,7 @@ from tests import test_open_repair_mailbox_root as root_fixture
 class MailboxSourceTests(unittest.TestCase):
     def setUp(self):
         self.host = root_fixture.MailboxRootTests("test_anchor_catalog_and_slot_originals_persist_and_replay_after_restart")
-        if "history" in self._testMethodName:
+        if "history" in self._testMethodName or "custody" in self._testMethodName:
             self.host.anchor_budget_overrides = dict(max_meta_bytes=1048576)
         self.host.setUp();self.addCleanup(self.host.doCleanups)
         active = self.host.activate()
@@ -96,6 +96,67 @@ class MailboxSourceTests(unittest.TestCase):
             self.source.prepare_history(self.resource_id,"synthetic_observation")
         self.assertEqual(self.host.h.db.execute("SELECT count(*) FROM open_repair_mailbox_root_history").fetchone()[0],0)
         self.assertEqual(self.host.h.db.execute("SELECT metadata_bytes FROM open_repair_mailbox_resources WHERE resource_id=?",(self.resource_id,)).fetchone()[0],1048576)
+
+    def custody(self,**options):
+        return self.source.finalize_root(self.resource_id,read_until=self.until,retain_until=self.until,**options)
+
+    def test_custody_survives_restart_and_reads_every_exact_original(self):
+        self.owner_observation();self.observe()
+        saved = self.source.prepare_history(self.resource_id,"synthetic_observation")
+        custody = self.custody()
+        payload = json.loads(custody["raw"])["payload"]
+        self.assertEqual(payload["kind"],"root.custody")
+        self.assertEqual(payload["historical_manifest_ref"],saved["manifest"]["ref"])
+        self.assertEqual(len(payload["resource_refs"]["feeds"]),1)
+        self.host.h.db.close();self.host.h.connect()
+        self.source = MailboxRootSource(MailboxRootActivation(self.host.h.resources));self.source.initialize()
+        self.assertEqual(self.custody(),custody)
+        for value in (*saved.values(),custody):
+            self.assertEqual(self.source.read_local_original(self.resource_id,value["ref"]),value["raw"])
+        for role in json.loads(saved["manifest"]["raw"])["roles"]:
+            raw = self.source.read_local_original(self.resource_id,role["document_ref"])
+            import hashlib
+            self.assertEqual(hashlib.sha256(raw).hexdigest(),role["document_ref"]["raw_sha256"])
+        self.host.h.now = self.until
+        self.assertEqual(self.custody(),custody)
+        with self.assertRaisesRegex(RepairWireError,"repair_resource_expired"):
+            self.source.read_local_original(self.resource_id,custody["ref"])
+
+    def test_custody_requires_history_and_refuses_different_retry(self):
+        self.owner_observation();self.observe()
+        with self.assertRaisesRegex(RepairWireError,"repair_mailbox_history_missing"):
+            self.custody()
+        self.source.prepare_history(self.resource_id,"synthetic_observation")
+        self.custody()
+        with self.assertRaisesRegex(RepairWireError,"repair_custody_conflict"):
+            self.source.finalize_root(self.resource_id,read_until=self.until-1,retain_until=self.until)
+        altered = dict(self.host.offer["ref"],key="a"*64)
+        with self.assertRaisesRegex(RepairWireError,"repair_ref_missing"):
+            self.source.read_local_original(self.resource_id,altered)
+
+    def test_custody_final_expiry_rolls_back_event_and_charge(self):
+        self.owner_observation();self.observe()
+        self.source.prepare_history(self.resource_id,"synthetic_observation")
+        before = self.host.h.db.execute("SELECT metadata_bytes FROM open_repair_mailbox_resources WHERE resource_id=?",(self.resource_id,)).fetchone()
+        calls = []
+        def guard():
+            calls.append(True)
+            if len(calls)==2:
+                self.host.h.now = self.until
+        with self.assertRaises(RepairWireError):
+            self.custody(_transaction_guard=guard)
+        self.assertEqual(self.host.h.db.execute("SELECT count(*) FROM open_repair_mailbox_root_custody").fetchone()[0],0)
+        self.assertEqual(self.host.h.db.execute("SELECT metadata_bytes FROM open_repair_mailbox_resources WHERE resource_id=?",(self.resource_id,)).fetchone(),before)
+
+    def test_custody_partial_loss_cannot_create_a_new_original_promise(self):
+        self.owner_observation();self.observe()
+        self.source.prepare_history(self.resource_id,"synthetic_observation")
+        self.custody()
+        self.host.h.db.execute("DELETE FROM open_repair_mailbox_root_custody")
+        self.host.h.db.commit()
+        self.host.h.now += 1
+        with self.assertRaisesRegex(RepairWireError,"repair_mailbox_custody_missing"):
+            self.custody()
 
     def test_real_anchor_and_slot_resources_share_one_node_signed_original(self):
         result = self.observe();self.assertEqual(len(result),1)
