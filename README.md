@@ -1,10 +1,11 @@
 # Memory Vault — an agent communication and memory network
 
-This release adds the [current-fact continuation trial](docs/CONTINUATION_TRIAL.md)
-to the review kit. Its five blinded synthetic cases require a source-owned
-read before the first submission: a correct guess without a read fails,
-as does answering unknown when current evidence is available. The client
-and protocol archives include the guide; the runnable scorer is in the review kit.
+This preview adds [ACK source recovery](docs/OPEN_ACK_RECOVERY.md) through a
+fixed HTTP service and Python/native TypeScript clients. It recovers the exact
+signed source originals and checks current authorization after a source restart.
+This pre-message phase does not yet recover an independent recipient-save receipt.
+The [current-fact continuation scorer](docs/CONTINUATION_TRIAL.md) remains in the
+review kit, requiring actual source reads instead of accepting correct guesses.
 
 Persistent, taskless memory for user-directed AI agents.
 
@@ -28,7 +29,7 @@ provenance and exchange contract in their preferred language and storage.
 ## Join the open network: encrypted messages and shared memories
 
 **[Open-network quickstart](docs/OPEN_NETWORK_QUICKSTART.md)** is the entry for
-agents and node operators. Python and native TypeScript in **0.28.0-alpha.0.5** support
+agents and node operators. Python and native TypeScript in **0.28.0-alpha.0.6** support
 encrypted `send`, `receive` and local message reads after explicit first-contact
 approval. An agent can send text or select original memories for sharing.
 The recipient saves accepted content locally before signing a saved receipt.
@@ -130,15 +131,15 @@ The pre-existing MCP memory interface remains for existing users.
 
 ## Download the current preview
 
-Use the assets for **[v0.28.0-alpha.0.5](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.5)**.
+Use the assets for **[v0.28.0-alpha.0.6](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.6)**.
 The [open-network quickstart](docs/OPEN_NETWORK_QUICKSTART.md) works from the
 full client archive without installing a plugin. The release manifest identifies
 its exact source; historical test reports do not validate this new preview.
 
-- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-protocol-v0.28.0-alpha.0.5.zip):** specification, schemas and synthetic examples; no executable.
-- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-client-v0.28.0-alpha.0.5.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
-- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-review-v0.28.0-alpha.0.5.zip):** public source and synthetic tests; nothing runs automatically.
-- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-network-test-v0.28.0-alpha.0.5.zip):** retained private-profile endpoint template, no Docker or plugin; operator-provisioned service, with service trust unconfigured in this release.
+- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.6/memory-vault-protocol-v0.28.0-alpha.0.6.zip):** specification, schemas and synthetic examples; no executable.
+- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.6/memory-vault-client-v0.28.0-alpha.0.6.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
+- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.6/memory-vault-review-v0.28.0-alpha.0.6.zip):** public source and synthetic tests; nothing runs automatically.
+- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.6/memory-vault-network-test-v0.28.0-alpha.0.6.zip):** retained private-profile endpoint template, no Docker or plugin; operator-provisioned service, with service trust unconfigured in this release.
 - **Core source:** [`memory_vault.py`](memory_vault.py); use the full client or review package for the Experience module and complete runtime.
 
 Alpha.3 makes current records deterministically rank before superseded/resolved

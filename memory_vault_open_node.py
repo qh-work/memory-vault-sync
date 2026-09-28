@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import secrets
 import socket
+from socketserver import TCPServer
 import sqlite3
 import threading
 import time
@@ -30,7 +31,7 @@ from memory_vault_open_control import (
 from memory_vault_open_index import OpenIndex
 from memory_vault_open_routing import LookupBudget, RoutingTable, RpcReply, lookup, maintenance_target
 from memory_vault_open_state import OpenCheckpoints
-from memory_vault_open_transport import MAX_RPC_BYTES, RPC_PATH, OpenHTTPTransport, endpoint
+from memory_vault_open_transport import MAX_RPC_BYTES, MAX_REPAIR_BYTES, RPC_PATH, REPAIR_PATH, OpenHTTPTransport, endpoint
 from memory_vault_trust import Identity, _absolute_path, _atomic_write_private, _exclusive_store
 
 NODE_CONFIG = "memory-vault-open-node-config/v1"
@@ -138,7 +139,7 @@ class OpenParticipant:
                  descriptor: Mapping[str, Any] | None = None, allow_loopback: bool = False,
                   index_policy: Mapping[str, Any] | None = None, contact_policy: Mapping[str, Any] | None = None,
                   delivery_policy: Mapping[str, Any] | None = None, provider_policy: Mapping[str, Any] | None = None,
-                  encryption_identity=None):
+                  encryption_identity=None, repair_policy: Mapping[str, Any] | None = None):
         if not isinstance(seeds, list) or len(seeds) > 2:
             raise MemoryError("open_two_initial_introductions_maximum")
         self.identity = identity
@@ -163,7 +164,35 @@ class OpenParticipant:
         self.contact_policy = dict(contact_policy or {})
         self.delivery_policy = dict(delivery_policy or {})
         self.provider_policy = dict(provider_policy or {})
+        if repair_policy is not None and type(repair_policy) is not dict:
+            raise MemoryError("open_invalid_repair_policy")
+        self.repair_policy = dict(repair_policy or {})
+        if (set(self.repair_policy) - {"enabled", "limit_policy", "capacity_policy"}
+                or type(self.repair_policy.get("enabled", False)) is not bool):
+            raise MemoryError("open_invalid_repair_policy")
+        if self.repair_policy.get("limit_policy") is not None:
+            from memory_vault_open_repair_bootstrap import _limits
+            from memory_vault_open_repair_state import DEFAULT_POLICY
+            from memory_vault_open_repair_wire import RepairBudget, build_new_wire
+            limits = build_new_wire(self.repair_policy["limit_policy"], DEFAULT_POLICY, RepairBudget(DEFAULT_POLICY)).value
+            _limits(limits)
+            self.repair_policy["limit_policy"] = dict(limits)
+        # A common ceiling must bind identically before the first service
+        # initializes this database. Omission adopts an existing binding.
+        shared_capacity = self.repair_policy.get("capacity_policy")
+        if shared_capacity is not None:
+            from memory_vault_open_capacity import _policy
+            shared_capacity = _policy(shared_capacity)
+            self.repair_policy["capacity_policy"] = shared_capacity
+            for held in (self.contact_policy, self.provider_policy):
+                if held.get("capacity_policy") is not None and _policy(held["capacity_policy"]) != shared_capacity:
+                    raise MemoryError("open_capacity_policy_mismatch")
+            self.contact_policy["capacity_policy"] = shared_capacity
+            if self.provider_policy:
+                self.provider_policy["capacity_policy"] = shared_capacity
         self.encryption_identity = encryption_identity
+        if self.repair_policy.get("enabled", False) and (encryption_identity is None or own is None):
+            raise MemoryError("open_repair_identity_required")
         if self.provider_policy and encryption_identity is None:
             raise MemoryError("open_provider_encryption_identity_required")
         from memory_vault_open_contact_state import ContactState
@@ -192,6 +221,47 @@ class OpenParticipant:
                     from memory_vault_open_provider_state import ProviderState
                     ProviderState(db, identity, self.descriptor, encryption_identity=encryption_identity,
                                   **self.provider_policy).initialize()
+                if self.repair_policy.get("enabled", False):
+                    self._repair_service(db).initialize()
+
+    def _repair_service(self, db):
+        from memory_vault_open_repair_state import RepairAckState
+        from memory_vault_open_repair_service import RepairBootstrapService
+        state = RepairAckState(db, self.identity, self.descriptor,
+            encryption_identity=self.encryption_identity,
+            limit_policy=self.repair_policy.get("limit_policy"),
+            capacity_policy=self.repair_policy.get("capacity_policy"))
+        state.initialize()
+        return RepairBootstrapService(state)
+
+    def handle_repair(self, raw):
+        """Exact fixed-profile packets; service owns current access and replay."""
+        if not self.repair_policy.get("enabled", False):
+            raise MemoryError("open_repair_closed")
+        if type(raw) is not bytes or not 0 < len(raw) <= MAX_REPAIR_BYTES:
+            raise MemoryError("open_invalid_repair_request")
+        import memory_vault_open_repair_wire as repair_wire
+        from memory_vault_open_repair_state import DEFAULT_POLICY
+        meter = repair_wire.RepairBudget(DEFAULT_POLICY)
+        parsed = repair_wire.parse_new_wire(raw, DEFAULT_POLICY, meter)
+        signed = repair_wire.object_fields(parsed.value, {"payload", "proof"})
+        payload = signed["payload"]
+        if type(payload) is not repair_wire._DraftDict:
+            raise MemoryError("open_invalid_repair_request")
+        kind = payload.get("kind")
+        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request"):
+            raise MemoryError("open_invalid_repair_request")
+        digest = meter._hash(parsed.raw)
+        packet = dict(raw=parsed.raw, ref=dict(namespace="meta", key=digest, raw_sha256=digest, size=len(parsed.raw)))
+        with self.state.db() as db:
+            service = self._repair_service(db)
+            if kind == "bootstrap.probe":
+                result, child = service.challenge(packet).raw, False
+            elif kind == "bootstrap.answer":
+                result, child = service.answer(packet).raw, False
+            else:
+                result, child = service.child(packet), True
+        return result, child
 
     def close(self):
         self.transport.close()
@@ -584,6 +654,12 @@ class OpenHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 16
 
+    def server_bind(self):
+        # The configured numeric listener does not need reverse DNS merely
+        # to populate HTTPServer's display name; that lookup can stall startup.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
     def __init__(self, address, participant):
         self.participant = participant
         self._slots = threading.BoundedSemaphore(8)
@@ -688,19 +764,25 @@ class _Handler(BaseHTTPRequestHandler):
             return
         try:
             is_blob = self.path == "/open/v1/blob"
+            is_repair = self.path == REPAIR_PATH
             maximum = 270350 if is_blob else MAX_RPC_BYTES
             lengths = self.headers.get_all("Content-Length", [])
-            if (self.path not in {RPC_PATH, "/open/v1/blob"} or len(lengths) != 1 or not lengths[0].isascii()
+            if (self.path not in {RPC_PATH, "/open/v1/blob", REPAIR_PATH} or len(lengths) != 1 or not lengths[0].isascii()
                     or not lengths[0].isdigit() or not 0 < int(lengths[0]) <= maximum
-                    or self.headers.get("Transfer-Encoding") or self.headers.get("Content-Encoding")):
+                    or self.headers.get_all("Transfer-Encoding") or self.headers.get_all("Content-Encoding")):
                 raise MemoryError("open_invalid_http_request")
             if is_blob and (lengths[0] != str(int(lengths[0])) or self.headers.get_all("Content-Type", []) != ["application/octet-stream"]):
+                raise MemoryError("open_invalid_http_request")
+            if is_repair and (lengths[0] != str(int(lengths[0])) or self.headers.get_all("Content-Type", []) != ["application/json"]):
                 raise MemoryError("open_invalid_http_request")
             size = int(lengths[0])
             raw = self.rfile.read(size)
             if len(raw) != size:
                 raise MemoryError("open_invalid_http_request")
-            if is_blob:
+            is_child = False
+            if is_repair:
+                encoded, is_child = self.server.participant.handle_repair(raw)
+            elif is_blob:
                 from memory_vault_open_blob import decode_blob_frame, encode_blob_frame
                 frame = decode_blob_frame(raw)
                 response, chunk = self.server.participant.handle_blob(frame.header, frame.chunk)
@@ -711,8 +793,10 @@ class _Handler(BaseHTTPRequestHandler):
             if len(encoded) > maximum:
                 raise MemoryError("open_response_too_large")
             self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream" if is_blob else "application/json")
+            self.send_header("Content-Type", "application/octet-stream" if is_blob or is_child else "application/json")
             self.send_header("Content-Length", str(len(encoded)))
+            if is_repair:
+                self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(encoded)
@@ -741,7 +825,7 @@ class _HeaderBudget:
 def _run_node(config_path):
     raw = _read_private(config_path, MAX_RPC_BYTES)
     parsed = document(raw, maximum=MAX_RPC_BYTES)
-    optional = {"contact_policy", "delivery_policy", "provider_policy", "encryption_key_path"}
+    optional = {"contact_policy", "delivery_policy", "provider_policy", "repair_policy", "encryption_key_path"}
     config = object_fields(parsed,
                            {"schema_version", "identity_path", "state_directory", "node", "seeds", "allow_loopback", "index_policy", "listen_host", "listen_port"} | (optional & set(parsed)))
     if config["schema_version"] != NODE_CONFIG:
@@ -760,7 +844,8 @@ def _run_node(config_path):
                          seeds=config["seeds"], descriptor=config["node"],
                          allow_loopback=config["allow_loopback"], index_policy=config["index_policy"],
                          contact_policy=config.get("contact_policy"), delivery_policy=config.get("delivery_policy"),
-                         provider_policy=config.get("provider_policy"), encryption_identity=encryption_identity) as participant:
+                         provider_policy=config.get("provider_policy"), repair_policy=config.get("repair_policy"),
+                         encryption_identity=encryption_identity) as participant:
         participant._publication = publication
         server = OpenHTTPServer((config["listen_host"], config["listen_port"]), participant)
         stop = threading.Event()

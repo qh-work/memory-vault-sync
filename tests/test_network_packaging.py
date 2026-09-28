@@ -40,7 +40,16 @@ TS_NETWORK = {"clients/typescript/network/" + name for name in
                "open-client.ts", "open-node.ts", "client-config.ts", "transport-state.ts",
                "open-contact.ts", "open-contact-state.ts", "open-contact-client.ts",
                "open-blob.ts", "open-delivery.ts", "open-delivery-control.ts", "open-delivery-client.ts",
-               "open-provider.ts", "open-provider-client.ts", "open-capacity.ts")}
+               "open-provider.ts", "open-provider-client.ts", "open-capacity.ts",
+               "open-repair-wire.ts",
+               "open-repair-history.ts",
+               "open-repair-original.ts",
+               "open-repair-resource.ts",
+               "open-repair-bootstrap.ts",
+               "open-repair-status.ts",
+               "open-repair-ack.ts",
+               "open-repair-probe.ts",
+               "open-repair-proof.ts", "open-repair-client.ts")}
 TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
                      ("nodes", "records", "vault", "peer", "peer_race", "transport", "setup",
                       "retrieval_text", "retrieval", "agent", "agent_network", "topics")}
@@ -63,7 +72,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 70)
+        self.assertEqual(len(allowed), 84)
         self.assertTrue(NEW_MODULES | {"memory_vault_open_capacity.py"} | RUNTIME_DATA <= allowed)
         self.assertEqual({name for name in allowed if not name.endswith(".py")}, RUNTIME_DATA)
         for name in allowed:
@@ -93,7 +102,7 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
         self.assertGreaterEqual(len(review), 39)
-        self.assertEqual(len(TS_NETWORK), 39)
+        self.assertEqual(len(TS_NETWORK), 49)
         self.assertTrue(RUNTIME_DATA <= set(documents))
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
@@ -113,6 +122,15 @@ class NetworkPackagingTests(unittest.TestCase):
                          "tests/test_open_repair_status.py", "tests/test_open_repair_status_typescript.py",
                          "tests/open_repair_ack_fixtures.py", "tests/test_open_repair_ack.py",
                          "tests/test_open_repair_ack_typescript.py", "tests/test_open_repair_state.py",
+                         "tests/test_open_repair_probe.py",
+                         "tests/test_open_repair_probe_typescript.py",
+                         "tests/test_open_repair_proof.py",
+                         "tests/test_open_repair_proof_typescript.py",
+                         "tests/test_open_repair_access.py",
+                         "tests/test_open_repair_service.py",
+                         "tests/test_open_repair_service_budget.py",
+                         "tests/test_open_repair_http.py",
+                         "tests/test_open_repair_client.py",
                          "tests/test_open_capacity.py", "tests/test_open_capacity_typescript.py",
                          "tests/test_open_provider_status.py", "tests/test_open_provider_status_typescript.py"} <= set(review))
         repair_sources = literal(RELEASE, "LOCAL_REPAIR_REVIEW_SOURCES")
@@ -121,11 +139,20 @@ class NetworkPackagingTests(unittest.TestCase):
             "memory_vault_open_repair_original.py", "memory_vault_open_repair_resource.py",
             "memory_vault_open_repair_bootstrap.py", "memory_vault_open_repair_status.py",
             "memory_vault_open_repair_ack.py", "memory_vault_open_repair_state.py",
+            "memory_vault_open_repair_probe.py",
+            "memory_vault_open_repair_proof.py",
+            "memory_vault_open_repair_access.py",
+            "memory_vault_open_repair_service.py",
+            "memory_vault_open_repair_client.py",
+            "memory_vault_open_repair_admin.py",
+            "memory_vault_open_repair_bound.py",
             "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
             "clients/typescript/network/open-repair-wire.ts", "clients/typescript/network/open-repair-history.ts",
             "clients/typescript/network/open-repair-original.ts", "clients/typescript/network/open-repair-resource.ts",
             "clients/typescript/network/open-repair-bootstrap.ts", "clients/typescript/network/open-repair-status.ts",
-            "clients/typescript/network/open-repair-ack.ts", "clients/typescript/network/open-capacity.ts"})
+            "clients/typescript/network/open-repair-ack.ts", "clients/typescript/network/open-capacity.ts",
+            "clients/typescript/network/open-repair-probe.ts", "clients/typescript/network/open-repair-proof.ts",
+            "clients/typescript/network/open-repair-client.ts"})
         for name in repair_sources:
             self.assertTrue((ROOT / name).is_file())
         for name in ("docs/NATIVE_OPEN_PROVIDER.md", "docs/CONTINUATION_TRIAL.md", "docs/OPEN_NETWORK_QUICKSTART.md"):

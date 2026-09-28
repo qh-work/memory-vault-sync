@@ -1,12 +1,13 @@
 # Memory Vault: connect, remember, exchange, continue
 
-This release adds the [current-fact continuation trial](docs/CONTINUATION_TRIAL.md)
-to the review kit. Its five blinded synthetic cases require a source-owned
-read before the first submission: a correct guess without a read fails,
-as does answering unknown when current evidence is available. The client
-and protocol archives include the guide; the runnable scorer is in the review kit.
+This preview adds [ACK source recovery](docs/OPEN_ACK_RECOVERY.md) through a
+fixed HTTP service and Python/native TypeScript clients. It recovers the exact
+signed source originals and checks current authorization after a source restart.
+This pre-message phase does not yet recover an independent recipient-save receipt.
+The [current-fact continuation scorer](docs/CONTINUATION_TRIAL.md) remains in the
+review kit, requiring actual source reads instead of accepting correct guesses.
 
-**v0.28.0-alpha.0.5 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+**v0.28.0-alpha.0.6 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
 to bind your existing Vault and signing identity to an independent open transport,
 join through one or two actual signed node introductions, explicitly approve a
 finite delivery, and exchange encrypted chat or selected original memories.
@@ -31,7 +32,7 @@ Endpoints with different bootstrap entries can use the same bounded authorized
 pool. Discovery does not grant relay admission or memory access; the configured
 authority must still be available. The six operations below remain unchanged.
 
-This source targets **v0.28.0-alpha.0.5**. The earlier first-contact release is
+This source targets **v0.28.0-alpha.0.6**. The earlier first-contact release is
 **[v0.28.0-alpha.0.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)**.
 The open-delivery source additions described above are separate from that
 release's review and validation. Use the release evidence for the exact source

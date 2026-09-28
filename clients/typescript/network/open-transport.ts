@@ -6,6 +6,7 @@ import tls from 'node:tls';
 import http from 'node:http';
 import https from 'node:https';
 import {performance} from 'node:perf_hooks';
+import {isUint8Array} from 'node:util/types';
 import {canonicalBytes,document} from './crypto.ts';
 import type {DocumentInput} from './crypto.ts';
 import {NetworkError} from './io.ts';
@@ -15,6 +16,11 @@ import type {BlobFrame} from './open-blob.ts';
 
 export const MAX_RPC_BYTES=65536, RPC_PATH='/open/v1/rpc';
 export const MAX_NODE_BYTES=4096, NODE_PATH='/open/v1/node';
+export const MAX_REPAIR_BYTES=65536, REPAIR_PATH='/open/v1/repair/bootstrap';
+const typedArray=Object.getPrototypeOf(Uint8Array.prototype);
+const repairLength=Object.getOwnPropertyDescriptor(typedArray,'byteLength')!.get!;
+const repairOffset=Object.getOwnPropertyDescriptor(typedArray,'byteOffset')!.get!;
+const repairBuffer=Object.getOwnPropertyDescriptor(typedArray,'buffer')!.get!;
 export interface BlobReply extends BlobFrame {
   readonly observed_address:string;
   /** Complete response frame bytes, including framing and the signed header. */
@@ -113,8 +119,17 @@ export class OpenHTTPTransport{
     if(!Buffer.from(reply.raw).equals(Buffer.from(canonicalBytes(response,MAX_NODE_BYTES))))fail('open_node_response_noncanonical');
     return {response:response as any,observed_address:reply.observed_address,wire_bytes:reply.wire_bytes};
   }
+  /** Exact signed requests and protected ranges. HTTP is not authority. */
+  async requestRepair(base:string,raw:Uint8Array,deadline:number,options:{child?:boolean}={}):Promise<Uint8Array>{
+    if(!isUint8Array(raw)||typeof (options.child??false)!=='boolean')fail('open_invalid_repair_request');
+    const size=Reflect.apply(repairLength,raw,[]);
+    if(size<1||size>MAX_REPAIR_BYTES)fail('open_invalid_repair_request');
+    const held=Buffer.from(Buffer.from(Reflect.apply(repairBuffer,raw,[]),Reflect.apply(repairOffset,raw,[]),size));
+    const reply=await this.exchange(base,held,deadline,false,false,true,options.child??false);
+    return reply.raw;
+  }
   /** All fixed paths share the same endpoint, DNS, socket and TLS policy. */
-  private async exchange(base:string,raw:Uint8Array,deadline:number,blob:boolean,introduction=false):Promise<RawReply>{
+  private async exchange(base:string,raw:Uint8Array,deadline:number,blob:boolean,introduction=false,repair=false,repairChild=false):Promise<RawReply>{
     const destination=endpoint(base,this.allow_loopback),maximum=introduction?MAX_NODE_BYTES:blob?MAX_BLOB_FRAME_BYTES:MAX_RPC_BYTES;
     if(this.closed)fail('open_transport_closed');
     if(!Number.isFinite(deadline)||deadline<=clock()||this.active>=3)fail('open_budget_exhausted',true);
@@ -156,20 +171,20 @@ export class OpenHTTPTransport{
         let done=false,bytes=0;const chunks:Buffer[]=[];
         const finish=(error?:unknown,response?:RawReply)=>{if(done)return;done=true;clearTimeout(timer);connected.destroy();error?reject(error):accept(response!);};
         const request=(destination.scheme==='https'?https:http).request({hostname:destination.host,port:destination.port,
-          method:introduction?'GET':'POST',path:introduction?NODE_PATH:blob?BLOB_PATH:RPC_PATH,agent,maxHeaderSize:16384,
+          method:introduction?'GET':'POST',path:introduction?NODE_PATH:blob?BLOB_PATH:repair?REPAIR_PATH:RPC_PATH,agent,maxHeaderSize:16384,
           headers:{'Content-Type':blob?'application/octet-stream':'application/json','Content-Length':String(raw.length),'Accept-Encoding':'identity','Connection':'close'}},response=>{
           if(response.statusCode!==200){finish(new NetworkError('open_request_rejected',[429,503].includes(response.statusCode??0)));return;}
           const encoding=response.headers['content-encoding'],length=response.headers['content-length'];
-          if(blob||introduction){
-            const prefix=introduction?'open_node':'open_blob';
+          if(blob||introduction||repair){
+            const prefix=introduction?'open_node':repair?'open_repair':'open_blob';
             const names=response.rawHeaders.filter((_value,index)=>index%2===0).map(name=>name.toLowerCase());
-            if(response.headers['content-type']?.toLowerCase()!==(introduction?'application/json':'application/octet-stream')||
+            if(response.headers['content-type']?.toLowerCase()!==(introduction||(repair&&!repairChild)?'application/json':'application/octet-stream')||
               names.filter(name=>name==='content-type').length!==1||names.filter(name=>name==='content-length').length!==1||
               encoding!==undefined||response.headers['transfer-encoding']!==undefined){
               finish(new NetworkError(prefix+'_response_headers_rejected'));return;
             }
             if(length===undefined||!/^(0|[1-9][0-9]*)$/.test(length)||
-              Number(length)<(introduction?1:BLOB_PREFIX_BYTES+1)||Number(length)>maximum){
+              Number(length)<(introduction||repair?1:BLOB_PREFIX_BYTES+1)||Number(length)>maximum){
               finish(new NetworkError(prefix+'_response_length_rejected'));return;
             }
           }
@@ -180,7 +195,7 @@ export class OpenHTTPTransport{
           response.on('aborted',()=>finish(new NetworkError('open_network_unavailable',true)));
           response.on('end',()=>{if(done)return;try{
             if(clock()>=deadline)fail('open_budget_exhausted',true);
-            if((blob||introduction)&&bytes!==Number(length))fail((introduction?'open_node':'open_blob')+'_response_length_rejected');
+            if((blob||introduction||repair)&&bytes!==Number(length))fail((introduction?'open_node':repair?'open_repair':'open_blob')+'_response_length_rejected');
             finish(undefined,{raw:Buffer.concat(chunks),observed_address:observed,wire_bytes:bytes});
           }catch(error){finish(error);}});
         });

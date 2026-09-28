@@ -1,11 +1,13 @@
-# Memory Vault v0.28.0-alpha.0.5 independent review kit
+# Memory Vault v0.28.0-alpha.0.6 independent review kit
 
-This alpha.0.5 release adds an operator-run current-fact continuation scorer
-in the review kit, with documentation in the client and protocol packages.
-Thirteen focused scoring checks passed on source `640e65a`; the scorer is
-unchanged here. The delivery HTTP results below are from alpha.0.4.
-No new runtime suite, CI pass, model trial or 6 Pro review is claimed
-for this packaging release.
+This alpha.0.6 preview adds bounded recovery of an unbound ACK source through
+an opt-in Python HTTP node, with Python and native TypeScript recovery clients.
+It retains exact signed originals, current authorization checks and persistent
+source work/replay limits. This pre-message phase does not yet recover a saved
+recipient receipt or move a message to a replacement node. See
+`docs/OPEN_ACK_RECOVERY.md` in the package documentation and the release record
+for results tied to the exact source and archive bytes. The current-fact scorer
+from alpha.0.5 and the delivery-approval fix from alpha.0.4 are retained.
 
 The Python and native TypeScript open clients add encrypted messages and selected original
 memory sharing after explicit first-contact approval. Recipient-saved receipts

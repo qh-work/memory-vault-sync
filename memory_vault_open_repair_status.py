@@ -107,8 +107,8 @@ class AuthenticatedStatusOriginal:
     at: int
 
 
-def verify_status_original(entry, *, expected_root, expected_signing_key, at,
-                           allowed_scopes, required, policy, budget):
+def _status_original(entry, *, expected_root, expected_signing_key, at,
+                     allowed_scopes, required, policy, budget, enforce_required):
     """Verify one whole original and its required retained observations.
 
     allowed_scopes is the complete set whose originals the enclosing typed
@@ -135,7 +135,8 @@ def verify_status_original(entry, *, expected_root, expected_signing_key, at,
             ("allowed_scopes", {"scope_kind", "scope_id"}, allowed),
             ("required", {"scope_kind", "scope_id", "document_revision", "operation_mask"}, obligations)):
             values = expected[name]
-            if type(values) is not wire._DraftList or not 1 <= len(values) <= 16:
+            minimum = 0 if name == "required" and not enforce_required else 1
+            if type(values) is not wire._DraftList or not minimum <= len(values) <= 16:
                 _fail()
             for value in values:
                 _fields(value, fields)
@@ -199,3 +200,24 @@ def verify_status_original(entry, *, expected_root, expected_signing_key, at,
             if observation["operation_mask"] & obligation["operation_mask"] != obligation["operation_mask"]:
                 _fail("repair_status_operation")
         return AuthenticatedStatusOriginal(document.raw, ref, payload, raw_hash, canonical_hash, at)
+
+
+def authenticate_status_original(entry, *, expected_root, expected_signing_key, at,
+                                 allowed_scopes, policy, budget):
+    """Authenticate a whole, currently timed observation, including denials.
+
+    The caller must derive the finite disclosure scopes from verified parents.
+    This returns authenticated revoked/minimum/mask observations for a durable
+    gate to record before denying access; it grants no operation by itself.
+    """
+    return _status_original(entry, expected_root=expected_root,
+        expected_signing_key=expected_signing_key, at=at, allowed_scopes=allowed_scopes,
+        required=[], policy=policy, budget=budget, enforce_required=False)
+
+
+def verify_status_original(entry, *, expected_root, expected_signing_key, at,
+                           allowed_scopes, required, policy, budget):
+    """Authenticate one whole original and enforce its historical requirements."""
+    return _status_original(entry, expected_root=expected_root,
+        expected_signing_key=expected_signing_key, at=at, allowed_scopes=allowed_scopes,
+        required=required, policy=policy, budget=budget, enforce_required=True)

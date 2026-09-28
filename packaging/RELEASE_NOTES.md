@@ -1,46 +1,39 @@
-# Memory Vault v0.28.0-alpha.0.5 — current-fact continuation scorer
+# Memory Vault v0.28.0-alpha.0.6 — bounded ACK source recovery
 
-Adds a runnable, operator-controlled continuation scorer to the downloadable
-review kit. Five blinded synthetic cases require the recipient to read the
-current fact source before submitting an answer. A correct guess without a
-source-owned read fails; so does answering unknown when evidence is available.
-An old-but-still-correct control prevents rejecting every old observation from
-passing. The first submission is frozen, and later reads cannot repair it.
+Python and native TypeScript clients can recover the exact original evidence
+for a previously committed, unbound ACK source through a real HTTP service.
+The Python node retains possession challenges, replay state, authorization
+floors and admitted work charges across restart. Each request rechecks current
+access; a remembered revocation or conflicting status cannot grant a later read.
 
-[Download the review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-review-v0.28.0-alpha.0.5.zip)
-and follow [the continuation guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/CONTINUATION_TRIAL.md).
-After extraction, run from the review-kit directory:
+The full client includes an explicit recovery command and a new-node
+`--enable-repair` option. Recovery exports a new private evidence file and keeps
+all status witnesses needed for a later cold run. It does not open the Vault or
+alter existing identities. The native client uses its own crypto and transport.
 
-```sh
-python3 -B scripts/continuation_trial.py --output /absolute/private/new-trial --seconds 900
-```
+Use the [agent quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.6/docs/OPEN_NETWORK_QUICKSTART.md)
+for encrypted chat and selected original memory sharing, or the
+[ACK recovery guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.6/docs/OPEN_ACK_RECOVERY.md)
+for the separate operator recovery entry. Download the
+[full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.6/memory-vault-client-v0.28.0-alpha.0.6.zip)
+and verify its bytes against `SHA256SUMS` and `release-manifest.json`.
+Existing releases and private installations remain unchanged by extraction.
 
-Python 3.10+ and its standard library are sufficient. The output directory must
-be new, with an existing parent. The fixture listens only on loopback. Give each
-isolated candidate one assignment; keep source code, hidden case labels and the
-operator report outside the candidate's access. This records source responses
-and synthetic proposed actions, not model understanding or real-world actions.
-The full client and protocol archives include the guide; the runnable scorer
-and its tests are in the review kit.
+This release recovers the pre-message unbound ACK phase. Independent recovery
+of an actual recipient-save receipt, replacement-node message repair and
+automatic ACK garbage collection remain unfinished. The source must already
+hold the original authorized allocation; enabling the route does not allocate
+storage or authorize arbitrary reads. Finite grant, work and retained-history
+limits can reject a request. Participants operate their own nodes and exchange
+signed introductions; no project-hosted public server or default seed is added.
 
-The alpha.0.4 fix for `open_delivery_not_authorized` after recipient approval is
-retained. Agents can use Python or native TypeScript to exchange encrypted chat
-and selected original memories after explicit approval, with storage and
-recipient-save receipts. Use the [open-network quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.5/docs/OPEN_NETWORK_QUICKSTART.md)
-and [full client archive](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.5/memory-vault-client-v0.28.0-alpha.0.5.zip).
-Operators upgrading a node older than alpha.0.4 must update and restart its Python
-runtime while preserving identity, configuration and network.sqlite3. No database
-migration is needed; existing finite approvals and expiry checks still apply.
+The approval fix for `open_delivery_not_authorized` and the current-fact
+continuation scorer are retained. The scorer rejects guesses without a source
+read, includes an old-but-still-correct control and rejects avoidable unknown
+answers. It does not establish real-world adoption or model understanding.
 
-Validation scope: the unchanged scorer passed 13 focused synthetic checks on
-`640e65a574245f709c44c56bf14231584b7201a1`. The retained delivery fix passed three
-Python and two native TypeScript local HTTP regressions on
-`f87a1d295beb2ff8134a77d9978333a529da55e5`. These historical results are separate
-from this release's source/byte packaging checks. No new runtime suite, CI pass,
-6 Pro review, external-model trial or global acceptance is claimed.
-
-This is an experimental prerelease. Participants operate their own nodes and
-exchange real signed introductions; no project-operated public server is
-supplied. Delivery remains bound to the original approved node and finite lease.
-Replacement-node repair and independent receipt repair remain unfinished.
-Canonical memory and delivery protocols are unchanged in this packaging release.
+Validation uses deliberately synthetic identities and content, real
+cryptography, native TypeScript/Python interoperability and loopback HTTP.
+The publication record attaches the exact source, cloud run and archive hashes.
+Those results do not certify global reliability, independent adoption or the
+full thousand-agent requirement.

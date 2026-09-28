@@ -54,7 +54,7 @@ The full suite was not run; historical results retain their original source
 scope. Memory content never grants execution authority or automatically
 enrolls an author as trusted.
 
-Start: docs/OPEN_NETWORK_QUICKSTART.md (v0.28.0-alpha.0.5).
+Start: docs/OPEN_NETWORK_QUICKSTART.md (v0.28.0-alpha.0.6).
 
 The retained 0.27.0-alpha.1 private profile has an opt-in bounded relay pool with independently signed node
 discovery, different bootstrap entries and automatic fallback. It retains chat/memory

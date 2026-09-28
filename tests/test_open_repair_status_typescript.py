@@ -41,7 +41,8 @@ for(const c of calls){let budget;try{
     const errors=[];for(let i=0;i<2;i++){try{s.verifyStatusOriginal(entry,options);errors.push(null);}catch(e){errors.push(e.code??'untyped_error');}}
     results.push({ok:true,result:{errors},work:budget.snapshot(),subprocessCalls});continue;
   }
-  const value=s.verifyStatusOriginal(entry,options);
+  if(c.op==='authenticate')delete options.required;
+  const value=c.op==='authenticate'?s.authenticateStatusOriginal(entry,options):s.verifyStatusOriginal(entry,options);
   const original=Buffer.from(value.raw).toString('base64');
   if(c.mutate){entry.raw.fill(0);entry.ref.key='00'.repeat(32);options.expectedRoot.root_id='changed';value.raw.fill(0);}
   results.push({ok:true,result:{raw:Buffer.from(value.raw).toString('base64'),raw_sha256:value.raw_sha256,
@@ -82,6 +83,19 @@ class OpenRepairStatusTypeScriptTests(unittest.TestCase):
 
     def changed(self, mutate):
         return status_entry(resign_status(self.signed, self.signers["owner"], mutate))
+
+    def test_authenticated_denial_original_is_retained_without_granting_permission(self):
+        import memory_vault_open_repair_status as status
+        entry = self.changed(lambda payload: payload["entries"][0].update(status="revoked"))
+        native, denied = self.ts([self.call(entry, op="authenticate"), self.call(entry)])
+        self.assertTrue(native["ok"], native)
+        self.assertEqual(denied["code"], "repair_authority_revoked")
+        local = wire.RepairPolicy(**POLICY)
+        options = {key: value for key, value in self.options.items() if key != "required"}
+        py = status.authenticate_status_original(entry, **options, policy=local, budget=wire.RepairBudget(local))
+        self.assertEqual(base64.b64decode(native["result"]["raw"]), py.raw)
+        self.assertEqual(native["result"]["canonical_sha256"], py.canonical_sha256)
+        self.assertEqual(native["work"]["signature_checks"], 1)
 
     def test_original_raw_canonical_hashes_and_mutable_snapshots_match_python(self):
         import memory_vault_open_repair_status as status

@@ -39,11 +39,13 @@ def _read_seed(path: Path, now: int):
     return seed
 
 
-def initialize_node(directory: Path, *, base_url: str, listen_port: int = 8787, seeds=()):
+def initialize_node(directory: Path, *, base_url: str, listen_port: int = 8787, seeds=(), enable_repair=False):
     directory = _absolute_path(directory)
     endpoint(base_url, allow_loopback=False)
     if type(listen_port) is not int or not 1024 <= listen_port <= 65535:
         raise MemoryError("open_invalid_listener")
+    if type(enable_repair) is not bool:
+        raise MemoryError("open_invalid_repair_policy")
     if not isinstance(seeds, (list, tuple)) or len(seeds) > 2:
         raise MemoryError("open_two_initial_introductions_maximum")
     now = int(time.time())
@@ -92,6 +94,9 @@ def initialize_node(directory: Path, *, base_url: str, listen_port: int = 8787, 
             "maximum_meta_bytes": 64 * 1024 * 1024, "maximum_requests": 65536,
             "maximum_pending": 1024, "maximum_jobs": 4096, "maximum_job_bytes": 16 * 1024 * 1024}},
     }
+    if enable_repair:
+        from memory_vault_open_repair_state import DEFAULT_LIMITS
+        config["repair_policy"] = {"enabled": True, "limit_policy": dict(DEFAULT_LIMITS)}
     _write_new_private(config_path, canonical_bytes(config) + b"\n")
     # This file alone is shareable. It contains a signed public introduction,
     # never the config, filesystem paths or either private identity document.
@@ -106,7 +111,8 @@ def initialize_node(directory: Path, *, base_url: str, listen_port: int = 8787, 
         "introduction_expires_at": descriptor["payload"]["expires_at"],
         "start_command": shlex.join(command),
         "https_forward_to": "http://127.0.0.1:" + str(listen_port),
-        "https_paths": ["/open/v1/node", "/open/v1/rpc", "/open/v1/blob"],
+        "https_paths": ["/open/v1/node", "/open/v1/rpc", "/open/v1/blob"] +
+                       (["/open/v1/repair/bootstrap"] if enable_repair else []),
         "network_started": False,
     }
 
@@ -117,9 +123,11 @@ def main(argv=None):
     parser.add_argument("--base-url", required=True, help="your deployed public HTTPS origin")
     parser.add_argument("--listen-port", type=int, default=8787, help="local 127.0.0.1 port behind your HTTPS terminator (default: 8787)")
     parser.add_argument("--seed", type=Path, action="append", default=[], help="public signed node JSON file; repeat at most twice")
+    parser.add_argument("--enable-repair", action="store_true", help="serve existing authorized ACK source originals with finite repair limits")
     args = parser.parse_args(argv)
     try:
-        result = initialize_node(args.directory, base_url=args.base_url, listen_port=args.listen_port, seeds=args.seed)
+        result = initialize_node(args.directory, base_url=args.base_url, listen_port=args.listen_port,
+                                 seeds=args.seed, enable_repair=args.enable_repair)
     except (MemoryError, OSError) as exc:
         print(json.dumps({"error": getattr(exc, "code", "open_setup_storage_unavailable")}), file=sys.stderr)
         return 1

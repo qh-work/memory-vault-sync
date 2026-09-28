@@ -1513,6 +1513,59 @@ content/historical phase still uses its exact original disclosure/read roles.
 
 ### 9.3 Two-way possession and protected service proof
 
+The local original-R `ack_owner` access gate uses the following additional
+**candidate service-container role spellings**. They do not extend the owner's
+`allowed_roles` alphabet or grant an independent disclosure permission:
+
+| Service child role | Exact bytes and permission basis |
+|---|---|
+| `current.status.ack_root` | Whole current A status covering the exact stored root authority |
+| `current.status.ack_read` | Whole current A status covering the exact stored read grant |
+| `current.status.ack_owner_bootstrap` | Whole current A status covering the earlier exact bootstrap grant |
+| `current.status.ack_slot` | Whole current A status covering that typed AckSlot |
+| `current.status.ack_resource` | Whole current original-R status covering that exact resource and generation |
+| `history.raw_pack` | One complete exact pack needed by the retained `ack_unbound` manifest; every entry is used by its permitted input closure |
+
+That source profile also returns the 13 existing direct `ack_unbound` roles,
+`history.ack_unbound`, and `ack.unbound_custody`. `history.raw_pack` can repeat
+for distinct referenced packs. Distinct logical roles may name the same full
+status original; every returned child position and its transmitted bytes count
+to the proof limits. No pack membership or status projection supplies permission
+for another original: all contained Signed documents retain their own profile
+and complete-document disclosure checks.
+
+The current gate authenticates those five scope obligations at the server's
+current clock, separately from the retained source-event observations. Returning
+the first challenge requires root/bootstrap DISCOVER|READ (10); proof/child
+service requires READ (2). The read-grant, AckSlot and resource obligations each
+require READ. Original expiries, applicable probe/proof deadlines, read/retain
+windows, source custody read deadline and current status validity all intersect.
+The local caller's narrower permission to emit an opaque probe remains distinct
+from permission for the server to return its challenge or any private proof.
+
+Durable typed scope floors keep maximum observed status/minimum-document
+revisions, union all authenticated currently valid revoked bits even when that
+observation is rejected as older, and retain same-issuer/root/revision canonical
+Signed conflicts. Denials are committed before being returned. New exact status
+wire/ref observations change the service generation; an identical retry does
+not. Every child operation rechecks generation and current gates under the
+existing transport DB transaction. Current status originals and floor rows
+consume the same resource metadata ledger as source/setup/service state; an
+exhausted allowance retains a small, pre-reserved permanent denial latch.
+This candidate retains its admitted observations and floors without collection.
+Any future capacity reclamation must first implement complete source, status, replay and
+handle dependency accounting; status expiry alone is not permission to erase
+a known revocation or free a still-needed reservation.
+
+Those floors are keyed by issuer, RootKey and typed scope across local source
+resources, even though admitted originals and rows remain charged to their
+resource. A second allocation cannot reset an AckSlot's known revocation or
+minimum revision. A resource's complete proof must independently supply a
+current permitted original at that shared floor; the gate never substitutes
+another resource's unrelated whole status. If evidence storage is exhausted,
+the pre-reserved denial latch conservatively blocks that RootKey across local
+resources, so moving to a fresh allocation cannot discard an observed refusal.
+
 Every message below has the signed common fields plus exactly the listed
 fields. IDs are fresh bounded opaque IDs, nonces are fresh random 32 bytes,
 nonce answers are canonical Base64url, and keys/epoch match the exact target.

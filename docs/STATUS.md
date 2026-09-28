@@ -1,11 +1,13 @@
 # Memory Vault development status
 
-This alpha.0.5 release adds an operator-run current-fact continuation scorer
-in the review kit, with documentation in the client and protocol packages.
-Thirteen focused scoring checks passed on source `640e65a`; the scorer is
-unchanged here. The delivery HTTP results below are from alpha.0.4.
-No new runtime suite, CI pass, model trial or 6 Pro review is claimed
-for this packaging release.
+This alpha.0.6 preview adds bounded recovery of an unbound ACK source through
+an opt-in Python HTTP node, with Python and native TypeScript recovery clients.
+It retains exact signed originals, current authorization checks and persistent
+source work/replay limits. This pre-message phase does not yet recover a saved
+recipient receipt or move a message to a replacement node. See
+`docs/OPEN_ACK_RECOVERY.md` in the package documentation and the release record
+for results tied to the exact source and archive bytes. The current-fact scorer
+from alpha.0.5 and the delivery-approval fix from alpha.0.4 are retained.
 
 **Current development priority:** a globally decentralized network with bounded
 local routing and sharded resource growth, not a larger private relay pool.
@@ -15,7 +17,12 @@ private-first sequence. The first executable open routing slice now has
 source-pinned implementation and cloud evidence; the full architecture remains
 a development target, not a global reliability claim.
 
-Current source target: **0.28.0-alpha.0.5**, an open encrypted-delivery preview.
+This source includes bounded [ACK source recovery](OPEN_ACK_RECOVERY.md),
+with a real fixed HTTP service, durable possession/replay state, shared node
+capacity and a recovery command. This pre-message unbound phase does not yet
+complete independent recipient-receipt or mailbox recovery. The release manifest and uploaded assets establish publication separately.
+
+Current source target: **0.28.0-alpha.0.6**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use

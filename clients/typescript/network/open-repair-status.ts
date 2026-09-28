@@ -74,7 +74,7 @@ export interface AuthenticatedStatusOriginal {
   readonly raw:Uint8Array;readonly ref:RawRef;readonly payload:Readonly<Record<string,DraftValue>>;
   readonly raw_sha256:string;readonly canonical_sha256:string;readonly at:number;
 }
-export function verifyStatusOriginal(entry:unknown,options:StatusOriginalOptions):AuthenticatedStatusOriginal {
+function statusOriginal(entry:unknown,options:StatusOriginalOptions,enforceRequired:boolean):AuthenticatedStatusOriginal {
   const args=fields(options,['expectedRoot','expectedSigningKey','at','allowedScopes','required','policy','budget']);
   const input=fields(entry,['raw','ref']),policy=args.policy as RepairPolicy,budget=args.budget as RepairBudget;
   // Use the native typed-array getter directly; never invoke an input getter.
@@ -89,7 +89,8 @@ export function verifyStatusOriginal(entry:unknown,options:StatusOriginalOptions
     ['allowed_scopes',['scope_kind','scope_id'],allowed],
     ['required',['scope_kind','scope_id','document_revision','operation_mask'],obligations],
   ] as const){
-    const values=expected[name];if(!Array.isArray(values)||values.length<1||values.length>16)fail();
+    const values=expected[name],minimum=name==='required'&&!enforceRequired?0:1;
+    if(!Array.isArray(values)||values.length<minimum||values.length>16)fail();
     for(const value of values){fields(value,names);const key=scopeKey(value);if(target.has(key))fail();
       if(name==='required'){number(value.document_revision);mask(value.operation_mask);}target.set(key,value);}
   }
@@ -126,4 +127,19 @@ export function verifyStatusOriginal(entry:unknown,options:StatusOriginalOptions
   }
   return Object.freeze({payload,ref,raw_sha256:rawHash,canonical_sha256:canonicalHash,at,
     get raw():Uint8Array{budget.output(raw.length);return Uint8Array.from(raw);}});
+}
+
+/** Authenticate exact denial observations for retention before access refusal.
+ * Allowed scopes must still come from the independently verified parent chain.
+ * This return value grants no operation and does not maintain a status ledger.
+ */
+export function authenticateStatusOriginal(entry:unknown,
+  options:Omit<StatusOriginalOptions,'required'>):AuthenticatedStatusOriginal {
+  const args=fields(options,['expectedRoot','expectedSigningKey','at','allowedScopes','policy','budget']);
+  return statusOriginal(entry,{expectedRoot:args.expectedRoot,expectedSigningKey:args.expectedSigningKey,
+    at:args.at,allowedScopes:args.allowedScopes,required:[],policy:args.policy,budget:args.budget},false);
+}
+
+export function verifyStatusOriginal(entry:unknown,options:StatusOriginalOptions):AuthenticatedStatusOriginal {
+  return statusOriginal(entry,options,true);
 }

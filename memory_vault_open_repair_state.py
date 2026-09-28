@@ -23,8 +23,8 @@ import memory_vault_open_repair_status as status
 import memory_vault_open_repair_wire as wire
 
 
-DEFAULT_LIMITS = dict(max_probe_bytes=4096, max_proof_bytes=262144, max_proof_items=64,
-    max_signature_checks=64, max_requests=64, max_pending=8, max_replay_records=128,
+DEFAULT_LIMITS = dict(max_probe_bytes=8192, max_proof_bytes=262144, max_proof_items=64,
+    max_signature_checks=512, max_requests=64, max_pending=8, max_replay_records=128,
     max_concurrent_handles=8, max_candidate_attempts=8)
 DEFAULT_POLICY = wire.RepairPolicy(524288, 16000000, 400000, 64, 262144,
                                   16000000, 2000, 2000, 16000000, 64)
