@@ -1306,12 +1306,13 @@ def read_mailbox_index(head_entry, checkpoint_entry, *, expected_slot, expected_
 
 def read_mailbox_admission(member, *, expected_slot, expected_signing_key,
                            expected_owner, expected_sender, expected_target,
-                           encryption_identity, read_original, at, limit_policy=DEFAULT_LIMITS,
+                           encryption_identity, read_original, at, current_statuses, known_statuses=(),
+                           on_status_authenticated=None, limit_policy=DEFAULT_LIMITS,
                            policy=DEFAULT_POLICY, budget=None):
     """Fetch original admission bytes for an entry from read_mailbox_index.
 
     Authenticates the source event graph and encrypted core before fetching E.
-    The returned inputs still require current status and custody checks;
+    The returned inputs still require enclosing feed custody checks;
     this function neither imports memories nor grants trust to their contents.
     """
     import memory_vault_open_repair_resource as resource
@@ -1393,6 +1394,65 @@ def read_mailbox_admission(member, *, expected_slot, expected_signing_key,
         p=setup['resources'][name]['active'].payload
         deadlines.extend(p['windows'][field] for field in ('read_until','retain_until'))
     if core['enum_until']>min(deadlines):_fail('repair_mailbox_member_mismatch')
+    current=verify_mailbox_member_current(setup,current_statuses,known_entries=known_statuses,at=at,
+        policy=policy,budget=budget,on_authenticated=on_status_authenticated)
     envelope=load(core['envelope_ref'],'object')
     return dict(core=core,link=link,checkpoint=checkpoint,history=resolved,setup=setup,envelope=envelope,
-        originals=MappingProxyType(originals))
+        current_statuses=current,originals=MappingProxyType(originals))
+
+
+def verify_mailbox_member_current(setup, entries, *, known_entries=(), at,
+                                  policy=DEFAULT_POLICY, budget=None, on_authenticated=None):
+    """Check current READ evidence against the authenticated original member.
+
+    on_authenticated lets the caller persist whole observations before any
+    denial, including expired revocations. Retained observations grant nothing.
+    """
+    budget=budget or wire.RepairBudget(policy);wire._context(policy,budget);wire.u53(at)
+    if (type(entries) not in (list,tuple) or not 1<=len(entries)<=16
+            or type(known_entries) not in (list,tuple) or len(known_entries)>32
+            or (on_authenticated is not None and not callable(on_authenticated))):_fail('repair_invalid_status')
+    root=setup['originals']['slot'].payload['slot_key']['root_key']
+    obligations=[]
+    for item in setup['obligations']:
+        mask=0 if item['role']=='destination' else 10 if item['role']=='bootstrap' else 2
+        obligations.append(dict(item,operation_mask=mask))
+    for name in ('read','maintenance'):
+        p=setup['originals'][name].payload
+        if p['operation_mask']&2!=2:_fail('repair_authority_revoked')
+    if setup['disclosure']['operation_mask']&2!=2:_fail('repair_authority_revoked')
+    required={(v['signer']['key_id'],v['scope_kind'],v['scope_id']):v for v in obligations}
+    def authenticate(entry,current):
+        raw,ref=ack._entry(entry)
+        p=status._fields(status._fields(original.parse_original_control(raw,policy,budget).value,{'payload','proof'})['payload'],status._PAYLOAD)
+        issuer=p['scope_key']['issuer_key_id'];permitted=[v for v in obligations if v['signer']['key_id']==issuer]
+        if not permitted or wire.u53(p['issued_at'])>at:_fail('repair_status_mismatch')
+        return status.authenticate_status_original(dict(raw=raw,ref=ref.as_dict()),expected_root=root,
+            expected_signing_key=permitted[0]['signer'],at=at if current else p['issued_at'],
+            allowed_scopes=[dict(scope_kind=v['scope_kind'],scope_id=v['scope_id']) for v in permitted],
+            policy=policy,budget=budget,on_authenticated=on_authenticated)
+    retained=[*setup['statuses'],*(authenticate(entry,False) for entry in known_entries)]
+    current=[authenticate(entry,True) for entry in entries]
+    seen={};floors={};covered=set()
+    for observed in (*retained,*current):
+        issuer=observed.payload['scope_key']['issuer_key_id'];revision=observed.payload['revision'];identity=(issuer,revision)
+        if identity in seen and seen[identity]!=observed.canonical_sha256:_fail('repair_status_conflict')
+        seen[identity]=observed.canonical_sha256
+        for value in observed.payload['entries']:
+            key=(issuer,value['scope_kind'],value['scope_id']);wanted=required[key];mask=wanted['operation_mask']
+            if value['status']=='revoked' and value['operation_mask']&mask:_fail('repair_authority_revoked')
+            if mask and value['minimum_document_revision']>wanted['document_revision']:_fail('repair_status_revision')
+            floors.setdefault(key,[]).append((revision,value['minimum_document_revision']))
+    for values in floors.values():
+        minimum=0
+        for _,floor in sorted(values):
+            if floor<minimum:_fail('repair_status_rollback')
+            minimum=floor
+    for observed in current:
+        issuer=observed.payload['scope_key']['issuer_key_id'];revision=observed.payload['revision']
+        for value in observed.payload['entries']:
+            key=(issuer,value['scope_kind'],value['scope_id']);wanted=required[key];mask=wanted['operation_mask']
+            if revision<max(v[0] for v in floors[key]):_fail('repair_status_rollback')
+            if mask and value['status']=='active' and value['operation_mask']&mask==mask:covered.add(key)
+    if covered!={key for key,value in required.items() if value['operation_mask']}:_fail('repair_status_missing')
+    return tuple(current)

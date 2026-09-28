@@ -275,6 +275,8 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         member_args=dict(expected_slot=slot,expected_signing_key=self.host.identities[0].public_descriptor(),
             expected_owner=owner,expected_sender=dict(signing_key=self.ai.public_descriptor(),encryption_key=sender_encryption.public_descriptor()),
             expected_target=source.target,
+            current_statuses=list({value.original.ref.raw_sha256:dict(raw=value.original.raw,ref=value.original.ref.as_dict())
+                for value in resolved.roles if value.role.startswith('historical.status.')}.values()),
             encryption_identity=owner_encryption,read_original=read_member_original,at=int(time.time()))
         recovered=read_mailbox_admission(members[0],**member_args)
         self.assertEqual(recovered['envelope'],envelope)
@@ -317,6 +319,25 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         db.execute('INSERT INTO open_mailbox_admission_objects VALUES(?,?,?,?)',(missing,ref['raw_sha256'],ref['size'],value['raw']))
         db.commit()
         revoked=status_entry(issue_status(self.bi,root=root,revision=3,entries=[dict(value,status='revoked') for value in scoped],issued_at=now,valid_until=now+100))
+        denied=[];authority_reads.clear()
+        with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
+            read_mailbox_admission(members[0],**dict(member_args,known_statuses=[revoked],
+                on_status_authenticated=denied.append,read_original=traced_original))
+        self.assertNotIn('object',authority_reads)
+        self.assertTrue(any(value.payload['revision']==3 for value in denied))
+        from memory_vault_open_repair_client import verify_mailbox_member_current
+        expired=status_entry(issue_status(self.bi,root=root,revision=3,entries=[dict(value,status='revoked') for value in scoped],
+            issued_at=now-10,valid_until=now-1))
+        retained=[]
+        with self.assertRaisesRegex(RepairWireError,'repair_status_mismatch'):
+            verify_mailbox_member_current(recovered['setup'],[expired],at=int(time.time()),on_authenticated=retained.append)
+        self.assertEqual(len(retained),1)
+        with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
+            verify_mailbox_member_current(recovered['setup'],member_args['current_statuses'],known_entries=[expired],at=int(time.time()))
+        without_sender=[entry for entry in member_args['current_statuses']
+            if json.loads(entry['raw'])['payload']['signing_key']['key_id']!=self.ai.key_id]
+        with self.assertRaisesRegex(RepairWireError,'repair_status_missing'):
+            verify_mailbox_member_current(recovered['setup'],without_sender,at=int(time.time()))
         from memory_vault_open_repair_mailbox_activation import verify_mailbox_member_inputs
         altered={value.role:dict(raw=value.original.raw,ref=value.original.ref.as_dict()) for value in recovered['history'].roles}
         for name in ('slot','read','maintenance','bootstrap','destination'):
