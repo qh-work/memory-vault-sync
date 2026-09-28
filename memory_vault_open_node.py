@@ -290,6 +290,13 @@ class OpenParticipant:
         from memory_vault_open_repair_state import DEFAULT_POLICY
         meter = repair_wire.RepairBudget(DEFAULT_POLICY)
         parsed = repair_wire.parse_new_wire(raw, DEFAULT_POLICY, meter)
+        if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "mailbox.source_allocate":
+            from memory_vault_open_repair_remote_setup import MailboxRemoteSetupService
+            with self.state.db() as db:
+                service = MailboxRemoteSetupService(self._repair_service(db).state,
+                    policy=self.repair_policy.get("remote_setup"))
+                service.initialize()
+                return service.handle(parsed.raw), False
         if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "ack.source_allocate":
             with self.state.db() as db:
                 return self._repair_remote_setup_service(db).handle(parsed.raw), False

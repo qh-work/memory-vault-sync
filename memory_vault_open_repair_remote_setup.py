@@ -404,3 +404,119 @@ class RepairRemoteSetupService:
             return response
         finally:
             self._settle(ctx,budget,response)
+
+
+class MailboxRemoteSetupService:
+    """Finite opt-in remote mailbox allocation with resumable exact originals."""
+    def __init__(self, state, *, policy=None):
+        from memory_vault_open_repair_mailbox_resources import RepairMailboxResources
+        self.state,self.db=state,state.db
+        self.policy=remote_policy(policy)
+        self.resources=RepairMailboxResources(state)
+
+    def initialize(self):
+        self.resources.initialize()
+        with self.state._transaction():
+            if self.policy['enabled']:
+                encoded=canonical_bytes({k:v for k,v in self.policy.items() if k!='enabled'}).decode()
+                old=self.state._one("SELECT value FROM open_repair_state WHERE name='mailbox_remote_setup_policy'")
+                if old is not None and old['value']!=encoded:
+                    wire._fail('repair_remote_policy_mismatch')
+                self.db.execute("INSERT OR IGNORE INTO open_repair_state VALUES('mailbox_remote_setup_policy',?)",(encoded,))
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_repair_mailbox_remote_owners(
+                owner TEXT PRIMARY KEY,requests INTEGER NOT NULL,signatures INTEGER NOT NULL,
+                bytes INTEGER NOT NULL,metadata INTEGER NOT NULL)''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_repair_mailbox_remote_allocations(
+                owner TEXT NOT NULL,root_digest TEXT NOT NULL,request_digest TEXT NOT NULL,
+                request BLOB NOT NULL,response BLOB,retain_until INTEGER NOT NULL,
+                PRIMARY KEY(owner,root_digest))''')
+
+    def handle(self, raw):
+        from dataclasses import replace
+        if not self.policy['enabled']:
+            wire._fail('repair_remote_setup_closed')
+        if type(raw) is not bytes or not 0<len(raw)<=MAX_BYTES:
+            wire._fail('repair_remote_setup_too_large')
+        s=self.state
+        budget=wire.RepairBudget(replace(s.policy,max_signature_checks=min(s.policy.max_signature_checks,self.policy['max_signatures'])))
+        request=wire.parse_new_wire(raw,budget.policy,budget)
+        p=wire.object_fields(request.value,{'schema_version','kind','owner','allocations'})
+        if p['schema_version']!=SCHEMA or p['kind']!='mailbox.source_allocate':
+            wire._fail('repair_remote_setup_mismatch')
+        owner=p['owner'];owner_id=resource._dual_key(owner,budget)['signing_key_id']
+        if type(p['allocations']) is not wire._DraftList or len(p['allocations'])!=3:
+            wire._fail('repair_invalid_resource')
+        entries=[decode_entry(value,budget.policy,budget) for value in p['allocations']]
+        # Author identity and intent are established before charging that owner.
+        # The shared capacity transaction still authorizes every actual reserve.
+        # Local mailbox operations currently use the node's exact wire policy.
+        if budget.policy!=s.policy:
+            wire._fail('repair_remote_setup_capacity')
+        checked=[self.resources._validate(entry,owner,budget) for entry in entries]
+        intents=[item[2]['intent'] for item in checked]
+        if ({v['purpose'] for v in intents}!={'anchor_catalog','feed_metadata','mailbox_data'}
+                or len({v['allocation_id'] for v in intents})!=3 or any(v['root_key']!=intents[0]['root_key'] for v in intents)):
+            wire._fail('repair_remote_setup_mismatch')
+        root_digest=budget._hash(wire._canonical(intents[0]['root_key'],budget));digest=budget._hash(request.raw)
+        until=max(v['windows']['retain_until'] for v in intents)
+        limit=s.limits
+        for intent in intents:
+            ceilings=dict(max_live_bytes=6*1024*1024,max_meta_bytes=4*limit['max_proof_bytes'],max_items=128,
+                max_requests=limit['max_signature_checks'],max_pending=limit['max_pending'],max_replay_records=limit['max_replay_records'],
+                max_jobs=16,max_job_bytes=limit['max_proof_bytes'])
+            if any(intent['budget'][k]>v for k,v in ceilings.items()):
+                wire._fail('repair_remote_setup_capacity')
+        allowance=budget.policy.max_signature_checks
+        byte_allowance=len(raw)+MAX_BYTES
+        with s._transaction() as now:
+            marker=s._one("SELECT value FROM open_repair_state WHERE name='mailbox_remote_setup_policy'")
+            if marker is None or marker['value']!=canonical_bytes({k:v for k,v in self.policy.items() if k!='enabled'}).decode():
+                wire._fail('repair_remote_policy_mismatch')
+            old=s._one("SELECT * FROM open_repair_mailbox_remote_allocations WHERE owner=? AND root_digest=?",(owner_id,root_digest))
+            if old is not None and old['request_digest']!=digest:
+                wire._fail('repair_remote_setup_conflict')
+            usage=s._one("SELECT * FROM open_repair_mailbox_remote_owners WHERE owner=?",(owner_id,))
+            if usage is None:
+                if old is not None:
+                    wire._fail('repair_remote_setup_ledger_missing')
+                if self.db.execute("SELECT count(*) FROM open_repair_mailbox_remote_owners").fetchone()[0]>=self.policy['max_owners']:
+                    wire._fail('repair_remote_setup_capacity')
+                s.capacity.reserve('mailbox','setup_'+owner_id,budget._hash(owner_id.encode()),self.policy['max_journal_bytes'],
+                    until,owner=owner_id,operation_id='mailbox_remote_setup')
+                self.db.execute("INSERT INTO open_repair_mailbox_remote_owners VALUES(?,0,0,0,0)",(owner_id,))
+                usage=dict(requests=0,signatures=0,bytes=0,metadata=0)
+            metadata=0 if old is not None else len(raw)+MAX_BYTES+2*ROW_CHARGE
+            roots=self.db.execute("SELECT count(*) FROM open_repair_mailbox_remote_allocations WHERE owner=?",(owner_id,)).fetchone()[0]
+            if (usage['requests']>=self.policy['max_requests'] or usage['signatures']+allowance>self.policy['max_signatures']
+                    or usage['bytes']+byte_allowance>self.policy['max_bytes'] or usage['metadata']+metadata>self.policy['max_journal_bytes']
+                    or (old is None and (roots+1)*3>self.policy['max_owner_resources'])):
+                wire._fail('repair_remote_setup_capacity')
+            if old is None:
+                pending=self.db.execute("SELECT count(*) FROM open_repair_mailbox_remote_allocations WHERE owner=? AND response IS NULL",(owner_id,)).fetchone()[0]
+                if pending>=self.policy['max_pending']:
+                    wire._fail('repair_remote_setup_capacity')
+                if any(not item[2]['issued_at']<=now<item[2]['expires_at'] for item in checked) or min(min(v['windows'].values()) for v in intents)<=now:
+                    wire._fail('repair_resource_expired')
+                if max(max(v['windows'].values()) for v in intents)>now+self.policy['max_lifetime']:
+                    wire._fail('repair_remote_setup_mismatch')
+                self.db.execute("INSERT INTO open_repair_mailbox_remote_allocations VALUES(?,?,?,?,NULL,?)",(owner_id,root_digest,digest,raw,until))
+            self.db.execute("UPDATE open_repair_mailbox_remote_owners SET requests=requests+1,signatures=signatures+?,bytes=bytes+?,metadata=metadata+? WHERE owner=?",
+                (allowance,byte_allowance,metadata,owner_id))
+        response=None
+        try:
+            if old is not None and old['response'] is not None:
+                response=bytes(old['response'])
+                return response
+            offers=self.resources.allocate_initial(entries,expected_owner=owner,_budget=budget)
+            response=wire.build_new_wire(dict(schema_version=SCHEMA,kind='mailbox.source_offers',root_key=intents[0]['root_key'],
+                offers={name:encode_entry(value,budget.policy,budget) for name,value in offers.items()}),budget.policy,budget).raw
+            if len(response)>MAX_BYTES:
+                wire._fail('repair_remote_setup_too_large')
+            with s._transaction():
+                self.db.execute("UPDATE open_repair_mailbox_remote_allocations SET response=? WHERE owner=? AND root_digest=? AND request_digest=?",
+                    (response,owner_id,root_digest,digest))
+            return response
+        finally:
+            with s._transaction():
+                self.db.execute("UPDATE open_repair_mailbox_remote_owners SET signatures=signatures-?,bytes=bytes-? WHERE owner=?",
+                    (allowance-budget.snapshot()['signature_checks'],MAX_BYTES-(len(response) if response is not None else 0),owner_id))

@@ -234,7 +234,7 @@ class MailboxSourceTests(unittest.TestCase):
             verify(signed_entry(changed,h.f["signers"]["target"],"synthetic_incomplete_custody"),incomplete)
         h.connect()
 
-    def http_service(self, h):
+    def http_service(self, h, *, remote_setup=False):
         import threading
         import time
         from unittest.mock import patch
@@ -243,7 +243,7 @@ class MailboxSourceTests(unittest.TestCase):
         self.enterContext(patch("time.time",side_effect=lambda:h.now))
         participant=OpenParticipant(h.source.identity,h.path.parent,seeds=[],descriptor=h.f["docs"]["descriptor"],
             encryption_identity=h.source.encryption_identity,allow_loopback=True,
-            repair_policy=dict(enabled=True,limit_policy=dict(h.source.limits)))
+            repair_policy=dict(enabled=True,limit_policy=dict(h.source.limits),remote_setup=dict(enabled=remote_setup)))
         server=OpenHTTPServer(("127.0.0.1",0),participant)
         thread=threading.Thread(target=server.serve_forever,kwargs=dict(poll_interval=.02),daemon=True);thread.start()
         def close():
@@ -419,13 +419,37 @@ class MailboxSourceTests(unittest.TestCase):
         root=copy.deepcopy(h.root);root["root_id"]="synthetic_builder_root";root["anchor_ref"]["key"]="f"*64
         slot=dict(h.slot_key,root_key=root,slot_id="synthetic_builder_slot")
         caps=copy.deepcopy(h.f["docs"]["allocate"]["payload"]["intent"]["budget"]);caps["max_meta_bytes"]=1048576
+        if "remote" in self._testMethodName:
+            caps["max_pending"]=h.source.limits["max_pending"]
+            caps["max_replay_records"]=h.source.limits["max_replay_records"]
         plan=dict(root_key=root,slot_key=slot,sender=dict(signing_key_id=h.f["signers"]["writer"].key_id,
             encryption_key_id=h.f["encryption"]["writer"].key_id),target=h.source.target,budget=caps,
             windows={name:h.now+600 for name in h.f["docs"]["allocate"]["payload"]["intent"]["windows"]},
             limits=LIMITS,max_appends=16,max_live_items=16)
         builder=MailboxSetupBuilder(h.f["signers"]["owner"],h.f["encryption"]["owner"],plan)
         allocations=builder.allocation_requests(at=h.now,expires_at=h.now+60)
-        offers=h.resources.allocate_initial(list(allocations.values()),expected_owner=h.owner)
+        if "remote" in self._testMethodName:
+            from memory_vault_open_repair_bind import decode_entry
+            from memory_vault_open_transport import OpenHTTPTransport
+            import time
+            remote=self.http_service(h,remote_setup=True)
+            transport=OpenHTTPTransport(allow_loopback=True);self.addCleanup(transport.close)
+            packet=builder.allocation_packet(allocations)
+            raw=transport.request_repair(remote.base_url,packet,deadline=time.monotonic()+15)
+            self.assertEqual(raw,transport.request_repair(remote.base_url,packet,deadline=time.monotonic()+15))
+            changed=builder.allocation_packet(builder.allocation_requests(at=h.now,expires_at=h.now+59))
+            with self.assertRaisesRegex(RepairWireError,"repair_remote_setup_conflict"):
+                remote.participant.handle_repair(changed)
+            import memory_vault_open_repair_wire as wire
+            parsed=wire.parse_new_wire(raw,DEFAULT_POLICY,wire.RepairBudget(DEFAULT_POLICY)).value
+            self.assertEqual(parsed["kind"],"mailbox.source_offers")
+            offers={name:decode_entry(value,DEFAULT_POLICY,wire.RepairBudget(DEFAULT_POLICY)) for name,value in parsed["offers"].items()}
+            remote.participant.repair_policy["remote_setup"]["enabled"]=False
+            from memory_vault import MemoryError
+            with self.assertRaisesRegex(MemoryError,"open_request_rejected"):
+                transport.request_repair(remote.base_url,packet,deadline=time.monotonic()+15)
+        else:
+            offers=h.resources.allocate_initial(list(allocations.values()),expected_owner=h.owner)
         entries=builder.slot_documents(allocations,offers,at=h.now,expires_at=h.now+600)
         slot_result=self.source.root.slots.activate(entries,expected_slot=slot)
         root_entries=builder.root_documents(allocations,offers,entries,slot_result,at=h.now,expires_at=h.now+600)
@@ -444,6 +468,9 @@ class MailboxSourceTests(unittest.TestCase):
         wrong=dict(offers);wrong["mailbox_data"]=offers["feed_metadata"]
         with self.assertRaises(RepairWireError):
             builder.slot_documents(allocations,wrong,at=h.now,expires_at=h.now+600)
+
+    def test_custody_remote_setup_builder_allocates_over_real_http(self):
+        self.test_custody_setup_builder_creates_actual_root_without_handwritten_authorities()
 
     def test_real_anchor_and_slot_resources_share_one_node_signed_original(self):
         result = self.observe();self.assertEqual(len(result),1)

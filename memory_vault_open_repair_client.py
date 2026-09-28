@@ -670,6 +670,16 @@ class MailboxSetupBuilder:
                 intent=intent,intent_sha256=digest),at,expires_at,budget)
         return result
 
+    def allocation_packet(self, allocations):
+        from memory_vault_open_repair_bind import encode_entry
+        import memory_vault_open_repair_resource as resource
+        purposes=("anchor_catalog","feed_metadata","mailbox_data")
+        resource._fields(allocations,set(purposes))
+        budget=wire.RepairBudget(self.policy)
+        return wire.build_new_wire(dict(schema_version=proof.SCHEMA,kind="mailbox.source_allocate",
+            owner=self.owner,allocations=[encode_entry(allocations[name],self.policy,budget) for name in purposes]),
+            self.policy,budget).raw
+
     def _offers(self, allocations, offers, at, budget):
         import memory_vault_open_repair_resource as resource
         import memory_vault_open_repair_history as history
