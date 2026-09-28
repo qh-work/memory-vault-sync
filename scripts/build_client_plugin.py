@@ -48,6 +48,7 @@ REQUIRED_MODULES = (
     "memory_vault_open_repair_ack.py",
     "memory_vault_open_repair_state.py",
     "memory_vault_open_repair_mailbox_resources.py",
+    "memory_vault_open_repair_mailbox_activation.py",
     "memory_vault_open_repair_probe.py",
     "memory_vault_open_repair_proof.py",
     "memory_vault_open_repair_access.py",
