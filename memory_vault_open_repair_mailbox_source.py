@@ -426,3 +426,138 @@ class MailboxRootSource:
             self.db.execute("UPDATE open_repair_mailbox_resources SET metadata_bytes=metadata_bytes+? WHERE resource_id=?",(charge,resource_id))
             deadlines.append(valid_until)
             return result
+
+
+class MailboxRecoveryService:
+    """Persistent recipient possession exchange over an original root custody.
+
+    The challenge phase reveals no mailbox originals. Proof publication and
+    transport routing are separate operations and are not enabled by this class.
+    """
+    def __init__(self, mailbox):
+        self.mailbox,self.source,self.db = mailbox,mailbox.source,mailbox.db
+
+    def initialize(self):
+        self.mailbox.initialize()
+        with self.source._transaction():
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_repair_mailbox_recovery_usage(
+                resource_id TEXT PRIMARY KEY,requests INTEGER NOT NULL,signatures INTEGER NOT NULL)''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_repair_mailbox_recovery_challenges(
+                resource_id TEXT NOT NULL,subject TEXT NOT NULL,probe_id TEXT NOT NULL,
+                probe BLOB NOT NULL,probe_ref BLOB NOT NULL,challenge BLOB NOT NULL,
+                challenge_ref BLOB NOT NULL,nonce BLOB NOT NULL,expires_at INTEGER NOT NULL,
+                PRIMARY KEY(subject,probe_id))''')
+
+    def _usage_locked(self, rid):
+        s=self.source
+        row=s._one("SELECT * FROM open_repair_mailbox_recovery_usage WHERE resource_id=?",(rid,))
+        marker=s._one("SELECT value FROM open_repair_state WHERE name=?",("mailbox_recovery:"+rid,))
+        count=self.db.execute("SELECT count(*) FROM open_repair_mailbox_recovery_challenges WHERE resource_id=?",(rid,)).fetchone()[0]
+        if ((row is None)!=(marker is None) or (row is None and count)
+                or (row is not None and (count>row["requests"] or marker["value"]!=s._expected_binding()+"|"+str(row["requests"])+"|"+str(row["signatures"])) )):
+            wire._fail("repair_mailbox_recovery_ledger_missing")
+        return row
+
+    def _mark_usage_locked(self, rid):
+        row=self.source._one("SELECT * FROM open_repair_mailbox_recovery_usage WHERE resource_id=?",(rid,))
+        self.db.execute("INSERT INTO open_repair_state VALUES(?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value",
+            ("mailbox_recovery:"+rid,self.source._expected_binding()+"|"+str(row["requests"])+"|"+str(row["signatures"])))
+
+    def challenge(self, entry):
+        from dataclasses import replace
+        import memory_vault_open_repair_probe as probe
+        s=self.source
+        preview_budget=wire.RepairBudget(s.policy)
+        parsed,ref=s._entry(entry,preview_budget)
+        signed=probe._fields(parsed.value,{"payload","proof"})
+        payload=probe._fields(signed["payload"],probe._FIELDS["probe"])
+        original._digest(payload["bootstrap_grant_sha256"])
+        subject=resource._dual_key_shape(payload["subject"])
+        original._key_id(subject["signing_key"]["key_id"])
+        rows=self.db.execute('''SELECT r.resource_id FROM open_repair_mailbox_roots r
+            JOIN open_repair_mailbox_root_custody c ON c.resource_id=r.resource_id
+            WHERE r.owner=? AND json_extract(r.inputs,'$.bootstrap.ref.raw_sha256')=? LIMIT 2''',
+            (subject["signing_key"]["key_id"],payload["bootstrap_grant_sha256"])).fetchall()
+        if len(rows)!=1:
+            wire._fail("repair_service_unavailable")
+        rid=rows[0][0]
+        row=s._one("SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?",(rid,))
+        root=s._one("SELECT * FROM open_repair_mailbox_roots WHERE resource_id=?",(rid,))
+        custody=s._one("SELECT * FROM open_repair_mailbox_root_custody WHERE resource_id=?",(rid,))
+        inputs=wire.parse_new_wire(bytes(root["inputs"]),s.policy,preview_budget).value
+        grant=wire.parse_new_wire(inputs["bootstrap"]["raw"].encode(),s.policy,preview_budget).value["payload"]
+        offer=wire.parse_new_wire(s._saved(row,"offer")["raw"],s.policy,preview_budget).value["payload"]
+        usage=s._one("SELECT * FROM open_repair_mailbox_recovery_usage WHERE resource_id=?",(rid,))
+        allowance=min(s.policy.max_signature_checks,grant["limits"]["max_signature_checks"]-(usage["signatures"] if usage else 0))
+        if allowance<1 or len(parsed.raw)>grant["limits"]["max_probe_bytes"]:
+            wire._fail("repair_service_capacity")
+        budget=wire.RepairBudget(replace(s.policy,max_signature_checks=allowance))
+        owner=json.loads(bytes(row["owner_keys"]))
+        expected=dict(expected_subject=owner,expected_target=s.target,target_storage_epoch=s.node["payload"]["storage_epoch"],
+            bootstrap_grant_sha256=inputs["bootstrap"]["ref"]["raw_sha256"],selector=grant["selector"],
+            at=s._now(),consumer="mailbox_root",policy=budget.policy,budget=budget)
+        packet=dict(raw=parsed.raw,ref=ref.as_dict())
+        verified=probe.verify_bootstrap_probe(packet,**expected)
+        owner_guard=self.mailbox.root.owner_status_guard(rid)
+        expires=min(verified.payload["expires_at"],grant["probe_until"],custody["read_until"],custody["retain_until"])
+        def guard():
+            if s._now()>=expires:
+                return "repair_access_expired"
+            return owner_guard()
+        # Reserve finite work before node encryption or signing. A process
+        # interrupted after admission retains its entire reservation on disk.
+        with s._transaction(guard=guard):
+            current=self._usage_locked(rid)
+            requests,signatures=(current["requests"],current["signatures"]) if current else (0,0)
+            current_resource=s._one("SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?",(rid,))
+            if (requests>=min(grant["limits"]["max_requests"],grant["limits"]["max_replay_records"],
+                              offer["budget"]["max_requests"],offer["budget"]["max_replay_records"])
+                    or signatures+allowance>grant["limits"]["max_signature_checks"]
+                    or current_resource["metadata_bytes"]+(ROW_CHARGE if current is None else 0)>offer["budget"]["max_meta_bytes"]):
+                wire._fail("repair_service_capacity")
+            self.db.execute('''INSERT INTO open_repair_mailbox_recovery_usage VALUES(?,1,?)
+                ON CONFLICT(resource_id) DO UPDATE SET requests=requests+1,signatures=signatures+excluded.signatures''',(rid,allowance))
+            self._mark_usage_locked(rid)
+            if current is None:
+                self.db.execute("UPDATE open_repair_mailbox_resources SET metadata_bytes=metadata_bytes+? WHERE resource_id=?",(ROW_CHARGE,rid))
+        try:
+            with s._transaction(guard=guard) as now:
+                old=s._one("SELECT * FROM open_repair_mailbox_recovery_challenges WHERE subject=? AND probe_id=?",
+                    (owner["signing_key"]["key_id"],verified.payload["probe_id"]))
+                if old is not None:
+                    if (old["resource_id"]!=rid or bytes(old["probe"])!=parsed.raw
+                            or json.loads(bytes(old["probe_ref"]))!=ref.as_dict()):
+                        wire._fail("repair_probe_replay_conflict")
+                    if now>=old["expires_at"]:
+                        wire._fail("repair_access_expired")
+                    return s._saved(old,"challenge")
+                pending=self.db.execute("SELECT count(*) FROM open_repair_mailbox_recovery_challenges WHERE resource_id=? AND expires_at>?",(rid,now)).fetchone()[0]
+                if pending>=min(grant["limits"]["max_pending"],offer["budget"]["max_pending"]):
+                    wire._fail("repair_service_capacity")
+            expected["at"]=s._now()
+            created=probe.issue_bootstrap_challenge(packet,signer=s.identity,encryption_identity=s.encryption_identity,
+                **expected,expires_at=expires)
+            result=dict(raw=created.original.raw,ref=created.original.ref.as_dict())
+            with s._transaction(guard=guard):
+                old=s._one("SELECT 1 FROM open_repair_mailbox_recovery_challenges WHERE subject=? AND probe_id=?",
+                    (owner["signing_key"]["key_id"],verified.payload["probe_id"]))
+                if old is not None:
+                    wire._fail("repair_probe_replay_conflict")
+                pending=self.db.execute("SELECT count(*) FROM open_repair_mailbox_recovery_challenges WHERE resource_id=? AND expires_at>?",(rid,s._now())).fetchone()[0]
+                current_resource=s._one("SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?",(rid,))
+                charge=len(parsed.raw)+len(result["raw"])+len(created.nonce)+ROW_CHARGE
+                if (pending>=min(grant["limits"]["max_pending"],offer["budget"]["max_pending"])
+                        or current_resource["metadata_bytes"]+charge>offer["budget"]["max_meta_bytes"]):
+                    wire._fail("repair_service_capacity")
+                self.db.execute("INSERT INTO open_repair_mailbox_recovery_challenges VALUES(?,?,?,?,?,?,?,?,?)",
+                    (rid,owner["signing_key"]["key_id"],verified.payload["probe_id"],parsed.raw,canonical_bytes(ref.as_dict()),
+                     result["raw"],canonical_bytes(result["ref"]),created.nonce,expires))
+                self.db.execute("UPDATE open_repair_mailbox_resources SET metadata_bytes=metadata_bytes+? WHERE resource_id=?",(charge,rid))
+            return result
+        finally:
+            actual=budget.snapshot()["signature_checks"]
+            with s._transaction():
+                self._usage_locked(rid)
+                self.db.execute("UPDATE open_repair_mailbox_recovery_usage SET signatures=signatures-? WHERE resource_id=?",
+                    (allowance-actual,rid))
+                self._mark_usage_locked(rid)

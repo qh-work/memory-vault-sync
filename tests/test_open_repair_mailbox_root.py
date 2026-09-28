@@ -53,7 +53,7 @@ class MailboxRootTests(unittest.TestCase):
                 root_authority_sha256=entries["root"]["ref"]["raw_sha256"],read_grant_sha256=entries["read"]["ref"]["raw_sha256"]),
             parent_authority_ref=entries["root"]["ref"],caller_authority_ref=entries["read"]["ref"],
             probe_until=h.now+600,proof_until=h.now+600,upload_until=h.now+600,probe_profile="opaque_v1",
-            response_profile="mailbox_root_service_v1",upload_roles=["bootstrap.grant"],limits=LIMITS)
+            response_profile="mailbox_root_service_v1",upload_roles=["bootstrap.grant"],limits=getattr(self,"bootstrap_limits",LIMITS))
         refs = [dict(role=kind,ref=entries[name]["ref"]) for name,kind in (
             ("root","mailbox.root_authority"),("read","mailbox.root_read_grant"),("catalog","mailbox.catalog"))]
         refs += [dict(role=kind,ref=self.slot_entries[name]["ref"]) for name,kind in (

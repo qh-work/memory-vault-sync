@@ -15,6 +15,9 @@ class MailboxSourceTests(unittest.TestCase):
         self.host = root_fixture.MailboxRootTests("test_anchor_catalog_and_slot_originals_persist_and_replay_after_restart")
         if "history" in self._testMethodName or "custody" in self._testMethodName:
             self.host.anchor_budget_overrides = dict(max_meta_bytes=1048576)
+        if "recovery" in self._testMethodName:
+            from tests.open_repair_ack_fixtures import LIMITS
+            self.host.bootstrap_limits = dict(LIMITS,max_probe_bytes=8192)
         self.host.setUp();self.addCleanup(self.host.doCleanups)
         active = self.host.activate()
         self.resource_id = json.loads(active["raw"])["payload"]["resource"]["resource_id"]
@@ -227,6 +230,50 @@ class MailboxSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(RepairWireError,"repair_status_missing"):
             verify(signed_entry(changed,h.f["signers"]["target"],"synthetic_incomplete_custody"),incomplete)
         h.connect()
+
+    def test_custody_recovery_challenge_persists_and_proves_node_keys(self):
+        import memory_vault_open_repair_probe as probe
+        from memory_vault_open_repair_mailbox_source import MailboxRecoveryService
+        self.owner_observation();self.observe();self.source.prepare_history(self.resource_id,"synthetic_observation");self.custody()
+        h=self.host.h
+        service=MailboxRecoveryService(self.source);service.initialize()
+        saved=json.loads(bytes(h.source._one("SELECT inputs FROM open_repair_mailbox_roots")["inputs"]))["bootstrap"]
+        grant=json.loads(saved["raw"])["payload"]
+        expected=dict(expected_subject=h.owner,expected_target=h.source.target,target_storage_epoch=h.slot_key["writer_storage_epoch"],
+            bootstrap_grant_sha256=saved["ref"]["raw_sha256"],selector=grant["selector"],at=h.now,consumer="mailbox_root")
+        def opts():
+            return dict(**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+        pending=probe.make_bootstrap_probe(h.f["signers"]["owner"],expires_at=h.now+40,**opts())
+        packet=dict(raw=pending.original.raw,ref=pending.original.ref.as_dict())
+        challenge=service.challenge(packet)
+        answer=probe.solve_bootstrap_challenge(packet,challenge,signer=h.f["signers"]["owner"],
+            encryption_identity=h.f["encryption"]["owner"],target_nonce=pending.nonce,expires_at=h.now+30,**opts())
+        held=h.source._one("SELECT * FROM open_repair_mailbox_recovery_challenges")
+        probe.verify_bootstrap_answer(packet,challenge,dict(raw=answer.raw,ref=answer.ref.as_dict()),caller_nonce=bytes(held["nonce"]),**opts())
+        self.assertGreater(h.source._one("SELECT signatures FROM open_repair_mailbox_recovery_usage")["signatures"],0)
+        h.db.close();h.connect()
+        self.source=MailboxRootSource(MailboxRootActivation(h.resources));service=MailboxRecoveryService(self.source);service.initialize()
+        self.assertEqual(service.challenge(packet),challenge)
+        self.assertEqual(h.source._one("SELECT requests FROM open_repair_mailbox_recovery_usage")["requests"],2)
+        h.now += 41
+        with self.assertRaises(RepairWireError):
+            service.challenge(packet)
+
+    def test_custody_recovery_refuses_exhausted_budget_before_creating_challenge(self):
+        import memory_vault_open_repair_probe as probe
+        from memory_vault_open_repair_mailbox_source import MailboxRecoveryService
+        self.owner_observation();self.observe();self.source.prepare_history(self.resource_id,"synthetic_observation");self.custody()
+        h=self.host.h;service=MailboxRecoveryService(self.source);service.initialize()
+        saved=json.loads(bytes(h.source._one("SELECT inputs FROM open_repair_mailbox_roots")["inputs"]))["bootstrap"]
+        grant=json.loads(saved["raw"])["payload"]
+        pending=probe.make_bootstrap_probe(h.f["signers"]["owner"],expected_subject=h.owner,expected_target=h.source.target,
+            target_storage_epoch=h.slot_key["writer_storage_epoch"],bootstrap_grant_sha256=saved["ref"]["raw_sha256"],
+            selector=grant["selector"],at=h.now,expires_at=h.now+40,consumer="mailbox_root",policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+        h.db.execute("INSERT INTO open_repair_mailbox_recovery_usage VALUES(?,?,?)",(self.resource_id,0,grant["limits"]["max_signature_checks"]))
+        h.db.commit()
+        with self.assertRaisesRegex(RepairWireError,"repair_service_capacity"):
+            service.challenge(dict(raw=pending.original.raw,ref=pending.original.ref.as_dict()))
+        self.assertEqual(h.db.execute("SELECT count(*) FROM open_repair_mailbox_recovery_challenges").fetchone()[0],0)
 
     def test_real_anchor_and_slot_resources_share_one_node_signed_original(self):
         result = self.observe();self.assertEqual(len(result),1)
