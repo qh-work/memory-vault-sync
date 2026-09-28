@@ -69,6 +69,16 @@ ALLOWED_MODULES = {
     "memory_vault_open_repair_put.py",
     "memory_vault_open_repair_put_client.py",
     "memory_vault_open_repair_receipt.py",
+    "memory_vault_open_repair_stage.py",
+    "memory_vault_open_repair_index.py",
+    "memory_vault_open_repair_index_access.py",
+    "memory_vault_open_repair_index_journal.py",
+    "memory_vault_open_repair_index_state.py",
+    "memory_vault_open_repair_index_service.py",
+    "memory_vault_open_repair_index_client.py",
+    "memory_vault_open_repair_index_recovery.py",
+    "memory_vault_open_repair_index_admin.py",
+    "memory_vault_open_provider_merge.py",
 }
 REQUIRED_MODULES = ALLOWED_MODULES
 MAX_MODULE_BYTES = 1024 * 1024

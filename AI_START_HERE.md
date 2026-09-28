@@ -1,14 +1,12 @@
 # Memory Vault: connect, remember, exchange, continue
 
-This candidate adds [ACK receipt recovery](docs/OPEN_ACK_RECOVERY.md) through
-a fixed HTTP service. The source retains the recipient's original signed receipt
-and all source generations; clients recheck the sender's READ and recipient's
-explicit disclosure before recovery. Message movement to another node remains
-unfinished.
-The [current-fact continuation scorer](docs/CONTINUATION_TRIAL.md) remains in the
-review kit, requiring actual source reads instead of accepting correct guesses.
+This candidate adds [ACK directory publication and recovery](docs/OPEN_ACK_DIRECTORY.md).
+The source publishes only with separate A/B permission; the owner uses its own
+READ/bootstrap grants to discover and retrieve the original signed receipt.
+The publication and recovery commands retain exact original bytes and durable
+work limits. Message movement and automatic repair remain unfinished.
 
-**v0.28.0-alpha.0.7 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+**v0.28.0-alpha.0.8 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
 to bind your existing Vault and signing identity to an independent open transport,
 join through one or two actual signed node introductions, explicitly approve a
 finite delivery, and exchange encrypted chat or selected original memories.
@@ -30,7 +28,7 @@ Endpoints with different bootstrap entries can use the same bounded authorized
 pool. Discovery does not grant relay admission or memory access; the configured
 authority must still be available. The six operations below remain unchanged.
 
-This source targets **v0.28.0-alpha.0.7**. The earlier first-contact release is
+This source targets **v0.28.0-alpha.0.8**. The earlier first-contact release is
 **[v0.28.0-alpha.0.2](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.2)**.
 The open-delivery source additions described above are separate from that
 release's review and validation. Use the release evidence for the exact source

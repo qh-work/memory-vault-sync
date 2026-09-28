@@ -1,8 +1,8 @@
 # Native provider discovery and directory publication
 
-This development candidate adds native TypeScript access to the existing
-`memory-vault-open-provider/v1` directory protocol. It is newer than the published
-alpha.0.5 archives. Use the matching source and review evidence for this candidate.
+This source checkout includes native TypeScript access to the existing
+`memory-vault-open-provider/v1` directory protocol. Use matching client and node
+versions; a release archive contains only the capabilities in its release notes.
 
 The provider client shares the running participant's protected transport database,
 signing identity and X25519 identity. It does not create another Vault. No Python
@@ -77,6 +77,14 @@ Returned observations must still match active current floors and valid index
 leases. `observed` means that the directory returned eligible signed facts and
 the provider answered the dual-key challenge. It does not mean a message was
 stored, delivered or saved by its recipient.
+
+`provider.get` scans bounded batches of legacy and explicitly authorized ACK
+index records in the same opaque-key order. `next_cursor` is the last scanned
+key and can advance past revoked or expired rows, including on an empty page.
+Continue while it is non-null, within the same finite lookup budget. A cursor
+must strictly increase and cannot precede the last returned entry. Both current
+Python and TypeScript clients apply this rule; older clients may reject such a
+page and return a partial lookup. No page establishes global absence.
 
 This candidate's focused fixtures use real local Python HTTP nodes, native Node
 and locked JOSE with synthetic identities. They cover owner/third-party

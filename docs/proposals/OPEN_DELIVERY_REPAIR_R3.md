@@ -2035,6 +2035,172 @@ observed prefix, observed empty, incomplete, conflict and exhausted budget.
 
 ## 10. Provider publication and lifecycle
 
+### 10.1 Candidate one-directory original-ACK publication
+
+This additional closed branch is a **new explicit publication operation**. It
+does not edit an occupied input manifest, old B disclosure, put, receipt or
+original ACK commit, and does not relabel an older admission. It supports only
+the original occupied source R, with R=M already named by the original A
+root's complete maintainer identity. That original root and its current exact
+root/slot statuses must permit PUBLISH. There is one independently preheld D
+DualKey and storage epoch. No replacement provider, arbitrary directory,
+implicit maintainer or delegated chain is introduced.
+
+A and B separately sign a new Q `ack.index_consent`. Its exact fields beyond
+the Q common fields are
+`variant,issued_at,expires_at,consent_id,revision,ack_slot,root_authority_ref,
+grant_ref,binding_ref,receipt_ref,original_disclosure_ref,
+original_ack_commit_ref,historical_manifest_ref,publisher:DualID,
+target:DualKey,target_storage_epoch,operation_mask,reservation_disclosure,
+post_assignment_disclosure`.
+variant is exactly `owner` (signed by the independently expected A) or
+`receipt_writer` (signed by the independently expected B). publisher is R=M;
+target is that one D, not a directory role wildcard. operation_mask is exactly
+PUBLISH=16. Every full reference names the already-existing exact source
+event, original B consent, receipt and bound tuple. A matching key ID alone
+cannot replace either independently expected complete key pair.
+
+`reservation_disclosure` is exactly `{intent_sha256,until}`. This explicit new
+signature permits M to send only the exact section 4 `resource.index_intent`
+having that canonical digest to D before assignment. The intent contains its
+RootKey/public identities, opaque scope/source/fact references and finite
+budget/windows; it contains no private original bytes. This is the concrete
+advance-descriptor permission for this branch. The old root's PUBLISH bit,
+the old B mask, the owner bootstrap return and a directory lease are not that
+permission. Both new consent originals remain local until offer/assignment.
+
+`post_assignment_disclosure` is exactly `{originals,status_scopes,until}`.
+originals is a sorted unique array of `{role,ref}`, ordered by role and the
+full namespace/key/raw_sha256/size tuple. A role can occur at several real
+history generations, but the same role/ref pair cannot repeat. It must equal
+the complete required Signed-original inventory belonging to this signer,
+recursively through all three actual ACK historical manifests and packs.
+The A signature cannot permit B/R originals, and B cannot permit A/R originals.
+status_scopes is a sorted unique array of `{scope_kind,scope_id}` covering the
+signer's exact historical authority/slot scopes in that inventory. Every
+entry in a whole current status original must be permitted; projection and
+unrelated entries are forbidden. The consent signature additionally permits
+this complete consent and whole status originals limited to its own immutable
+authority scope, whose hash is calculated after signing. No self hash is put
+inside the consent. Unsigned manifests and packs confer no permission: their
+complete exact dependency set and every contained Signed original are checked.
+
+To keep an already authorized occupied ACK readable, issuers sign the source
+scopes and new publication-consent-only scopes in separate complete status
+originals. They use distinct increasing revisions for the same issuer/root
+across both sets (for example, A source revision 3 then A publication revision
+4; B source revision 2 then B publication revision 3). Mixing a new consent
+scope into the source status does not extend an older owner bootstrap or B
+disclosure. Such a mixed whole original may be usable for the new publication
+permission yet must be refused by the old READ response permission. Neither
+the publisher nor serving node may project its entries or silently widen old
+consent. Provide separately signed, fully disclosed originals for each use.
+
+These two consent forms grant future one-directory publication only. Old
+B ack.disclosure may remain mask 67; it is not interpreted as PUBLISH and its
+historical meaning is unchanged. The current original B disclosure must still
+permit RETAIN for the held source, and its consent/retention horizon remains
+a bound. Current new A/B consent scopes require PUBLISH, original A root and
+AckSlot require PUBLISH, and R's exact current resource requires PUBLISH and
+RETAIN. Source read/retain commitments, original root/resource publish windows,
+both new consent deadlines, the fact expiry and index intent windows all bound
+publication. Owner READ or B's owner-only bootstrap cannot satisfy these gates.
+Authenticated current refusals are returned to the durable floor gate before
+refusal; invalid signatures or undeclared original disclosures are not accepted
+as floor evidence. Source generation, all original pins, actual capacity and
+sticky issuer/root/scope floors are rechecked by the local writer.
+
+The opaque provider fact is signed by R, selects the original stable ACK
+anchor, uses R's current source storage epoch and has custody_id exactly
+`ack_` followed by the full original ack.commit raw digest. This deterministic
+alias is not a read permission. The index intent's advertised_custody_ref is
+that original ack.commit, historical_manifest_ref is its original
+ack_occupied_inputs manifest, and scope is exactly the section 4 ack_occupied
+scope. max_live_bytes is zero; actual proof metadata/control/replay costs need
+their own finite reservation. The intent is frozen before the real D offer.
+
+M→D `maintenance.assignment` keeps the existing section 4 shape: exact original
+A parent_root_ref, parent_assignment_ref=null, depth=2, subject=D DualID,
+PUBLISH=16, the exact intent scope/hash, actual D offer/resource/epoch and
+matching finite budget/windows. bootstrap_grant_refs is empty. Its assignment
+status scope is the canonical digest of
+`{kind:assignment,root_key,assignment_kind:maintenance.assignment,
+assignment_sha256}`; assignment_sha256 hashes full original Signed bytes.
+The assignment has no revision field: its immutable document revision is zero.
+M's current exact assignment and D's current exact resource status require
+PUBLISH. The D resource generation is checked against its real reservation.
+
+R signs Q `ack.index_publish` after complete provisional staging. Its exact
+fields beyond common are
+`issued_at,expires_at,request_id,subject:DualID,target:DualID,
+target_storage_epoch,allocation_request_ref,resource_offer_ref,assignment_ref,
+owner_consent_ref,recipient_consent_ref,provider_fact_ref,source_head_ref,
+historical_manifest_ref,original_ack_commit_ref,stage_result_ref,
+source_disclosure`.
+source_disclosure has the same originals/status_scopes/until shape, but permits
+only R's own exact Signed source originals, including those nested in historical
+packs, the original commit/head and exact resource statuses. Each referenced
+object is already complete. The actual D must bind stage_result_ref to its
+own durable, complete, matching caller/resource/scope stage; a raw ref supplied
+by the caller is not evidence that staging occurred. Exact request retries
+retain the original request/result. A different request body under the same
+stable operation identity is a conflict.
+
+This branch uses section 9.6's `index_admit` stage and does not create a fifth
+cold bootstrap profile. Before any private stage, the sender verifies its own
+complete local source closure and the new A/B permissions, then the actual
+target offer/assignment and live local source/floor gate. D does not certify
+permissions using an H it has not received. R's Signed proof.stage_intent
+expressly permits only its own Signed originals listed in that exact manifest
+to the named D, closing the R-original upload permission before the later
+index request exists. A/B originals continue to require their own consents.
+The completed D accept independently repeats full semantic validation and
+current durable gates. Provisional staging itself grants no publication.
+
+The stage manifest has exactly one child of each of these eight roles:
+`index.assignment,index.owner_consent,index.recipient_consent,
+index.provider_fact,index.source_head,index.source_manifest,
+index.source_commit,provider.node`; additionally `current.status` occurs
+1..16 times, `directory.status` exactly once and `history.raw_pack` exactly
+three times. The three packs are the complete actual unbound, empty and
+occupied packs. Source head/manifest/commit select the actual occupied event.
+The actual D retains its matching allocation/offer separately; they are not
+unverified replacements supplied in this manifest. Every direct stage child
+uses meta. The original object-namespace recipient receipt remains unchanged
+inside its historical pack and scope, never as an extra direct child; E is
+not an allowed child. Logical children can repeat a RawRef in different roles,
+but each role/full-ref pair is unique, sorted, and indexed consecutively.
+There are no alternate historical-child or current-status role spellings.
+The manifest contains no future index request or stage result. requested_bytes
+is the sum of every logical child's raw size and requested_items is the child
+count; physical deduplication does not erase transfer or logical accounting.
+
+Control originals and the complete stage manifest stay within 65,536 bytes.
+This branch always uses the finite stage even when its data could fit inline.
+New Signed Q proof.stage_child has exact fields beyond common
+`issued_at,expires_at,request_id,subject:DualID,target_node_key_id,
+target_storage_epoch,intent_ref,handle_ref,manifest_ref,reservation_generation,
+binding,length,chunk_sha256`, with binding exactly
+`{kind:repair_proof_child,handle_id,child_index,offset}`.
+Decoded chunks are 16,384-byte aligned with length exactly
+min(16384, child.size-offset). Existing MVOB1 14-byte prefix, 8,192-byte signed
+header and 262,144-byte chunk ceilings stay unchanged. A finite total
+bytes/items/frames/work ledger charges each attempt and survives restart;
+individual bounded frames do not imply an unbounded total transfer.
+
+New Signed Q proof.stage_close has exact fields beyond common
+`issued_at,expires_at,close_id,intent_ref,handle_ref,subject:DualID,
+target_node_key_id,target_storage_epoch`, with no new child list. New Signed Q
+proof.stage_child_response has exact fields beyond common
+`issued_at,expires_at,subject,target_node_key_id,target_storage_epoch,
+request_ref,handle_ref,child_index,child_ref,offset,length,chunk_sha256,
+durable_prefix`. request_ref is the complete original signed child header.
+The response is an empty-chunk frame; durable_prefix lies between the request
+offset+length and that child's size and attests only committed provisional
+bytes. Neither it nor stage_result is an application receipt or index lease.
+
+### 10.2 General lifecycle boundary
+
 Public provider responses stay opaque: lookup ref, provider node/epoch,
 custody alias, provider-local revision, short validity and actual index lease.
 They never contain the mailbox membership graph, private proof packs, grant

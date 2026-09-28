@@ -178,6 +178,27 @@ class OpenProviderTypeScriptTests(unittest.TestCase):
                 self.assertTrue(result["ok"], result)
                 self.assertEqual(result["value"], expected)
 
+    def test_inactive_scan_cursor_advances_in_both_clients(self):
+        request = provider.sign_rpc(self.owner, node=self.node, action="provider.get",
+            body=dict(ref=self.ref, after="1"*64, limit=4, maximum_bytes=49152), now=self.now)
+        body = dict(ref=self.ref, observed_at=self.now, entries=[], nodes=[],
+            next_cursor="2"*64, state="not_observed")
+        good = provider.sign_response(self.server, request=request, node=self.node, body=body, now=self.now)
+        values = [good]
+        for cursor in ("1"*64, "0"*64):
+            bad = copy.deepcopy(good)
+            bad["payload"]["body"]["next_cursor"] = cursor
+            bad["proof"] = self.server.sign_message(bad["payload"])
+            values.append(bad)
+        calls = [self.call("verifyResponse", value, dict(request=request,node=self.node,now=self.now)) for value in values]
+        results = self.ts(calls)
+        self.assertTrue(results[0]["ok"], results[0])
+        provider.verify_response(good, request=request, node=self.node, now=self.now)
+        for value, result in zip(values[1:], results[1:]):
+            with self.assertRaises(MemoryError) as caught:
+                provider.verify_response(value, request=request, node=self.node, now=self.now)
+            self.assertEqual(result, dict(ok=False,code=caught.exception.code))
+
     def test_real_bidirectional_x25519_target_proof_and_wrong_nonce(self):
         results = self.ts([
             self.call("answerTargetChallenge", self.signers["node"], self.encryption.private_document(),

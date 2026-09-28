@@ -32,7 +32,7 @@ _TARGET_SLOTS = threading.BoundedSemaphore(1)
 
 class ProviderState:
     def __init__(self, db, identity, node, *, encryption_identity, enabled=False, policy=None, clock=None,
-                 capacity_policy=None):
+                 capacity_policy=None, repair_lookup=None):
         if type(enabled) is not bool:
             fail("provider_invalid_policy")
         actual = dict(DEFAULT_POLICY)
@@ -49,6 +49,10 @@ class ProviderState:
         self.encryption_identity, self.enabled, self.policy = encryption_identity, enabled, actual
         self.clock, self._lock = clock or time.time, threading.RLock()
         self.capacity = CapacityAuthority(db, policy=capacity_policy)
+        # Internal local storage adapter; no wire document can supply this.
+        if repair_lookup is not None and not callable(repair_lookup):
+            fail("provider_invalid_policy")
+        self._repair_lookup = repair_lookup
 
     def _now(self):
         return integer(int(self.clock()))
@@ -303,11 +307,19 @@ class ProviderState:
             kind="authority", scope_id=authority_scope(grant["root_key"], "provider.publication.grant", grant_digest), required_revision=grant["revision"], now=now)
         if refusal is not None:
             return refusal
+        from memory_vault_open_provider_merge import LEGACY, observe_cross_fact
+        key, fact_digest = self._fact_key(fact), document_sha256(body["fact"])
+        # Current authorization is complete. Record a cross-store fork before
+        # replay or later application capacity checks can obscure it.
+        self._capacity()
+        cross = observe_cross_fact(self.db, LEGACY, key=key, revision=fact["revision"],
+            digest=fact_digest, raw=canonical_bytes(body["fact"]))
+        if cross is not None:
+            return ProviderError("provider_fact_" + cross)
         caller, operation_digest = rpc["signing_key"]["key_id"], document_sha256(body)
         previous = self._replay(caller, "provider.put", body["allocation_id"], operation_digest, now)
         if previous is not None:
             return previous
-        key, fact_digest = self._fact_key(fact), document_sha256(body["fact"])
         old = self._one("SELECT * FROM open_provider_facts WHERE fact_key=?", (key,))
         if old:
             if old["status"] in {"withdrawn", "conflict"}:
@@ -371,23 +383,57 @@ class ProviderState:
         if "directory" not in self.node["payload"]["roles"]:
             fail("provider_not_directory")
         body = rpc["body"]; ref = body["ref"]
-        rows = self.db.execute("SELECT * FROM open_provider_facts WHERE namespace=? AND opaque_key=? AND fact_key>? ORDER BY fact_key LIMIT 33",
+        cursor = self.db.execute("SELECT * FROM open_provider_facts WHERE namespace=? AND opaque_key=? AND fact_key>? ORDER BY fact_key LIMIT 33",
                                (ref["namespace"], ref["key"], body["after"] or ""))
-        columns = [c[0] for c in rows.description]
+        columns = [c[0] for c in cursor.description]
+        legacy = [dict(zip(columns, values)) for values in cursor.fetchall()]
+        repair = self._repair_lookup(ref, after=body["after"], limit=33, at=now) if self._repair_lookup else []
+        # Stop at the earliest full batch boundary so a cursor never skips
+        # candidates that have not yet been read from the other storage table.
+        boundaries = [rows[-1]["fact_key"] for rows in (legacy, repair) if len(rows) == 33]
+        cutoff = min(boundaries) if boundaries else None
+        groups = {}
+        for rows, is_repair in ((legacy, False), (repair, True)):
+            for row in rows:
+                if cutoff is None or row["fact_key"] <= cutoff:
+                    groups.setdefault(row["fact_key"], []).append((row, is_repair))
         result = {"ref": ref, "observed_at": now, "entries": [], "nodes": [], "next_cursor": None, "state": "not_observed"}
         node_keys = set()
-        for values in rows.fetchall():
-            row = dict(zip(columns, values))
-            if not self._eligible(row, now):
+        for key, candidates in sorted(groups.items()):
+            if any(row["status"] == "conflict" for row, _ in candidates):
+                result["next_cursor"] = key
                 continue
+            revision = max(row["revision"] for row, _ in candidates)
+            newest = [(row, origin) for row, origin in candidates if row["revision"] == revision]
+            # A conflicting signed fact cannot be hidden by whichever table
+            # happens to be examined first. Inactive higher revisions also
+            # prevent an older active fact from reappearing.
+            if len({row["digest"] for row, _ in newest}) > 1:
+                from memory_vault_open_provider_merge import LEGACY, observe_cross_fact
+                legacy_row = next(row for row, origin in newest if not origin)
+                observe_cross_fact(self.db, LEGACY, key=key, revision=revision,
+                    digest=legacy_row["digest"], raw=bytes(legacy_row["record"]))
+                result["next_cursor"] = key
+                continue
+            eligible = [(row, origin) for row, origin in newest
+                        if (row["eligible"] if origin else self._eligible(row, now))]
+            if not eligible:
+                result["next_cursor"] = key
+                continue
+            row, _ = eligible[0]
             candidate = {"fact": document(bytes(row["record"])), "index_lease": document(bytes(row["index_lease"]))}
-            node = document(bytes(row["node"])); new_node = row["provider"] not in node_keys
-            trial = {**result, "entries": result["entries"] + [candidate], "nodes": result["nodes"] + ([node] if new_node else []), "next_cursor": row["fact_key"], "state": "observed"}
+            node = document(bytes(row["node"]))
+            node_key = (node["payload"]["signing_key"]["key_id"], node["payload"]["storage_epoch"])
+            new_node = node_key not in node_keys
+            trial = {**result, "entries": result["entries"] + [candidate], "nodes": result["nodes"] + ([node] if new_node else []), "next_cursor": key, "state": "observed"}
             if len(result["entries"]) >= body["limit"] or len(canonical_bytes(trial)) + 2048 > body["maximum_bytes"]:
                 if not result["entries"]:
-                    fail("provider_response_budget")
+                    # A prior scanned cross-store fork is already a verified
+                    # durable refusal; an oversized later candidate must not
+                    # roll that observation back.
+                    return ProviderError("provider_response_budget")
                 break
-            result = trial; node_keys.add(row["provider"])
+            result = trial; node_keys.add(node_key)
         # Pages are explicitly current observations, not consistent global
         # absence proofs. The final cursor may lead to one empty terminal page.
         return result

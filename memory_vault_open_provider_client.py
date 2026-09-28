@@ -265,13 +265,28 @@ class OpenProviderClient:
                 return node
         raise ProviderError("provider_directory_unresolved", retryable=True)
 
-    async def find(self, ref, budget=None, *, maximum_candidates=8, maximum_directories=3):
+    async def find_at(self, directory, ref, budget=None, *, maximum_candidates=8):
+        """Read one independently known directory, with real bounded pagination."""
+        return await self.find(ref,budget,maximum_candidates=maximum_candidates,
+            maximum_directories=1,directory=directory)
+
+    async def find(self, ref, budget=None, *, maximum_candidates=8, maximum_directories=3, directory=None):
         """Return actual dual-key-responsive candidates and their raw observations."""
         ref = opaque_ref(ref); budget = self._budget(budget)
         bounded(maximum_candidates, 16); bounded(maximum_directories, 3)
         candidates, errors, partial = {}, [], False
         try:
-            directories, partial = await self._directories(ref, budget, maximum_directories)
+            if directory is None:
+                directories, partial = await self._directories(ref, budget, maximum_directories)
+            else:
+                # The explicit introduction is not silently replaced by a
+                # closer routed node. Each response still needs its exact
+                # signature, request binding, lease and live provider proof.
+                directory=document(canonical_bytes(directory),maximum=4096)
+                raw=verify_node(directory)
+                if raw['status']!='active' or 'directory' not in raw['roles']:
+                    raise ProviderError('provider_wrong_directory')
+                directories=[directory]
         except (MemoryError, OSError, TimeoutError) as error:
             return {"state": "not_observed", "candidates": [], "errors": [{"code": getattr(error, "code", "provider_unreachable")}], "partial": True, **self._metrics(budget)}
         for directory in directories:

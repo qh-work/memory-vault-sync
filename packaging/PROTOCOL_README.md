@@ -1,14 +1,13 @@
-# Memory Vault v0.28.0-alpha.0.7 — independent protocol
+# Memory Vault v0.28.0-alpha.0.8 — independent protocol
 
-This alpha.0.7 candidate adds message-bound ACK slots, recipient-authorized
-receipt uploads and independent recovery of the original signed saved-message
-receipt. It retains all three source generations, original bytes, current
-READ permissions and durable shared work/replay limits across restart. The
-ACK recovery guide in the package documentation describes the explicit operator and
-client APIs. Message movement to replacement nodes and automatic repair remain
-unfinished. The current-fact scorer from alpha.0.5 and the delivery-approval fix
-from alpha.0.4 are retained. Exact source and archive validation belongs to the
-release record.
+This alpha.0.8 candidate adds explicit one-directory ACK publication and
+independent owner discovery followed by an actual original-receipt read. Source
+requests, used work, authority observations and exact retry responses survive
+restart. Separate A/B publication consents are required; a directory lease alone
+is never a read capability. See the [directory guide](docs/OPEN_ACK_DIRECTORY.md).
+Message movement, automatic repair and global reliability remain unfinished.
+The earlier encrypted delivery, selected-memory sharing and current-fact scorer
+are retained. Exact validation belongs to the source-bound release record.
 
 The Python and native TypeScript open clients add encrypted messages and selected original
 memory sharing after explicit first-contact approval. Recipient-saved receipts
@@ -49,7 +48,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.7;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.8;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility

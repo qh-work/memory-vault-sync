@@ -388,8 +388,9 @@ function responseBody(body:unknown,options:{request:Obj;node:SignedNode;now?:num
     for(const entry of raw.entries){const item=fields(entry,['fact','index_lease']),fact=verifyDocument(item.fact,'provider.fact',{now});
       if(!same(fact.ref,wanted.ref)||fact.status!=='active'||!nodes.has(JSON.stringify([fact.signing_key.key_id,fact.storage_epoch])))fail('provider_invalid_candidates');
       verifyIndexLease(item.index_lease,{fact:item.fact,node,now});keys.push(documentSha256({ref:fact.ref,provider_key_id:fact.signing_key.key_id,storage_epoch:fact.storage_epoch,custody_id:fact.custody_id}));}
-    if(keys.some((key,index)=>index>0&&key<=keys[index-1])||(keys.length>0&&(keys[0]<=(wanted.after||'')||raw.next_cursor!==keys[keys.length-1])))fail('provider_invalid_cursor');
-    if(!keys.length&&raw.next_cursor!==null)fail('provider_invalid_cursor');
+    if(keys.some((key,index)=>index>0&&key<=keys[index-1])||(keys.length>0&&(keys[0]<=(wanted.after||'')||raw.next_cursor===null||raw.next_cursor<keys[keys.length-1])))fail('provider_invalid_cursor');
+    // A scan of inactive rows still advances; a cursor never rolls backward.
+    if(raw.next_cursor!==null&&raw.next_cursor<=(wanted.after||''))fail('provider_invalid_cursor');
   }else if(action==='target.get'){
     const raw=fields(body,['target']),target=verifyDocument(raw.target,'provider.target',{now}),expected=nodeBinding(target,node,now);
     if(!same(target.signing_key,expected.signing_key))fail('provider_target_mismatch');

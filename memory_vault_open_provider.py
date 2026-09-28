@@ -528,9 +528,12 @@ def _response_body(body, *, request, node, now):
                 fail("provider_invalid_candidates")
             verify_index_lease(item["index_lease"], fact=item["fact"], node=node, now=now)
             keys.append(document_sha256({"ref": fact["ref"], "provider_key_id": fact["signing_key"]["key_id"], "storage_epoch": fact["storage_epoch"], "custody_id": fact["custody_id"]}))
-        if keys != sorted(set(keys)) or keys and (keys[0] <= (wanted["after"] or "") or raw["next_cursor"] != keys[-1]):
+        cursor = raw["next_cursor"]
+        if keys != sorted(set(keys)) or keys and (keys[0] <= (wanted["after"] or "") or cursor is None or cursor < keys[-1]):
             fail("provider_invalid_cursor")
-        if not keys and raw["next_cursor"] is not None:
+        # A bounded scan can pass only expired or revoked rows. Its opaque
+        # cursor still advances so a later active provider remains reachable.
+        if cursor is not None and cursor <= (wanted["after"] or ""):
             fail("provider_invalid_cursor")
     elif action == "target.get":
         raw = fields(body, {"target"})

@@ -29,6 +29,16 @@ It retains the 64-check limit for each source operation. The actual allocation,
 owner root/read and bootstrap grants must reserve matching capacity before they
 are signed. Existing configurations and signed grants stay unchanged.
 
+For a newly authorized source also intended for one explicit directory
+publication, the source checkout provides `--repair-profile receipt-index`:
+4,096 cumulative signature checks, 4 MiB of proof, 128 requests and 256 replay
+records. Each source operation still has a 64-check limit. The original
+allocation and signed grants must fund that work from the start; selecting this
+profile later never enlarges an older grant or resets used work. The recovery
+commands and `publish_saved_ack(..., repair_profile="receipt-index")` accept the
+same explicit client ceiling. Directory publication still needs its own A/B
+consents and an actual directory allocation.
+
 Forward the printed HTTPS paths, including `/open/v1/repair/bootstrap`, to the
 local listener. Existing node configuration stays unchanged. The service is
 closed unless `repair_policy.enabled` is exactly `true`; it also requires that

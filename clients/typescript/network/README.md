@@ -257,7 +257,7 @@ interop evidence, not a static TypeScript compiler check or an external audit.
 `open-client.ts`, `open-participant.ts`, `open-transport.ts` and `open-node.ts`
 provide native open contact discovery and finite HTTP directory nodes. The same
 Agent dispatches an explicit open config without creating a private-profile peer.
-Open messaging is still unsupported. See [native open HTTP](../../../docs/NATIVE_OPEN_HTTP.md).
+Native clients support encrypted messaging and selected memory sharing through the Python delivery node. Hosting an open delivery node in TypeScript remains unsupported. See [native open HTTP](../../../docs/NATIVE_OPEN_HTTP.md).
 
 ## Explicit open ACK recovery
 

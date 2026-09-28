@@ -143,6 +143,37 @@ class OpenProviderStatusTests(unittest.TestCase):
         self.assertIsNone(self.row())
         self.assertFalse(self.db.in_transaction)
 
+    def test_merged_page_keeps_each_storage_epoch_descriptor(self):
+        # The callback supplies already admitted synthetic records; this tests
+        # the merged response, not admission or new custody authority.
+        ref = self.request['payload']['body']['ref']
+        rows = []
+        for number in (1, 2):
+            epoch = 'synthetic_source_epoch_' + str(number)
+            node = issue_node(self.owner, base_url='http://127.0.0.1:18502',
+                storage_epoch=epoch, roles=['router'], revision=number,
+                issued_at=self.now, expires_at=self.now + 600)
+            fact = provider.issue_fact(self.owner, ref=ref, storage_epoch=epoch,
+                custody_id='synthetic_custody', revision=1,
+                issued_at=self.now, expires_at=self.now + 300)
+            lease = provider.sign_document(self.server, 'provider.index_lease',
+                issued_at=self.now, expires_at=self.now + 180,
+                node_key_id=self.server.key_id, storage_epoch=self.node['payload']['storage_epoch'],
+                index_lease_id='synthetic_index_' + str(number), fact_sha256=provider.document_sha256(fact),
+                ref=ref, provider_key_id=self.owner.key_id, provider_storage_epoch=epoch,
+                custody_id='synthetic_custody')
+            rows.append(dict(fact_key=self.state._fact_key(fact['payload']), provider=self.owner.key_id,
+                revision=1, digest=provider.document_sha256(fact), status='active', eligible=True,
+                record=canonical_bytes(fact), node=canonical_bytes(node), index_lease=canonical_bytes(lease)))
+        self.state._repair_lookup = lambda *args, **kwargs: sorted(rows, key=lambda row: row['fact_key'])
+        request = provider.sign_rpc(self.owner, node=self.node, action='provider.get',
+            body=dict(ref=ref, after=None, limit=4, maximum_bytes=49152), now=self.now)
+        body = self.state.handle(request)
+        response = provider.sign_response(self.server, request=request, node=self.node, body=body, now=self.now)
+        verified = provider.verify_response(response, request=request, node=self.node, now=self.now)
+        self.assertEqual(len(verified['body']['entries']), 2)
+        self.assertEqual(len(verified['body']['nodes']), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

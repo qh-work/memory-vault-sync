@@ -35,8 +35,8 @@ try{
    else if(event.op==='query')value=db.prepare(event.sql).all(...(event.args??[]));
    else value=tx(()=>{
      if(event.op==='sql')return db.prepare(event.sql).run(...(event.args??[]));
-     if(event.op==='reserve')return authority.reserve('ack',event.id,event.digest,event.bytes,event.retain,{owner:'synthetic_owner',operation_id:event.id});
-     if(event.op==='catch_reserve'){try{return authority.reserve('ack',event.id,event.digest,event.bytes,event.retain,{owner:'synthetic_owner',operation_id:event.id});}catch(error){return {caught:error.code};}}
+     if(event.op==='reserve')return authority.reserve(event.service??'ack',event.id,event.digest,event.bytes,event.retain,{owner:'synthetic_owner',operation_id:event.id});
+     if(event.op==='catch_reserve'){try{return authority.reserve(event.service??'ack',event.id,event.digest,event.bytes,event.retain,{owner:'synthetic_owner',operation_id:event.id});}catch(error){return {caught:error.code};}}
      if(event.op==='collect')return authority.collectReleased(event.service,{now:event.at,limit:event.limit});
      if(event.op==='check')return new c.CapacityAuthority(db,event.policy).checkPolicy();
      throw Error('unknown synthetic operation');
@@ -108,6 +108,26 @@ class OpenCapacityTypeScriptTests(unittest.TestCase):
         result=self.ts([changed,dict(op='usage')])['results']
         self.assertEqual(result[0]['code'],'open_capacity_reservation_conflict')
         self.assertEqual(result[1]['value'],authority.usage())
+
+    def test_repair_directory_and_ack_share_capacity_across_native_restart(self):
+        selected = dict(maximum_reserved_bytes=capacity.SERVICE_RESERVE_BYTES+4096,maximum_reservations=2)
+        index = dict(self.reserve('synthetic_index'),service='repair_index')
+        first = self.ts([index,dict(op='usage')],policy=selected)['results']
+        self.assertTrue(first[0]['value'])
+        db, authority = self.initialize_python(); self.addCleanup(db.close)
+        self.assertEqual(authority.usage(),first[1]['value'])
+        db.execute('BEGIN IMMEDIATE')
+        self.assertFalse(authority.reserve('repair_index','synthetic_index','a'*64,4096,200,
+            owner='synthetic_owner',operation_id='synthetic_index'))
+        with self.assertRaisesRegex(MemoryError,'open_capacity_exhausted'):
+            authority.reserve('ack','synthetic_second','b'*64,1,200,
+                owner='synthetic_owner',operation_id='synthetic_second')
+        db.commit()
+        again = self.ts([index,dict(self.reserve('synthetic_third',1),service='repair_index'),
+            dict(op='usage')],policy=selected)['results']
+        self.assertFalse(again[0]['value'])
+        self.assertEqual(again[1]['code'],'open_capacity_exhausted')
+        self.assertEqual(again[2]['value'],first[1]['value'])
 
     def test_old_oversubscribed_obligations_migrate_without_eviction(self):
         db=sqlite3.connect(self.path);self.addCleanup(db.close)

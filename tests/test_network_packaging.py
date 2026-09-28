@@ -72,7 +72,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 100)
+        self.assertEqual(len(allowed), 110)
         self.assertTrue(NEW_MODULES | {"memory_vault_open_capacity.py"} | RUNTIME_DATA <= allowed)
         self.assertEqual({name for name in allowed if not name.endswith(".py")}, RUNTIME_DATA)
         for name in allowed:
@@ -161,6 +161,16 @@ class NetworkPackagingTests(unittest.TestCase):
             "memory_vault_open_repair_put.py",
             "memory_vault_open_repair_put_client.py",
             "memory_vault_open_repair_receipt.py",
+            "memory_vault_open_repair_stage.py",
+            "memory_vault_open_repair_index.py",
+            "memory_vault_open_repair_index_access.py",
+            "memory_vault_open_repair_index_journal.py",
+            "memory_vault_open_repair_index_state.py",
+            "memory_vault_open_repair_index_service.py",
+            "memory_vault_open_repair_index_client.py",
+            "memory_vault_open_repair_index_recovery.py",
+            "memory_vault_open_repair_index_admin.py",
+            "memory_vault_open_provider_merge.py",
             "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
             "clients/typescript/network/open-repair-wire.ts", "clients/typescript/network/open-repair-history.ts",
             "clients/typescript/network/open-repair-original.ts", "clients/typescript/network/open-repair-resource.ts",

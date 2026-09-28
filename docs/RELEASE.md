@@ -1,13 +1,12 @@
 # Distribution scope and publication gates
 
-This alpha.0.7 candidate adds message-bound ACK slots, recipient-authorized
-receipt uploads and independent recovery of the original signed saved-message
-receipt. It retains all three source generations, original bytes, current
-READ permissions and durable shared work/replay limits across restart. The
-[ACK recovery guide](OPEN_ACK_RECOVERY.md) describes the explicit operator and
-client APIs. Message movement to replacement nodes and automatic repair remain
-unfinished. The current-fact scorer from alpha.0.5 and the delivery-approval fix
-from alpha.0.4 are retained. Exact source and archive validation belongs to the
+This alpha.0.8 candidate adds explicit ACK directory publication and independent
+owner discovery followed by an actual original-receipt read. It retains separate
+publication and READ permissions, original bytes, and durable shared work/replay
+limits across restart. The [directory guide](OPEN_ACK_DIRECTORY.md) describes the
+source and owner commands. Message movement, automatic repair and global
+reliability remain unfinished. Earlier delivery, selected-memory sharing and the
+current-fact scorer remain available. Exact validation belongs to the source-bound
 release record.
 
 ## One protocol, two complete usage paths
@@ -16,7 +15,7 @@ The protocol is independent of language, storage, model, session, device and
 task. The authorized full client automates the same canonical record contract;
 an independent implementation is not required to install it or import Python.
 
-The current prerelease build target is **0.28.0-alpha.0.7**, an open encrypted
+The current prerelease build target is **0.28.0-alpha.0.8**, an open encrypted
 delivery preview. Python and native TypeScript six-operation Agents connect explicit first-contact
 approval to encrypted chat or selected original memories, durable local saving,
 original-node storage receipts and separate recipient-save receipts. Setup
@@ -43,13 +42,13 @@ instructions or acceptance of this prerelease.
 
 The release builder produces:
 
-- `memory-vault-protocol-v0.28.0-alpha.0.7.zip`: specification, schemas, synthetic
+- `memory-vault-protocol-v0.28.0-alpha.0.8.zip`: specification, schemas, synthetic
   interchange examples and implementer guides, **no executable files**.
-- `memory-vault-client-v0.28.0-alpha.0.7.zip`: complete source-built runtime, plugin,
+- `memory-vault-client-v0.28.0-alpha.0.8.zip`: complete source-built runtime, plugin,
   local marketplace catalog and explicit setup instructions.
-- `memory-vault-review-v0.28.0-alpha.0.7.zip`: public synthetic tests and source/build
+- `memory-vault-review-v0.28.0-alpha.0.8.zip`: public synthetic tests and source/build
   material for reviewers to run only with their user's authorization.
-- `memory-vault-network-test-v0.28.0-alpha.0.7.zip`: synthetic endpoint template;
+- `memory-vault-network-test-v0.28.0-alpha.0.8.zip`: synthetic endpoint template;
   this release has unconfigured service trust and requires operator provisioning.
 - `memory_vault.py`: core source; Experience use also needs the companion module
   included in the client/review packages.

@@ -69,6 +69,16 @@ REQUIRED_MODULES = (
     "memory_vault_open_repair_put.py",
     "memory_vault_open_repair_put_client.py",
     "memory_vault_open_repair_receipt.py",
+    "memory_vault_open_repair_stage.py",
+    "memory_vault_open_repair_index.py",
+    "memory_vault_open_repair_index_access.py",
+    "memory_vault_open_repair_index_journal.py",
+    "memory_vault_open_repair_index_state.py",
+    "memory_vault_open_repair_index_service.py",
+    "memory_vault_open_repair_index_client.py",
+    "memory_vault_open_repair_index_recovery.py",
+    "memory_vault_open_repair_index_admin.py",
+    "memory_vault_open_provider_merge.py",
 )
 OPTIONAL_MODULES: tuple[str, ...] = ()
 PACKAGE_DOCUMENTS = (
@@ -129,6 +139,7 @@ PACKAGE_DOCUMENTS = (
     "docs/NATIVE_OPEN_PROVIDER.md",
     "docs/OPEN_NETWORK_QUICKSTART.md",
     "docs/OPEN_ACK_RECOVERY.md",
+    "docs/OPEN_ACK_DIRECTORY.md",
     "docs/CONTINUATION_TRIAL.md",
     "clients/typescript/network/client-config.ts", "clients/typescript/network/transport-state.ts",
 )

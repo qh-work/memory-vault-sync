@@ -147,9 +147,9 @@ class CapacityAuthority:
                     **actual)
 
     def reserve(self, service, reservation_id, input_digest, charge_bytes, retain_until, *, owner, operation_id):
-        """Reserve ACK setup once; legacy inserts are accounted by triggers."""
+        """Reserve repair resources once; legacy inserts use the same totals."""
         self._write_lock()
-        if service != "ack":
+        if service not in ("ack", "repair_index"):
             _fail("invalid_service")
         for value in (reservation_id, owner, operation_id):
             if type(value) is not str or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value) is None:

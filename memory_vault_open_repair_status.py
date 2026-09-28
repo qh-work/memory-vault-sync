@@ -14,7 +14,8 @@ SCHEMA = "memory-vault-open-authority/v1"
 MAX_STATUS_BYTES = 16384
 MAX_STATUS_SECONDS = 604800
 AUTHORITY_KINDS = frozenset(("ack.root_authority", "ack.read_grant",
-                            "ack.write_grant", "bootstrap.grant", "ack.disclosure"))
+                            "ack.write_grant", "bootstrap.grant", "ack.disclosure",
+                            "ack.index_consent"))
 SCOPE_KINDS = frozenset(("catalog", "mailbox_slot", "ack_slot", "authority",
                        "resource", "assignment", "contact_policy"))
 _PAYLOAD = frozenset(("schema_version", "kind", "signing_key", "scope_key",
@@ -92,6 +93,15 @@ def status_scope(root, scope_kind, subject, policy, budget):
             except wire.RepairWireError:
                 _fail()
             payload = dict(kind=kind, root_key=root, ack_slot=subject)
+        elif kind == "assignment":
+            _fields(subject, {"assignment_kind", "assignment_sha256"})
+            if subject["assignment_kind"] != "maintenance.assignment":
+                _fail()
+            try:
+                original._digest(subject["assignment_sha256"])
+            except wire.RepairWireError:
+                _fail()
+            payload = dict(kind=kind, root_key=root, **subject)
         else:
             _fail()
         return budget._hash(wire._canonical(payload, budget))

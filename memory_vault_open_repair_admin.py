@@ -18,7 +18,7 @@ from memory_vault import MemoryError, canonical_bytes
 from memory_vault_network_crypto import b64url, document, object_fields, unb64url
 from memory_vault_open_client import OpenNetworkClient
 from memory_vault_open_repair_client import AckOwnerRecoveryClient
-from memory_vault_open_repair_state import DEFAULT_LIMITS, DEFAULT_POLICY, RECEIPT_WORKFLOW_LIMITS
+from memory_vault_open_repair_state import DEFAULT_LIMITS, DEFAULT_POLICY, RECEIPT_WORKFLOW_LIMITS, INDEX_WORKFLOW_LIMITS
 from memory_vault_open_repair_wire import RepairWireError
 from memory_vault_trust import TrustError, _absolute_path, _read_private, _write_new_private
 
@@ -82,9 +82,14 @@ def _retained_statuses(authenticated_entries):
     return [item for item, _ in retained], list(archive.values())
 
 
-def recover_ack(network_config: Path, request_path: Path, output: Path, *, timeout=30, phase="unbound"):
+def recover_ack(network_config: Path, request_path: Path, output: Path, *, timeout=30, phase="unbound", repair_profile=None):
     """New-only evidence export; never open or modify the configured Vault."""
     if phase not in {"unbound", "empty", "occupied"}:
+        raise RepairWireError("repair_invalid_request_bundle")
+    profiles = {"unbound": DEFAULT_LIMITS, "receipt": RECEIPT_WORKFLOW_LIMITS, "receipt-index": INDEX_WORKFLOW_LIMITS}
+    if repair_profile is None:
+        repair_profile = "receipt" if phase == "occupied" else "unbound"
+    if type(repair_profile) is not str or repair_profile not in profiles:
         raise RepairWireError("repair_invalid_request_bundle")
     request_path, output = _absolute_path(request_path), _absolute_path(output)
     if os.path.lexists(output):
@@ -118,7 +123,7 @@ def recover_ack(network_config: Path, request_path: Path, output: Path, *, timeo
         raise RepairWireError("repair_invalid_request_bundle") from None
     with OpenNetworkClient(_absolute_path(network_config)) as network:
         client = AckOwnerRecoveryClient(network.identity, network.encryption,
-            limit_policy=OCCUPIED_LIMITS if phase == "occupied" else DEFAULT_LIMITS,
+            limit_policy=profiles[repair_profile],
             allow_loopback=network.participant.transport.allow_loopback,
             transport=network.participant.transport)
         recover = dict(unbound=client.recover, empty=client.recover_empty, occupied=client.recover_occupied)[phase]
@@ -172,9 +177,11 @@ def main(argv=None):
         recover.add_argument("--request", required=True, type=Path, help="private original request bundle")
         recover.add_argument("--output", required=True, type=Path, help="new private evidence file; never overwritten")
         recover.add_argument("--timeout", type=float, default=30)
+        recover.add_argument("--repair-profile", choices=("unbound", "receipt", "receipt-index"),
+            help="explicit client acceptance ceiling; never changes the source's signed limits")
     args = parser.parse_args(argv)
     try:
-        result = recover_ack(args.network_config, args.request, args.output, timeout=args.timeout,
+        result = recover_ack(args.network_config, args.request, args.output, timeout=args.timeout, repair_profile=args.repair_profile,
             phase={"recover-ack":"unbound", "recover-empty":"empty", "recover-occupied":"occupied"}[args.command])
     except (MemoryError, TrustError, RepairWireError, OSError) as exc:
         print(json.dumps({"error": getattr(exc, "code", "repair_storage_unavailable")}), file=sys.stderr)

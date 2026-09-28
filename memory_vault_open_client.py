@@ -91,7 +91,24 @@ class OpenNetworkClient:
     def read_message(self, **arguments):
         return self._delivery().read_message(**arguments)
 
-    def publish_saved_ack(self, base_url, request, *, timeout=30):
+    def recover_indexed_ack(self, **arguments):
+        """Discover a consented source and read its original receipt as owner.
+
+        Directory observations do not authorize this read. The caller supplies
+        its independent original READ/bootstrap grants and exact A/B/source
+        identities; success requires a real read matching the advertised commit.
+        """
+        from memory_vault_open_provider_client import OpenProviderClient
+        from memory_vault_open_repair_client import AckOwnerRecoveryClient
+        from memory_vault_open_repair_index_recovery import DiscoveredAckRecoveryClient
+        from memory_vault_open_repair_state import INDEX_WORKFLOW_LIMITS
+        reader = AckOwnerRecoveryClient(self.identity, self.encryption,
+            limit_policy=INDEX_WORKFLOW_LIMITS, transport=self.participant.transport,
+            allow_loopback=self.participant.transport.allow_loopback)
+        discovered = DiscoveredAckRecoveryClient(OpenProviderClient(self.participant, self.encryption), reader)
+        return asyncio.run(discovered.recover(**arguments))
+
+    def publish_saved_ack(self, base_url, request, *, timeout=30, repair_profile="receipt"):
         """Explicitly share one actually saved receipt through an ACK source.
 
         The closed request supplies retained original authorities and binding.
@@ -101,9 +118,12 @@ class OpenNetworkClient:
         """
         from memory_vault_open_repair_put_client import AckReceiptClient
         from memory_vault_open_repair_receipt import SavedAckReceiptPublisher
-        from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS
+        from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS, INDEX_WORKFLOW_LIMITS
+        profiles = {"receipt": RECEIPT_WORKFLOW_LIMITS, "receipt-index": INDEX_WORKFLOW_LIMITS}
+        if type(repair_profile) is not str or repair_profile not in profiles:
+            raise MemoryError("open_invalid_repair_policy")
         client = AckReceiptClient(self.identity, self.encryption,
-            limit_policy=RECEIPT_WORKFLOW_LIMITS,
+            limit_policy=profiles[repair_profile],
             allow_loopback=self.participant.transport.allow_loopback,
             transport=self.participant.transport)
         return SavedAckReceiptPublisher(self._delivery(), client).publish_saved(base_url, request, timeout=timeout)

@@ -1,14 +1,13 @@
-# Memory Vault v0.28.0-alpha.0.7 — authorized full client
+# Memory Vault v0.28.0-alpha.0.8 — authorized full client
 
-This alpha.0.7 candidate adds message-bound ACK slots, recipient-authorized
-receipt uploads and independent recovery of the original signed saved-message
-receipt. It retains all three source generations, original bytes, current
-READ permissions and durable shared work/replay limits across restart. The
-ACK recovery guide in the package documentation describes the explicit operator and
-client APIs. Message movement to replacement nodes and automatic repair remain
-unfinished. The current-fact scorer from alpha.0.5 and the delivery-approval fix
-from alpha.0.4 are retained. Exact source and archive validation belongs to the
-release record.
+This alpha.0.8 candidate adds explicit one-directory ACK publication and
+independent owner discovery followed by an actual original-receipt read. Source
+requests, used work, authority observations and exact retry responses survive
+restart. Separate A/B publication consents are required; a directory lease alone
+is never a read capability. See the [directory guide](docs/OPEN_ACK_DIRECTORY.md).
+Message movement, automatic repair and global reliability remain unfinished.
+The earlier encrypted delivery, selected-memory sharing and current-fact scorer
+are retained. Exact validation belongs to the source-bound release record.
 
 The Python and native TypeScript open clients add encrypted messages and selected original
 memory sharing after explicit first-contact approval. Recipient-saved receipts
@@ -27,7 +26,7 @@ enrolls an author as trusted.
 
 [Open-network quickstart](plugins/memory-vault-client/docs/OPEN_NETWORK_QUICKSTART.md).
 
-This full-client package targets **v0.28.0-alpha.0.7 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.8 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

@@ -1,14 +1,13 @@
 # Memory Vault development status
 
-This alpha.0.7 candidate adds message-bound ACK slots, recipient-authorized
-receipt uploads and independent recovery of the original signed saved-message
-receipt. It retains all three source generations, original bytes, current
-READ permissions and durable shared work/replay limits across restart. The
-[ACK recovery guide](OPEN_ACK_RECOVERY.md) describes the explicit operator and
-client APIs. Message movement to replacement nodes and automatic repair remain
-unfinished. The current-fact scorer from alpha.0.5 and the delivery-approval fix
-from alpha.0.4 are retained. Exact source and archive validation belongs to the
-release record.
+This alpha.0.8 candidate adds explicit one-directory ACK publication and
+independent owner discovery followed by an actual original-receipt read. Source
+requests, used work, authority observations and exact retry responses survive
+restart. Separate A/B publication consents are required; a directory lease alone
+is never a read capability. See the [directory guide](OPEN_ACK_DIRECTORY.md).
+Message movement, automatic repair and global reliability remain unfinished.
+The earlier encrypted delivery, selected-memory sharing and current-fact scorer
+are retained. Exact validation belongs to the source-bound release record.
 
 **Current development priority:** a globally decentralized network with bounded
 local routing and sharded resource growth, not a larger private relay pool.
@@ -23,7 +22,7 @@ binding, recipient-authorized upload, three-generation source verification,
 independent signed-receipt reads and a private recovery command. The release
 manifest and uploaded assets establish publication separately.
 
-Current source target: **0.28.0-alpha.0.7**, an open encrypted-delivery preview.
+Current source target: **0.28.0-alpha.0.8**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use

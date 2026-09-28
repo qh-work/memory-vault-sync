@@ -223,6 +223,16 @@ class OpenParticipant:
                                   **self.provider_policy).initialize()
                 if self.repair_policy.get("enabled", False):
                     self._repair_service(db).initialize()
+                    self._repair_index_service(db).initialize()
+
+    def _repair_index_service(self, db):
+        from memory_vault_open_repair_index_state import RepairIndexState
+        from memory_vault_open_repair_index_service import RepairIndexService
+        state = RepairIndexState(db, self.identity, self.descriptor,
+            encryption_identity=self.encryption_identity,
+            limit_policy=self.repair_policy.get("limit_policy"),
+            capacity_policy=self.repair_policy.get("capacity_policy"))
+        return RepairIndexService(state)
 
     def _repair_service(self, db, packet_payload=None):
         from memory_vault_open_repair_state import RepairAckState
@@ -257,6 +267,9 @@ class OpenParticipant:
         from memory_vault_open_repair_state import DEFAULT_POLICY
         meter = repair_wire.RepairBudget(DEFAULT_POLICY)
         parsed = repair_wire.parse_new_wire(raw, DEFAULT_POLICY, meter)
+        if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "ack.index_allocate":
+            with self.state.db() as db:
+                return self._repair_index_service(db).handle("ack.index_allocate", parsed.raw).raw, False
         if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "ack.put_request":
             with self.state.db() as db:
                 service = self._repair_service(db, parsed.value)
@@ -266,11 +279,14 @@ class OpenParticipant:
         if type(payload) is not repair_wire._DraftDict:
             raise MemoryError("open_invalid_repair_request")
         kind = payload.get("kind")
-        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "ack.bind_request"):
+        from memory_vault_open_repair_index_service import KINDS as INDEX_KINDS
+        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "ack.bind_request") and kind not in INDEX_KINDS:
             raise MemoryError("open_invalid_repair_request")
         digest = meter._hash(parsed.raw)
         packet = dict(raw=parsed.raw, ref=dict(namespace="meta", key=digest, raw_sha256=digest, size=len(parsed.raw)))
         with self.state.db() as db:
+            if kind in INDEX_KINDS:
+                return self._repair_index_service(db).handle(kind, packet).raw, False
             service = self._repair_service(db, payload)
             if kind == "bootstrap.probe":
                 result, child = service.challenge(packet).raw, False
@@ -607,8 +623,11 @@ class OpenParticipant:
                 if not self.provider_policy:
                     raise MemoryError("open_provider_closed")
                 with self.state.db() as db:
+                    repair_lookup = (self._repair_index_service(db).state.lookup_candidates
+                        if self.repair_policy.get("enabled", False) else None)
                     result = ProviderState(db, self.identity, self.descriptor,
-                        encryption_identity=self.encryption_identity, **self.provider_policy).handle(request)
+                        encryption_identity=self.encryption_identity, repair_lookup=repair_lookup,
+                        **self.provider_policy).handle(request)
             except MemoryError as exc:
                 result = {"error": {"code": exc.code, "retryable": bool(exc.retryable)}}
             return provider_response(self.identity, request=request, node=self.descriptor, body=result)
@@ -655,6 +674,15 @@ class OpenParticipant:
     def handle_blob(self, request, chunk):
         if self.descriptor is None:
             raise MemoryError("open_node_not_configured")
+        payload = request.get("payload") if isinstance(request, Mapping) else None
+        if isinstance(payload, Mapping) and payload.get("kind") == "proof.stage_child":
+            if not self.repair_policy.get("enabled", False):
+                raise MemoryError("open_repair_closed")
+            from memory_vault_open_blob import decode_blob_frame, encode_blob_frame
+            with self.state.db() as db:
+                raw = self._repair_index_service(db).handle_blob(encode_blob_frame(request, chunk))
+            frame = decode_blob_frame(raw)
+            return frame.header, frame.chunk
         from memory_vault_open_blob import verify_blob_request, sign_blob_response
         from memory_vault_open_delivery_state import DeliveryState
         verify_blob_request(request, node=self.descriptor)
