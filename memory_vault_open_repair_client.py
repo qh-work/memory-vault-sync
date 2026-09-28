@@ -460,3 +460,154 @@ class AckOwnerRecoveryClient:
             historical=(*historical,*occupied_source.statuses)
         self._floors((*historical,*known),checked,obligations)
         return tuple(checked)
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveredMailboxRootProof:
+    source: object
+    proof: proof.AuthenticatedBootstrapProof
+    current_statuses: tuple
+    originals: object
+    metrics: object
+
+
+class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
+    """Recover B's original mailbox directory from independently retained S1."""
+    def recover(self, base_url, *, target_node_entry, expected_target, expected_root,
+                root_entry, read_entry, bootstrap_entry, known_statuses=(), archive_statuses=(), timeout=30):
+        from memory_vault_open_repair_mailbox_root import verify_mailbox_root_bootstrap, verify_mailbox_root_source_event
+        if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=60:
+            _fail("repair_invalid_deadline")
+        budget=wire.RepairBudget(self.policy);started=self._now();deadline=time.monotonic()+timeout
+        expected=wire.build_new_wire(dict(root=expected_root,target=expected_target),self.policy,budget).value
+        root,target=expected["root"],expected["target"]
+        setup=verify_mailbox_root_bootstrap(dict(root=root_entry,read=read_entry,bootstrap=bootstrap_entry),
+            expected_root=root,expected_owner=self.subject,limit_policy=self.limits,at=started,policy=self.policy,budget=budget)
+        raw,ref=ack._entry(target_node_entry)
+        node=original.verify_original_control(raw,expected_signing_key=target["signing_key"],expected_schema="memory-vault-open-control/v1",
+            expected_kind="node",at=started,policy=self.policy,budget=budget)
+        original._node_shape(node,started,budget)
+        if len(node.document.raw)!=ref.size or node.raw_sha256!=ref.raw_sha256:
+            _fail("repair_ref_mismatch")
+        if endpoint(base_url,allow_loopback=self.allow_loopback)!=endpoint(node.payload["base_url"],allow_loopback=self.allow_loopback):
+            _fail("repair_proof_mismatch")
+        grant=setup["bootstrap"].payload
+        retained=self._retained_inputs(known_statuses,archive_statuses,budget)
+        known=[]
+        for entry in retained:
+            parsed=original.parse_original_control(entry["raw"],self.policy,budget)
+            p=status._fields(status._fields(parsed.value,{"payload","proof"})["payload"],status._PAYLOAD)
+            signer=p["signing_key"]
+            if signer not in (self.subject["signing_key"],target["signing_key"]) or p["issued_at"]>started:
+                _fail("repair_status_mismatch")
+            values=self._status_entries(p)
+            permitted={"authority","catalog","mailbox_slot"} if signer==self.subject["signing_key"] else {"resource"}
+            if any(v["scope_kind"] not in permitted for v in values):
+                _fail("repair_status_disclosure")
+            observed=status.authenticate_status_original(entry,expected_root=root,expected_signing_key=signer,at=p["issued_at"],
+                allowed_scopes=[dict(scope_kind=v["scope_kind"],scope_id=v["scope_id"]) for v in values],
+                policy=self.policy,budget=budget,on_authenticated=self.status_observer)
+            known.append(observed)
+            if any(v["status"]=="revoked" and v["operation_mask"]&10 for v in observed.payload["entries"]):
+                _fail("repair_authority_revoked")
+        expiry=min(started+min(60,max(1,int(timeout))),node.payload["expires_at"],grant["probe_until"],grant["proof_until"],
+            *(v.payload["expires_at"] for v in setup.values()))
+        if expiry<=started:
+            _fail("repair_access_expired")
+        binding=dict(expected_subject=self.subject,expected_target=target,target_storage_epoch=node.payload["storage_epoch"],
+            bootstrap_grant_sha256=setup["bootstrap"].ref.raw_sha256,selector=grant["selector"],consumer="mailbox_root",policy=self.policy,budget=budget)
+        requests,wire_bytes,proof_bytes=0,0,0
+        def request(raw,child=False):
+            nonlocal requests,wire_bytes
+            if requests>=grant["limits"]["max_requests"] or time.monotonic()>=deadline:
+                _fail("repair_over_budget")
+            requests+=1
+            value=self.transport.request_repair(base_url,raw,child=child,deadline=deadline)
+            if type(value) is not bytes or not 0<len(value)<=proof.MAX_RESPONSE_BYTES:
+                _fail("repair_invalid_response")
+            wire_bytes+=len(raw)+len(value)
+            return value
+        outgoing=probe.make_bootstrap_probe(self.identity,**binding,at=started,expires_at=expiry)
+        if len(outgoing.original.raw)>grant["limits"]["max_probe_bytes"]:
+            _fail("repair_over_budget")
+        challenge_raw=request(outgoing.original.raw);digest=budget._hash(challenge_raw)
+        challenge=dict(raw=challenge_raw,ref=wire.RawRef("meta",digest,digest,len(challenge_raw)).as_dict())
+        answer=probe.solve_bootstrap_challenge(_entry(outgoing.original),challenge,signer=self.identity,encryption_identity=self.encryption_identity,
+            target_nonce=outgoing.nonce,**binding,at=self._now(),expires_at=expiry)
+        response=request(answer.raw)
+        held=proof.verify_bootstrap_proof_response(response,expected_subject=self.subject,expected_target=target,
+            target_storage_epoch=node.payload["storage_epoch"],selector=grant["selector"],bootstrap_grant_ref=setup["bootstrap"].ref.as_dict(),
+            probe_ref=outgoing.original.ref.as_dict(),challenge_ref=challenge["ref"],answer_ref=answer.ref.as_dict(),at=self._now(),
+            max_proof_items=grant["limits"]["max_proof_items"],max_proof_bytes=grant["limits"]["max_proof_bytes"],
+            expected_source_state="root",consumer="mailbox_root",policy=self.policy,budget=budget)
+        proof_bytes=len(response)+len(held.handle.raw)+len(held.manifest.raw)
+        originals,roles={},{}
+        for item in held.manifest.value["children"]:
+            reference=wire.raw_ref(item["ref"]);roles.setdefault(item["role"],[]).append(reference)
+            if reference in originals:
+                continue
+            if reference.size>self.policy.max_document_bytes or proof_bytes+reference.size>grant["limits"]["max_proof_bytes"]:
+                _fail("repair_over_budget")
+            chunks=[];offset=0
+            while offset<reference.size:
+                count=min(proof.MAX_CHILD_BYTES,reference.size-offset)
+                child=proof.make_bootstrap_child_request(self.identity,held,subject=self.subject,target=target,at=self._now(),
+                    expires_at=held.handle.payload["expires_at"],child_index=item["index"],offset=offset,requested_bytes=count,policy=self.policy,budget=budget)
+                value=request(child.raw,True)
+                if len(value)!=count:
+                    _fail("repair_ref_mismatch")
+                budget._bytes("input_bytes",len(value));chunks.append(value);offset+=count
+            budget._bytes("output_bytes",reference.size);assembled=b"".join(chunks)
+            if budget._hash(assembled)!=reference.raw_sha256:
+                _fail("repair_ref_mismatch")
+            originals[reference]=assembled;proof_bytes+=len(assembled)
+        def entry(reference):
+            return dict(raw=originals[reference],ref=reference.as_dict())
+        resolver=wire.LocalRawResolver(self.policy,budget)
+        for reference in roles["history.raw_pack"]:
+            if resolver.put(reference.namespace,reference.key,originals[reference]).ref!=reference:
+                _fail("repair_ref_mismatch")
+        source=verify_mailbox_root_source_event(entry(roles["history.mailbox_root"][0]),resolver,entry(roles["root.custody"][0]),
+            expected_root=root,expected_owner=self.subject,expected_target=target,target_storage_epoch=node.payload["storage_epoch"],
+            limit_policy=self.limits,policy=self.policy,budget=budget)
+        for name in setup:
+            if source["setup"]["originals"][name].ref!=setup[name].ref or source["setup"]["originals"][name].raw!=setup[name].raw:
+                _fail("repair_proof_mismatch")
+        # The service plan must contain exactly the already verified history
+        # objects, plus its current observations and the finite wrapper objects.
+        actual={(role,ref) for role,refs in roles.items() for ref in refs if not role.startswith("current.status.")}
+        wanted={(v.role,v.original.ref) for v in source["manifest"].roles}
+        wanted.update(("history.raw_pack",wire.raw_ref(v["pack_ref"])) for v in source["manifest"].manifest.value["roles"])
+        wanted.update((role,ref) for role in ("history.mailbox_root","root.custody") for ref in roles[role])
+        if actual!=wanted:
+            _fail("repair_proof_mismatch")
+        obligations=[dict(v,role=v["role"].replace("historical.","current.",1),mask=v["bits"]) for v in source["obligations"]]
+        current,covered=[],set()
+        permitted_scopes={(v["signer"]["key_id"],v["kind"],v["scope_id"]) for v in obligations}
+        for observed in known:
+            if any((observed.payload["signing_key"]["key_id"],v["scope_kind"],v["scope_id"]) not in permitted_scopes for v in observed.payload["entries"]):
+                _fail("repair_status_disclosure")
+        for role,refs in roles.items():
+            if not role.startswith("current.status."):
+                continue
+            for reference in refs:
+                p=original.parse_original_control(originals[reference],self.policy,budget).value["payload"]
+                permitted=[v for v in obligations if v["signer"]==p["signing_key"]]
+                values=self._status_entries(p);present={(v["scope_kind"],v["scope_id"]) for v in values}
+                matched=[v for v in permitted if v["role"]==role and (v["kind"],v["scope_id"]) in present]
+                if not matched:
+                    _fail("repair_status_disclosure")
+                observed=status.verify_status_original(entry(reference),expected_root=root,expected_signing_key=matched[0]["signer"],at=self._now(),
+                    allowed_scopes=[dict(scope_kind=v["kind"],scope_id=v["scope_id"]) for v in permitted],
+                    required=[dict(scope_kind=v["kind"],scope_id=v["scope_id"],document_revision=v["revision"],operation_mask=v["mask"])
+                        for v in permitted if (v["kind"],v["scope_id"]) in present],policy=self.policy,budget=budget,on_authenticated=self.status_observer)
+                current.append(observed);covered.update((v["role"],v["kind"],v["scope_id"]) for v in matched)
+        if covered!={(v["role"],v["kind"],v["scope_id"]) for v in obligations}:
+            _fail("repair_status_missing")
+        self._floors((*known,*source["statuses"]),current,obligations)
+        if self._now()>=min(held.handle.payload["expires_at"],source["read_until"],source["retain_until"]) or time.monotonic()>=deadline:
+            _fail("repair_access_expired")
+        verify_mailbox_root_bootstrap(dict(root=root_entry,read=read_entry,bootstrap=bootstrap_entry),expected_root=root,
+            expected_owner=self.subject,limit_policy=self.limits,at=self._now(),policy=self.policy,budget=budget)
+        return RecoveredMailboxRootProof(MappingProxyType(source),held,tuple(current),MappingProxyType(originals),
+            MappingProxyType(dict(requests=requests,wire_bytes=wire_bytes,proof_bytes=proof_bytes,**budget.snapshot())))

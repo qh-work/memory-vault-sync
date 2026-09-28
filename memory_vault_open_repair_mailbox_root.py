@@ -402,6 +402,65 @@ def verify_mailbox_root_source_event(manifest_entry, resolver, custody_entry, *,
         setup=graph,descriptor=descriptor,statuses=tuple(statuses),obligations=tuple(obligations),stored_at=at,read_until=read_until,retain_until=retain_until)
 
 
+def verify_mailbox_root_bootstrap(entries, *, expected_root, expected_owner, limit_policy, at, policy, budget):
+    """Verify the recipient's independently retained pre-message root entry."""
+    wire._context(policy,budget)
+    expected=wire.build_new_wire(dict(root=expected_root,owner=expected_owner,limits=limit_policy,at=at),policy,budget).value
+    root,owner=expected["root"],expected["owner"]
+    history._root(root);owner_id=resource._dual_key(owner,budget);bootstrap._limits(expected["limits"]);wire.u53(expected["at"])
+    if root["root_kind"]!="mailbox" or root["owner"]!=owner_id:
+        _fail()
+    resource._fields(entries,{"root","read","bootstrap"})
+    checked={}
+    for name in ("root","read","bootstrap"):
+        value=resource._fields(entries[name],{"raw","ref"})
+        ref=resource._ref(wire.build_new_wire(value["ref"],policy,budget).value)
+        parsed=wire.parse_new_wire(value["raw"],policy,budget)
+        if len(parsed.raw)!=ref.size or budget._hash(parsed.raw)!=ref.raw_sha256:
+            wire._fail("repair_ref_mismatch")
+        signed=resource._fields(parsed.value,{"payload","proof"})
+        p=resource._fields(signed["payload"],resource.COMMON|set(FIELDS[name].split()))
+        if p["kind"]!=KINDS[name] or p["schema_version"]!=resource.SCHEMA or p["root_key"]!=root:
+            _fail()
+        resource._lifetime(p);wire.u53(p["revision"])
+        if not p["issued_at"]<=expected["at"]<p["expires_at"]:
+            wire._fail("repair_resource_expired")
+        original._verify_control_signature(p,signed["proof"],owner["signing_key"],budget)
+        checked[name]=resource.AuthenticatedRepairOriginal(parsed.raw,ref,p)
+    r,c,g=(checked[k].payload for k in ("root","read","bootstrap"))
+    for value in (r,c):
+        resource._budget(value["budget"]);resource._windows(value["windows"],issued=value["issued_at"],expires=value["expires_at"])
+        resource._opmask(value["operation_mask"])
+        if expected["at"]>=min(value["windows"][k] for k in ("read_until","retain_until")):
+            wire._fail("repair_resource_expired")
+    if (r["operation_mask"]&10!=10 or c["operation_mask"]&2!=2 or c["operation_mask"]&~r["operation_mask"]
+            or c["reader"]!=owner_id or c["root_authority_ref"]!=checked["root"].ref.as_dict()
+            or any(c["budget"][k]>r["budget"][k] for k in resource._BUDGET)
+            or any(c["windows"][k]>r["windows"][k] for k in resource._WINDOWS)
+            or c["expires_at"]>r["expires_at"] or not r["issued_at"]<=c["issued_at"]<=g["issued_at"]):
+        _fail()
+    _ordered(r["allowed_roles"],lambda v:v,_role);_ordered(g["upload_roles"],lambda v:v,_role)
+    if (not {"bootstrap.grant","mailbox_root_service_v1"}<=set(r["allowed_roles"])
+            or not set(g["upload_roles"])<=UPLOAD_ROLES & set(r["allowed_roles"])
+            or g["owner"]!=owner_id or g["subject"]!=owner_id or g["consumer"]!="mailbox_root"
+            or g["probe_profile"]!="opaque_v1" or g["response_profile"]!="mailbox_root_service_v1"
+            or g["parent_authority_ref"]!=checked["root"].ref.as_dict() or g["caller_authority_ref"]!=checked["read"].ref.as_dict()
+            or g["selector"]!=dict(root_key_sha256=budget._hash(wire._canonical(root,budget)),anchor_ref=root["anchor_ref"],
+                root_authority_sha256=checked["root"].ref.raw_sha256,read_grant_sha256=checked["read"].ref.raw_sha256)
+            or g["expires_at"]>min(r["expires_at"],c["expires_at"])):
+        _fail()
+    bootstrap._limits(g["limits"])
+    for name,parents in bootstrap._PARENT_CAPS.items():
+        if g["limits"][name]>expected["limits"][name] or any(g["limits"][name]>p["budget"][k] for p in (r,c) for k in parents):
+            _fail()
+    for name in ("probe_until","proof_until","upload_until"):
+        if not expected["at"]<wire.u53(g[name])<=g["expires_at"]:
+            _fail()
+        if name!="probe_until" and any(g[name]>p["windows"][k] for p in (r,c) for k in ("read_until","retain_until")):
+            _fail()
+    return checked
+
+
 class MailboxRootActivation:
     def __init__(self, resources):
         self.resources, self.source, self.db = resources, resources.source, resources.db

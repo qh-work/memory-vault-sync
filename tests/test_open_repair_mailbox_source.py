@@ -263,8 +263,43 @@ class MailboxSourceTests(unittest.TestCase):
                 return transport.request_repair(base,packet["raw"],deadline=time.monotonic()+15)
             def child(self,packet):
                 return transport.request_repair(base,packet["raw"],child=True,deadline=time.monotonic()+15)
-        remote=Remote();remote.participant=participant
+        remote=Remote();remote.participant=participant;remote.base_url=base
         return remote
+
+    def test_custody_recovery_client_fetches_http_and_rejects_retained_revocation(self):
+        from memory_vault_open_repair_client import MailboxRootRecoveryClient
+        from memory_vault_open_repair_mailbox_source import MailboxRecoveryService
+        from tests.open_repair_ack_fixtures import signed_entry
+        from tests.test_open_repair_status import status_entry
+        import memory_vault_open_provider as provider
+        from unittest.mock import patch
+        self.owner_observation();self.observe();self.source.prepare_history(self.resource_id,"synthetic_observation");custody=self.custody()
+        h=self.host.h;MailboxRecoveryService(self.source).initialize();remote=self.http_service(h)
+        node=dict(h.f["docs"]["descriptor"]["payload"],base_url=remote.base_url)
+        node_entry=signed_entry(node,h.f["signers"]["target"],"synthetic_http_node")
+        held=json.loads(bytes(h.source._one("SELECT inputs FROM open_repair_mailbox_roots")["inputs"]))
+        options=dict(target_node_entry=node_entry,expected_target=h.source.target,expected_root=h.root,
+            **{name+"_entry":dict(raw=held[name]["raw"].encode(),ref=held[name]["ref"]) for name in ("root","read","bootstrap")})
+        observed=[]
+        client=MailboxRootRecoveryClient(h.f["signers"]["owner"],h.f["encryption"]["owner"],limit_policy=dict(h.source.limits),
+            allow_loopback=True,clock=lambda:h.now,status_observer=observed.append)
+        self.addCleanup(client.close)
+        result=client.recover(remote.base_url,**options)
+        self.assertEqual(result.source["custody"].raw,custody["raw"])
+        self.assertGreater(result.metrics["requests"],2)
+        self.assertTrue(observed)
+        context=self.source.root.owner_status_context(self.resource_id)
+        revoked=status_entry(provider.issue_status(h.f["signers"]["owner"],root=h.root,revision=2,
+            entries=[dict(scope_kind=v["scope_kind"],scope_id=v["scope_id"],minimum_document_revision=1,status="revoked",operation_mask=127)
+                for v in context["required"]],issued_at=h.now,valid_until=h.now+100))
+        with patch.object(client.transport,"request_repair",side_effect=AssertionError("unexpected network after known revocation")):
+            with self.assertRaisesRegex(RepairWireError,"repair_authority_revoked"):
+                client.recover(remote.base_url,**options,known_statuses=[revoked])
+            altered=json.loads(options["read_entry"]["raw"])["payload"]
+            altered["reader"]=dict(signing_key_id=h.source.identity.key_id,encryption_key_id=h.source.encryption_identity.key_id)
+            bad=dict(options,read_entry=signed_entry(altered,h.f["signers"]["owner"],"synthetic_wrong_reader"))
+            with self.assertRaises(RepairWireError):
+                client.recover(remote.base_url,**bad)
 
     def test_custody_recovery_full_http_originals(self):
         self.test_custody_recovery_challenge_persists_and_proves_node_keys()
