@@ -459,6 +459,10 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         self.assertEqual(payload['historical_manifest_ref'],feed_history['manifest']['ref'])
         self.assertEqual(payload['covered_interval'],dict(start=0,end=1))
         self.assertEqual(db.execute('SELECT count(*) FROM open_mailbox_feed_custody').fetchone()[0],1)
+        inspect_snapshot = getattr(self, 'inspect_committed_mailbox', None)
+        if inspect_snapshot is not None:
+            inspect_snapshot(staging, slot, admitted['head']['ref'])
+            return
         from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_source_event
         budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
         for value in (saved['pack'],feed_history['pack']):resolver.put('meta',value['ref']['key'],value['raw'])

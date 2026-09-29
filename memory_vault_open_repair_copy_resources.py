@@ -46,6 +46,14 @@ class RepairCopyResources:
                 reservation_until INTEGER NOT NULL,retain_until INTEGER NOT NULL,
                 status TEXT NOT NULL CHECK(status='reserved'),UNIQUE(caller,allocation_id))''')
 
+    def _validate_scope(self, intent):
+        if intent['purpose'] != 'ack_replica':wire._fail('repair_copy_allocation_mismatch')
+        ack_copy_scope(intent['scope'], intent['root_key'])
+
+    def _validate_live_capacity(self, intent, caps):
+        if intent['scope']['kind']=='ack_occupied' and caps['max_live_bytes']<wire.raw_ref(intent['scope']['receipt_ref']).size:
+            wire._fail('repair_copy_capacity')
+
     def allocate(self, entry, *, expected_caller, _budget=None, _guard=None, _admitted=None):
         s=self.source;budget=_budget if _budget is not None else wire.RepairBudget(s.policy)
         wire._context(s.policy,budget)
@@ -57,7 +65,7 @@ class RepairCopyResources:
         p=resource._fields(signed['payload'],resource.COMMON|set(resource._FIELDS[0].split()))
         resource._lifetime(p)
         intent=resource._fields(p['intent'],INTENT_FIELDS)
-        history._root(intent['root_key']);ack_copy_scope(intent['scope'],intent['root_key'])
+        history._root(intent['root_key']);self._validate_scope(intent)
         for name in ('allocation_id','job_id'):resource._opaque(intent[name])
         resource._opaque(p['request_id'])
         manifest=wire.raw_ref(intent['historical_manifest_ref'])
@@ -65,7 +73,7 @@ class RepairCopyResources:
         resource._windows(intent['windows'],issued=p['issued_at'])
         if (p['schema_version']!=resource.SCHEMA or p['kind']!='resource.allocate'
                 or p['signing_key']!=caller['signing_key'] or intent['caller']!=caller
-                or intent['kind']!='resource.copy_intent' or intent['purpose']!='ack_replica'
+                or intent['kind']!='resource.copy_intent'
                 or intent['target']!=s.target or p['target_node_key_id']!=s.identity.key_id
                 or p['target_storage_epoch']!=s.node['payload']['storage_epoch']
                 or intent['target_storage_epoch']!=p['target_storage_epoch']
@@ -74,9 +82,9 @@ class RepairCopyResources:
             wire._fail('repair_copy_allocation_mismatch')
         original._verify_control_signature(p,signed['proof'],caller['signing_key'],budget)
         if (min(caps[name] for name in ('max_meta_bytes','max_items','max_requests','max_pending',
-                'max_replay_records','max_jobs','max_job_bytes'))<=0
-                or (intent['scope']['kind']=='ack_occupied' and caps['max_live_bytes']<wire.raw_ref(intent['scope']['receipt_ref']).size)):
+                'max_replay_records','max_jobs','max_job_bytes'))<=0):
             wire._fail('repair_copy_capacity')
+        self._validate_live_capacity(intent, caps)
         charge=caps['max_live_bytes']+caps['max_meta_bytes']+caps['max_job_bytes']+caps['max_replay_records']*REPLAY_CHARGE+ROW_CHARGE
         wire.u53(charge,1)
         digest=budget._hash(wire._canonical(ref.as_dict(),budget))
