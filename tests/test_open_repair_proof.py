@@ -59,6 +59,24 @@ class RepairProofTests(unittest.TestCase):
         options.update(changes)
         return proof.verify_bootstrap_proof_response(self.response().raw if raw is None else raw, **options)
 
+    def replica_manifest(self):
+        # Container grammar only; real HTTP tests reconstruct every child.
+        manifest=copy.deepcopy(self.manifest)
+        reference=self.fixture['entries']['root']['ref']
+        rows=[dict(role=role,ref=reference) for role in sorted(proof.REPLICA_FIXED_ROLES)]
+        rows.append(dict(role='history.raw_pack',ref=self.fixture['packs'][0]['ref']))
+        rows.append(dict(role='copy.current_status',ref=self.fixture['entries']['read']['ref']))
+        manifest['children']=[dict(index=i,**row) for i,row in enumerate(rows)]
+        return manifest
+
+    def test_replica_container_is_explicit_and_retains_exact_repeated_status_refs(self):
+        manifest=self.replica_manifest();raw=self.response(manifest).raw
+        self.verify(raw,expected_source_state='replica_unbound')
+        with self.assertRaises(wire.RepairWireError):self.verify(raw)
+        duplicate=copy.deepcopy(manifest);item=copy.deepcopy(duplicate['children'][-1])
+        item['index']=len(duplicate['children']);duplicate['children'].append(item)
+        with self.assertRaises(wire.RepairWireError):self.response(duplicate)
+
     def mailbox_manifest(self):
         # Manifest-format fixture only; these locators do not assert mailbox
         # authority. The mailbox source consumer separately validates children.

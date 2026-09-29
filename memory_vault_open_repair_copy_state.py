@@ -36,6 +36,14 @@ class RepairCopyState(RepairCopyResources):
             total+=self.db.execute('SELECT coalesce(sum(length(raw)+length(ref)+?),0) FROM open_repair_copy_'+table+' WHERE resource_id=?',(ROW_CHARGE,rid)).fetchone()[0]
         held=self.source._one('SELECT * FROM open_repair_copy_commits WHERE resource_id=?',(rid,))
         if held:total+=sum(len(held[name]) for name in ('manifest','manifest_ref','custody','custody_ref'))+ROW_CHARGE
+        # Service rows use this same reservation; no separate uncharged store.
+        for table,columns in (
+                ('open_repair_copy_read_config','length(raw)+length(digest)'),
+                ('open_repair_bootstrap_usage','0'),('open_repair_bootstrap_work','0'),
+                ('open_repair_bootstrap_challenges','length(probe)+length(probe_ref)+length(challenge)+length(challenge_ref)+length(nonce)+coalesce(length(response),0)+coalesce(length(handle_ref),0)'),
+                ('open_repair_bootstrap_handles','length(response)'),('open_repair_bootstrap_requests','0')):
+            if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
+                total+=self.db.execute('SELECT coalesce(sum('+columns+'+?),0) FROM '+table+' WHERE resource_id=?',(ROW_CHARGE,rid)).fetchone()[0]
         return total
 
     def _observe_single(self,row,caps,root_digest,item):
@@ -280,7 +288,7 @@ class RepairCopyState(RepairCopyResources):
             limit_policy=limit_policy,policy=policy,budget=budget)
 
     def prepare_unbound_read(self,resource_id,consents,*,expected_ack_slot,expected_owner,expected_source,
-            source_storage_epoch,expected_maintainer,current_statuses,limit_policy,action='proof',_budget=None):
+            source_storage_epoch,expected_maintainer,current_statuses,limit_policy,action='proof',_budget=None,_include_replica=False):
         """Durable current permission check for a future possession/read service.
 
         This is operator-local. It never claims caller key possession or publishes
@@ -326,6 +334,22 @@ class RepairCopyState(RepairCopyResources):
                         denial=denial or 'repair_authority_revoked'
             if (now>=plan['expires_at'] or not s.node['payload']['issued_at']<=now<s.node['payload']['expires_at']
                     or s.node['payload']['status']!='active'):denial=denial or 'repair_access_expired'
+            stamp=self._read_snapshot(resource_id,root_digest) if _include_replica and denial is None else None
         if denial:wire._fail(denial)
-        return dict(state='permission_checked',resource_id=resource_id,action=action,
+        result=dict(state='permission_checked',resource_id=resource_id,action=action,
             replica_custody_ref=replica['custody'].ref.as_dict(),**plan)
+        if _include_replica:result.update(_replica=replica,_stamp=stamp,_root_digest=root_digest)
+        return result
+
+    def _read_snapshot(self,resource_id,root_digest):
+        """Internal immutable permission/byte stamp, under the storage lock."""
+        s=self.source;row,held=self._committed(resource_id)
+        parts=[tuple(row.items()),tuple(held.items()),canonical_bytes(s.node),canonical_bytes(s.limits)]
+        for table,where,value,order in (
+                ('open_repair_copy_objects','resource_id',resource_id,'ref_digest'),
+                ('open_repair_copy_observations','root_digest',root_digest,'resource_id,raw_digest'),
+                ('open_repair_copy_blocks','root_digest',root_digest,'resource_id')):
+            parts.append(tuple(tuple(r) for r in self.db.execute('SELECT * FROM '+table+' WHERE '+where+'=? ORDER BY '+order,(value,))))
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='open_repair_copy_read_config'").fetchone():
+            parts.append(tuple(tuple(r) for r in self.db.execute('SELECT * FROM open_repair_copy_read_config WHERE resource_id=?',(resource_id,))))
+        return tuple(parts)

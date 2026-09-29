@@ -70,10 +70,11 @@ def repack_fixture(fixture, *, roles=None, manifest_changes=None, custody_change
     return fixture
 
 
-def ack_unbound_fixture(*, changes=None, capacity_overrides=None):
+def ack_unbound_fixture(*, changes=None, capacity_overrides=None, limit_overrides=None):
     """changes[role] replaces payload fields before topological re-signing."""
     docs, _, expected, signers, encryption = ack_resource_fixture(include_encryption=True)
     changes = changes or {}
+    limits = dict(LIMITS, **(limit_overrides or {}))
     docs = copy.deepcopy(docs)
     now = 2_000_000_000
     capacity = dict(max_live_bytes=131072, max_meta_bytes=262144, max_items=64,
@@ -131,7 +132,7 @@ def ack_unbound_fixture(*, changes=None, capacity_overrides=None):
         probe_until=now+900, proof_until=now+900, upload_until=now+900,
         probe_profile="opaque_v1", response_profile="ack_owner_service_v1",
         upload_roles=["ack.read_grant", "ack.root_authority", "ack.write_grant", "bootstrap.grant"],
-        limits=copy.deepcopy(LIMITS)), signers["owner"])
+        limits=copy.deepcopy(limits)), signers["owner"])
     node = issue_node(signers["target"], base_url="http://127.0.0.1:19091",
         storage_epoch=expected["target_storage_epoch"], roles=["directory", "router"],
         revision=1, issued_at=now+5, expires_at=now+3600)
@@ -155,7 +156,7 @@ def ack_unbound_fixture(*, changes=None, capacity_overrides=None):
         signing_key=signers["target"].public_descriptor(), ack_slot=slot, root_authority_ref=entries["root"]["ref"],
         historical_manifest_ref={}, resource_ref=docs["active"]["payload"]["resource"],
         stored_at=now+6, read_until=now+800, retain_until=now+950, state="unbound"))
-    expected["limit_policy"] = copy.deepcopy(LIMITS)
+    expected["limit_policy"] = copy.deepcopy(limits)
     result = dict(docs=docs, entries=entries, expected=expected, signers=signers, encryption=encryption, role_map=dict(ROLE_MAP))
     return repack_fixture(result, custody_changes=changes.get("custody"))
 

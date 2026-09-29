@@ -25,6 +25,11 @@ EMPTY_FIXED_ROLES = empty.ROLES | CURRENT_ROLES | {"history.ack_empty", "ack.emp
 OCCUPIED_FIXED_ROLES = occupied.ROLES | CURRENT_ROLES | {"history.ack_occupied_inputs", "ack.commit", "ack.head", "current.status.ack_disclosure"}
 SOURCE_STATES = {"unbound": (FIXED_ROLES, 1), "empty": (EMPTY_FIXED_ROLES, 2),
                  "occupied": (OCCUPIED_FIXED_ROLES, 3)}
+REPLICA_FIXED_ROLES = ack.ROLES | frozenset(('history.ack_unbound','ack.slot_custody',
+    'copy.reservation_consent','copy.allocation','copy.offer','copy.assignment','copy.owner_disclosure',
+    'copy.source_disclosure','copy.current_status','replica.manifest','replica.custody',
+    'return.owner','return.source','return.maintainer','current.status.replica_read'))
+SOURCE_STATES['replica_unbound'] = (REPLICA_FIXED_ROLES, 1)
 OFFER_CURRENT_ROLES = (CURRENT_ROLES - {"current.status.ack_read", "current.status.ack_owner_bootstrap"}) | {"current.status.ack_write", "current.status.ack_offer_bootstrap"}
 OFFER_FIXED_ROLES = empty.ROLES | OFFER_CURRENT_ROLES | {"history.ack_empty", "ack.empty_custody", "ack.head"}
 MAILBOX_CURRENT_ROLES = frozenset("current.status."+name for name in
@@ -134,6 +139,9 @@ def _manifest(value, expected, maximum_items, expected_source_state=None):
             'resource.data_allocate','resource.metadata_allocate','resource.data_offer','resource.metadata_offer',
             'resource.slot_activation','resource.data_active','resource.metadata_active','feed.head','feed.checkpoint','history.mailbox_feed','feed.custody'}
         if any(counts.get(role)!=1 for role in singleton) or any(counts.get(role,0)<1 for role in fixed_roles):_fail()
+    elif source_state=="replica_unbound":
+        repeated={"copy.current_status","current.status.replica_read"}
+        if any(counts.get(role)!=1 for role in fixed_roles-repeated) or any(not 1<=counts.get(role,0)<=16 for role in repeated):_fail()
     elif any(counts.get(role) != 1 for role in fixed_roles):
         _fail()
     if len(packs) < minimum_packs:

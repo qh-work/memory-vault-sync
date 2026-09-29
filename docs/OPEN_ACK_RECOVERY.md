@@ -65,6 +65,38 @@ both its original parent budgets and those ceilings. The client also applies
 its independent finite parsing and verification limits. Exhaustion reports an
 error; it does not establish that a slot is empty.
 
+## Development: reading an unbound replacement replica
+
+The source checkout can serve an already committed unbound ACK replica through
+the same protected HTTP route. The replacement operator initializes
+`ReplicaReadService(state)` and calls `configure(resource_id, context=...,
+consents=..., current_statuses=...)` locally in the node's existing protected
+transport database. The context contains independently held `expected_ack_slot`,
+`expected_owner`, `expected_source`, `source_storage_epoch`, and
+`expected_maintainer`. Configuration contains public signed originals only.
+
+The owner, original source and maintainer must each sign a separate
+`ack.replica_return_consent` for the exact replacement keys/epoch, assignment,
+original source custody and bootstrap grant. Each consent permits only that
+issuer's exact originals and named status scopes. Existing COPY or directory
+permission does not supply this return permission. These consents can be
+prepared before the copy commitment without contacting their issuers again
+within the original finite authorization windows.
+
+The response explicitly identifies `replica_unbound`; it cannot be accepted as
+an original source or a bound/occupied replica. Both signing and encryption key
+possession are checked before proof publication. Full original bytes, replica
+custody, return consents and current statuses are available through authenticated
+range reads. Challenges, responses, replay records, status floors and actual
+work charges survive restart in the same database and capacity reservation.
+Remembered revocation prevents an old handle from continuing to read.
+
+This operator API and HTTP service are development functionality. The standard
+recovery command and Python/TypeScript recovery clients do not yet consume this
+replica profile. Remote copy upload, first-receipt admission on a replacement,
+occupied replica recovery and automatic replacement selection remain unfinished.
+The existing published alpha.0.14 archives do not include this service.
+
 ## Owner recovery command
 
 Prepare a private UTF-8 JSON request from the owner's retained originals:

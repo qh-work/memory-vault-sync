@@ -17,6 +17,7 @@ class CopyPreparationTests(unittest.TestCase):
     def setUp(self):
         self.local = state_fixture.RepairStateTests()
         self.local.capacity_overrides=getattr(self,"source_capacity",None)
+        self.local.limit_overrides=getattr(self,"source_limits",None)
         self.local.setUp(); self.addCleanup(self.local.tearDown)
         self.destination = state_fixture.RepairStateTests(); self.destination.setUp(); self.addCleanup(self.destination.tearDown)
         self.f = self.local.fixture; self.p = policy()

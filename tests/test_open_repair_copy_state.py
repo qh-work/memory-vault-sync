@@ -20,6 +20,7 @@ class CopyStateTests(unittest.TestCase):
     def setUp(self):
         self.base=preparation.CopyPreparationTests()
         self.base.source_capacity=getattr(self,"source_capacity",None)
+        self.base.source_limits=getattr(self,"source_limits",None)
         self.base.setUp();self.addCleanup(self.base.doCleanups)
         self.f=self.base.f;self.destination=self.base.destination
         if getattr(self,'extra_pack',False):

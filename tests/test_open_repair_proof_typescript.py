@@ -77,6 +77,15 @@ class OpenRepairProofTypeScriptTests(unittest.TestCase):
             input=json.dumps(calls).encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
         self.assertEqual(process.returncode,0,process.stderr.decode(errors='replace')[-5000:]);return json.loads(process.stdout)
 
+    def test_replica_container_native_python_parity(self):
+        manifest=self.py.replica_manifest();call=self.call()
+        call['raw']=base64.b64encode(self.py.response(manifest).raw).decode()
+        call['options']['expectedSourceState']='replica_unbound'
+        rejected=copy.deepcopy(call);rejected['options']['expectedSourceState']='unbound'
+        good,bad=self.ts([call,rejected])
+        self.assertTrue(good['ok'],good);self.assertEqual(good['result']['manifest'],manifest)
+        self.assertFalse(bad['ok']);self.assertEqual(bad['code'],'repair_proof_mismatch')
+
     def test_mailbox_root_manifest_native_python_parity(self):
         manifest,options=self.py.mailbox_manifest()
         raw=self.py.response(manifest).raw
