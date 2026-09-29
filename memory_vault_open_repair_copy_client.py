@@ -2,7 +2,8 @@
 
 The maintainer's private preparation database retains outgoing requests before
 HTTP. Target possession precedes disclosure; custody is independently verified.
-This client neither allocates remote capacity nor grants owner READ access.
+Remote capacity reservation is explicit and separately authorized. This client
+does not grant owner READ access.
 """
 import secrets
 import threading

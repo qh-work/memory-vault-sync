@@ -179,6 +179,56 @@ witnesses. This development client does not maintain
 a separate persistent recipient-side status database automatically. Source-side
 floors are durable in the existing protected transport database.
 
+## Maintainer copy commands (development after alpha.0.16)
+
+`copy-reserve` and `copy-upload` use the maintainer's existing open-client identity
+and protected transport journal. They never open the content Vault. Both accept
+`--network-config`, `--request`, `--output`, `--timeout` (at most 60 seconds), and
+an explicit `--repair-profile receipt-index` when the original grants fund that
+ceiling. Requests and new-only results are private JSON files. A failed or lost
+reply can be retried with the same request and journal inside the original
+permission window; restarting does not renew a grant.
+
+```sh
+python -B memory_vault_open_repair_admin.py copy-reserve \
+  --network-config /absolute/private/maintainer/open-config.json \
+  --request /absolute/private/copy-reservation.json \
+  --output /absolute/private/new-reservation-result.json --repair-profile receipt-index
+python -B memory_vault_open_repair_admin.py copy-upload \
+  --network-config /absolute/private/maintainer/open-config.json \
+  --request /absolute/private/copy-upload.json \
+  --output /absolute/private/new-copy-result.json --repair-profile receipt-index
+```
+
+Both requests use `schema_version: memory-vault-open-ack-copy-request/v1`.
+They have these exact fields:
+
+| Field | Value |
+| --- | --- |
+| `operation` | `reserve` or `upload`, matching the command |
+| `node` | Independently held signed replacement-node original |
+| `ack_slot`, `owner`, `source`, `source_storage_epoch` | Independently held original source expectations; owner/source contain both public key descriptors |
+| `manifest`, `custody` | Original unbound source manifest and source custody entries |
+| `reservation` | Owner's exact signed reservation disclosure consent |
+| `intent` | Complete explicit copy intent, including the selected destination's keys and storage epoch |
+| `originals` | Up to 64 exact packed source originals, as `{raw_base64url,ref}` |
+| `current_statuses` | Up to 16 signed current authority-status original entries |
+
+Every original entry uses `{raw_base64url,ref}` with the full opaque reference.
+`copy-reserve` authenticates the destination, reserves actual capacity, verifies
+the signed offer, and creates the maintainer's durable original assignment. Its
+`capacity_reserved_and_assigned` result contains `allocation`, `offer`, and
+`assignment`; it has not uploaded or committed a replica.
+
+An upload request additionally contains those three exact entries plus separately
+signed `owner_disclosure` and `source_disclosure` entries for that assignment.
+The command rechecks their originals and current authority, verifies destination
+possession before disclosure, uploads the packed originals, commits, and verifies
+the returned manifest/custody chain. `replica_committed` exports both full entries.
+Neither result is a saved-message receipt or READ permission. The owner, source
+and maintainer must still supply separate return consents to configure recovery.
+Automatic destination selection and occupied/empty replica copies remain open.
+
 ## Unbound replica command (development after alpha.0.16)
 
 A new replacement node can explicitly accept finite remote copy reservations:

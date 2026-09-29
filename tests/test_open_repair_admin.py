@@ -25,18 +25,18 @@ class _AdminFixture:
         self.addCleanup(context.__exit__, None, None, None)
         return value
 
-    def configure_owner(self):
+    def configure_owner(self, role="owner"):
         self.directory = Path(self.host.source.temp.name).resolve() / "synthetic-owner"
         self.directory.mkdir(mode=0o700)
         f = self.host.source.fixture
-        owner = f["signers"]["owner"]
+        owner = f["signers"][role]
         secret = owner._private_key.private_bytes(serialization.Encoding.Raw,
             serialization.PrivateFormat.Raw, serialization.NoEncryption())
         self.identity = self.directory / "identity.json"
         _write_new_private(self.identity, canonical_bytes({**owner.public_descriptor(),
             "schema_version": "universal-memory-identity/v1", "private_key": base64.b64encode(secret).decode()}))
         self.encryption = self.directory / "encryption.json"
-        f["encryption"]["owner"].save(self.encryption)
+        f["encryption"][role].save(self.encryption)
         self.vault = self.directory / "vault" / "memory.sqlite3"
         self.trust = self.directory / "trust.json"
         TrustStore(self.trust).add(owner.public_descriptor())
@@ -245,6 +245,87 @@ class RepairReplicaAdminTests(_AdminFixture,unittest.TestCase):
         self.assertEqual((code,output),(1,''));self.assertEqual(json.loads(error)['error'],'repair_output_exists')
         self.assertEqual(self.output.read_bytes(),b'synthetic original output\n')
         self.assertFalse((self.directory/'transport').exists())
+
+
+class _CopyAdminFixture(_AdminFixture):
+    repair_profile = 'receipt-index'
+
+    def configure_copy(self, h, descriptor, operation):
+        from types import SimpleNamespace
+        from memory_vault_open_repair_admin import COPY_REQUEST_SCHEMA
+        self.host = SimpleNamespace(source=SimpleNamespace(temp=h.destination.temp, fixture=h.f))
+        self.configure_owner('maintainer')
+        self.f = h.f
+        self.encode = lambda entry: dict(raw_base64url=b64url(entry['raw']), ref=entry['ref'])
+        raw = canonical_bytes(descriptor); digest = hashlib.sha256(raw).hexdigest()
+        self.request = dict(schema_version=COPY_REQUEST_SCHEMA, operation=operation,
+            node=self.encode(dict(raw=raw, ref=dict(namespace='meta', key=digest, raw_sha256=digest, size=len(raw)))),
+            ack_slot=h.f['expected']['expected_ack_slot'], owner=h.f['expected']['expected_owner'],
+            source=h.f['expected']['expected_target'], source_storage_epoch=h.f['expected']['target_storage_epoch'],
+            manifest=self.encode(h.f['manifest']), custody=self.encode(h.f['custody']), reservation=self.encode(h.consent),
+            intent=h.intent, originals=[self.encode(e) for e in h.f['packs']])
+
+
+class RepairCopyReserveAdminTests(_CopyAdminFixture, unittest.TestCase):
+    def setUp(self):
+        from tests.test_open_repair_copy_resources import RemoteCopyClientHTTPTests
+        from tests.open_repair_ack_fixtures import signed_entry
+        self.remote=RemoteCopyClientHTTPTests();self.addCleanup(self.remote.doCleanups);self.remote.setUp()
+        h=self.remote.h;self.configure_copy(h,self.remote.descriptor,'reserve')
+        self.request['current_statuses']=[self.encode(signed_entry(h.owner_status,h.f['signers']['owner'],'copy_current')),
+            self.encode(h.f['entries']['target_status'])]
+
+    def test_reservation_command_assigns_real_offer_and_replays_after_restart(self):
+        code,output,error=self.call('copy-reserve');self.assertEqual((code,error),(0,''))
+        evidence=json.loads(self.output.read_bytes())
+        self.assertEqual(evidence['state'],'capacity_reserved_and_assigned')
+        assignment=json.loads(unb64url(evidence['assignment']['raw_base64url'], maximum=524288))['payload']
+        self.assertEqual(assignment['resource_offer_ref'],evidence['offer']['ref'])
+        self.remote.restart();self.request_path=self.directory/'retry.json';self.output=self.directory/'retry-result.json'
+        code,output,error=self.call('copy-reserve');self.assertEqual((code,error),(0,''))
+        self.assertEqual(json.loads(self.output.read_bytes()),evidence)
+        self.assertEqual(self.remote.h.destination.db.execute('SELECT count(*) FROM open_repair_copy_resources').fetchone()[0],1)
+        self.assertFalse(self.vault.exists());self.assertFalse(json.loads(output)['recipient_saved'])
+        self.assertEqual({path:path.read_bytes() for path in self.originals},self.originals)
+
+    def test_existing_output_prevents_network_and_transport_initialization(self):
+        _write_new_private(self.output,b'original synthetic output\n')
+        code,output,error=self.call('copy-reserve');self.assertEqual((code,output),(1,''))
+        self.assertEqual(json.loads(error)['error'],'repair_output_exists')
+        self.assertFalse((self.directory/'transport').exists())
+        self.assertEqual(self.output.read_bytes(),b'original synthetic output\n')
+
+
+class RepairCopyUploadAdminTests(_CopyAdminFixture, unittest.TestCase):
+    def setUp(self):
+        from tests.test_open_repair_copy_upload import CopyUploadHTTPTests
+        from tests.open_repair_ack_fixtures import signed_entry
+        self.remote=CopyUploadHTTPTests();self.addCleanup(self.remote.doCleanups);self.remote.setUp()
+        h=self.remote.h;self.configure_copy(h.base,self.remote.descriptor,'upload')
+        for name,entry in dict(allocation=h.request,offer=h.offer,assignment=h.assignment,
+                owner_disclosure=h.disclosures['owner'],source_disclosure=h.disclosures['source']).items():
+            self.request[name]=self.encode(entry)
+        self.request['current_statuses']=[self.encode(signed_entry(p,s,'current_'+str(i)))
+            for i,(p,s) in enumerate(zip(h.status_values,h.status_signers))]
+        # Seed only the synthetic maintainer's previously prepared local journal.
+        from memory_vault_open_client import OpenNetworkClient
+        with OpenNetworkClient(self.network) as network, network.participant.state.db() as db:
+            for table,sql in h.base.local.db.execute("SELECT name,sql FROM sqlite_master WHERE type='table' AND name LIKE 'ack_copy_prepare_%'").fetchall():
+                db.execute(sql)
+                for row in h.base.local.db.execute('SELECT * FROM '+table).fetchall():
+                    db.execute('INSERT INTO '+table+' VALUES('+','.join('?' for _ in row)+')',row)
+            db.commit()
+
+    def test_upload_command_commits_originals_and_reuses_same_custody_after_restart(self):
+        code,output,error=self.call('copy-upload');self.assertEqual((code,error),(0,''))
+        first=json.loads(self.output.read_bytes());self.assertEqual(first['state'],'replica_committed')
+        self.assertFalse(first['recipient_saved']);self.assertFalse(self.vault.exists())
+        self.assertNotEqual(first['custody']['ref']['key'],first['custody']['ref']['raw_sha256'])
+        self.remote.restart();self.output=self.directory/'retry-result.json';self.request_path=self.directory/'retry.json'
+        code,output,error=self.call('copy-upload');self.assertEqual((code,error),(0,''))
+        self.assertEqual(json.loads(self.output.read_bytes()),first)
+        self.assertEqual(stat.S_IMODE(self.output.stat().st_mode),0o600)
+        self.assertEqual({path:path.read_bytes() for path in self.originals},self.originals)
 
 
 class RepairSetupTests(unittest.TestCase):

@@ -241,13 +241,108 @@ def recover_ack(network_config: Path, request_path: Path, output: Path, *, timeo
         vault_modified=False, recipient_saved=phase == "occupied")
 
 
+COPY_REQUEST_SCHEMA = "memory-vault-open-ack-copy-request/v1"
+COPY_RESULT_SCHEMA = "memory-vault-open-ack-copy-result/v1"
+MAX_COPY_BUNDLE_BYTES = 8 * 1024 * 1024
+
+
+def copy_ack(network_config, request_path, output, *, operation, timeout=30, repair_profile=None):
+    """Explicit maintainer reservation/assignment or upload; no inferred grants."""
+    import time
+    import memory_vault_open_repair_wire as wire
+    from memory_vault_open_repair_copy_client import AckCopyUploadClient
+    from memory_vault_open_repair_copy_prepare import AckCopyPreparation
+    from memory_vault_open_repair_index_state import encode_entry
+    profiles = {"unbound": DEFAULT_LIMITS, "receipt": RECEIPT_WORKFLOW_LIMITS, "receipt-index": INDEX_WORKFLOW_LIMITS}
+    if operation not in {"reserve", "upload"} or (repair_profile is not None and repair_profile not in profiles):
+        raise RepairWireError("repair_invalid_request_bundle")
+    request_path, output = _absolute_path(request_path), _absolute_path(output)
+    if os.path.lexists(output):
+        raise RepairWireError("repair_output_exists")
+    raw = _read_private(request_path, MAX_COPY_BUNDLE_BYTES)
+    if raw is None:
+        raise RepairWireError("repair_request_missing")
+    fields = {"schema_version", "operation", "node", "ack_slot", "owner", "source", "source_storage_epoch",
+              "manifest", "custody", "reservation", "intent", "originals", "current_statuses"}
+    if operation == "upload":
+        fields.update({"allocation", "offer", "assignment", "owner_disclosure", "source_disclosure"})
+    request = object_fields(document(raw, maximum=MAX_COPY_BUNDLE_BYTES), fields)
+    if request["schema_version"] != COPY_REQUEST_SCHEMA or request["operation"] != operation:
+        raise RepairWireError("repair_invalid_request_bundle")
+    if type(request["originals"]) is not list or not 1 <= len(request["originals"]) <= 64:
+        raise RepairWireError("repair_invalid_request_bundle")
+    if type(request["current_statuses"]) is not list or not 1 <= len(request["current_statuses"]) <= 16:
+        raise RepairWireError("repair_invalid_status")
+    names = ["node", "manifest", "custody", "reservation"]
+    if operation == "upload":
+        names += ["allocation", "offer", "assignment", "owner_disclosure", "source_disclosure"]
+    entries = {name: _entry(request[name]) for name in names}
+    originals = [_entry(item) for item in request["originals"]]
+    statuses = [_entry(item) for item in request["current_statuses"]]
+    node = document(entries["node"]["raw"], maximum=DEFAULT_POLICY.max_document_bytes)
+    try:
+        base_url = node["payload"]["base_url"]
+        target = request["intent"]["target"]
+        epoch = request["intent"]["target_storage_epoch"]
+    except (KeyError, TypeError):
+        raise RepairWireError("repair_invalid_request_bundle") from None
+
+    def resolver():
+        result = wire.LocalRawResolver(DEFAULT_POLICY, wire.RepairBudget(DEFAULT_POLICY))
+        for entry in originals:
+            ref = wire.raw_ref(entry["ref"])
+            if result.put(ref.namespace, ref.key, entry["raw"]).ref != ref:
+                raise RepairWireError("repair_ref_mismatch")
+        return result
+
+    context = dict(expected_ack_slot=request["ack_slot"], expected_owner=request["owner"],
+        expected_source=request["source"], source_storage_epoch=request["source_storage_epoch"],
+        current_statuses=statuses, limit_policy=profiles[repair_profile or "unbound"])
+    with OpenNetworkClient(_absolute_path(network_config)) as network, network.participant.state.db() as db:
+        journal = AckCopyPreparation(db, network.identity, network.encryption, policy=DEFAULT_POLICY)
+        client = AckCopyUploadClient(journal, encryption_identity=network.encryption,
+            transport=network.participant.transport, allow_loopback=network.participant.transport.allow_loopback)
+        try:
+            if operation == "reserve":
+                result = client.reserve(base_url, entries["manifest"], resolver(), entries["custody"],
+                    entries["reservation"], request["intent"], target_node_entry=entries["node"], timeout=timeout, **context)
+                source = resolver()
+                assignment = journal.assign_unbound(entries["manifest"], source, entries["custody"],
+                    entries["reservation"], request["intent"], offer_entry=result["offer"], at=int(time.time()),
+                    budget=source.budget, **context)
+                evidence = dict(state="capacity_reserved_and_assigned",
+                    **{name: encode_entry(result[name]) for name in ("allocation", "offer")}, assignment=encode_entry(assignment))
+            else:
+                allocation = document(entries["allocation"]["raw"], maximum=DEFAULT_POLICY.max_document_bytes)
+                if (type(allocation) is not dict or type(allocation.get("payload")) is not dict
+                        or allocation["payload"].get("intent") != request["intent"]):
+                    raise RepairWireError("repair_copy_upload_conflict")
+                result = client.upload(base_url, entries["manifest"], resolver(), entries["custody"],
+                    entries["allocation"], entries["offer"], entries["assignment"], entries["reservation"],
+                    entries["owner_disclosure"], entries["source_disclosure"], target_node_entry=entries["node"],
+                    expected_target=target, target_storage_epoch=epoch, timeout=timeout, **context)
+                evidence = dict(state=result["state"], **{name: encode_entry(result[name]) for name in ("manifest", "custody")})
+        finally:
+            client.close()
+    evidence.update(schema_version=COPY_RESULT_SCHEMA, ack_slot=request["ack_slot"], target=target,
+        target_storage_epoch=epoch, recipient_saved=False, vault_modified=False)
+    encoded = canonical_bytes(evidence) + b"\n"
+    if len(encoded) > MAX_COPY_BUNDLE_BYTES:
+        raise RepairWireError("repair_over_budget")
+    _write_new_private(output, encoded)
+    return dict(state=evidence["state"], evidence_path=str(output), evidence_sha256=hashlib.sha256(encoded).hexdigest(),
+        recipient_saved=False, vault_modified=False)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (("recover-ack", "recover unbound ACK source originals"),
                             ("recover-empty", "recover a message-bound empty ACK source"),
                             ("recover-occupied", "recover the recipient's signed saved-message receipt"),
-                            ("recover-replica", "recover an independently authorized unbound ACK replica")):
+                            ("recover-replica", "recover an independently authorized unbound ACK replica"),
+                            ("copy-reserve", "reserve capacity and assign an explicitly authorized unbound replica"),
+                            ("copy-upload", "upload and commit the separately authorized unbound replica")):
         recover = commands.add_parser(name, help=help_text)
         recover.add_argument("--network-config", required=True, type=Path)
         recover.add_argument("--request", required=True, type=Path, help="private original request bundle")
@@ -257,8 +352,12 @@ def main(argv=None):
             help="explicit client acceptance ceiling; never changes the source's signed limits")
     args = parser.parse_args(argv)
     try:
-        result = recover_ack(args.network_config, args.request, args.output, timeout=args.timeout, repair_profile=args.repair_profile,
-            phase={"recover-ack":"unbound", "recover-empty":"empty", "recover-occupied":"occupied","recover-replica":"replica_unbound"}[args.command])
+        if args.command in {"copy-reserve", "copy-upload"}:
+            result = copy_ack(args.network_config, args.request, args.output, timeout=args.timeout,
+                repair_profile=args.repair_profile, operation=args.command.split("-")[1])
+        else:
+            result = recover_ack(args.network_config, args.request, args.output, timeout=args.timeout, repair_profile=args.repair_profile,
+                phase={"recover-ack":"unbound", "recover-empty":"empty", "recover-occupied":"occupied","recover-replica":"replica_unbound"}[args.command])
     except (MemoryError, TrustError, RepairWireError, OSError) as exc:
         print(json.dumps({"error": getattr(exc, "code", "repair_storage_unavailable")}), file=sys.stderr)
         return 1
