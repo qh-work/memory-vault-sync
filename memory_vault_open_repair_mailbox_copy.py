@@ -7,7 +7,7 @@ The existing ACK allocation endpoint remains ACK-only.
 import memory_vault_open_repair_history as history
 import memory_vault_open_repair_resource as resource
 import memory_vault_open_repair_wire as wire
-from memory_vault_open_repair_copy_resources import RepairCopyResources
+from memory_vault_open_repair_copy_resources import RepairCopyResources, RepairRemoteCopyAllocation
 
 
 def mailbox_copy_scope(value, root, purpose):
@@ -55,3 +55,20 @@ class MailboxCopyResources(RepairCopyResources):
                 wire._fail('repair_copy_capacity')
         elif caps['max_live_bytes'] < wire.raw_ref(intent['scope']['envelope_ref']).size:
             wire._fail('repair_copy_capacity')
+
+
+class MailboxRemoteCopyAllocation(RepairRemoteCopyAllocation):
+    """Explicit operator opt-in with its own durable finite request allowance.
+
+    Capacity and per-resource work remain shared with other node services.
+    Enabling ACK reservations does not enable this endpoint, or the reverse.
+    Caller and destination dual possession remain prerequisites for upload.
+    """
+    callers_table='open_repair_mailbox_copy_remote_callers'
+    work_table='open_repair_mailbox_copy_remote_work'
+    policy_key='remote_mailbox_copy_policy'
+    journal_prefix='mailbox_copy_remote_'
+    operation_id='remote_mailbox_copy'
+    request_kind='mailbox.copy_allocate'
+    response_kind='mailbox.copy_allocation'
+    resource_type=MailboxCopyResources

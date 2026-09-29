@@ -108,8 +108,22 @@ class RepairCopyState(RepairCopyResources):
             current_statuses=current_statuses,at=s._now(),limit_policy=limit_policy,policy=policy,budget=budget,
             on_observed=lambda item:self._observe_single(row,caps,root_digest,item),source_state=source_state,bound=bound,
             recipient_reservation_entry=recipient_reservation_entry,recipient_disclosure_entry=recipient_disclosure_entry)
+        return self._store_copy_plan(row,plan,resolver,
+            source_histories=copy_source.source_histories(plan.source,manifest_entry),source_custody=plan.source.custody,
+            recipient_disclosure=plan.disclosures[2] if copy_source.occupied_source(plan.source) else None)
+
+    def _store_copy_plan(self,row,plan,resolver,*,source_histories,source_custody,recipient_disclosure=None,extra_edges=()):
+        """Commit an internally authenticated exact closure under local capacity.
+
+        Public operation methods authenticate their own typed source graph and
+        retain status observations before reaching this shared transaction.
+        """
+        s=self.source;budget=resolver.budget;policy=s._budget_policy(budget)
+        parsed=wire.parse_new_wire(s._saved(row,'offer')['raw'],policy,budget).value['payload']
+        rid=row['resource_id'];caps=parsed['budget']
+        root_digest=budget._hash(wire._canonical(parsed['intent']['root_key'],budget))
         root=plan.assignment.payload['root_key']
-        objects={};roles=[];edges=[]
+        objects={};roles=[];edges=list(extra_edges)
         def add(role,entry):
             if hasattr(entry,'raw'):entry=dict(raw=entry.raw,ref=entry.ref.as_dict())
             ref=wire.raw_ref(entry['ref']);raw=entry['raw']
@@ -120,8 +134,8 @@ class RepairCopyState(RepairCopyResources):
         for item in plan.originals:add(item.role,item.original)
         for name,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
                 ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):add(name,item)
-        if copy_source.occupied_source(plan.source):add('copy.recipient_disclosure',plan.disclosures[2])
-        for role,entry,source_manifest in copy_source.source_histories(plan.source,manifest_entry):
+        if recipient_disclosure is not None:add('copy.recipient_disclosure',recipient_disclosure)
+        for role,entry,source_manifest in source_histories:
             add(role,entry)
             for member in source_manifest.manifest.value['roles']:
                 packed=resolver.resolve(member['pack_ref']);add('history.raw_pack',packed)
@@ -189,7 +203,7 @@ class RepairCopyState(RepairCopyResources):
                     physical_objects=roles,edges=edges))
                 sha=budget._hash(manifest);mref=dict(namespace='meta',key=sha,raw_sha256=sha,size=len(manifest))
                 custody=s._sign(dict(schema_version=resource.SCHEMA,kind='replica.custody',signing_key=s.identity.public_descriptor(),
-                    root_key=root,scope=plan.assignment.payload['scope'],original_custody_ref=plan.source.custody.ref.as_dict(),
+                    root_key=root,scope=plan.assignment.payload['scope'],original_custody_ref=source_custody.ref.as_dict(),
                     replica_manifest_ref=mref,assignment_ref=plan.assignment.ref.as_dict(),resource_offer_ref=plan.offer.ref.as_dict(),
                     resource=parsed['resource'],reservation_generation=1,stored_at=now,
                     read_until=plan.read_until,retain_until=plan.retain_until),'copy_custody',budget)

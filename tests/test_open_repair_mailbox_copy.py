@@ -83,3 +83,57 @@ class MailboxCopyReservationTests(unittest.TestCase):
         with self.assertRaisesRegex(RepairWireError, 'repair_copy_scope'):
             self.allocate(intent)
         self.assertEqual(self.state.db.execute('SELECT count(*) FROM open_repair_copy_resources').fetchone()[0], 0)
+
+
+class MailboxRemoteReservationTests(unittest.TestCase):
+    allocation_policy_name = 'remote_mailbox_copy'
+
+    def setUp(self):
+        from memory_vault_open_repair_mailbox_copy import MailboxRemoteCopyAllocation
+        self.local = MailboxCopyReservationTests('test_distinct_catalog_feed_and_message_reservations_survive_restart')
+        self.local.setUp(); self.addCleanup(self.local.doCleanups)
+        self.h = self.local.parent
+        self.h.local.now[0] = 2_000_000_010
+        self.intent = self.local.intent('mailbox_root')
+        self.policy = dict(enabled=True, max_requests=2, max_caller_resources=2)
+        self.service = MailboxRemoteCopyAllocation(self.h.local.state, policy=self.policy)
+        self.service.initialize()
+
+    def carrier(self, intent=None):
+        from memory_vault import canonical_bytes
+        from memory_vault_open_repair_index_state import encode_entry
+        return canonical_bytes(dict(schema_version='memory-vault-open-repair/v1', kind='mailbox.copy_allocate',
+            caller=self.h.caller, allocation=encode_entry(self.h.request(self.intent if intent is None else intent))))
+
+    def test_real_http_reservation_replays_after_node_restart(self):
+        fixture.RemoteCopyAllocationTests.test_allocation_over_real_http_survives_node_restart(self)
+        db = self.h.local.db
+        self.assertEqual(db.execute('SELECT count(*) FROM open_repair_mailbox_copy_remote_work').fetchone()[0], 2)
+        self.assertEqual(db.execute("SELECT count(*) FROM open_capacity_reservations WHERE operation_id='remote_mailbox_copy'").fetchone()[0], 1)
+
+    def test_ack_and_mailbox_permissions_and_request_ledgers_remain_separate(self):
+        from memory_vault import canonical_bytes
+        from memory_vault_open_repair_index_state import encode_entry
+        from memory_vault_open_repair_mailbox_copy import MailboxRemoteCopyAllocation
+        from memory_vault_open_repair_copy_resources import RepairRemoteCopyAllocation
+        ack = RepairRemoteCopyAllocation(self.h.local.state, policy=self.policy); ack.initialize()
+        closed = MailboxRemoteCopyAllocation(self.h.local.state)
+        before = self.h.local.state.capacity.usage()
+        with self.assertRaisesRegex(RepairWireError, 'repair_remote_copy_closed'):
+            closed.handle(self.carrier())
+        self.assertEqual(self.h.local.state.capacity.usage(), before)
+        first = self.service.handle(self.carrier())
+        self.assertEqual(json.loads(first)['kind'], 'mailbox.copy_allocation')
+        ack_request = canonical_bytes(dict(schema_version='memory-vault-open-repair/v1', kind='ack.copy_allocate',
+            caller=self.h.caller, allocation=encode_entry(self.h.request())))
+        self.assertEqual(json.loads(ack.handle(ack_request))['kind'], 'ack.copy_allocation')
+        self.assertEqual(self.service.handle(self.carrier()), first)
+        with self.assertRaisesRegex(RepairWireError, 'repair_copy_work_capacity'):
+            self.service.handle(self.carrier())
+        # Exhausting this mailbox allowance does not erase or consume ACK's
+        # distinct remaining request, or create a second mailbox resource.
+        self.assertEqual(json.loads(ack.handle(ack_request))['kind'], 'ack.copy_allocation')
+        db = self.h.local.db
+        self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_resources').fetchone()[0], 2)
+        self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_remote_work').fetchone()[0], 2)
+        self.assertEqual(db.execute('SELECT count(*) FROM open_repair_mailbox_copy_remote_work').fetchone()[0], 2)

@@ -169,7 +169,7 @@ class OpenParticipant:
         if repair_policy is not None and type(repair_policy) is not dict:
             raise MemoryError("open_invalid_repair_policy")
         self.repair_policy = dict(repair_policy or {})
-        if (set(self.repair_policy) - {"enabled", "limit_policy", "capacity_policy", "remote_setup", "remote_copy"}
+        if (set(self.repair_policy) - {"enabled", "limit_policy", "capacity_policy", "remote_setup", "remote_copy", "remote_mailbox_copy"}
                 or type(self.repair_policy.get("enabled", False)) is not bool):
             raise MemoryError("open_invalid_repair_policy")
         if "remote_setup" in self.repair_policy:
@@ -177,11 +177,12 @@ class OpenParticipant:
             self.repair_policy["remote_setup"] = remote_policy(self.repair_policy["remote_setup"])
             if self.repair_policy["remote_setup"]["enabled"] and not self.repair_policy.get("enabled", False):
                 raise MemoryError("open_invalid_repair_policy")
-        if "remote_copy" in self.repair_policy:
-            from memory_vault_open_repair_copy_resources import remote_copy_policy
-            self.repair_policy["remote_copy"] = remote_copy_policy(self.repair_policy["remote_copy"])
-            if self.repair_policy["remote_copy"]["enabled"] and not self.repair_policy.get("enabled", False):
-                raise MemoryError("open_invalid_repair_policy")
+        for family in ("remote_copy", "remote_mailbox_copy"):
+            if family in self.repair_policy:
+                from memory_vault_open_repair_copy_resources import remote_copy_policy
+                self.repair_policy[family] = remote_copy_policy(self.repair_policy[family])
+                if self.repair_policy[family]["enabled"] and not self.repair_policy.get("enabled", False):
+                    raise MemoryError("open_invalid_repair_policy")
         if self.repair_policy.get("limit_policy") is not None:
             from memory_vault_open_repair_bootstrap import _limits
             from memory_vault_open_repair_state import DEFAULT_POLICY
@@ -243,6 +244,9 @@ class OpenParticipant:
                     if self.repair_policy.get("remote_copy", {}).get("enabled", False):
                         from memory_vault_open_repair_copy_resources import RepairRemoteCopyAllocation
                         RepairRemoteCopyAllocation(self._repair_service(db).state,policy=self.repair_policy['remote_copy']).initialize()
+                    if self.repair_policy.get("remote_mailbox_copy", {}).get("enabled", False):
+                        from memory_vault_open_repair_mailbox_copy import MailboxRemoteCopyAllocation
+                        MailboxRemoteCopyAllocation(self._repair_service(db).state,policy=self.repair_policy['remote_mailbox_copy']).initialize()
 
     def _repair_remote_setup_service(self, db):
         from memory_vault_open_repair_remote_setup import RepairRemoteSetupService
@@ -319,6 +323,12 @@ class OpenParticipant:
             from memory_vault_open_repair_copy_resources import RepairRemoteCopyAllocation
             with self.state.db() as db:
                 service=RepairRemoteCopyAllocation(self._repair_service(db).state,policy=self.repair_policy.get('remote_copy'))
+                service.initialize()
+                return service.handle(parsed.raw),False
+        if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "mailbox.copy_allocate":
+            from memory_vault_open_repair_mailbox_copy import MailboxRemoteCopyAllocation
+            with self.state.db() as db:
+                service=MailboxRemoteCopyAllocation(self._repair_service(db).state,policy=self.repair_policy.get('remote_mailbox_copy'))
                 service.initialize()
                 return service.handle(parsed.raw),False
         if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "mailbox.source_allocate":

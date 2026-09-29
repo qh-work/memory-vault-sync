@@ -141,6 +141,15 @@ class RepairRemoteCopyAllocation:
     Only M's allocation intent is transmitted here. Owner/source originals stay
     local until separate full disclosure checks and target possession succeed.
     """
+    callers_table='open_repair_copy_remote_callers'
+    work_table='open_repair_copy_remote_work'
+    policy_key='remote_copy_policy'
+    journal_prefix='copy_remote_'
+    operation_id='remote_copy'
+    request_kind='ack.copy_allocate'
+    response_kind='ack.copy_allocation'
+    resource_type=RepairCopyResources
+
     def __init__(self,state,*,policy=None):
         self.state,self.db,self.policy=state,state.db,remote_copy_policy(policy)
 
@@ -148,19 +157,19 @@ class RepairRemoteCopyAllocation:
         from memory_vault_open_repair_copy_state import RepairCopyState
         RepairCopyState(self.state).initialize()
         with self.state._transaction():
-            self.db.execute('CREATE TABLE IF NOT EXISTS open_repair_copy_remote_callers(caller TEXT PRIMARY KEY,keys BLOB NOT NULL,retain_until INTEGER NOT NULL)')
-            self.db.execute('CREATE TABLE IF NOT EXISTS open_repair_copy_remote_work(id TEXT PRIMARY KEY,caller TEXT NOT NULL,resource_id TEXT,allowance INTEGER NOT NULL,actual INTEGER,wire_bytes INTEGER NOT NULL)')
+            self.db.execute(f'CREATE TABLE IF NOT EXISTS {self.callers_table}(caller TEXT PRIMARY KEY,keys BLOB NOT NULL,retain_until INTEGER NOT NULL)')
+            self.db.execute(f'CREATE TABLE IF NOT EXISTS {self.work_table}(id TEXT PRIMARY KEY,caller TEXT NOT NULL,resource_id TEXT,allowance INTEGER NOT NULL,actual INTEGER,wire_bytes INTEGER NOT NULL)')
             if self.policy['enabled']:
                 encoded=canonical_bytes({k:v for k,v in self.policy.items() if k!='enabled'}).decode()
-                prior=self.state._one("SELECT value FROM open_repair_state WHERE name='remote_copy_policy'")
+                prior=self.state._one('SELECT value FROM open_repair_state WHERE name=?',(self.policy_key,))
                 if prior is not None and prior['value']!=encoded:wire._fail('repair_remote_policy_mismatch')
-                self.db.execute("INSERT OR IGNORE INTO open_repair_state VALUES('remote_copy_policy',?)",(encoded,))
+                self.db.execute('INSERT OR IGNORE INTO open_repair_state VALUES(?,?)',(self.policy_key,encoded))
 
     def _live(self):
         now=self.state._now();p=self.state.node['payload']
         if not self.policy['enabled']:return 'repair_remote_copy_closed'
         if p['status']!='active' or not p['issued_at']<=now<p['expires_at']:return 'repair_resource_expired'
-        bound=self.state._one("SELECT value FROM open_repair_state WHERE name='remote_copy_policy'")
+        bound=self.state._one('SELECT value FROM open_repair_state WHERE name=?',(self.policy_key,))
         if bound is None or bound['value']!=canonical_bytes({k:v for k,v in self.policy.items() if k!='enabled'}).decode():return 'repair_remote_policy_mismatch'
 
     def handle(self,raw):
@@ -172,7 +181,7 @@ class RepairRemoteCopyAllocation:
         s=self.state;b=wire.RepairBudget(s.policy)
         value=wire.parse_new_wire(raw,s.policy,b).value
         wire.object_fields(value,{'schema_version','kind','caller','allocation'})
-        if value['schema_version']!=resource.SCHEMA or value['kind']!='ack.copy_allocate':wire._fail('repair_copy_allocation_mismatch')
+        if value['schema_version']!=resource.SCHEMA or value['kind']!=self.request_kind:wire._fail('repair_copy_allocation_mismatch')
         caller=value['caller'];caller_id=resource._dual_key(caller,b)['signing_key_id']
         allocation=decode_entry(value['allocation'],s.policy,b)
         parsed,ref=s._entry(allocation,b);signed=wire.object_fields(parsed.value,{'payload','proof'})
@@ -187,35 +196,35 @@ class RepairRemoteCopyAllocation:
             wire._fail('repair_copy_allocation_mismatch')
         ticket=secrets.token_hex(16);charge=len(raw)+65536;response=None
         with s._transaction(guard=self._live):
-            held=s._one('SELECT * FROM open_repair_copy_remote_callers WHERE caller=?',(caller_id,))
-            digest=b._hash(canonical_bytes(caller));journal_id='copy_remote_'+caller_id
+            held=s._one(f'SELECT * FROM {self.callers_table} WHERE caller=?',(caller_id,))
+            digest=b._hash(canonical_bytes(caller));journal_id=self.journal_prefix+caller_id
             if held is None:
-                if self.db.execute('SELECT count(*) FROM open_repair_copy_remote_callers').fetchone()[0]>=self.policy['max_callers']:wire._fail('repair_copy_capacity')
-                s.capacity.reserve('repair_copy',journal_id,digest,self.policy['max_journal_bytes'],now+self.policy['max_lifetime'],owner=caller_id,operation_id='remote_copy')
-                self.db.execute('INSERT INTO open_repair_copy_remote_callers VALUES(?,?,?)',(caller_id,canonical_bytes(caller),now+self.policy['max_lifetime']))
-                held=s._one('SELECT * FROM open_repair_copy_remote_callers WHERE caller=?',(caller_id,))
+                if self.db.execute(f'SELECT count(*) FROM {self.callers_table}').fetchone()[0]>=self.policy['max_callers']:wire._fail('repair_copy_capacity')
+                s.capacity.reserve('repair_copy',journal_id,digest,self.policy['max_journal_bytes'],now+self.policy['max_lifetime'],owner=caller_id,operation_id=self.operation_id)
+                self.db.execute(f'INSERT INTO {self.callers_table} VALUES(?,?,?)',(caller_id,canonical_bytes(caller),now+self.policy['max_lifetime']))
+                held=s._one(f'SELECT * FROM {self.callers_table} WHERE caller=?',(caller_id,))
             reservation=s._one("SELECT * FROM open_capacity_reservations WHERE service='repair_copy' AND reservation_id=?",(journal_id,))
             if (bytes(held['keys'])!=canonical_bytes(caller) or retain>held['retain_until'] or now>=held['retain_until']
                     or reservation is None or reservation['digest']!=digest or reservation['charge_bytes']!=self.policy['max_journal_bytes']
-                    or reservation['owner']!=caller_id or reservation['operation_id']!='remote_copy' or reservation['retain_until']!=held['retain_until']):wire._fail('repair_copy_ledger_missing')
-            count,checks,used=self.db.execute('SELECT count(*),coalesce(sum(coalesce(actual,allowance)),0),coalesce(sum(wire_bytes),0) FROM open_repair_copy_remote_work WHERE caller=?',(caller_id,)).fetchone()
+                    or reservation['owner']!=caller_id or reservation['operation_id']!=self.operation_id or reservation['retain_until']!=held['retain_until']):wire._fail('repair_copy_ledger_missing')
+            count,checks,used=self.db.execute(f'SELECT count(*),coalesce(sum(coalesce(actual,allowance)),0),coalesce(sum(wire_bytes),0) FROM {self.work_table} WHERE caller=?',(caller_id,)).fetchone()
             if (count>=self.policy['max_requests'] or checks+s.policy.max_signature_checks>self.policy['max_signatures']
                     or used+charge>self.policy['max_bytes'] or (count+1)*512+len(held['keys'])+512>self.policy['max_journal_bytes']):wire._fail('repair_copy_work_capacity')
-            self.db.execute('INSERT INTO open_repair_copy_remote_work VALUES(?,?,NULL,?,NULL,?)',(ticket,caller_id,s.policy.max_signature_checks,charge))
+            self.db.execute(f'INSERT INTO {self.work_table} VALUES(?,?,NULL,?,NULL,?)',(ticket,caller_id,s.policy.max_signature_checks,charge))
         def admitted(rid,caps):
             if self.db.execute('SELECT count(*) FROM open_repair_copy_resources WHERE caller=?',(caller_id,)).fetchone()[0]>self.policy['max_caller_resources']:wire._fail('repair_copy_capacity')
             work=s._one('SELECT requests FROM open_repair_copy_work WHERE resource_id=?',(rid,));count=work['requests'] if work else 0
             if count>=min(64,caps['max_requests'],caps['max_replay_records']):wire._fail('repair_copy_work_capacity')
             self.db.execute('INSERT OR REPLACE INTO open_repair_copy_work VALUES(?,?)',(rid,count+1))
-            self.db.execute('UPDATE open_repair_copy_remote_work SET resource_id=? WHERE id=?',(rid,ticket))
+            self.db.execute(f'UPDATE {self.work_table} SET resource_id=? WHERE id=?',(rid,ticket))
         try:
-            offer=RepairCopyResources(s).allocate(allocation,expected_caller=caller,_budget=b,_guard=self._live,_admitted=admitted)
-            response=wire.build_new_wire(dict(schema_version=resource.SCHEMA,kind='ack.copy_allocation',offer=encode_entry(offer)),s.policy,b).raw
+            offer=self.resource_type(s).allocate(allocation,expected_caller=caller,_budget=b,_guard=self._live,_admitted=admitted)
+            response=wire.build_new_wire(dict(schema_version=resource.SCHEMA,kind=self.response_kind,offer=encode_entry(offer)),s.policy,b).raw
             if len(response)>65536:wire._fail('repair_control_too_large')
             return response
         finally:
             with s._transaction():
-                row=s._one('SELECT * FROM open_repair_copy_remote_work WHERE id=?',(ticket,))
+                row=s._one(f'SELECT * FROM {self.work_table} WHERE id=?',(ticket,))
                 if row is None or row['actual'] is not None:wire._fail('repair_service_work_corrupt')
-                self.db.execute('UPDATE open_repair_copy_remote_work SET actual=?,wire_bytes=? WHERE id=?',
+                self.db.execute(f'UPDATE {self.work_table} SET actual=?,wire_bytes=? WHERE id=?',
                     (b.snapshot()['signature_checks'],charge if response is None or len(response)>65536 else len(raw)+len(response),ticket))
