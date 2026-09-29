@@ -388,6 +388,8 @@ class MailboxStagingHTTPTests(unittest.TestCase):
                 except Exception as error:raise AssertionError('synthetic feed server errors: '+repr(server_errors)) from error
         service=RemoteFeed()
         grant=json.loads(slot_entries['bootstrap']['raw'])['payload']
+        # Requests use the live authenticated handle deadline. Fixture setup
+        # and cold import can already consume 45 seconds on a cloud runner.
         if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
             from dataclasses import replace
             from memory_vault_open_repair_client import MailboxFeedRecoveryClient,MailboxSetupJournal
@@ -493,24 +495,24 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             self.assertTrue(observed);self.assertGreater(result.metrics['requests'],2)
             checked=result.proof
             child=next(v for v in checked.manifest.value['children'] if v['role']=='feed.custody')
-            child_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=now+45,
+            child_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=checked.handle.payload['expires_at'],
                 child_index=child['index'],offset=0,requested_bytes=child['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
         else:
             expected=dict(expected_subject=owner,expected_target=source.target,target_storage_epoch=slot['writer_storage_epoch'],
                 bootstrap_grant_sha256=slot_entries['bootstrap']['ref']['raw_sha256'],selector=grant['selector'],at=int(time.time()),consumer='mailbox_feed')
-            pending=probe.make_bootstrap_probe(self.bi,expires_at=now+55,**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            pending=probe.make_bootstrap_probe(self.bi,expires_at=expected['at']+55,**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
             packet=dict(raw=pending.original.raw,ref=pending.original.ref.as_dict())
             challenge=service.challenge(packet)
             expected['at']=int(time.time())
             answer=probe.solve_bootstrap_challenge(packet,challenge,signer=self.bi,encryption_identity=owner_encryption,
-                target_nonce=pending.nonce,expires_at=now+50,**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+                target_nonce=pending.nonce,expires_at=min(expected['at']+50,json.loads(challenge['raw'])['payload']['expires_at']),**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
             response=service.answer(dict(raw=answer.raw,ref=answer.ref.as_dict()))
             checked=proof.verify_bootstrap_proof_response(response,expected_subject=owner,expected_target=source.target,
                 target_storage_epoch=slot['writer_storage_epoch'],selector=grant['selector'],bootstrap_grant_ref=slot_entries['bootstrap']['ref'],
                 probe_ref=packet['ref'],challenge_ref=challenge['ref'],answer_ref=answer.ref.as_dict(),at=int(time.time()),
                 max_proof_items=64,max_proof_bytes=524288,consumer='mailbox_feed',expected_source_state='feed',policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
             child=next(v for v in checked.manifest.value['children'] if v['role']=='feed.custody')
-            child_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=now+45,
+            child_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=checked.handle.payload['expires_at'],
                 child_index=child['index'],offset=0,requested_bytes=child['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
             self.assertEqual(service.child(dict(raw=child_request.raw,ref=child_request.ref.as_dict())),feed_custody['raw'])
             transfer_bytes=len(response)+len(checked.handle.raw)+len(checked.manifest.raw)+len(feed_custody['raw'])+sum(v['ref']['size'] for v in checked.manifest.value['children'])
@@ -519,7 +521,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             for child in checked.manifest.value['children']:
                 chunks=[]
                 for offset in range(0,child['ref']['size'],65536):
-                    request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=now+45,
+                    request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=checked.handle.payload['expires_at'],
                         child_index=child['index'],offset=offset,requested_bytes=min(65536,child['ref']['size']-offset),policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
                     chunks.append(service.child(dict(raw=request.raw,ref=request.ref.as_dict())))
                 child_raw=b''.join(chunks);self.assertEqual(hashlib.sha256(child_raw).hexdigest(),child['ref']['raw_sha256'])
@@ -632,7 +634,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
                 staging.stage_delivered(raw,revoked)
             with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
                 staging.stage_delivered(raw,owner_status)
-        denied_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=now+45,
+        denied_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=checked.handle.payload['expires_at'],
             child_index=child_request.payload['child_index'],offset=0,requested_bytes=feed_custody['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
         with self.assertRaisesRegex(AssertionError,'repair_authority_revoked'):
             service.child(dict(raw=denied_request.raw,ref=denied_request.ref.as_dict()))
