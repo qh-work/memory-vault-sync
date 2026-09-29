@@ -72,7 +72,13 @@ export async function startOpenNode(configPath:string):Promise<{close:()=>Promis
   try{await new Promise<void>((accept,reject)=>{server.once('error',reject);server.listen({host:'127.0.0.1',port:Number(config.listen_port),backlog:16},()=>{server.removeListener('error',reject);accept();});});}
   catch(error){participant.close();throw error;}
   const maintain=async(first=false)=>{
-    try{if(first)await participant.join();else await participant.maintain();}catch{/* Typed wire errors never become private diagnostic logs. */}
+    try{
+      const stored=document(readPrivate(absolutePath(configPath),MAX_RPC_BYTES)!,MAX_RPC_BYTES);
+      const {node:previousNode,...previousConfig}=config,{node:nextNode,...nextConfig}=stored;
+      if(!Buffer.from(canonicalBytes(previousConfig)).equals(canonicalBytes(nextConfig)))throw new NetworkError('open_node_configuration_changed');
+      participant.refreshDescriptor(nextNode as unknown as SignedNode);
+      if(first)await participant.join();else await participant.maintain();
+    }catch{/* Typed wire errors never become private diagnostic logs. */}
     if(!stopped)timer=setTimeout(()=>{void maintain();},2000);
   };
   void maintain(true);

@@ -435,6 +435,32 @@ class OpenTypeScriptHTTPTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM open_contact_floors").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT count(*) FROM open_index_replay").fetchone()[0], 0)
 
+    def test_native_installs_signed_successor_without_restart(self):
+        host = self.host(1, native={0})
+        old = host.nodes[0]
+        current = int(time.time())
+        successor = issue_node(host.identities[0], base_url=old["payload"]["base_url"],
+            storage_epoch=old["payload"]["storage_epoch"], roles=["directory", "router"],
+            revision=2, issued_at=current, expires_at=current+3600)
+        config = json.loads(host.configs[0].read_bytes())
+        config["node"] = successor
+        atomic_write(host.configs[0], canonical_bytes(config), replace=True)
+        transport = OpenHTTPTransport(allow_loopback=True)
+        self.addCleanup(transport.close)
+        deadline = time.monotonic()+8
+        while True:
+            reply = transport.request_node(old["payload"]["base_url"], deadline=time.monotonic()+2)
+            if reply.response == successor:
+                break
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(.1)
+        config["node"] = old
+        atomic_write(host.configs[0], canonical_bytes(config), replace=True)
+        time.sleep(2.2)
+        reply = transport.request_node(old["payload"]["base_url"], deadline=time.monotonic()+2)
+        self.assertEqual(reply.response, successor)
+        self.assertIsNone(host.processes[0].poll())
+
     def test_native_old_seed_uses_new_cached_revision_after_restart(self):
         host = self.host(1, native={0})
         old = host.nodes[0]; current = int(time.time())

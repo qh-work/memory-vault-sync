@@ -25,7 +25,7 @@ const parsed=(value:Uint8Array):Obj=>document(value) as Obj;
 const same=(a:unknown,b:unknown)=>Buffer.from(canonicalBytes(a)).equals(Buffer.from(canonicalBytes(b)));
 
 export class ContactState {
-  readonly db:DatabaseSync;readonly identity:SigningIdentityDocument;readonly node:SignedNode;
+  readonly db:DatabaseSync;readonly identity:SigningIdentityDocument;node:SignedNode;
   readonly capacity:CapacityAuthority;
   enabled:boolean;clock:()=>number;
   maximum_leases!:number;maximum_knock_items!:number;maximum_knock_bytes!:number;

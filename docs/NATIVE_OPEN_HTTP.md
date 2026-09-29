@@ -22,7 +22,10 @@ refresh expired fixed-key seed hints through this endpoint before performing
 normal authenticated endpoint checks. The endpoint exposes no private config
 or identity material and rejects body-bearing requests. Native descriptor
 automatic renewal remains unfinished; operators must still supply a valid
-renewed descriptor when restarting a native node.
+renewed descriptor in its protected config. The running node picks up a valid
+same-binding successor during maintenance, preserving contact/index state.
+Other configuration changes require restart; lower revisions and binding
+changes are refused. This reload does not sign or generate a successor.
 
 The listener remains restricted to loopback and nonprivileged ports. An owner
 must separately provide HTTPS termination for public use. Directory service
