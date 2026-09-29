@@ -1,4 +1,4 @@
-"""Finite index-admission proof staging wire, without storage or authority.
+"""Finite index-admission and ACK-copy staging wire, without storage or authority.
 
 These signatures establish possession and exact provisional-byte bindings.
 The caller must separately authenticate publication/allocation permission and
@@ -15,6 +15,7 @@ import struct
 from types import MappingProxyType
 
 import memory_vault_open_blob as blob
+import memory_vault_open_repair_ack as ack
 import memory_vault_open_repair_history as history
 import memory_vault_open_repair_original as original
 import memory_vault_open_repair_probe as probe
@@ -41,6 +42,11 @@ _FIELDS = {
 _NODE_KINDS = frozenset(("challenge", "handle", "result", "child_response"))
 SINGLE_STAGE_ROLES = frozenset("index.assignment index.owner_consent index.recipient_consent index.provider_fact index.source_head index.source_manifest index.source_commit provider.node".split())
 STAGE_ROLES = SINGLE_STAGE_ROLES | {"current.status", "directory.status", "history.raw_pack"}
+COPY_SINGLE_ROLES = ack.ROLES | frozenset(("history.ack_unbound", "ack.slot_custody",
+    "copy.reservation_consent", "copy.allocation", "copy.offer", "copy.assignment",
+    "copy.owner_disclosure", "copy.source_disclosure"))
+COPY_STAGE_ROLES = COPY_SINGLE_ROLES | {"copy.current_status", "history.raw_pack"}
+CONSUMERS = frozenset(("index_admit", "ack_copy_unbound"))
 
 
 def _fail(code="repair_invalid_stage"):
@@ -77,9 +83,11 @@ def _role(value):
         _fail()
 
 
-def _expected(*, expected_subject, expected_target, target_storage_epoch, at, policy, budget):
+def _expected(*, expected_subject, expected_target, target_storage_epoch, at, policy, budget,
+              expected_consumer="index_admit"):
+    if type(expected_consumer) is not str or expected_consumer not in CONSUMERS:_fail()
     value = wire.build_new_wire(dict(subject=expected_subject, target=expected_target,
-                                    epoch=target_storage_epoch, at=at), policy, budget).value
+                                    epoch=target_storage_epoch, at=at,consumer=expected_consumer), policy, budget).value
     wire.u53(value["at"])
     original._opaque(value["epoch"])
     for name in ("subject", "target"):
@@ -116,14 +124,22 @@ def _base(kind, expected, expires_at):
     return payload
 
 
-def _manifest(value, policy, budget):
+def _manifest(value, policy, budget, expected_consumer=None):
     _fields(value, {"schema_version", "kind", "consumer", "root_key", "scope", "children"})
-    if value["schema_version"] != SCHEMA or value["kind"] != "proof.stage_manifest" or value["consumer"] != "index_admit":
+    if (value["schema_version"] != SCHEMA or value["kind"] != "proof.stage_manifest"
+            or type(value["consumer"]) is not str or value["consumer"] not in CONSUMERS
+            or expected_consumer is not None and value["consumer"] != expected_consumer):
         _fail()
     history._root(value["root_key"])
-    # The index-admission scope and role alphabet are closed below; application
-    # authorization remains the separate original-chain verifier's duty.
-    _scope(value["scope"], value["root_key"])
+    # Consumer binding is checked again on every signed intent verification;
+    # directory admission must never accept the replica upload profile.
+    copying=value["consumer"]=="ack_copy_unbound"
+    if copying:
+        from memory_vault_open_repair_copy_resources import ack_copy_scope
+        ack_copy_scope(value["scope"],value["root_key"])
+        if value["scope"]["kind"]!="ack_unbound":_fail()
+    else:
+        _scope(value["scope"], value["root_key"])
     children = value["children"]
     if type(children) is not wire._DraftList or not 1 <= len(children) <= min(MAX_STAGE_ITEMS, policy.max_entries):
         _fail("repair_stage_capacity")
@@ -133,7 +149,7 @@ def _manifest(value, policy, budget):
         if wire.u53(child["index"]) != index:
             _fail()
         role = child["role"]
-        _role(role)
+        if type(role) is not str or role not in (COPY_STAGE_ROLES if copying else STAGE_ROLES):_fail()
         counts[role] = counts.get(role, 0) + 1
         ref = wire.raw_ref(child["ref"])
         pair = (role, ref.namespace, ref.key, ref.raw_sha256, ref.size)
@@ -155,7 +171,11 @@ def _manifest(value, policy, budget):
         total += ref.size
         if total > min(MAX_STAGE_BYTES, policy.max_retained_bytes, wire.U53_MAX):
             _fail("repair_stage_capacity")
-    if (any(counts.get(role) != 1 for role in SINGLE_STAGE_ROLES)
+    if copying:
+        if (any(counts.get(role)!=1 for role in COPY_SINGLE_ROLES)
+                or not 1<=counts.get("history.raw_pack",0)<=len(ack.ROLES)
+                or not 1<=counts.get("copy.current_status",0)<=16):_fail()
+    elif (any(counts.get(role) != 1 for role in SINGLE_STAGE_ROLES)
             or counts.get("history.raw_pack") != 3 or counts.get("directory.status") != 1
             or not 1 <= counts.get("current.status", 0) <= 16):
         _fail()
@@ -166,10 +186,10 @@ def _manifest(value, policy, budget):
     return wire.RawRef("meta", digest, digest, len(raw)), total, len(children)
 
 
-def make_stage_manifest(*, root_key, scope, children, policy, budget):
+def make_stage_manifest(*, root_key, scope, children, policy, budget, consumer="index_admit"):
     wire._context(policy, budget)
     with budget._lock:
-        draft = wire.build_new_wire(dict(schema_version=SCHEMA, kind="proof.stage_manifest", consumer="index_admit",
+        draft = wire.build_new_wire(dict(schema_version=SCHEMA, kind="proof.stage_manifest", consumer=consumer,
                                         root_key=root_key, scope=scope, children=children), policy, budget)
         _manifest(draft.value, policy, budget)
         return draft
@@ -194,7 +214,7 @@ def _verify(entry, kind, expected, policy, budget, *, cap=MAX_CONTROL_BYTES):
         _fail("repair_stage_mismatch")
     if kind == "intent":
         original._opaque(payload["allocation_id"])
-        ref, total, count = _manifest(payload["manifest"], policy, budget)
+        ref, total, count = _manifest(payload["manifest"], policy, budget,expected["consumer"])
         if (payload["manifest_sha256"] != ref.raw_sha256 or wire.u53(payload["requested_bytes"], 1) != total
                 or wire.u53(payload["requested_items"], 1) != count):
             _fail("repair_stage_mismatch")
@@ -251,7 +271,7 @@ def make_stage_intent(signer, *, allocation_id, manifest, expires_at, **options)
     with _using(options) as (expected, policy, budget):
         # Snapshot external mutable JSON before deriving commitments.
         value = wire.build_new_wire(manifest, policy, budget).value
-        ref, total, count = _manifest(value, policy, budget)
+        ref, total, count = _manifest(value, policy, budget,expected["consumer"])
         original._opaque(allocation_id)
         payload = _base("intent", expected, expires_at)
         payload.update(allocation_id=allocation_id, manifest=value, manifest_sha256=ref.raw_sha256,

@@ -337,3 +337,78 @@ class OpenRepairStageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CopyStageProfileTests(unittest.TestCase):
+    def setUp(self):
+        self.signers,self.encryption,self.expected,self.root,scope=stage_fixture()
+        self.scope=dict(kind='ack_unbound',ack_slot=scope['ack_slot'],root_authority_ref=raw_ref(b'root authority'))
+        self.local=policy(max_signature_checks=256)
+        self.raws={role:('synthetic copy '+role).encode() for role in stage.COPY_STAGE_ROLES}
+        self.raws['history.raw_pack']=b'synthetic packed original:'+b'x'*stage.STAGE_CHUNK_BYTES
+        self.rows=sorted((role,raw_ref(raw)) for role,raw in self.raws.items())
+        self.manifest=stage.make_stage_manifest(root_key=self.root,scope=self.scope,consumer='ack_copy_unbound',
+            children=[dict(index=i,role=role,ref=ref) for i,(role,ref) in enumerate(self.rows)],
+            policy=self.local,budget=wire.RepairBudget(self.local))
+
+    def options(self,consumer='ack_copy_unbound'):
+        return dict(self.expected,expected_consumer=consumer,policy=self.local,budget=wire.RepairBudget(self.local))
+
+    def exchange(self):
+        intent=stage.make_stage_intent(self.signers['subject'],allocation_id='synthetic_copy_allocation',
+            manifest=self.manifest.value,expires_at=self.expected['at']+50,**self.options())
+        challenge=stage.issue_stage_challenge(entry(intent),signer=self.signers['target'],
+            expires_at=self.expected['at']+45,**self.options())
+        answer=stage.solve_stage_challenge(entry(intent),entry(challenge.original),signer=self.signers['subject'],
+            encryption_identity=self.encryption['subject'],expires_at=self.expected['at']+40,**self.options())
+        handle=stage.make_stage_handle(entry(intent),entry(challenge.original),entry(answer),caller_nonce=challenge.nonce,
+            signer=self.signers['target'],reservation_generation=1,expires_at=self.expected['at']+35,**self.options())
+        return intent,challenge,answer,handle
+
+    def test_copy_exchange_and_all_exact_original_chunks(self):
+        intent,_,_,handle=self.exchange()
+        for index,(role,reference) in enumerate(self.rows):
+            assembled=[]
+            for offset in range(0,reference['size'],stage.STAGE_CHUNK_BYTES):
+                raw=self.raws[role][offset:offset+stage.STAGE_CHUNK_BYTES]
+                frame=stage.make_stage_child_frame(entry(intent),entry(handle),signer=self.signers['subject'],
+                    child_index=index,offset=offset,chunk=raw,expires_at=self.expected['at']+30,**self.options())
+                checked=stage.verify_stage_child_frame(frame,entry(intent),entry(handle),**self.options())
+                self.assertEqual(checked.child_ref.as_dict(),reference);assembled.append(checked.chunk)
+            self.assertEqual(b''.join(assembled),self.raws[role])
+
+    def test_copy_intent_and_children_cannot_enter_index_profile(self):
+        intent,_,_,handle=self.exchange()
+        with self.assertRaises(wire.RepairWireError):
+            stage.verify_stage_intent(entry(intent),**self.options('index_admit'))
+        index=0;role,reference=self.rows[index]
+        frame=stage.make_stage_child_frame(entry(intent),entry(handle),signer=self.signers['subject'],
+            child_index=index,offset=0,chunk=self.raws[role],expires_at=self.expected['at']+30,**self.options())
+        with self.assertRaises(wire.RepairWireError):
+            stage.verify_stage_child_frame(frame,entry(intent),entry(handle),**self.options('index_admit'))
+        with self.assertRaises(wire.RepairWireError):
+            stage.make_stage_intent(self.signers['subject'],allocation_id='synthetic_copy_allocation',
+                manifest=self.manifest.value,expires_at=self.expected['at']+50,**self.options('index_admit'))
+
+    def test_index_intent_cannot_be_reused_for_copy_upload(self):
+        old=OpenRepairStageTests();old.setUp()
+        intent=old.intent()
+        stage.verify_stage_intent(entry(intent),**old.options())
+        with self.assertRaises(wire.RepairWireError):
+            stage.verify_stage_intent(entry(intent),**old.options(expected_consumer='ack_copy_unbound'))
+
+    def test_copy_requires_complete_closed_roles_and_unbound_scope(self):
+        for change in ('missing','index_role','occupied'):
+            value=json.loads(self.manifest.raw)
+            if change=='missing':value['children'].pop()
+            elif change=='index_role':value['children'][0]['role']='index.assignment'
+            else:value['scope']['kind']='ack_empty'
+            with self.assertRaises(wire.RepairWireError):
+                stage.make_stage_manifest(root_key=value['root_key'],scope=value['scope'],children=value['children'],
+                    consumer='ack_copy_unbound',policy=self.local,budget=wire.RepairBudget(self.local))
+
+    def test_copy_wrong_encryption_answer_never_creates_handle(self):
+        intent,challenge,answer,_=self.exchange()
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_invalid_nonce'):
+            stage.make_stage_handle(entry(intent),entry(challenge.original),entry(answer),caller_nonce=b'0'*32,
+                signer=self.signers['target'],reservation_generation=1,expires_at=self.expected['at']+35,**self.options())

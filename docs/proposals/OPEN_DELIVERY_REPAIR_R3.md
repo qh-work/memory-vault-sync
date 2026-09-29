@@ -2654,3 +2654,32 @@ unbound replicas only. Its local `permission_checked` result does not establish
 caller key possession, publish bytes or expose a remote endpoint. The actual
 possession exchange, proof transport, independent live-client checks, discovery
 and automatic repair remain required integrations.
+
+
+### ACK-unbound copy staging profile (development)
+
+The existing finite `proof.stage_*` wire also has an explicit
+`ack_copy_unbound` consumer. Every verifier requires that consumer through
+`expected_consumer`; the default remains `index_admit`. A signed copy intent,
+handle or child frame cannot be reused in directory admission. The wire keeps
+its original 60-second exchange, 16-KiB aligned chunks, 64-child and 1-MiB
+logical-transfer ceilings. No original grant or physical reservation is enlarged.
+
+The copy manifest uses the exact unbound ACK scope with `root_authority_ref`.
+It requires one of every original ACK-unbound role, `history.ack_unbound`,
+`ack.slot_custody`, `copy.reservation_consent`, `copy.allocation`, `copy.offer`,
+`copy.assignment`, `copy.owner_disclosure` and `copy.source_disclosure`; it also
+requires 1–16 `copy.current_status` originals and 1–13 complete
+`history.raw_pack` entries. All direct children use metadata references. The
+13-pack bound follows the 13 original source roles; application verification
+still rejects unused packs. Closed role sets exclude receipt admission,
+occupied state, directory publication and unrelated uploads.
+
+The stage challenge checks the uploader's encryption-key possession in addition
+to signatures and exact original references. Target dual-possession and advance
+original-disclosure checks remain prerequisites of the transport caller. Stage
+completion attests only provisional bytes. Destination persistence, cumulative
+work accounting, restart-safe upload, full original/current COPY verification
+and the atomic `RepairCopyState.commit_unbound` transition are required before
+publishing replica custody. This wire extension alone does not expose a copy
+HTTP endpoint or complete remote repair.
