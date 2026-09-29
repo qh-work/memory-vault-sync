@@ -160,6 +160,9 @@ class RepairBootstrapService:
                 self.db.execute("UPDATE open_repair_bootstrap_usage SET signatures=signatures+? WHERE resource_id=?",
                     (actual, source["resource_id"]))
 
+    def _active_budget(self, source, budget):
+        return wire.parse_new_wire(bytes(source["active"]),budget.policy,budget).value["payload"]["budget"]
+
     def _run(self, entry, kind, current_statuses=None):
         budget = wire.RepairBudget(self.state.policy)
         parsed, reference, payload = self._preview(entry, budget)
@@ -180,7 +183,7 @@ class RepairBootstrapService:
                 _fail("repair_service_unavailable")
             resource_id = row["resource_id"]
         source, grant, expected = self._context(resource_id, budget)
-        active = wire.parse_new_wire(bytes(source["active"]), budget.policy, budget).value["payload"]["budget"]
+        active = self._active_budget(source, budget)
         row, reserved = self._usage(resource_id)
         remaining = grant["limits"]["max_signature_checks"] - reserved - (row["signatures"] if row else 0)
         allowance = min(remaining, self.state.policy.max_signature_checks)
@@ -195,7 +198,7 @@ class RepairBootstrapService:
         budget = wire.RepairBudget(replace(self.state.policy, max_signature_checks=allowance))
         parsed, reference, payload = self._preview(packet, budget)
         source, grant, expected = self._context(resource_id, budget)
-        active = wire.parse_new_wire(bytes(source["active"]), budget.policy, budget).value["payload"]["budget"]
+        active = self._active_budget(source, budget)
         subject, target = expected["expected_subject"], expected["expected_target"]
         if (payload["schema_version"] != proof.SCHEMA or payload["kind"] != "bootstrap." + ("proof_child_request" if kind == "child" else kind)
                 or payload["purpose"] != ("bootstrap.service_proof_child" if kind == "child" else "bootstrap.service_proof")

@@ -37,16 +37,48 @@ class AckReceiptClient(AckOfferClient):
     def __init__(self, identity, encryption_identity, *, policy=DEFAULT_RECEIPT_POLICY, **options):
         super().__init__(identity, encryption_identity, policy=policy, **options)
 
+    def prepare_return(self, base_url, *, timeout=30, **options):
+        """Keep this client's fresh preflight for the immediately following put.
+
+        The private cache carries its original work meter and deadline; it is
+        consumed once, never accepted as caller-supplied proof or persisted.
+        """
+        import copy
+        self._prepared_return=None
+        started=time.monotonic();budget=wire.RepairBudget(self.policy)
+        prior=self._retained_inputs(options.get('known_statuses',()),options.get('archive_statuses',()),budget)
+        prepared=self.preflight(base_url,timeout=timeout,_budget=budget,**options)
+        context={name:value for name,value in options.items() if name not in ('known_statuses','archive_statuses')}
+        self._prepared_return=(base_url,copy.deepcopy(context),prepared,budget,started,timeout,
+            copy.deepcopy(prior))
+        return prepared
+
     def put(self, base_url, receipt_entry, disclosure_entry, put_entry, *, current_statuses,
             read_until, retain_until, known_disclosure_statuses=(), timeout=30, _journal=None, **preflight_options):
+        if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=60:
+            _fail('repair_invalid_deadline')
         started = time.monotonic()
         budget = wire.RepairBudget(self.policy)
         if _journal is not None and not callable(_journal):
             _fail("repair_invalid_context")
+        cached=getattr(self,'_prepared_return',None)
+        self._prepared_return=None
+        if cached is not None:
+            base,context,prepared,budget,started,prepared_timeout,prior=cached
+            selected={name:value for name,value in preflight_options.items() if name not in ('known_statuses','archive_statuses')}
+            if base!=base_url or context!=selected:_fail('repair_proof_mismatch')
+            timeout=min(timeout,prepared_timeout)
+            if time.monotonic()>=started+timeout:_fail('repair_access_expired')
+        else:prior=()
         retained = self._retained_inputs(preflight_options.get("known_statuses",()),preflight_options.get("archive_statuses",()),budget)
+        if prior:
+            unique={ack._entry(item):item for item in (*prior,*retained)}
+            if len(unique)>32:_fail('repair_status_history_capacity')
+            retained=tuple(unique.values())
         known_disclosure_statuses=self._retained_inputs(known_disclosure_statuses,(),budget)
         preflight_options = dict(preflight_options,known_statuses=(),archive_statuses=retained)
-        prepared = self.preflight(base_url,timeout=timeout,_budget=budget,**preflight_options)
+        if cached is None:
+            prepared = self.preflight(base_url,timeout=timeout,_budget=budget,**preflight_options)
         source = prepared.source
         owner = wire.build_new_wire(preflight_options["expected_owner"],self.policy,budget).value
         target = wire.build_new_wire(preflight_options["expected_target"],self.policy,budget).value

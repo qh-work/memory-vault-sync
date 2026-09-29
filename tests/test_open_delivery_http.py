@@ -95,6 +95,55 @@ class DeliveryHTTPTests(unittest.TestCase):
         self.assertEqual(changed["error"]["code"], "network_request_id_conflict")
         self.assertEqual(self.stored_count(), 1)
 
+    def test_older_pending_receipts_do_not_starve_later_receipt_after_restart(self):
+        self._exercise_pending_receipt_rotation()
+
+    def _exercise_pending_receipt_rotation(self, retry_receive=None):
+        from unittest.mock import patch
+        from memory_vault import MemoryError
+        from memory_vault_open_delivery_client import OpenDeliveryClient
+        _, reference = self.request_contact()
+        self.contact(self.b, "decide", request_ref=reference, decision="approved",
+                     max_items=5, max_bytes=6291456)
+        self.assertTrue(self.contact(self.a, "result", request_id="req_delivery_contact")["recipient_approved"])
+        requests = [{"op": "send", "request_id": "req_receipt_fairness_"+str(i),
+                     "recipients": [self.bi.key_id], "text": "Synthetic receipt retry "+str(i)} for i in range(5)]
+        sent = {self.call(self.a, **request)["message_id"]: request for request in requests}
+        async def unavailable(*args, **kwargs):
+            raise MemoryError("open_delivery_unavailable", retryable=True)
+        with patch.object(OpenDeliveryClient, "_send_receipt", unavailable):
+            self.call(self.b, op="receive", limit=4)
+            self.call(self.b, op="receive", limit=4)
+        with self.b._network() as network:
+            directory = network.participant.state.directory
+        with sqlite3.connect(directory / "network.sqlite3") as db:
+            rows = db.execute("SELECT message_id,receipt_sent,phase FROM open_delivery_inbox ORDER BY created_at,message_id").fetchall()
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(all(row[1:] == (0, "saved") for row in rows))
+        blocked = {row[0] for row in rows[:4]}
+        later = rows[4][0]
+        original = OpenDeliveryClient._send_receipt
+        async def selective(client, message_id, *args, **kwargs):
+            if message_id in blocked:
+                # An independent-return message may remain saved without a
+                # direct receipt; an unavailable peer can remain pending too.
+                if message_id == rows[0][0]:
+                    return
+                return await unavailable()
+            return await original(client, message_id, *args, **kwargs)
+        with patch.object(OpenDeliveryClient, "_send_receipt", selective):
+            for _ in range(2):
+                self.b = Agent(self.b.client_config, self.b.network_config)
+                if retry_receive is None:
+                    self.call(self.b, op="receive", limit=4)
+                else:
+                    retry_receive(self.b, sorted(blocked))
+        with sqlite3.connect(directory / "network.sqlite3") as db:
+            states = dict(db.execute("SELECT message_id,receipt_sent FROM open_delivery_inbox"))
+        self.assertEqual(states[later], 1)
+        self.assertTrue(all(states[key] == 0 for key in blocked))
+        self.assertTrue(self.call(self.a, **sent[later])["endpoint_validated"])
+
     def test_pending_and_rejected_contact_cannot_store(self):
         _, reference = self.request_contact()
         request = {"op": "send", "request_id": "req_delivery_denied", "recipients": [self.bi.key_id],
@@ -150,23 +199,33 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         import memory_vault_open_repair_wire as wire
         from memory_vault_open_provider import issue_status
         from tests.test_open_repair_status import status_entry
+        if self._testMethodName in ('test_ack_configuration_survives_mailbox_custody','test_ack_configuration_admitted_over_http','test_cold_mailbox_returns_independent_receipt'):
+            from dataclasses import replace
+            DEFAULT_POLICY=replace(DEFAULT_POLICY,max_signature_checks=128)
         limits=dict(DEFAULT_LIMITS,max_proof_bytes=524288)
-        if self._testMethodName=='test_sender_admits_message_over_http':
+        # Fund both exhaustive downloads and their bounded possession
+        # renewals before signing any original resource or authority.
+        exhaustive_feed=self._testMethodName in ('test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources',
+            'test_ack_configuration_survives_mailbox_custody')
+        funded_feed=(exhaustive_feed or self._testMethodName=='test_sender_admits_message_over_http'
+            or getattr(self,'ack_remote_admission',False))
+        if funded_feed:
             limits.update(max_proof_bytes=1048576,max_proof_items=128,max_signature_checks=2048)
+        if exhaustive_feed:limits.update(max_requests=128,max_replay_records=256)
         _,reference=self.request_contact()
-        if self._testMethodName=='test_sender_admits_message_over_http':
+        if self._testMethodName=='test_sender_admits_message_over_http' or getattr(self,'ack_remote_admission',False):
             self.call(self.b,op='connect',invitation=dict(schema_version=CONNECT_SCHEMA,action='decide',request_ref=reference,decision='approved',max_items=2,max_bytes=6291456))
             self.call(self.a,op='connect',invitation=dict(schema_version=CONNECT_SCHEMA,action='result',request_id='req_delivery_contact'))
         else:self.decide(reference,'approved')
         selected={}
-        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):
             TrustStore(ClientConfig.load(self.b.client_config).trust_path).add(self.ai.public_descriptor())
             shared_memory=self.call(self.a,op='remember',request_id='req_mailbox_memory',kind='observation',
                 text='Synthetic mailbox memory: consult current evidence before reuse.')
             selected['memory_ids']=[shared_memory['memory_id']]
         sent=self.call(self.a,op='send',request_id='req_mailbox_stage',recipients=[self.bi.key_id],text='Synthetic mailbox staging message',**selected)
         self.assertTrue(sent['storage_accepted'])
-        if self._testMethodName=='test_sender_admits_message_over_http':
+        if self._testMethodName=='test_sender_admits_message_over_http' or getattr(self,'ack_remote_admission',False):
             self.second_mailbox_message=self.call(self.a,op='send',request_id='req_mailbox_stage_second',recipients=[self.bi.key_id],text='Synthetic second mailbox message')
         with self.a._network() as network:
             sender_encryption=network.encryption
@@ -176,20 +235,25 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         with self.b._network() as network:owner_encryption=network.encryption
         self.host.stop(0)
         db=sqlite3.connect(self.root/'node_0/transport/network.sqlite3');db.row_factory=sqlite3.Row;self.addCleanup(db.close)
-        source=RepairAckState(db,self.host.identities[0],self.host.nodes[0],encryption_identity=EncryptionIdentity.generate(),limit_policy=limits)
+        source=RepairAckState(db,self.host.identities[0],self.host.nodes[0],encryption_identity=EncryptionIdentity.generate(),limit_policy=limits,policy=DEFAULT_POLICY)
         resources=RepairMailboxResources(source);activation=MailboxRootActivation(resources);activation.initialize()
         now=int(time.time());owner=dict(signing_key=self.bi.public_descriptor(),encryption_key=owner_encryption.public_descriptor())
         dual=lambda value:dict(signing_key_id=value['signing_key']['key_id'],encryption_key_id=value['encryption_key']['key_id'])
         root=dict(owner=dual(owner),root_kind='mailbox',anchor_ref=dict(namespace='anchor',key='b'*64),owner_epoch='synthetic_owner',root_id='synthetic_mailbox')
         slot=dict(root_key=root,slot_id='synthetic_slot',writer=dual(source.target),writer_storage_epoch=source.node['payload']['storage_epoch'])
         caps=dict(max_live_bytes=131072,max_meta_bytes=2097152,max_items=64,max_requests=512,max_pending=8,max_replay_records=128,max_jobs=16,max_job_bytes=524288)
-        if self._testMethodName=='test_sender_admits_message_over_http':
+        if funded_feed:
             caps.update(max_items=128,max_job_bytes=1048576,max_requests=2048,max_meta_bytes=4194304)
+        if exhaustive_feed:caps.update(max_replay_records=256)
+        # This workflow deliberately performs many successful and rejected
+        # operations before its final revocation assertions. Give synthetic
+        # authorities enough lifetime for slow runners; keep the protocol's
+        # short allocation reservation and possession-handle deadlines intact.
         windows={name:now+600 for name in ('admit_until','read_until','copy_until','publish_until','retain_until')}
         plan=dict(root_key=root,slot_key=slot,sender=dict(signing_key_id=self.ai.key_id,encryption_key_id=sender_encryption.key_id),target=source.target,
             budget=caps,windows=windows,limits=limits,max_appends=16,max_live_items=16)
         builder=MailboxSetupBuilder(self.bi,owner_encryption,plan)
-        requests=builder.allocation_requests(at=now,expires_at=now+60)
+        requests=builder.allocation_requests(at=now,expires_at=now+240)
         offers=resources.allocate_initial(list(requests.values()),expected_owner=owner)
         now=int(time.time())
         slot_entries=builder.slot_documents(requests,offers,at=now,expires_at=windows['retain_until'])
@@ -198,9 +262,9 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         root_entries=builder.root_documents(requests,offers,slot_entries,slot_result,at=now,expires_at=windows['retain_until'])
         active=activation.activate(root_entries,expected_root=root,slot_keys=[slot]);rid=json.loads(active['raw'])['payload']['resource']['resource_id']
         root_source=MailboxRootSource(activation);root_source.initialize()
-        activation.observe_owner_status(rid,builder.initial_owner_status(slot_entries,root_entries,at=now,valid_until=now+100))
-        root_source.observe_resources(rid,'synthetic_setup',valid_until=now+100);root_source.prepare_history(rid,'synthetic_setup')
-        root_source.finalize_root(rid,read_until=now+100,retain_until=now+100)
+        activation.observe_owner_status(rid,builder.initial_owner_status(slot_entries,root_entries,at=now,valid_until=now+400))
+        root_source.observe_resources(rid,'synthetic_setup',valid_until=now+400);root_source.prepare_history(rid,'synthetic_setup')
+        root_source.finalize_root(rid,read_until=now+400,retain_until=now+400)
         docs={name:session[name] for name in ('node','policy','request','decision')}
         docs.update(knock_lease=session['lease'],grant=session['decision']['payload']['grant'],delivery_lease=session['decision']['payload']['grant']['payload']['resource_lease'])
         contact={name:canonical_bytes(value) for name,value in docs.items()}
@@ -208,19 +272,19 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         with self.b._network() as owner_network:
             with owner_network.participant.state.db() as owner_db:
                 destination_bundle=MailboxDestinationStore(owner_db,self.bi,owner_encryption).prepare(plan,slot_entries,contact,
-                    at=now,expires_at=now+60,status_revision=2,status_until=now+100)
+                    at=now,expires_at=now+240,status_revision=2,status_until=now+400)
         # A restarted client must return the original signed issuance, even
         # when the retry clock differs. Reusing its revision cannot resign.
         with self.b._network() as owner_network:
             with owner_network.participant.state.db() as owner_db:
                 store=MailboxDestinationStore(owner_db,self.bi,owner_encryption)
-                self.assertEqual(store.prepare(plan,slot_entries,contact,at=now+1,expires_at=now+60,status_revision=2,status_until=now+100),destination_bundle)
+                self.assertEqual(store.prepare(plan,slot_entries,contact,at=now+1,expires_at=now+240,status_revision=2,status_until=now+400),destination_bundle)
                 with self.assertRaisesRegex(RepairWireError,'repair_destination_conflict'):
-                    store.prepare(plan,slot_entries,contact,at=now+1,expires_at=now+59,status_revision=2,status_until=now+100)
+                    store.prepare(plan,slot_entries,contact,at=now+1,expires_at=now+59,status_revision=2,status_until=now+400)
                 with self.assertRaisesRegex(RepairWireError,'repair_destination_revision_rollback'):
-                    store.prepare(plan,slot_entries,contact,at=now+1,expires_at=now+60,status_revision=1,status_until=now+100)
+                    store.prepare(plan,slot_entries,contact,at=now+1,expires_at=now+240,status_revision=1,status_until=now+400)
         destination=destination_bundle['destination']
-        if self._testMethodName=='test_sender_admits_message_over_http':
+        if self._testMethodName=='test_sender_admits_message_over_http' or getattr(self,'ack_remote_admission',False):
             from memory_vault_open_client import MAILBOX_CONNECT_SCHEMA
             import base64
             from unittest.mock import patch
@@ -231,7 +295,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
                 expected_target=source.target,target_node_entry=dict(raw=node_raw.decode(),ref=dict(namespace='meta',key=node_digest,raw_sha256=node_digest,size=len(node_raw))),
                 slot_entries={name:dict(raw=slot_entries[name]['raw'].decode(),ref=slot_entries[name]['ref']) for name in ('slot','read','maintenance','bootstrap')}))
             authorize=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='authorize',receiver_id=registered['receiver_id'],
-                contact_request_ref=reference,expires_at=now+60,status_revision=3,status_until=now+100)
+                contact_request_ref=reference,expires_at=now+240,status_revision=3,status_until=now+400)
             chunks=[]
             with patch('memory_vault_open_transport.OpenHTTPTransport.request_repair',side_effect=AssertionError('authorization used network')):
                 while True:
@@ -250,27 +314,35 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             destination_bundle=dict(destination=destination,owner_status=owner_original)
             prepared=self.call(self.a,op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='prepare',
                 message_id=sent['message_id'],slot_entries={name:dict(raw=slot_entries[name]['raw'].decode(),ref=slot_entries[name]['ref']) for name in ('slot','read','maintenance')},
-                destination_entry=dict(raw=destination['raw'].decode(),ref=destination['ref']),attempt_until=now+60,consent_until=now+100))
+                destination_entry=dict(raw=destination['raw'].decode(),ref=destination['ref']),attempt_until=now+240,consent_until=now+400,
+                **({'ack_request_id':'req_mailbox_stage'} if hasattr(self,'ack_configuration') else {})))
             self.assertEqual(prepared['state'],'mailbox_draft_saved')
             self.assertFalse(prepared['network_accessed'])
+        if hasattr(self,'ack_configuration'):
+            from memory_vault_open_client import MAILBOX_CONNECT_SCHEMA
+            result=self.call(self.a,op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='prepare',
+                message_id=sent['message_id'],ack_request_id='req_mailbox_stage',
+                slot_entries={name:dict(raw=slot_entries[name]['raw'].decode(),ref=slot_entries[name]['ref']) for name in ('slot','read','maintenance')},
+                destination_entry=dict(raw=destination['raw'].decode(),ref=destination['ref']),attempt_until=now+240,consent_until=now+400))
+            self.assertEqual(result['state'],'mailbox_draft_saved')
         with self.a._network() as network:
             with network.participant.state.db() as sender_db:
                 draft=MailboxMessageDraftStore(sender_db,self.ai,sender_encryption).prepare(envelope,recipient=owner,
                     slot_entries={name:slot_entries[name] for name in ('slot','read','maintenance')},destination_entry=destination,
-                    contact_originals=contact,at=now,attempt_until=now+60,consent_until=now+100)
+                    contact_originals=contact,at=now,attempt_until=now+240,consent_until=now+400,ack_configuration=getattr(self,'ack_configuration',None))
         owner_status=destination_bundle['owner_status']
         scoped=json.loads(owner_status['raw'])['payload']['entries']
         delivery=DeliveryState(db,self.host.identities[0],self.host.nodes[0],enabled=True)
         staging=MailboxMessageStaging(resources,delivery);staging.initialize()
         raw=wire.build_new_wire(draft['originals'],DEFAULT_POLICY,RepairBudget(DEFAULT_POLICY)).raw
-        if self._testMethodName=='test_sender_admits_message_over_http':
+        if self._testMethodName=='test_sender_admits_message_over_http' or getattr(self,'ack_remote_admission',False):
             self._remote_message_admission(source,owner_status,slot,slot_entries,owner,sender_encryption,sent,now,limits,envelope)
             return
         first=staging.stage_delivered(raw,owner_status)
         self.assertEqual(first['state'],'staged');self.assertEqual(staging.stage_delivered(raw,owner_status),first)
         encryption=source.encryption_identity
         db.close();db=sqlite3.connect(self.root/'node_0/transport/network.sqlite3');db.row_factory=sqlite3.Row;self.addCleanup(db.close)
-        source=RepairAckState(db,self.host.identities[0],self.host.nodes[0],encryption_identity=encryption,limit_policy=limits)
+        source=RepairAckState(db,self.host.identities[0],self.host.nodes[0],encryption_identity=encryption,limit_policy=limits,policy=DEFAULT_POLICY)
         resources=RepairMailboxResources(source)
         staging=MailboxMessageStaging(resources,DeliveryState(db,self.host.identities[0],self.host.nodes[0],enabled=True));staging.initialize()
         self.assertEqual(staging.stage_delivered(raw,owner_status),first)
@@ -283,7 +355,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
         resolver.put('meta',saved['pack']['ref']['key'],saved['pack']['raw'])
         resolved=history.resolve_historical_inputs(saved['manifest']['raw'],resolver,DEFAULT_POLICY,budget)
-        self.assertEqual(len(resolved.roles),29)
+        self.assertEqual(len(resolved.roles),35 if hasattr(self,'ack_configuration') else 29)
         self.assertEqual(next(value.original.raw for value in resolved.roles if value.role=='delivery.attempt'),draft['attempt']['raw'])
         self.assertNotIn('mailbox.root_authority',{value.role for value in resolved.roles})
         self.assertEqual(resolved.manifest.value['envelope_ref']['raw_sha256'],hashlib.sha256(envelope).hexdigest())
@@ -294,10 +366,10 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             return sign(payload,*args,**kwargs)
         with patch.object(source,'_sign',side_effect=interrupted):
             with self.assertRaisesRegex(RuntimeError,'synthetic interruption'):
-                staging.commit_member(self.ai.key_id,sent['message_id'],object_until=now+90,enum_until=now+90)
+                staging.commit_member(self.ai.key_id,sent['message_id'],object_until=now+360,enum_until=now+360)
         self.assertEqual(db.execute('SELECT phase FROM open_mailbox_message_staging').fetchone()[0],'pending')
-        admitted=staging.commit_member(self.ai.key_id,sent['message_id'],object_until=now+90,enum_until=now+90)
-        self.assertEqual(staging.commit_member(self.ai.key_id,sent['message_id'],object_until=now+90,enum_until=now+90),admitted)
+        admitted=staging.commit_member(self.ai.key_id,sent['message_id'],object_until=now+360,enum_until=now+360)
+        self.assertEqual(staging.commit_member(self.ai.key_id,sent['message_id'],object_until=now+360,enum_until=now+360),admitted)
         from memory_vault_network_crypto import decrypt_bytes
         core=json.loads(admitted['core']['raw'])['payload']
         self.assertEqual(core['envelope_ref'],resolved.manifest.value['envelope_ref'])
@@ -338,7 +410,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             expected_owner=owner,expected_sender=dict(signing_key=self.ai.public_descriptor(),encryption_key=sender_encryption.public_descriptor()),
             expected_target=source.target,limit_policy=limits,
             current_statuses=list({value.original.ref.raw_sha256:dict(raw=value.original.raw,ref=value.original.ref.as_dict())
-                for value in resolved.roles if value.role.startswith('historical.status.')}.values()),
+                for value in resolved.roles if value.role.startswith('historical.status.') and not value.role.startswith('historical.status.ack_')}.values()),
             encryption_identity=owner_encryption,read_original=read_member_original,at=int(time.time()))
         recovered=read_mailbox_admission(members[0],**member_args)
         self.assertEqual(recovered['envelope'],envelope)
@@ -346,7 +418,12 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             sender_signing_key=self.ai.public_descriptor(),sender_encryption_key=sender_encryption.public_descriptor(),
             recipient_signing_key=self.bi.public_descriptor(),recipient_encryption_key=owner_encryption.public_descriptor())
         self.assertIn(b'Synthetic mailbox staging message',plain)
-        self.assertEqual(len(recovered['history'].roles),29)
+        self.assertEqual(len(recovered['history'].roles),35 if hasattr(self,'ack_configuration') else 29)
+        if hasattr(self,'ack_configuration'):
+            retained={value.role:value.original for value in recovered['history'].roles}
+            for role,entry in self.ack_configuration.items():self.assertEqual(retained[role].raw,entry['raw'])
+            self.assertNotIn('ack.read_grant',retained)
+            self.assertIsNotNone(recovered['setup']['ack_configuration'])
         self.assertEqual(len(recovered['setup']['statuses']),8)
         held_page=admitted['sealed_page'];ref=held_page['ref']
         metadata_before=db.execute('SELECT sum(metadata_bytes) FROM open_repair_mailbox_resources').fetchone()[0]
@@ -374,10 +451,10 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         metadata_before=db.execute('SELECT sum(metadata_bytes) FROM open_repair_mailbox_resources').fetchone()[0]
         with patch.object(source,'_sign',side_effect=interrupted_feed):
             with self.assertRaisesRegex(RuntimeError,'synthetic feed interruption'):
-                staging.finalize_feed(slot,admitted['head']['ref'],read_until=now+80,retain_until=now+90)
+                staging.finalize_feed(slot,admitted['head']['ref'],read_until=now+320,retain_until=now+360)
         self.assertEqual(db.execute('SELECT sum(metadata_bytes) FROM open_repair_mailbox_resources').fetchone()[0],metadata_before)
-        feed_custody=staging.finalize_feed(slot,admitted['head']['ref'],read_until=now+80,retain_until=now+90)
-        self.assertEqual(staging.finalize_feed(slot,admitted['head']['ref'],read_until=now+80,retain_until=now+90),feed_custody)
+        feed_custody=staging.finalize_feed(slot,admitted['head']['ref'],read_until=now+320,retain_until=now+360)
+        self.assertEqual(staging.finalize_feed(slot,admitted['head']['ref'],read_until=now+320,retain_until=now+360),feed_custody)
         payload=json.loads(feed_custody['raw'])['payload']
         self.assertEqual(payload['historical_manifest_ref'],feed_history['manifest']['ref'])
         self.assertEqual(payload['covered_interval'],dict(start=0,end=1))
@@ -388,7 +465,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         verified_feed=verify_mailbox_feed_source_event(feed_history['manifest'],resolver,feed_custody,expected_slot=slot,
             expected_owner=owner,expected_sender=member_args['expected_sender'],expected_target=source.target,
             limit_policy=limits,policy=DEFAULT_POLICY,budget=budget)
-        self.assertEqual(verified_feed['read_until'],now+80)
+        self.assertEqual(verified_feed['read_until'],now+320)
         import memory_vault_open_repair_probe as probe
         import memory_vault_open_repair_proof as proof
         from memory_vault_open_repair_mailbox_source import MailboxRecoveryService
@@ -412,20 +489,45 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         self.addCleanup(close_feed_server)
         transport=OpenHTTPTransport(allow_loopback=True);self.addCleanup(transport.close)
         base='http://127.0.0.1:'+str(server.server_port)
+        def feed_failure(error,before):
+            current=server_errors[before:]
+            failure=AssertionError('synthetic feed server errors: '+repr(current))
+            # The CI reporter keeps only its fixed public protocol-code allowlist.
+            if len(current)==1:failure.code=current[0]
+            return failure
         class RemoteFeed:
             def challenge(self,packet):
                 raw=transport.request_repair(base,packet['raw'],deadline=time.monotonic()+15)
                 digest=hashlib.sha256(raw).hexdigest()
                 return dict(raw=raw,ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw)))
-            def answer(self,packet):return transport.request_repair(base,packet['raw'],deadline=time.monotonic()+15)
+            def answer(self,packet):
+                before=len(server_errors)
+                try:return transport.request_repair(base,packet['raw'],deadline=time.monotonic()+15)
+                except Exception as error:raise feed_failure(error,before) from error
             def child(self,packet):
+                before=len(server_errors)
                 try:return transport.request_repair(base,packet['raw'],child=True,deadline=time.monotonic()+15)
-                except Exception as error:raise AssertionError('synthetic feed server errors: '+repr(server_errors)) from error
+                except Exception as error:raise feed_failure(error,before) from error
         service=RemoteFeed()
         grant=json.loads(slot_entries['bootstrap']['raw'])['payload']
+        def fresh_feed_proof():
+            expected=dict(expected_subject=owner,expected_target=source.target,target_storage_epoch=slot['writer_storage_epoch'],
+                bootstrap_grant_sha256=slot_entries['bootstrap']['ref']['raw_sha256'],selector=grant['selector'],at=int(time.time()),consumer='mailbox_feed')
+            pending=probe.make_bootstrap_probe(self.bi,expires_at=expected['at']+55,**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            packet=dict(raw=pending.original.raw,ref=pending.original.ref.as_dict())
+            challenge=service.challenge(packet)
+            expected['at']=int(time.time())
+            answer=probe.solve_bootstrap_challenge(packet,challenge,signer=self.bi,encryption_identity=owner_encryption,
+                target_nonce=pending.nonce,expires_at=min(expected['at']+50,json.loads(challenge['raw'])['payload']['expires_at']),**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            response=service.answer(dict(raw=answer.raw,ref=answer.ref.as_dict()))
+            checked=proof.verify_bootstrap_proof_response(response,expected_subject=owner,expected_target=source.target,
+                target_storage_epoch=slot['writer_storage_epoch'],selector=grant['selector'],bootstrap_grant_ref=slot_entries['bootstrap']['ref'],
+                probe_ref=packet['ref'],challenge_ref=challenge['ref'],answer_ref=answer.ref.as_dict(),at=int(time.time()),
+                max_proof_items=64,max_proof_bytes=524288,consumer='mailbox_feed',expected_source_state='feed',policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            return checked,response
         # Requests use the live authenticated handle deadline. Fixture setup
         # and cold import can already consume 45 seconds on a cloud runner.
-        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):
             from dataclasses import replace
             from memory_vault_open_repair_client import MailboxFeedRecoveryClient,MailboxSetupJournal
             from tests.open_repair_ack_fixtures import signed_entry
@@ -533,31 +635,32 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             child_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=checked.handle.payload['expires_at'],
                 child_index=child['index'],offset=0,requested_bytes=child['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
         else:
-            expected=dict(expected_subject=owner,expected_target=source.target,target_storage_epoch=slot['writer_storage_epoch'],
-                bootstrap_grant_sha256=slot_entries['bootstrap']['ref']['raw_sha256'],selector=grant['selector'],at=int(time.time()),consumer='mailbox_feed')
-            pending=probe.make_bootstrap_probe(self.bi,expires_at=expected['at']+55,**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
-            packet=dict(raw=pending.original.raw,ref=pending.original.ref.as_dict())
-            challenge=service.challenge(packet)
-            expected['at']=int(time.time())
-            answer=probe.solve_bootstrap_challenge(packet,challenge,signer=self.bi,encryption_identity=owner_encryption,
-                target_nonce=pending.nonce,expires_at=min(expected['at']+50,json.loads(challenge['raw'])['payload']['expires_at']),**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
-            response=service.answer(dict(raw=answer.raw,ref=answer.ref.as_dict()))
-            checked=proof.verify_bootstrap_proof_response(response,expected_subject=owner,expected_target=source.target,
-                target_storage_epoch=slot['writer_storage_epoch'],selector=grant['selector'],bootstrap_grant_ref=slot_entries['bootstrap']['ref'],
-                probe_ref=packet['ref'],challenge_ref=challenge['ref'],answer_ref=answer.ref.as_dict(),at=int(time.time()),
-                max_proof_items=64,max_proof_bytes=524288,consumer='mailbox_feed',expected_source_state='feed',policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            checked,response=fresh_feed_proof()
             child=next(v for v in checked.manifest.value['children'] if v['role']=='feed.custody')
             child_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=checked.handle.payload['expires_at'],
                 child_index=child['index'],offset=0,requested_bytes=child['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
             self.assertEqual(service.child(dict(raw=child_request.raw,ref=child_request.ref.as_dict())),feed_custody['raw'])
             transfer_bytes=len(response)+len(checked.handle.raw)+len(checked.manifest.raw)+len(feed_custody['raw'])+sum(v['ref']['size'] for v in checked.manifest.value['children'])
             self.assertLessEqual(transfer_bytes,grant['limits']['max_proof_bytes'])
-            received={}
-            for child in checked.manifest.value['children']:
+            received={};renewals=0
+            # This exhaustive endpoint check fetches even originals already
+            # present in packs. Read the changing current-status entries first;
+            # stable historical originals may require another possession proof
+            # on a slower runner. Each renewal is charged by the real service.
+            children=sorted(checked.manifest.value['children'],key=lambda item:not item['role'].startswith('current.status.'))
+            for child in children:
                 chunks=[]
                 for offset in range(0,child['ref']['size'],65536):
+                    if checked.handle.payload['expires_at']-int(time.time())<=20:
+                        self.assertLess(renewals,4,'bounded exhaustive proof download')
+                        checked,response=fresh_feed_proof();renewals+=1
+                        transfer_bytes+=len(response)+len(checked.handle.raw)+len(checked.manifest.raw)
+                        self.assertLessEqual(transfer_bytes,grant['limits']['max_proof_bytes'])
+                    matches=[entry for entry in checked.manifest.value['children']
+                        if entry['role']==child['role'] and entry['ref']==child['ref']]
+                    self.assertEqual(len(matches),1,'renewal must retain the exact full original reference')
                     request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=checked.handle.payload['expires_at'],
-                        child_index=child['index'],offset=offset,requested_bytes=min(65536,child['ref']['size']-offset),policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+                        child_index=matches[0]['index'],offset=offset,requested_bytes=min(65536,child['ref']['size']-offset),policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
                     chunks.append(service.child(dict(raw=request.raw,ref=request.ref.as_dict())))
                 child_raw=b''.join(chunks);self.assertEqual(hashlib.sha256(child_raw).hexdigest(),child['ref']['raw_sha256'])
                 received[(child['role'],child['ref']['key'])]=dict(raw=child_raw,ref=child['ref'])
@@ -568,7 +671,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
                 received[('feed.custody',feed_custody['ref']['key'])],expected_slot=slot,expected_owner=owner,
                 expected_sender=member_args['expected_sender'],expected_target=source.target,limit_policy=limits,policy=DEFAULT_POLICY,budget=budget)
             self.assertEqual(remote_verified['graph']['head']['count'],1)
-        extended=source._sign(dict(payload,retain_until=now+91),'synthetic_overpromise',RepairBudget(DEFAULT_POLICY))
+        extended=source._sign(dict(payload,retain_until=now+361),'synthetic_overpromise',RepairBudget(DEFAULT_POLICY))
         budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
         for value in (saved['pack'],feed_history['pack']):resolver.put('meta',value['ref']['key'],value['raw'])
         with self.assertRaises(RepairWireError):
@@ -603,12 +706,12 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         db.execute('DELETE FROM open_mailbox_admission_objects WHERE key=?',(missing,))
         db.execute('RELEASE missing_original')
         with self.assertRaisesRegex(RepairWireError,'repair_storage_corrupt'):
-            staging.commit_member(self.ai.key_id,sent['message_id'],object_until=now+90,enum_until=now+90)
+            staging.commit_member(self.ai.key_id,sent['message_id'],object_until=now+360,enum_until=now+360)
         value=admitted['sealed_page'];ref=value['ref']
         db.execute('INSERT INTO open_mailbox_admission_objects VALUES(?,?,?,?)',(missing,ref['raw_sha256'],ref['size'],value['raw']))
         db.commit()
-        revoked=status_entry(issue_status(self.bi,root=root,revision=3,entries=[dict(value,status='revoked') for value in scoped],issued_at=now,valid_until=now+100))
-        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+        revoked=status_entry(issue_status(self.bi,root=root,revision=3,entries=[dict(value,status='revoked') for value in scoped],issued_at=now,valid_until=now+400))
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):
             observed.clear()
             with patch.object(client.transport,'request_repair',side_effect=AssertionError('unexpected network after retained revocation')):
                 with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
@@ -657,7 +760,15 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             verify_mailbox_member_inputs(changed,expected_slot=slot,expected_owner=owner,expected_sender=member_args['expected_sender'],
                 expected_target=source.target,target_storage_epoch=slot['writer_storage_epoch'],accepted_at=recovered['core']['accepted_at'],
                 limit_policy=limits,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
-        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+        # The preceding independent integrity checks can outlive a short handle.
+        # Obtain a new, charged possession proof before revocation, rather than
+        # attempting to sign a child request against an expired old handle.
+        denial_proof,_=fresh_feed_proof()
+        denial_child=next(v for v in denial_proof.manifest.value['children'] if v['role']=='feed.custody')
+        denied_request=proof.make_bootstrap_child_request(self.bi,denial_proof,subject=owner,target=source.target,
+            at=int(time.time()),expires_at=denial_proof.handle.payload['expires_at'],
+            child_index=denial_child['index'],offset=0,requested_bytes=feed_custody['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):
             from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
             metadata_id=db.execute('SELECT metadata_id FROM open_mailbox_message_staging').fetchone()[0]
             MailboxStatusLedger(resources).observe(metadata_id,revoked,expected_signing_key=owner['signing_key'],
@@ -669,11 +780,9 @@ class MailboxStagingHTTPTests(unittest.TestCase):
                 staging.stage_delivered(raw,revoked)
             with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
                 staging.stage_delivered(raw,owner_status)
-        denied_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=checked.handle.payload['expires_at'],
-            child_index=child_request.payload['child_index'],offset=0,requested_bytes=feed_custody['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
         with self.assertRaisesRegex(AssertionError,'repair_authority_revoked'):
             service.child(dict(raw=denied_request.raw,ref=denied_request.ref.as_dict()))
-        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):
             with self.assertRaisesRegex(AssertionError,'repair_authority_revoked'):
                 service.child(body_packet)
             status_count=recipient_db.execute('SELECT count(*) FROM open_mailbox_setup_statuses').fetchone()[0]
@@ -716,7 +825,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         with self.a._network() as network:
             with network.participant.state.db() as db:
                 store=MailboxMessageDraftStore(db,self.ai,sender_encryption)
-                options=dict(target=source.target,owner_status_entry=owner_status,at=now,expires_at=now+60,object_until=now+80,enum_until=now+80)
+                options=dict(target=source.target,owner_status_entry=owner_status,at=now,expires_at=now+240,object_until=now+320,enum_until=now+320)
                 packet=store.admission_request(sent['message_id'],**options)
         with self.a._network() as network:
             with network.participant.state.db() as db:
@@ -741,7 +850,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         # supplies the actual restarted HTTP endpoint without changing grants.
         authorization=dict(self.sender_authorization,base_url=base,target_node_entry=dict(raw=node['raw'].decode(),ref=node['ref']))
         retain=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='retain',message_id=second['message_id'],authorization=authorization,
-            attempt_until=now+60,consent_until=now+100,expires_at=now+60,object_until=now+80,enum_until=now+80)
+            attempt_until=now+240,consent_until=now+400,expires_at=now+240,object_until=now+320,enum_until=now+320)
         from memory_vault import MemoryError as VaultError
         real_request=OpenHTTPTransport.request_repair
         def lose_reply(client,*args,**kwargs):
@@ -763,7 +872,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         self.assertEqual(usage_after['signatures']-usage_before['signatures'],1)
         self.assertGreater(usage_after['bytes'],usage_before['bytes'])
         payload=json.loads(packet['raw'])['payload']
-        conflicting=dict(payload,enum_until=now+81)
+        conflicting=dict(payload,enum_until=now+321)
         conflict=canonical_bytes(dict(payload=conflicting,proof=self.ai.sign_message(conflicting)))
         with self.assertRaisesRegex(AssertionError,'repair_message_conflict'):request(conflict)
         errors.clear()
@@ -785,7 +894,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='admit',base_url=base,message_id=sent['message_id'],target=source.target,
             target_node_entry=dict(raw=node['raw'].decode(),ref=node['ref']),
             owner_status_entry=dict(raw=owner_status['raw'].decode(),ref=owner_status['ref']),
-            expires_at=now+60,object_until=now+80,enum_until=now+80)
+            expires_at=now+240,object_until=now+320,enum_until=now+320)
         accepted=self.call(self.a,op='connect',invitation=invitation)
         self.assertEqual(accepted['state'],'retained_at_mailbox')
         self.assertFalse(accepted['recipient_acknowledged'])
@@ -806,6 +915,121 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             offline=verify_mailbox_inbox_evidence(evidence,envelope,owner=owner,encryption_identity=network.encryption,staged_at=at)
             self.assertEqual(offline['envelope'],envelope)
         self.assertEqual(errors,[])
+
+    def test_ack_configuration_survives_mailbox_custody(self):
+        from memory_vault_network_crypto import EncryptionIdentity
+        from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS
+        from memory_vault_open_repair_mailbox_activation import ACK_CONFIGURATION_ROLES
+        ack_host=HTTPNodes(self.root/'independent_ack',1);self.addCleanup(ack_host.close)
+        ack_host.stop(0)
+        config=json.loads(ack_host.configs[0].read_bytes())
+        encryption=EncryptionIdentity.generate();key=self.root/'independent_ack'/'encryption.json';encryption.save(key)
+        config.update(encryption_key_path=str(key),provider_policy=dict(enabled=True),
+            repair_policy=dict(enabled=True,limit_policy=RECEIPT_WORKFLOW_LIMITS,remote_setup=dict(enabled=True)))
+        atomic_write(ack_host.configs[0],canonical_bytes(config),replace=True);ack_host.start(0)
+        old_call=self.call
+        def call(agent,**request):
+            if request['op']=='send' and agent is self.a and not hasattr(self,'ack_configuration'):
+                from memory_vault_open_client import ACK_CONNECT_SCHEMA
+                prepared=old_call(self.a,op='connect',invitation=dict(schema_version=ACK_CONNECT_SCHEMA,action='prepare',
+                    request_id=request['request_id'],recipient=self.bi.key_id,text=request['text'],memory_ids=request.get('memory_ids',[]),
+                    source_url=ack_host.nodes[0]['payload']['base_url'],source_key_id=ack_host.identities[0].key_id,
+                    repair_profile='receipt',lifetime=3600))
+                with self.a._network() as network:
+                    self.ack_configuration=network._mailbox_ack_configuration(request['request_id'],prepared['message_id'])
+                self.assertEqual(set(self.ack_configuration),ACK_CONFIGURATION_ROLES)
+                self.ack_preparation_request_id=request['request_id']
+            return old_call(agent,**request)
+        self.call=call
+        self.test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources()
+        if getattr(self,'ack_cold_return',False):
+            self._return_cold_ack(ack_host)
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_ack_configuration
+        from memory_vault_open_repair_state import DEFAULT_POLICY
+        from memory_vault_open_repair_wire import RepairBudget,RepairWireError
+        import time
+        with self.a._network() as network:
+            sender=dict(signing_key=self.ai.public_descriptor(),encryption_key=network.encryption.public_descriptor())
+        with self.b._network() as network:
+            recipient=dict(signing_key=self.bi.public_descriptor(),encryption_key=network.encryption.public_descriptor())
+        write=json.loads(self.ack_configuration['ack.write_grant']['raw'])['payload']
+        arguments=dict(sender=sender,recipient=recipient,message_id=write['message_id'],envelope_ref=write['envelope_ref'],
+            at=int(time.time()),policy=DEFAULT_POLICY)
+        with self.assertRaisesRegex(RepairWireError,'repair_ack_bound_mismatch'):
+            verify_mailbox_ack_configuration(self.ack_configuration,**dict(arguments,message_id=write['message_id'][:-1]+('0' if write['message_id'][-1]!='0' else '1')),budget=RepairBudget(DEFAULT_POLICY))
+        wrong_status=dict(self.ack_configuration)
+        wrong_status['historical.status.ack_root']=wrong_status['historical.status.ack_write']
+        with self.assertRaisesRegex(RepairWireError,'repair_status_missing'):
+            verify_mailbox_ack_configuration(wrong_status,**arguments,budget=RepairBudget(DEFAULT_POLICY))
+
+    def test_cold_mailbox_returns_independent_receipt(self):
+        self.ack_cold_return=True
+        self.test_ack_configuration_survives_mailbox_custody()
+
+    def _return_cold_ack(self, ack_host):
+        import base64
+        from unittest.mock import patch
+        from memory_vault_open_client import ACK_CONNECT_SCHEMA
+        from memory_vault_open_delivery_client import OpenDeliveryClient
+        write=json.loads(self.ack_configuration['ack.write_grant']['raw'])['payload']
+        invitation=dict(schema_version=ACK_CONNECT_SCHEMA,action='return_mailbox_receipt',message_id=write['message_id'],
+            source_url=ack_host.nodes[0]['payload']['base_url'],source_key_id=ack_host.identities[0].key_id,repair_profile='receipt')
+        from memory_vault import MemoryError
+        from memory_vault_open_transport import OpenHTTPTransport
+        original_request=OpenHTTPTransport.request_repair
+        dropped=[]
+        def lose_reply(transport,*args,**kwargs):
+            reply=original_request(transport,*args,**kwargs)
+            try:kind=json.loads(reply).get('kind')
+            except (ValueError,UnicodeDecodeError):kind=None
+            if kind=='ack.put_response' and not dropped:
+                dropped.append(True)
+                raise MemoryError('synthetic_lost_ack_reply')
+            return reply
+        with patch.object(OpenHTTPTransport,'request_repair',new=lose_reply):
+            failed=self.b.handle(dict(op='connect',invitation=invitation))
+        self.assertEqual(dropped,[True]);self.assertFalse(failed['ok'])
+        self.assertEqual(failed['error']['code'],'synthetic_lost_ack_reply')
+        # A new client resumes the frozen put journal after R already committed.
+        with patch.object(OpenDeliveryClient,'call',side_effect=AssertionError('original delivery endpoint used')):
+            returned=self.call(self.b,op='connect',invitation=invitation)
+        self.assertEqual(returned['state'],'retained_at_ack_source')
+        self.assertTrue(returned['network_accessed'])
+        with self.b._network() as network:
+            with patch.object(network.participant.transport,'request_repair',side_effect=AssertionError('repeated ACK network call')):
+                again=network._ack_connect(invitation)
+        self.assertTrue(again['from_local_history']);self.assertFalse(again['network_accessed'])
+        self.assertEqual(again['receipt_ref'],returned['receipt_ref'])
+        # A changed destination never reuses the saved authorization request.
+        with self.b._network() as network:
+            with self.assertRaisesRegex(Exception,'open_ack_mailbox_return_conflict'):
+                network._ack_connect(dict(invitation,source_url='http://127.0.0.1:1'))
+            with network.participant.state.db() as db:
+                saved=db.execute('SELECT request FROM open_mailbox_ack_returns WHERE message_id=?',(write['message_id'],)).fetchone()[0]
+                db.execute('UPDATE open_mailbox_ack_returns SET request=? WHERE message_id=?',(b'{}',write['message_id']))
+            with self.assertRaisesRegex(Exception,'open_ack_mailbox_return_corrupt'):
+                network._ack_connect(invitation)
+            with network.participant.state.db() as db:
+                db.execute('UPDATE open_mailbox_ack_returns SET request=? WHERE message_id=?',(saved,write['message_id']))
+        chunks=[];cursor=None
+        while True:
+            query=dict(schema_version=ACK_CONNECT_SCHEMA,action='export_preparation',request_id=self.ack_preparation_request_id,part='owner_invitation')
+            if cursor is not None:query['cursor']=cursor
+            page=self.call(self.a,op='connect',invitation=query)
+            chunks.append(base64.b64decode(page['bundle_chunk']));cursor=page['next_cursor']
+            if cursor is None:break
+        owner_invitation=json.loads(b''.join(chunks))
+        with patch.object(OpenDeliveryClient,'call',side_effect=AssertionError('original delivery endpoint used')):
+            recovered=self.call(self.a,op='connect',invitation=owner_invitation)
+        self.assertEqual(recovered['message_id'],write['message_id'])
+        with self.a._network() as network:
+            with network.participant.state.db() as db:
+                row=db.execute('SELECT acknowledgement FROM open_delivery_outbox WHERE message_id=?',(write['message_id'],)).fetchone()
+                self.assertIsNotNone(row['acknowledgement'])
+
+    def test_ack_configuration_admitted_over_http(self):
+        self.ack_remote_admission=True
+        self.test_ack_configuration_survives_mailbox_custody()
 
     def test_sender_admits_message_over_http(self):
         self.test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources()

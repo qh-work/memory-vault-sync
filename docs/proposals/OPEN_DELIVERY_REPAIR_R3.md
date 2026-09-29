@@ -2472,3 +2472,353 @@ ACK repair with A/B and every original holder stopped; all cold inputs frozen
 before the unknown refs existed; and crashes around every commit/publication/
 unlink boundary. Correct failures remain part of the results. No receipt,
 syntax parse, construction DAG or release archive alone proves those outcomes.
+
+### Implemented ACK-unbound reservation preparation
+
+`memory_vault_open_repair_copy_prepare.py` provides a bounded, local maintainer
+journal for the step **before** sending a copy allocation request. The operator
+must use a private local database and independently prove the destination's two
+keys before transmitting the emitted request. This is not a public endpoint.
+
+A new owner-signed `ack.copy_reservation_consent` has the repair schema/common
+signature fields and exactly these payload fields:
+
+```
+issued_at, expires_at, consent_id, revision, root_authority_ref,
+source_custody_ref, historical_manifest_ref, maintainer:DualID,
+target:DualKey, target_storage_epoch,
+reservation_disclosure:{intent_sha256,until}
+```
+
+This consent permits disclosure of only the exact minimal copy intent to that
+specific destination. Its authority-status scope uses its kind and original raw
+hash. It does not replace root COPY authority or permit uploading original
+proofs. The source event must verify as ACK-unbound, the maintainer must already
+be named by the root, and current owner root/slot/consent and original-source
+resource observations must permit COPY. Existing receipt and receipt-index roots
+without COPY cannot be upgraded by this consent. Old preparations stay unchanged.
+The intent's windows/budgets stay within the original root, and request expiry
+also respects original-source availability and the consent's finite deadline.
+
+The caller-owned journal retains authenticated status observations even when a
+later input is malformed or live use is denied. Old status replay, observed
+revocation, conflicting job reuse, identity changes and expired retries refuse
+request emission. Exact retries return the same signed allocation bytes. The
+journal retains at most 16 jobs and 64 status documents (at most 1 MiB of status
+bytes and references); capacity exhaustion does not evict revocations or jobs.
+The root's finite concurrent-job limit further bounds retained preparations.
+
+The emitted allocation connects to `RepairCopyResources.allocate`, which makes
+a real shared-capacity reservation. `AckCopyPreparation.assign_unbound` then
+revalidates the source and current owner permissions, authenticates that exact
+destination offer, and durably signs one depth-2 `maintenance.assignment` with
+COPY/READ/RETAIN, the exact resource and the pre-existing owner bootstrap grant.
+Current owner root discovery permission and current read/bootstrap grants are
+also required for that service assignment. No destination becomes a maintainer.
+The assignment and its original offer cannot be replaced in the same job. Live
+retries return the exact signature; expired reservation/request retries refuse
+rather than invent a renewed offer. Status observations and assignment creation
+share one writer transaction. Assignment windows must fit both the offer and the
+original owner service deadlines. This helper does not mint current assignment
+status: that belongs to the maintainer's coordinated authority-status issuer.
+
+Neither preparation, offer nor assignment is replica custody.
+Destination-local disclosure and copy commit are described below. Replica read
+service, HTTP orchestration, and native TypeScript preparation remain unfinished. No future empty/occupied ACK state is included in
+an unbound preparation.
+
+
+### Destination-local ACK-unbound replica commit
+
+`RepairCopyState.commit_unbound` consumes the exact locally reserved allocation,
+whole original unbound source event, depth-2 assignment, and two additional signed
+`ack.copy_disclosure` originals. Their payloads have the common repair signature
+fields plus exactly:
+
+```
+issued_at, expires_at, consent_id, revision, variant, root_key,
+assignment_ref, source_custody_ref, historical_manifest_ref,
+target:DualKey, target_storage_epoch,
+disclosure:{originals:[{role,ref}],status_scopes:[{scope_kind,scope_id}],until}
+```
+
+`variant` is `owner` or `source`, with that original signer's signature. Each
+permission names the complete exact inventory belonging to its signer; the owner
+inventory includes the reservation consent. `disclosure_permissions` derives the
+full list and whole historical status scopes, including the reservation-consent
+scope. The disclosure's own authority-status scope is also permitted implicitly
+by that signed original. No projection of another signer's status is accepted.
+Current root, owner read/bootstrap, reservation consent, source resource, both
+disclosures and the maintainer assignment must all authorize the applicable
+operations. The destination independently checks its actual local shared ledger;
+another node's signed offer cannot substitute for physical capacity.
+
+After verification the destination stores the exact originals and complete raw
+packs, a recomputed replica manifest and its own signed `replica.custody` in one
+transaction. Metadata includes duplicate bytes in both originals and packs,
+references, stored observations and row overhead. Failed final writes roll back
+all copied objects and custody. Authenticated observations are persisted before
+later checks, including malformed sibling documents, can fail. Revocation and
+revision rollback therefore cannot be erased by a rejected copy. Metadata-status
+exhaustion blocks the root instead of dropping a denial. Retries check every
+stored original and return the same custody while the admission remains live;
+missing stored objects are refused rather than silently reconstructed.
+
+This is a destination-local operator API with finite charged attempts, not an
+HTTP upload or read endpoint. Its current checks use fresh synthetic original
+source events, real SQLite/shared-capacity writes, restart, exact-byte source
+reconstruction and failed-write rollback. They do not establish remote transfer,
+independent owner retrieval from a replacement, provider discovery or automatic
+replacement. Those integrations remain required before advertising this as
+end-to-end replacement-node repair.
+
+
+### Restart reconstruction of a committed replica
+
+The replica manifest now binds the exact `copy.current_status` originals used at
+its original commit. These immutable originals may share physical storage with
+the same resource's status journal when their full reference and bytes match;
+both obligations remain pinned and their metadata is charged. A later current
+status update does not change the original commit or its custody signature.
+Before retry observation, an existing commit's complete stored inventory is
+checked, so a retry cannot quietly recreate a missing committed status original.
+
+`RepairCopyState.restore_unbound` reconstructs a historical replica using only
+the destination database and independently supplied owner, original source and
+maintainer identities. It authenticates the destination custody, exact manifest,
+all stored objects, original source event, original commit-time authority and
+complete typed role/edge closure. It also requires the real capacity ledger to
+remain intact. Missing objects/status originals, invented graph edges or an
+incomplete old experimental manifest are refused; nothing is synthesized.
+
+Its explicit result state is `historical_replica`. Reconstruction can inspect a
+past valid event after its serving window ends, but does not authorize current
+READ, expose an HTTP endpoint, refresh status or advertise a provider. A live
+owner service must separately check current authority, revocation and dual-key
+possession before disclosing any reconstructed bytes. Old experimental copy
+commits lacking commit-time status references cannot be promoted to that state.
+
+The same reconstruction is now available to independent clients through
+`verify_unbound_replica_event`. It accepts the exact replica manifest, P custody,
+an explicitly bounded raw resolver and independently held A/R/M/P public keys.
+Every typed role, complete reference, original R event and copy-time permission
+is recomputed; a P signature alone cannot establish a different source, scope,
+resource, delegation or history edge. It needs no destination database or private
+key. Local restart reconstruction uses this same verifier after checking physical
+storage and the shared capacity ledger. Its result remains historical evidence,
+not current READ or permission to forward the copied signers' originals.
+
+`RepairCopyState.read_local_original` supplies the local service adapter with
+exact committed bytes, including manifest/custody and commit-time status originals
+that share physical storage with the status journal. A full reference must match
+the immutable inventory; a later journal observation is not implicitly a proof
+child. Reads require the real shared capacity ledger and intact stored inventory.
+Both this method and restart reconstruction accept a caller's existing bounded
+work meter; they cannot reset or enlarge it. This is an operator-local primitive,
+not an HTTP route or a substitute for current READ/disclosure/possession checks.
+
+### Explicit owner return from an unbound replica
+
+`RepairCopyState.prepare_unbound_read` now checks current permission against
+actual committed storage. A, original R and maintainer M each sign an
+`ack.replica_return_consent` for this exact source custody/history, assignment,
+P descriptor/epoch, original owner bootstrap grant and owner subject. Each
+consent enumerates the complete role/RawRef pairs belonging to its own signer,
+plus explicit scopes for returning whole status originals. The consent itself
+and its own status scope are returnable to the named owner. P's own originals
+remain tied to the verified P offer/custody/resource.
+
+`copy_return_permissions` derives these signing inputs from a verified copy
+plan before P commits. No consent depends on a future P custody hash or future
+status bytes. Whole commit-time and current status documents must remain within
+the issuer's explicitly permitted scopes. A/R/M may therefore prepare the return
+consents and separately coordinated status revisions before copying, then be
+offline during P's commit and subsequent permission check. This does not issue
+new status revisions automatically or extend their finite validity.
+
+Current checks require owner root/read/bootstrap/slot READ, M assignment READ,
+all three return-consent READ scopes, and P's current resource generation/status.
+Challenge preparation also requires DISCOVER from the root/bootstrap. COPY-only
+permission does not suffice. The admission reservation may have expired after a
+successful commit, but actual read/retention, consent, status and node deadlines
+must all remain live. Exact original reconstruction occurs with the same bounded
+work meter; each preparation consumes a real shared request allowance. Authenticated
+observations survive malformed siblings, refusal and restart. Old active replay
+cannot erase a retained revocation; metadata exhaustion blocks the root rather
+than forgetting evidence. New read workflows need enough explicitly signed and
+reserved metadata capacity for their planned status updates. Existing capacity
+is never enlarged implicitly.
+
+The current implementation supports distinct A/R/M/P signing identities and
+unbound replicas only. Its local `permission_checked` result does not establish
+caller key possession, publish bytes or expose a remote endpoint. The actual
+possession exchange, proof transport, independent live-client checks, discovery
+and automatic repair remain required integrations.
+
+
+### ACK-unbound copy staging profile (development)
+
+The existing finite `proof.stage_*` wire also has an explicit
+`ack_copy_unbound` consumer. Every verifier requires that consumer through
+`expected_consumer`; the default remains `index_admit`. A signed copy intent,
+handle or child frame cannot be reused in directory admission. The wire keeps
+its original 60-second exchange, 16-KiB aligned chunks, 64-child and 1-MiB
+logical-transfer ceilings. No original grant or physical reservation is enlarged.
+
+The copy manifest uses the exact unbound ACK scope with `root_authority_ref`.
+It requires one of every original ACK-unbound role, `history.ack_unbound`,
+`ack.slot_custody`, `copy.reservation_consent`, `copy.allocation`, `copy.offer`,
+`copy.assignment`, `copy.owner_disclosure` and `copy.source_disclosure`; it also
+requires 1–16 `copy.current_status` originals and 1–13 complete
+`history.raw_pack` entries. All direct children use metadata references. The
+13-pack bound follows the 13 original source roles; application verification
+still rejects unused packs. Closed role sets exclude receipt admission,
+occupied state, directory publication and unrelated uploads.
+
+The stage challenge checks the uploader's encryption-key possession in addition
+to signatures and exact original references. Target dual-possession and advance
+original-disclosure checks remain prerequisites of the transport caller. Stage
+completion attests only provisional bytes. Destination persistence, cumulative
+work accounting, restart-safe upload, full original/current COPY verification
+and the atomic `RepairCopyState.commit_unbound` transition are required before
+publishing replica custody. This wire extension alone does not expose a copy
+HTTP endpoint or complete remote repair.
+
+### Persistent copy-stage receiver (development after the alpha.0.15 candidate)
+
+`RepairCopyUpload` receives an `ack_copy_unbound` stage under an existing exact
+`RepairCopyResources` reservation in the node's protected transport database.
+Its local entry points are `intent(resource_id, entry)`, `answer`, `child` and
+`close`; `commit_closed` then requires independently held owner/source/maintainer
+bindings and reruns the complete original and current COPY verification.
+
+Intent/challenge, nonce, answer/handle, exact frames and responses, close/result
+and actual work are durable. Only the signing caller may consume the reservation;
+its encryption answer must succeed before a handle permits chunks. Exact retries
+return saved results; a newly signed request for an already occupied child offset
+is a conflict. Restart preserves both progress and used work. Gaps and incorrect
+whole-child hashes cannot close. A closed stage is still provisional: it contains
+no replica custody until the separately authorized atomic commit succeeds.
+
+The receiver intersects node, reservation and exchange deadlines without renewal.
+It shares the copy request ledger and its 64-attempt local ceiling with later copy
+and read preparation. Interrupted attempts retain their full signature allowance;
+successful and denied admitted attempts retain actual checks and wire charges.
+Stage bytes consume the original job-byte budget, while signatures, responses,
+sessions and replay metadata consume the original metadata capacity. Existing
+shared capacity must remain present. No private staging database or extra resource
+reservation is created, and no live obligations are evicted to make room.
+
+The node routes this explicit profile through its existing repair control and
+MVOB1 blob endpoints only when the operator enables repair and an exact local
+copy reservation already exists. Intent selection uses the reserved maintainer
+and allocation; later packets use the durably retained intent digest. The
+receiver still authenticates the complete packet and full parent references.
+Directory publication keeps its separate consumer and application state.
+
+Actual HTTP upload survives restart during challenge/answer and chunk transfer,
+returns exact saved responses, and closes before a separate authorized commit.
+A maintainer can then send signed `ack.copy_commit` to the repair endpoint. Its
+closed fields are the common schema/kind/signing key plus `issued_at`,
+`expires_at`, `request_id`, `subject:DualID`, `target_node_key_id`,
+`target_storage_epoch`, `resource_id`, full `intent_ref` and `stage_result_ref`,
+and public `owner`, `source`, `source_storage_epoch` bindings. The maintainer is
+selected from the existing reservation, not the request. Owner IDs must match
+that reservation's root; source bindings must verify against the original
+custody/authority chain. The slot comes from the existing allocation. The
+request expires within the exact closed stage, and all current COPY checks run.
+
+`ack.copy_committed` returns encoded original entries `manifest` and `custody`,
+including their opaque full references. Neither reference is replaced by a bare
+hash. Callers must verify the signed replica event and original chain; the
+response wrapper alone is not evidence. Logical idempotency is the existing
+resource and closed original stage, not a new request-ID authority: exact retries
+revalidate current permission and return the same durable custody. Restart or a
+lost reply cannot create a second commitment. The request ID is a correlation
+value; it does not renew the stage or grant access. Custody does not imply owner
+READ, recipient admission or completed receipt recovery.
+
+Remote allocation requires the explicit operator policy described below. The
+unbound upload client coordinates an already reserved destination. Automatic
+replacement selection and later occupied/empty variants remain unfinished.
+The immutable alpha.0.15 candidate does not contain this later receiver.
+
+The maintainer preparation journal now retains the exact outgoing unbound stage
+and its complete original children after verifying current COPY and disclosure
+authority. Reopening the journal returns those same bytes within the original
+window; it cannot silently replace a previously prepared upload. Authenticated
+status observations, including revocations, survive a failed preparation and
+restart. Preparation reserves bounded verification work before admitting the
+operation and preserves interrupted charges. It does not transmit bytes or prove
+target possession. The network orchestrator must establish the destination's
+dual-key possession before sending this retained output. This sender preparation
+is also later than the immutable alpha.0.15 candidate.
+
+`AckCopyUploadClient` now runs that prepared unbound upload over actual HTTP.
+Construct it with the existing `AckCopyPreparation` journal and the maintainer's
+encryption identity. `upload(base, *original_args, target_node_entry=...,
+**context)` takes the preparation method's original arguments and context,
+except `at` (read from the current clock). Each invocation needs a fresh bounded
+resolver and the caller's current authenticated status originals. The destination
+must already hold the exact reservation and enable both provider and repair
+services. A directory entry alone does not satisfy these requirements.
+
+Before disclosing the stage or children, the client checks the destination node
+original, base URL, epoch and both keys using the existing target challenge. Its
+private journal retains the random challenge nonce and every exact outgoing
+request before transmission. Cached responses are verified again. Lost replies
+replay the same request while the original window remains valid. Upload close is
+followed by a separate signed commit; the returned full manifest and custody
+originals are verified against the original source/assignment/disclosure chain.
+The result `replica_committed` proves that bounded custody event, not owner READ
+or successful subsequent receipt recovery.
+
+The preparation result carries its exact authenticated status snapshot into the
+client. Every admitted request and saved response checks that snapshot and the
+retained denial state. Concurrent status changes stop the operation; retry must
+re-enter the full preparation checks. Work is finite: at most 256 verification
+attempts, 68 network attempts (also constrained by the original intent), and four
+times the original job-byte budget in request/response wire allowances. Lost or
+interrupted replies keep their reserved wire charge. Metadata remains within the
+original intent limit. Restart never extends the original at-most-60-second
+stage. These client changes are later than immutable alpha.0.15.
+
+Operators may now set `repair_policy.remote_copy.enabled=true` alongside enabled
+repair/provider services. The default remains closed. The finite policy permits
+at most 16 callers, four copy resources per caller, 64 allocation attempts, 4096
+signature checks, 8 MiB of wire allowances, 64 KiB of admission journal storage
+and a 24-hour admission lifetime; operators may lower these ceilings. Admission
+policy limits are persisted and cannot be reset by restarting or toggling the
+service. Each caller's journal reserves actual shared capacity separately from
+their copy resources. Missing reservations are refused, not recreated.
+
+`ack.copy_allocate` has only `schema_version`, `kind`, `caller:DualKey` and
+`allocation:{raw_base64url,ref}`. The original signed `resource.allocate` must name
+that caller, destination and current epoch. The response `ack.copy_allocation`
+contains the original signed `offer` entry. Authentication, current node/request
+time and operator limits precede allocation. Every admitted attempt is durable,
+including denied work; successful reservations and retries also charge the
+copy resource's existing request budget. Requests expire without renewal.
+The resulting capacity promise grants no COPY/READ/discovery or receipt authority.
+
+`AckCopyUploadClient.reserve` takes the same original source, owner reservation
+consent and intent as `prepare_unbound`, plus the independently held target node
+original. It verifies local source/disclosure authority, then target dual-key
+possession, and journals the exact remote allocation request before sending it.
+Lost offer replies replay the original request after both sides restart. Returned
+offers are signature-checked and matched to the complete original allocation,
+target, epoch, budget and windows. The result `capacity_reserved` includes the
+allocation and offer. The maintainer then calls `assign_unbound` with current
+authority; owner/source upload disclosures are still separate original inputs to
+`upload`. The private reservation and upload journals have separate phase keys
+and finite work/metadata budgets; neither phase can overwrite the other.
+
+Development after immutable alpha.0.16 adds the explicit `recover-replica` owner
+command. It verifies independent A/R/M/P bindings and the complete returned
+unbound replica event before writing a private new evidence file. Authenticated
+status observations, including supplied facts rejected before networking and
+facts observed before a later failure, persist in the existing protected
+transport database with their full original references. The bounded root journal
+is shared across retries/output filenames and supplies relevant previously
+authenticated issuers to each fresh verification. It never opens the content
+Vault, replaces output, claims recipient saving or changes a source's authority.

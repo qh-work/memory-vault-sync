@@ -1,6 +1,113 @@
 # Memory Vault development status
 
-Published [alpha.0.13](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.13), source `7297b50f68d59649caf266be2e10515d19b5051e`, adds single-call mailbox retention and durable Agent ACK preparation with directly usable recipient/owner invitations. Five targeted HTTP workflows passed using the extracted client runtime; all eight public assets were anonymously downloaded and matched the reviewed candidate. [Exact-source cloud regression](https://github.com/qh-work/memory-vault-sync/actions/runs/36518360240) is still running; full-suite acceptance is not yet established.
+Current source candidate: **alpha.0.23 (unpublished)**. Native TypeScript agents
+can now choose a configured contact node by its public key and explicitly
+request finite offline directory maintenance. They refresh and challenge that
+node, sign the same bounded authority as Python and retain the exact enrollment
+in the existing transport database. Lost replies, restarts and language changes
+preserve the node's existing job and used work. This adds no delivery approval,
+trust, Vault access or permission extension. Directory workers still run on
+supporting Python nodes; native Node hosts explicitly refuse the unimplemented
+worker. This candidate requires its own source-bound and packaged acceptance.
+Thirty-three targeted protocol, native Agent, real-HTTP and directory-maintenance
+checks passed on development source. They include a lost successful enrollment
+reply, recipient exit, original directory expiry, node restart, Python takeover,
+new-sender contact and final grant expiry. This is synthetic local traffic.
+
+Frozen alpha.0.22 candidate (publication tracked separately). Pending local delivery
+and receipt work now rotates through a durable cursor shared by Python and
+Node. Four older unavailable or independently authorized receipts no longer
+prevent a later saved receipt from being retried. Each poll still attempts at
+most four pending items; rotating changes neither receipt-sent state nor
+permission. Restart and language switching retain the next retry position.
+
+A real five-message HTTP regression failed on alpha.0.21: the fifth saved
+receipt remained unsent after two restarted polls. Alpha.0.21 is therefore held
+unpublished despite its earlier 32 packaged checks passing; those checks did
+not cover this failure. Its immutable archives remain available for review.
+The fix passed that scenario in Python and native Node, including the sender's
+actual saved-receipt validation while all four blocked receipts remained unsent.
+Twenty-nine direct-delivery, native HTTP and contact cases passed. Alpha.0.22
+still needs its own source-bound full CI and extracted-package acceptance.
+It retains native descriptor renewal, public introduction refresh and protected
+Python/Node publication ownership from the held alpha.0.21 candidate.
+
+Alpha.0.20 is now a published prerelease. It includes native Node commands for
+unbound, empty and occupied ACK recovery, sharing authenticated status retention
+with Python across failures and restarts. These commands export private evidence
+through an existing identity and never open the content Vault.
+
+The immutable alpha.0.19 candidate remains unpublished. Its full cloud run
+completed 1,065 tests with one mailbox-staging failure, zero errors and zero
+skips. The same failure was reproduced by delaying proof-child downloads:
+the exhaustive non-ACK fixture had not funded its possession renewals and final
+revocation check. Both exhaustive fixtures now request finite matching capacity
+before signing their original grants; product limits and deadlines are unchanged.
+This release passed its own source-bound and extracted-package acceptance as recorded below.
+
+Alpha.0.18 remains unpublished: its complete cloud run executed 1,059 tests
+with one ACK-bearing mailbox custody failure and no errors or skips. A slow
+local download reproduced a possession handle expiring between child reads.
+The exhaustive fixture now reads current-status originals first and renews
+possession before expiry for the same exact historical references. Renewals
+are bounded and charged; sufficient finite capacity is signed before setup.
+Product permission windows and budgets are unchanged. Alpha.0.20 passed
+separate package/privacy and exact-source full acceptance as recorded above. It also includes
+packed-original reuse and persistent original-source recovery observations
+from subsequent development; neither change is in alpha.0.18 archives.
+
+Published **[alpha.0.20](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.20)** is fixed at `24f93b04f78926d39e073ff5b3463cfc77ea64a6`.
+
+Seventeen synthetic native-command, mailbox, receipt, restart and replica checks passed using the extracted alpha.0.20 runtime. Its exact-source full cloud regression passed 1072 tests across 114 modules, with all 256 reported source hashes matching `24f93b04f78926d39e073ff5b3463cfc77ea64a6`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish external adoption, global reliability or thousand-agent capacity.
+
+This release includes packed replica original reuse and persistent original-source
+recovery status across command restarts, including native TypeScript original-source
+recovery commands in the installable client archive.
+
+The release candidate below has now passed its own acceptance.
+
+This release adds explicit `copy-reserve`, `copy-upload`, `configure-replica`,
+and `recover-replica` commands. They use existing local identities and protected
+transport state, preserve exact retry requests, and keep return permissions
+separate from copy custody. Owner recovery remembers authenticated status facts
+across failed commands and restarts. New-node setup can explicitly enable finite
+remote copy reservations. No command opens the private content Vault. The replica
+recovery example explicitly selects the existing 60-second client ceiling for
+slower supported Python runtimes; signed deadlines and resource budgets remain
+unchanged. These additions are later than the immutable alpha.0.16 candidate.
+
+The alpha.0.16 full run was incomplete: one long mailbox fixture attempted to
+sign a child request after its short handle expired, and the growing suite later
+hit its 40-minute CI wall limit. Alpha.0.17 retained those same test/CI inputs and
+its full run was cancelled after that diagnosis; both remain unpublished. The
+fixture now performs a fresh, charged possession exchange before its independent
+revocation check and reports only the current request's server errors. CI allows
+55 minutes inside a 60-minute job; protocol deadlines and grants are unchanged.
+Alpha.0.17 did pass 14 extracted-runtime workflows and supported Python 3.10.
+Those results do not relabel either older candidate as a full-suite pass. This
+alpha.0.20 release passed separate exact-source acceptance as recorded above.
+
+The immutable **alpha.0.15 candidate remains unpublished**. Its full cloud run
+[36536522221](https://github.com/qh-work/memory-vault-sync/actions/runs/36536522221)
+failed nine fixture setup cases and twelve later service-start cases. Seven
+extracted-runtime HTTP checks and archive/privacy checks passed, but do not
+replace full acceptance. A fixture wrapper did not forward newly added options;
+its failed setup also missed cleanup registration. Later source corrects both.
+The earlier full pass at `fed27adc38e7eeacd1f1ba15546b778c364ae231`
+([36531179438](https://github.com/qh-work/memory-vault-sync/actions/runs/36531179438))
+does not cover the replica changes.
+
+The current branch additionally implements explicit remote unbound replica
+capacity reservation, durable upload/commit retries, and independent signed
+custody verification. Operators opt into finite remote copy admission; a capacity
+offer never substitutes for owner/source disclosure or READ permission. These
+changes are not in the immutable alpha.0.15 candidate. Automatic replacement
+selection, occupied/empty replica transfer, full native TypeScript mailbox
+parity and global scale remain unfinished.
+
+Published [alpha.0.14](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.14), source `0eaf504e953be31b1844d6abfe57cd6f3c06aa29`, connects ACK-bearing mailbox retention to explicit receipt return after cold selected-memory delivery. A lost successful receipt response resumes from the original durable request; A then recovers the original receipt while the delivery node is offline. Four real-HTTP workflows passed using the extracted client runtime and child nodes. All eight public assets were anonymously downloaded and matched the reviewed candidate. [Exact-source full cloud regression](https://github.com/qh-work/memory-vault-sync/actions/runs/36523208918) failed two cases; scale and external adoption remain unverified.
+
+Published [alpha.0.13](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.13), source `7297b50f68d59649caf266be2e10515d19b5051e`, adds single-call mailbox retention and durable Agent ACK preparation with directly usable recipient/owner invitations. Five targeted HTTP workflows passed using the extracted client runtime; all eight public assets were anonymously downloaded and matched the reviewed candidate. [Exact-source cloud regression](https://github.com/qh-work/memory-vault-sync/actions/runs/36518360240) passed 934 tests, with all 242 reported source hashes matching alpha.0.13.
 
 Published [alpha.0.12](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.12) adds bounded mailbox configuration inspection/restoration, durable receiver authorization from an already approved contact, and corrected completed-retry signature accounting. Four targeted workflows passed using the extracted client; all eight assets were anonymously downloaded and byte-matched. [Exact-source full cloud regression](https://github.com/qh-work/memory-vault-sync/actions/runs/36514556101) passed 934 open-network tests with zero failures/errors/skips; the separate supported-Python-3.10 ACK check passed. The report’s 242 source-file hashes match the release commit. Scale jobs were not run. The broader network gaps below remain open.
 
@@ -31,7 +138,7 @@ binding, recipient-authorized upload, three-generation source verification,
 independent signed-receipt reads and a private recovery command. The release
 manifest and uploaded assets establish publication separately.
 
-Current source target: **0.28.0-alpha.0.10**, an open encrypted-delivery preview.
+Current source target: **0.28.0-alpha.0.23**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use

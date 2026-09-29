@@ -13,6 +13,7 @@ from memory_vault_open_transport import OpenHTTPTransport, endpoint
 import memory_vault_open_repair_ack as ack
 import memory_vault_open_repair_bootstrap as bootstrap
 import memory_vault_open_repair_empty as empty
+import memory_vault_open_repair_history as history
 import memory_vault_open_repair_occupied as occupied
 import memory_vault_open_repair_original as original
 import memory_vault_open_repair_probe as probe
@@ -35,6 +36,16 @@ class RecoveredAckOwnerProof:
     source: object
     proof: proof.AuthenticatedBootstrapProof
     current_statuses: tuple
+    originals: object
+    metrics: object
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveredAckReplicaProof:
+    replica: object
+    proof: proof.AuthenticatedBootstrapProof
+    current_statuses: tuple
+    archive_statuses: tuple
     originals: object
     metrics: object
 
@@ -70,6 +81,18 @@ class AckOwnerRecoveryClient:
             bootstrap_entry=bootstrap_entry,known_statuses=known_statuses,archive_statuses=archive_statuses,
             timeout=timeout,empty_expected=None)
 
+    def recover_replica(self, base_url, *, target_node_entry, expected_target, expected_ack_slot,
+                        expected_source, source_storage_epoch, expected_maintainer,
+                        root_entry, read_entry, bootstrap_entry,
+                        known_statuses=(), archive_statuses=(), timeout=30):
+        """Recover an unbound replica using independently held A/R/M/P bindings."""
+        return self._recover(base_url,target_node_entry=target_node_entry,expected_target=expected_target,
+            expected_ack_slot=expected_ack_slot,root_entry=root_entry,read_entry=read_entry,
+            bootstrap_entry=bootstrap_entry,known_statuses=known_statuses,archive_statuses=archive_statuses,
+            timeout=timeout,empty_expected=None,_source_state="replica_unbound",
+            _replica_context=dict(expected_source=expected_source,source_storage_epoch=source_storage_epoch,
+                                  expected_maintainer=expected_maintainer))
+
     def recover_empty(self, base_url, *, target_node_entry, expected_target, expected_ack_slot,
                       root_entry, read_entry, bootstrap_entry, expected_receipt_writer,
                       expected_message_id, expected_envelope_ref,
@@ -83,7 +106,7 @@ class AckOwnerRecoveryClient:
 
     def _recover(self, base_url, *, target_node_entry, expected_target, expected_ack_slot,
                  root_entry, read_entry, bootstrap_entry, known_statuses, archive_statuses, timeout, empty_expected,
-                 _budget=None, _source_state=None):
+                 _budget=None, _source_state=None, _replica_context=None):
         if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=60:
             _fail("repair_invalid_deadline")
         budget = wire.RepairBudget(self.policy) if _budget is None else _budget
@@ -97,7 +120,9 @@ class AckOwnerRecoveryClient:
             empty.bound._expected(expected["slot"],self.subject,empty_expected["receipt_writer"],
                 empty_expected["message_id"],empty_expected["envelope_ref"],started,self.policy,budget)
         source_state=("unbound" if empty_expected is None else "empty") if _source_state is None else _source_state
-        if source_state not in ("unbound","empty","occupied") or (source_state=="unbound")!=(empty_expected is None):
+        if (source_state not in ("unbound","empty","occupied","replica_unbound")
+                or (source_state in ("unbound","replica_unbound"))!=(empty_expected is None)
+                or (source_state=="replica_unbound")!=(_replica_context is not None)):
             _fail("repair_invalid_proof")
         setup = bootstrap.verify_ack_owner_bootstrap_original(bootstrap_entry,dict(root=root_entry,read=read_entry),
             expected_ack_slot=expected["slot"],expected_owner=self.subject,at=started,limit_policy=self.limits,
@@ -112,9 +137,16 @@ class AckOwnerRecoveryClient:
             _fail("repair_proof_mismatch")
         grant = setup.originals["bootstrap"].payload
         obligations = self._obligations(setup.originals, expected["slot"], budget)
-        known = self._known(retained, obligations, expected["slot"]["root_key"],
-                            expected["target"], budget,deferred_authorities=empty_expected is not None,
-                            receipt_writer=empty_expected["receipt_writer"] if source_state=="occupied" else None)
+        if _replica_context is not None:
+            _replica_context=wire.build_new_wire(_replica_context,self.policy,budget).value
+            known=self._known_replica(retained,expected["slot"]["root_key"],
+                (self.subject,expected["target"],_replica_context["expected_source"],
+                 _replica_context["expected_maintainer"]),budget)
+            self._floors(known,(),obligations,probe_phase=True)
+        else:
+            known = self._known(retained, obligations, expected["slot"]["root_key"],
+                                expected["target"], budget,deferred_authorities=empty_expected is not None,
+                                receipt_writer=empty_expected["receipt_writer"] if source_state=="occupied" else None)
         expiry = min(started+min(60,max(1,int(timeout))),grant["probe_until"],grant["proof_until"],grant["expires_at"],
                      node.payload["expires_at"],*(setup.originals[name].payload["expires_at"] for name in ("root","read")))
         if expiry<=started:
@@ -149,36 +181,74 @@ class AckOwnerRecoveryClient:
             max_proof_items=grant["limits"]["max_proof_items"],max_proof_bytes=grant["limits"]["max_proof_bytes"],policy=self.policy,budget=budget,
             expected_source_state=source_state)
         proof_bytes = len(response)+len(held.handle.raw)+len(held.manifest.raw)
+        # Exact originals already supplied by the caller still undergo the
+        # full source/history verification below; fetching identical bytes
+        # again would needlessly consume the source's finite request grant.
+        available={item.ref:item.raw for item in setup.originals.values()}
+        for item in retained:
+            raw,ref=ack._entry(item)
+            if len(raw)==ref.size and budget._hash(raw)==ref.raw_sha256:
+                available[ref]=raw
+        available[ack._entry(target_node_entry)[1]]=node.document.raw
         originals,roles = {},{}
-        for item in held.manifest.value["children"]:
+        children=held.manifest.value["children"]
+        for item in children:
+            roles.setdefault(item["role"],[]).append(wire.raw_ref(item["ref"]))
+        def download(item):
+            nonlocal proof_bytes
             reference = wire.raw_ref(item["ref"])
-            roles.setdefault(item["role"],[]).append(reference)
             if reference in originals:
-                continue
+                return
             if reference.size>self.policy.max_document_bytes or proof_bytes+reference.size>grant["limits"]["max_proof_bytes"]:
                 _fail("repair_over_budget")
-            chunks,offset = [],0
-            while offset<reference.size:
-                count = min(proof.MAX_CHILD_BYTES,reference.size-offset)
-                child = proof.make_bootstrap_child_request(self.identity,held,subject=self.subject,target=expected["target"],
-                    at=self._now(),expires_at=held.handle.payload["expires_at"],child_index=item["index"],offset=offset,
-                    requested_bytes=count,policy=self.policy,budget=budget)
-                received = request(child.raw,child=True)
-                if len(received)!=count:
-                    _fail("repair_ref_mismatch")
-                budget._bytes("input_bytes",len(received))
-                chunks.append(received);offset+=count
-            budget._bytes("output_bytes",reference.size)
-            assembled = b"".join(chunks)
+            if reference in available:
+                assembled=available[reference]
+                budget._bytes('input_bytes',len(assembled))
+            else:
+                chunks,offset = [],0
+                while offset<reference.size:
+                    count = min(proof.MAX_CHILD_BYTES,reference.size-offset)
+                    child = proof.make_bootstrap_child_request(self.identity,held,subject=self.subject,target=expected["target"],
+                        at=self._now(),expires_at=held.handle.payload["expires_at"],child_index=item["index"],offset=offset,
+                        requested_bytes=count,policy=self.policy,budget=budget)
+                    received = request(child.raw,child=True)
+                    if len(received)!=count:
+                        _fail("repair_ref_mismatch")
+                    budget._bytes("input_bytes",len(received))
+                    chunks.append(received);offset+=count
+                budget._bytes("output_bytes",reference.size)
+                assembled = b"".join(chunks)
             if budget._hash(assembled)!=reference.raw_sha256:
                 _fail("repair_ref_mismatch")
             proof_bytes+=len(assembled)
             originals[reference]=assembled
+        if source_state=="replica_unbound":
+            # Fetch exact containers first; membership is structural evidence,
+            # never a substitute for source/copy/return authority checks below.
+            for item in children:
+                if item["role"] in {"history.raw_pack","history.ack_unbound"}:download(item)
+            packed=wire.LocalRawResolver(self.policy,budget)
+            for reference in roles.get("history.raw_pack",()):
+                if packed.put(reference.namespace,reference.key,originals[reference]).ref!=reference:
+                    _fail("repair_ref_mismatch")
+            for reference in roles.get("history.ack_unbound",()):
+                tree=history.resolve_historical_inputs(originals[reference],packed,self.policy,budget)
+                if tree.manifest.value['variant']!='ack_unbound':_fail('repair_proof_mismatch')
+                for row in tree.roles:
+                    item=row.original
+                    if item.ref in available and available[item.ref]!=item.raw:_fail('repair_ref_conflict')
+                    available[item.ref]=item.raw
+        # Retain every advertised full reference and charge its logical bytes,
+        # including those whose exact bytes were recovered from a pack.
+        for item in children:download(item)
         if self._now()>=held.handle.payload["expires_at"] or time.monotonic()>=deadline:
             _fail("repair_access_expired")
         def entry(role):
             reference=roles[role][0]
             return dict(raw=originals[reference],ref=reference.as_dict())
+        if _replica_context is not None:
+            return self._replica_result(held,roles,originals,entry,setup,known,expected,node,
+                _replica_context,budget,expiry,deadline,requests,wire_bytes,proof_bytes)
         resolver=wire.LocalRawResolver(self.policy,budget)
         for reference in roles["history.raw_pack"]:
             if resolver.put(reference.namespace,reference.key,originals[reference]).ref!=reference:
@@ -241,6 +311,67 @@ class AckOwnerRecoveryClient:
             bootstrap_entry=bootstrap_entry,known_statuses=known_statuses,archive_statuses=archive_statuses,
             timeout=timeout,empty_expected=dict(receipt_writer=expected_receipt_writer,
                 message_id=expected_message_id,envelope_ref=expected_envelope_ref),_source_state="occupied")
+
+    def _known_replica(self, entries, root, parties, budget):
+        # Retained facts establish lower bounds only. Accept signatures only
+        # from independently supplied parties; no returned key becomes trusted.
+        signers={p["signing_key"]["key_id"]:p["signing_key"] for p in parties}
+        if len(signers)!=4:_fail("repair_replica_read_distinct_parties_required")
+        checked=[]
+        for entry in entries:
+            raw,ref=ack._entry(entry)
+            parsed=original.parse_original_control(raw,self.policy,budget)
+            payload=status._fields(status._fields(parsed.value,{"payload","proof"})["payload"],status._PAYLOAD)
+            issuer=status._fields(payload["scope_key"],{"root_key","issuer_key_id"})["issuer_key_id"]
+            if issuer not in signers:_fail("repair_status_mismatch")
+            issued=wire.u53(payload["issued_at"])
+            if issued>self._now()+30:_fail("repair_status_mismatch")
+            scopes=[dict(scope_kind=e["scope_kind"],scope_id=e["scope_id"]) for e in self._status_entries(payload)]
+            checked.append(status.authenticate_status_original(dict(raw=parsed.raw,ref=ref.as_dict()),
+                expected_root=root,expected_signing_key=signers[issuer],at=issued,allowed_scopes=scopes,
+                policy=self.policy,budget=budget,on_authenticated=self.status_observer))
+        return tuple(checked)
+
+    def _replica_result(self,held,roles,originals,entry,setup,known,expected,node,context,
+                        budget,expiry,deadline,requests,wire_bytes,proof_bytes):
+        import memory_vault_open_repair_copy_authority as copy_authority
+        resolver=wire.LocalRawResolver(self.policy,budget)
+        for reference,raw in originals.items():
+            if resolver.put(reference.namespace,reference.key,raw).ref!=reference:_fail("repair_ref_mismatch")
+        replica=copy_authority.verify_unbound_replica_event(entry("replica.manifest"),resolver,entry("replica.custody"),
+            expected_ack_slot=expected["slot"],expected_owner=self.subject,expected_target=expected["target"],
+            target_storage_epoch=node.payload["storage_epoch"],**context,
+            limit_policy=self.limits,policy=self.policy,budget=budget)
+        source=replica["source"]
+        for role,values in replica["entries"].items():
+            if set(roles.get(role,()))!={wire.raw_ref(e["ref"]) for e in values}:_fail("repair_proof_mismatch")
+        extras={"replica.manifest","replica.custody","return.owner","return.source","return.maintainer",
+                "current.status.replica_read"}
+        if set(roles)!=set(replica["entries"])|extras:_fail("repair_proof_mismatch")
+        for name,item in (("root",source.resources.originals["root"]),("read",source.resources.originals["read"]),
+                          ("bootstrap",source.bootstrap.originals["bootstrap"])):
+            if item.ref!=setup.originals[name].ref or item.raw!=setup.originals[name].raw:_fail("repair_proof_mismatch")
+        current=[dict(raw=originals[r],ref=r.as_dict()) for r in roles["current.status.replica_read"]]
+        permission=copy_authority._check_unbound_owner_return(replica,
+            {name:entry("return."+name) for name in ("owner","source","maintainer")},
+            expected_owner=self.subject,expected_source=context["expected_source"],
+            expected_maintainer=context["expected_maintainer"],expected_target=expected["target"],
+            target_storage_epoch=node.payload["storage_epoch"],current_statuses=current,at=self._now(),action="proof",
+            policy=self.policy,budget=budget,on_observed=self.status_observer)
+        if permission["denial_code"]:_fail(permission["denial_code"])
+        prior=(*source.statuses,*replica["authority"].statuses,*known)
+        checked=permission["statuses"]
+        empty._history_floors((*prior,*checked),previous=prior,current=checked)
+        obligations=[dict(item,kind=item["scope_kind"]) for item in permission["obligations"]]
+        self._floors(known,checked,obligations)
+        if (self._now()>=min(expiry,held.handle.payload["expires_at"],permission["expires_at"])
+                or time.monotonic()>=deadline):_fail("repair_access_expired")
+        archive={}
+        for item in (*prior,*checked):archive.setdefault((item.raw,item.ref),item)
+        if len(archive)>32:_fail("repair_status_history_capacity")
+        metrics=MappingProxyType(dict(requests=requests,wire_bytes=wire_bytes,proof_bytes=proof_bytes,**budget.snapshot()))
+        return RecoveredAckReplicaProof(MappingProxyType(replica),held,checked,tuple(archive.values()),
+                                       MappingProxyType(originals),metrics)
 
     def _empty_head(self,entry,source,target,budget):
         raw,ref=ack._entry(entry)
@@ -348,7 +479,7 @@ class AckOwnerRecoveryClient:
                 _fail("repair_status_mismatch")
             observed = status.authenticate_status_original(dict(raw=parsed.raw,ref=ref.as_dict()),
                 expected_root=root,expected_signing_key=signer,at=issued,allowed_scopes=allowed,
-                policy=self.policy,budget=budget)
+                policy=self.policy,budget=budget,on_authenticated=getattr(self,"status_observer",None))
             checked.append(observed)
         # Co-located A/B keys make a not-yet-recovered authority scope
         # ambiguous. Conservatively retain its READ revocation before probing.
@@ -473,7 +604,7 @@ class RecoveredMailboxRootProof:
 
 class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
     """Recover B's original mailbox directory from independently retained S1."""
-    def _download_mailbox(self, base_url, *, target, node_payload, bootstrap_original, expiry, started, deadline, budget, consumer, source_state):
+    def _download_mailbox(self, base_url, *, target, node_payload, bootstrap_original, expiry, started, deadline, budget, consumer, source_state, available=None):
         grant=bootstrap_original.payload
         binding=dict(expected_subject=self.subject,expected_target=target,target_storage_epoch=node_payload["storage_epoch"],
             bootstrap_grant_sha256=bootstrap_original.ref.raw_sha256,selector=grant["selector"],consumer=consumer,policy=self.policy,budget=budget)
@@ -503,25 +634,55 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
             expected_source_state=source_state,consumer=consumer,policy=self.policy,budget=budget)
         proof_bytes=len(response)+len(held.handle.raw)+len(held.manifest.raw)
         originals,roles={},{}
-        for item in held.manifest.value["children"]:
-            reference=wire.raw_ref(item["ref"]);roles.setdefault(item["role"],[]).append(reference)
-            if reference in originals:
-                continue
+        available={} if available is None else dict(available)
+        children=held.manifest.value["children"]
+        for item in children:
+            roles.setdefault(item["role"],[]).append(wire.raw_ref(item["ref"]))
+        def download(item):
+            nonlocal proof_bytes
+            reference=wire.raw_ref(item["ref"])
+            if reference in originals:return
             if reference.size>self.policy.max_document_bytes or proof_bytes+reference.size>grant["limits"]["max_proof_bytes"]:
                 _fail("repair_over_budget")
-            chunks=[];offset=0
-            while offset<reference.size:
-                count=min(proof.MAX_CHILD_BYTES,reference.size-offset)
-                child=proof.make_bootstrap_child_request(self.identity,held,subject=self.subject,target=target,at=self._now(),
-                    expires_at=held.handle.payload["expires_at"],child_index=item["index"],offset=offset,requested_bytes=count,policy=self.policy,budget=budget)
-                value=request(child.raw,True)
-                if len(value)!=count:
-                    _fail("repair_ref_mismatch")
-                budget._bytes("input_bytes",len(value));chunks.append(value);offset+=count
-            budget._bytes("output_bytes",reference.size);assembled=b"".join(chunks)
-            if budget._hash(assembled)!=reference.raw_sha256:
-                _fail("repair_ref_mismatch")
+            if reference in available:
+                assembled=available[reference]
+                if type(assembled) is not bytes or len(assembled)!=reference.size:_fail("repair_ref_mismatch")
+                budget._bytes("input_bytes",len(assembled))
+            else:
+                chunks=[];offset=0
+                while offset<reference.size:
+                    count=min(proof.MAX_CHILD_BYTES,reference.size-offset)
+                    child=proof.make_bootstrap_child_request(self.identity,held,subject=self.subject,target=target,at=self._now(),
+                        expires_at=held.handle.payload["expires_at"],child_index=item["index"],offset=offset,requested_bytes=count,policy=self.policy,budget=budget)
+                    value=request(child.raw,True)
+                    if len(value)!=count:_fail("repair_ref_mismatch")
+                    budget._bytes("input_bytes",len(value));chunks.append(value);offset+=count
+                budget._bytes("output_bytes",reference.size);assembled=b"".join(chunks)
+            if budget._hash(assembled)!=reference.raw_sha256:_fail("repair_ref_mismatch")
             originals[reference]=assembled;proof_bytes+=len(assembled)
+        # Download the signed proof's exact history containers first. The typed
+        # history resolver validates full pack membership and all opaque refs;
+        # it grants no authority. Signatures, source events, current status and
+        # exact role closure are still verified by recover() below.
+        history_role="history.mailbox_root" if source_state=="root" else "history.mailbox_feed"
+        for item in children:
+            if item["role"] in ("history.raw_pack",history_role):download(item)
+        packed=wire.LocalRawResolver(self.policy,budget)
+        for reference in roles.get("history.raw_pack",()):
+            if packed.put(reference.namespace,reference.key,originals[reference]).ref!=reference:_fail("repair_ref_mismatch")
+        def reuse(tree):
+            for row in tree.roles:
+                item=row.original
+                if item.ref in available and available[item.ref]!=item.raw:_fail("repair_ref_conflict")
+                available[item.ref]=item.raw
+            for prior in tree.predecessors:reuse(prior)
+        for reference in roles.get(history_role,()):
+            tree=history.resolve_historical_inputs(originals[reference],packed,self.policy,budget)
+            if tree.manifest.value['variant']!=('mailbox_root' if source_state=='root' else 'mailbox_feed'):_fail('repair_proof_mismatch')
+            reuse(tree)
+        # Reuse only the complete RawRef advertised by the proof, never a hash-
+        # only alias. Logical proof-byte limits include every reused original.
+        for item in children:download(item)
         return held,originals,roles,dict(requests=requests,wire_bytes=wire_bytes,proof_bytes=proof_bytes)
 
     def recover(self, base_url, *, target_node_entry, expected_target, expected_root,
@@ -567,7 +728,9 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
             _fail("repair_access_expired")
         held,originals,roles,counts=self._download_mailbox(base_url,target=target,node_payload=node.payload,
             bootstrap_original=setup["bootstrap"],expiry=expiry,started=started,deadline=deadline,budget=budget,
-            consumer="mailbox_root",source_state="root")
+            consumer="mailbox_root",source_state="root",
+            available={**{item.ref:item.raw for item in (*setup.values(),*known)},
+                ack._entry(target_node_entry)[1]:node.document.raw})
         def entry(reference):
             return dict(raw=originals[reference],ref=reference.as_dict())
         resolver=wire.LocalRawResolver(self.policy,budget)
@@ -1177,7 +1340,7 @@ class MailboxMessageDraftStore:
         self.db,self.identity,self.encryption_identity,self.policy=db,identity,encryption_identity,policy
 
     def prepare(self, envelope_raw, *, recipient, slot_entries, destination_entry, contact_originals,
-                at, attempt_until, consent_until):
+                at, attempt_until, consent_until, ack_configuration=None):
         import hashlib
         from memory_vault import canonical_bytes
         from memory_vault_open_delivery import verify_envelope,MAX_ENVELOPE_BYTES
@@ -1232,6 +1395,10 @@ class MailboxMessageDraftStore:
             ref=resource._ref(destination[name]);doc=held.originals[role].document
             if ref.raw_sha256!=budget._hash(doc.raw) or ref.size!=len(doc.raw):_fail('repair_ref_mismatch')
         wire.u53(at);wire.u53(attempt_until);wire.u53(consent_until)
+        from memory_vault_open_repair_mailbox_activation import ACK_CONFIGURATION_ROLES,verify_mailbox_ack_configuration
+        if ack_configuration is not None:
+            verify_mailbox_ack_configuration(ack_configuration,sender=sender,recipient=recipient,
+                message_id=context['message_id'],envelope_ref=reference,at=at,policy=self.policy,budget=budget)
         originals=dict(slot=slot_entries,destination=destination_entry,
             contact={name:dict(raw=raw,ref=dict(namespace='meta',key=hashlib.sha256(raw).hexdigest(),raw_sha256=hashlib.sha256(raw).hexdigest(),size=len(raw)))
                      for name,raw in contact_originals.items()})
@@ -1240,7 +1407,8 @@ class MailboxMessageDraftStore:
         binding=hashlib.sha256(canonical_bytes(dict(envelope=reference,recipient=recipient,
             slot_refs={name:value['ref'] for name,value in slot_entries.items()},destination_ref=destination_entry['ref'],
             contact_hashes={name:hashlib.sha256(raw).hexdigest() for name,raw in contact_originals.items()},
-            attempt_until=attempt_until,consent_until=consent_until))).hexdigest()
+            attempt_until=attempt_until,consent_until=consent_until,
+            **({'ack_configuration':{name:encode_entry(value,self.policy,budget) for name,value in ack_configuration.items()}} if ack_configuration is not None else {})))).hexdigest()
         journal=MailboxSetupJournal(self.db)
         def save():
             self.db.execute('''CREATE TABLE IF NOT EXISTS open_mailbox_message_drafts(
@@ -1273,12 +1441,12 @@ class MailboxMessageDraftStore:
                 return _entry(probe._sign(payload,self.identity,self.policy,budget))
             consent=sign('message.disclosure',dict(consent_id='consent_'+binding,root_key=root,slot_key=key,sender=sender_ids,
                 recipient=recipient_ids,envelope_ref=reference,maintenance_root_ref=slot_entries['maintenance']['ref'],
-                allowed_roles=sorted(['contact.request','delivery.attempt','message.disclosure','authority.status.disclosure']),
+                allowed_roles=sorted({'contact.request','delivery.attempt','message.disclosure','authority.status.disclosure'} | (ACK_CONFIGURATION_ROLES if ack_configuration is not None else set())),
                 operation_mask=127,consent_until=consent_until,bootstrap_return=dict(subject=recipient_ids,consumer='mailbox_feed',
                     roles=['authority.status.disclosure','message.disclosure'],until=consent_until),revision=1),consent_until)
             attempt=sign('delivery.attempt',dict(attempt_id='attempt_'+binding,message_id=context['message_id'],envelope_ref=reference,
                 sender=sender_ids,recipient=recipient_ids,destination_ref=destination_entry['ref'],slot_key=key,
-                operation='message.store',disclosure_ref=consent['ref'],ack_grant_ref=None),attempt_until)
+                operation='message.store',disclosure_ref=consent['ref'],ack_grant_ref=ack_configuration['ack.write_grant']['ref'] if ack_configuration is not None else None),attempt_until)
             from memory_vault_open_provider import issue_status
             scope=status.status_scope(root,'authority',dict(authority_kind='message.disclosure',authority_sha256=consent['ref']['raw_sha256']),self.policy,budget)
             observation=issue_status(self.identity,root=root,revision=status_revision,entries=[dict(scope_kind='authority',scope_id=scope,
@@ -1288,6 +1456,7 @@ class MailboxMessageDraftStore:
             bundle=dict(disclosure=encode_entry(consent,self.policy,budget),disclosure_status=encode_entry(observed,self.policy,budget),attempt=encode_entry(attempt,self.policy,budget),
                 destination=encode_entry(destination_entry,self.policy,budget),slot={name:encode_entry(value,self.policy,budget) for name,value in slot_entries.items()},
                 contact={name:encode_entry(value,self.policy,budget) for name,value in originals['contact'].items()})
+            if ack_configuration is not None:bundle['ack_configuration']={name:encode_entry(value,self.policy,budget) for name,value in ack_configuration.items()}
             raw=wire.build_new_wire(bundle,self.policy,budget).raw
             if len(raw)>131072:_fail('repair_message_capacity')
             self.db.execute('INSERT INTO open_mailbox_message_drafts VALUES(?,?,?,?,?,?,?)',(self.identity.key_id,context['message_id'],binding,root_digest,status_revision,envelope_raw,raw))
@@ -1300,7 +1469,7 @@ class MailboxMessageDraftStore:
 
     def admission_request(self, message_id, *, target, owner_status_entry, at, expires_at, object_until, enum_until):
         """Freeze one exact network admission request for an existing draft."""
-        from memory_vault_open_repair_bind import encode_entry,decode_entry
+        from memory_vault_open_repair_bind import encode_entry,decode_entry,encode_mailbox_draft
         budget=wire.RepairBudget(self.policy)
         row=self.db.execute('SELECT originals FROM open_mailbox_message_drafts WHERE sender=? AND message_id=?',
             (self.identity.key_id,message_id)).fetchone()
@@ -1312,12 +1481,13 @@ class MailboxMessageDraftStore:
         import memory_vault_open_repair_resource as resource
         target=wire.build_new_wire(target,self.policy,budget).value
         if resource._dual_key(target,budget)!=key['writer']:_fail('repair_probe_mismatch')
-        digest=budget._hash(raw)
         payload=dict(schema_version=proof.SCHEMA,kind='mailbox.source_message',signing_key=subject['signing_key'],
             subject=subject,target=target,target_storage_epoch=key['writer_storage_epoch'],slot_key=key,message_id=message_id,
-            draft=dict(raw=raw.decode('utf-8'),ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw))),
+            draft=encode_mailbox_draft(raw,self.policy,budget,compact='ack_configuration' in draft),
             owner_status=encode_entry(owner_status_entry,self.policy,budget),object_until=object_until,enum_until=enum_until)
-        binding=budget._hash(wire.build_new_wire(payload,self.policy,budget).raw)
+        # Bind the original bytes, not a compressor version's representation.
+        logical=dict(payload,draft=encode_mailbox_draft(raw,self.policy,budget)) if 'ack_configuration' in draft else payload
+        binding=budget._hash(wire.build_new_wire(logical,self.policy,budget).raw)
         journal=MailboxSetupJournal(self.db)
         def save():
             self.db.execute('CREATE TABLE IF NOT EXISTS open_mailbox_message_requests(sender TEXT NOT NULL,message_id TEXT NOT NULL,binding TEXT NOT NULL,raw BLOB NOT NULL,PRIMARY KEY(sender,message_id))')
@@ -1339,7 +1509,7 @@ class MailboxMessageDraftStore:
     def verify_admission_response(self, request_raw, response_raw):
         """Verify R's storage assertion, without claiming recipient delivery."""
         import memory_vault_open_repair_resource as resource
-        from memory_vault_open_repair_bind import decode_entry
+        from memory_vault_open_repair_bind import decode_entry,decode_mailbox_draft
         budget=wire.RepairBudget(self.policy)
         if type(response_raw) is not bytes or not 0<len(response_raw)<=65536:_fail('repair_remote_setup_too_large')
         request=wire.parse_new_wire(request_raw,self.policy,budget).value['payload']
@@ -1363,7 +1533,7 @@ class MailboxMessageDraftStore:
             original._verify_control_signature(item,value['proof'],request['target']['signing_key'],budget)
             entries[name]=entry;payloads[name]=item
         core=payloads['core'];custody=payloads['custody']
-        draft=wire.parse_new_wire(request['draft']['raw'].encode('utf-8'),self.policy,budget).value
+        draft=wire.parse_new_wire(decode_mailbox_draft(request['draft'],self.policy,budget)['raw'],self.policy,budget).value
         attempt=decode_entry(draft['attempt'],self.policy,budget)
         attempt_payload=wire.parse_new_wire(attempt['raw'],self.policy,budget).value['payload']
         if (core['message_id']!=request['message_id'] or custody['message_id']!=request['message_id']
@@ -1849,7 +2019,9 @@ class MailboxFeedRecoveryClient(MailboxRootRecoveryClient):
             *(v.payload['expires_at'] for v in setup.values()))
         if expiry<=started:_fail('repair_access_expired')
         held,originals,roles,counts=self._download_mailbox(base_url,target=target,node_payload=node.payload,bootstrap_original=setup['bootstrap'],
-            expiry=expiry,started=started,deadline=deadline,budget=budget,consumer='mailbox_feed',source_state='feed')
+            expiry=expiry,started=started,deadline=deadline,budget=budget,consumer='mailbox_feed',source_state='feed',
+            available={**{item.ref:item.raw for item in (*setup.values(),*known)},
+                ack._entry(target_node_entry)[1]:node.document.raw})
         def entry(reference):return dict(raw=originals[reference],ref=reference.as_dict())
         resolver=wire.LocalRawResolver(self.policy,budget)
         for reference in roles['history.raw_pack']:

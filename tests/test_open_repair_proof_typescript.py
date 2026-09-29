@@ -77,6 +77,15 @@ class OpenRepairProofTypeScriptTests(unittest.TestCase):
             input=json.dumps(calls).encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
         self.assertEqual(process.returncode,0,process.stderr.decode(errors='replace')[-5000:]);return json.loads(process.stdout)
 
+    def test_replica_container_native_python_parity(self):
+        manifest=self.py.replica_manifest();call=self.call()
+        call['raw']=base64.b64encode(self.py.response(manifest).raw).decode()
+        call['options']['expectedSourceState']='replica_unbound'
+        rejected=copy.deepcopy(call);rejected['options']['expectedSourceState']='unbound'
+        good,bad=self.ts([call,rejected])
+        self.assertTrue(good['ok'],good);self.assertEqual(good['result']['manifest'],manifest)
+        self.assertFalse(bad['ok']);self.assertEqual(bad['code'],'repair_proof_mismatch')
+
     def test_mailbox_root_manifest_native_python_parity(self):
         manifest,options=self.py.mailbox_manifest()
         raw=self.py.response(manifest).raw
@@ -93,6 +102,16 @@ class OpenRepairProofTypeScriptTests(unittest.TestCase):
         result=self.ts([call])[0]
         self.assertTrue(result['ok'],result)
         self.assertEqual(result['result']['manifest'],manifest)
+
+    def test_mailbox_ack_configuration_roles_native_python_parity(self):
+        manifest,options=self.py.mailbox_feed_with_ack_manifest()
+        call=self.call();call['raw']=base64.b64encode(self.py.response(manifest).raw).decode()
+        call['options'].update(consumer='mailbox_feed',expectedSourceState='feed',selector=options['selector'])
+        result=self.ts([call])[0];self.assertTrue(result['ok'],result)
+        self.assertEqual(result['result']['manifest'],manifest)
+        manifest['children'].pop()
+        rejected=self.ts([self.make_call(manifest)])[0]
+        self.assertFalse(rejected['ok']);self.assertEqual(rejected['code'],'repair_invalid_proof')
 
     def test_native_mailbox_body_request_is_python_verifiable(self):
         manifest,options=self.py.mailbox_feed_manifest()

@@ -8,6 +8,8 @@ fresh, signed challenge. Resource service is an explicit local owner policy.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
 import asyncio
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -167,13 +169,18 @@ class OpenParticipant:
         if repair_policy is not None and type(repair_policy) is not dict:
             raise MemoryError("open_invalid_repair_policy")
         self.repair_policy = dict(repair_policy or {})
-        if (set(self.repair_policy) - {"enabled", "limit_policy", "capacity_policy", "remote_setup"}
+        if (set(self.repair_policy) - {"enabled", "limit_policy", "capacity_policy", "remote_setup", "remote_copy"}
                 or type(self.repair_policy.get("enabled", False)) is not bool):
             raise MemoryError("open_invalid_repair_policy")
         if "remote_setup" in self.repair_policy:
             from memory_vault_open_repair_remote_setup import remote_policy
             self.repair_policy["remote_setup"] = remote_policy(self.repair_policy["remote_setup"])
             if self.repair_policy["remote_setup"]["enabled"] and not self.repair_policy.get("enabled", False):
+                raise MemoryError("open_invalid_repair_policy")
+        if "remote_copy" in self.repair_policy:
+            from memory_vault_open_repair_copy_resources import remote_copy_policy
+            self.repair_policy["remote_copy"] = remote_copy_policy(self.repair_policy["remote_copy"])
+            if self.repair_policy["remote_copy"]["enabled"] and not self.repair_policy.get("enabled", False):
                 raise MemoryError("open_invalid_repair_policy")
         if self.repair_policy.get("limit_policy") is not None:
             from memory_vault_open_repair_bootstrap import _limits
@@ -233,6 +240,9 @@ class OpenParticipant:
                     self._repair_index_service(db).initialize()
                     if self.repair_policy.get("remote_setup", {}).get("enabled", False):
                         self._repair_remote_setup_service(db).initialize()
+                    if self.repair_policy.get("remote_copy", {}).get("enabled", False):
+                        from memory_vault_open_repair_copy_resources import RepairRemoteCopyAllocation
+                        RepairRemoteCopyAllocation(self._repair_service(db).state,policy=self.repair_policy['remote_copy']).initialize()
 
     def _repair_remote_setup_service(self, db):
         from memory_vault_open_repair_remote_setup import RepairRemoteSetupService
@@ -253,6 +263,12 @@ class OpenParticipant:
         from memory_vault_open_repair_state import RepairAckState, DEFAULT_POLICY, DEFAULT_LIMITS
         from memory_vault_open_repair_service import RepairBootstrapService
         policy=DEFAULT_POLICY
+        if packet_payload is not None and packet_payload.get('kind')=='ack.put_request':
+            # Occupied admission authenticates the retained empty/unbound
+            # closures plus B's receipt and current originals. Separate root
+            # status adds real work; stay inside the configured node ceiling.
+            limits=self.repair_policy.get('limit_policy') or DEFAULT_LIMITS
+            policy=replace(policy,max_signature_checks=min(96,limits['max_signature_checks']))
         if mailbox_workflow or (packet_payload is not None and packet_payload.get('consumer')=='mailbox_feed'):
             # Full-prefix verification covers several separately authorized
             # members. Keep a finite aggregate ceiling within node limits.
@@ -299,6 +315,12 @@ class OpenParticipant:
         from memory_vault_open_repair_state import DEFAULT_POLICY
         meter = repair_wire.RepairBudget(DEFAULT_POLICY)
         parsed = repair_wire.parse_new_wire(raw, DEFAULT_POLICY, meter)
+        if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "ack.copy_allocate":
+            from memory_vault_open_repair_copy_resources import RepairRemoteCopyAllocation
+            with self.state.db() as db:
+                service=RepairRemoteCopyAllocation(self._repair_service(db).state,policy=self.repair_policy.get('remote_copy'))
+                service.initialize()
+                return service.handle(parsed.raw),False
         if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "mailbox.source_allocate":
             from memory_vault_open_repair_remote_setup import MailboxRemoteSetupService
             with self.state.db() as db:
@@ -341,12 +363,19 @@ class OpenParticipant:
             with self.state.db() as db:
                 return self._repair_remote_setup_service(db).handle(parsed.raw), False
         from memory_vault_open_repair_index_service import KINDS as INDEX_KINDS
-        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "mailbox.body_read", "ack.bind_request") and kind not in INDEX_KINDS:
+        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "mailbox.body_read", "ack.bind_request", "ack.copy_commit") and kind not in INDEX_KINDS:
             raise MemoryError("open_invalid_repair_request")
         digest = meter._hash(parsed.raw)
         packet = dict(raw=parsed.raw, ref=dict(namespace="meta", key=digest, raw_sha256=digest, size=len(parsed.raw)))
         with self.state.db() as db:
-            if kind in INDEX_KINDS:
+            if kind in INDEX_KINDS or kind=="ack.copy_commit":
+                from memory_vault_open_repair_copy_upload import RepairCopyUpload, copy_upload_resource
+                rid=copy_upload_resource(db,payload)
+                if rid is not None:
+                    service=RepairCopyUpload(self._repair_service(db).state);service.initialize()
+                    method={'proof.stage_intent':'intent','proof.stage_answer':'answer','proof.stage_close':'close','ack.copy_commit':'commit_request'}[kind]
+                    return getattr(service,method)(rid,packet)['raw'],False
+                if kind=="ack.copy_commit":raise MemoryError("open_invalid_repair_request")
                 return self._repair_index_service(db).handle(kind, packet).raw, False
             service = self._repair_service(db, payload)
             if payload.get("consumer") in ("mailbox_root","mailbox_feed"):
@@ -762,7 +791,13 @@ class OpenParticipant:
                 raise MemoryError("open_repair_closed")
             from memory_vault_open_blob import decode_blob_frame, encode_blob_frame
             with self.state.db() as db:
-                raw = self._repair_index_service(db).handle_blob(encode_blob_frame(request, chunk))
+                from memory_vault_open_repair_copy_upload import RepairCopyUpload, copy_upload_resource
+                rid=copy_upload_resource(db,payload)
+                if rid is not None:
+                    service=RepairCopyUpload(self._repair_service(db).state);service.initialize()
+                    raw=service.child(rid,encode_blob_frame(request,chunk))
+                else:
+                    raw = self._repair_index_service(db).handle_blob(encode_blob_frame(request, chunk))
             frame = decode_blob_frame(raw)
             return frame.header, frame.chunk
         from memory_vault_open_blob import verify_blob_request, sign_blob_response
@@ -1000,6 +1035,45 @@ def _run_node(config_path):
             worker.join()
 
 
+@contextlib.contextmanager
+def _publication_lock(config_path):
+    """Shared Python/Node process ownership, released by SQLite on process exit.
+
+    Separate from transport storage: a lifetime write lock must never block
+    message, contact or routing transactions. Keep the existing config flock.
+    """
+    from memory_vault_storage import open_file
+    path = Path(str(_absolute_path(config_path)) + ".publication.sqlite3")
+    fd = open_file(path, os.O_CREAT | os.O_RDWR, private=True)
+    try:
+        before = os.fstat(fd)
+    finally:
+        os.close(fd)
+    for suffix in ("-wal", "-shm", "-journal"):
+        try:
+            fd = open_file(Path(str(path)+suffix), os.O_RDONLY, private=True)
+        except FileNotFoundError:
+            continue
+        else:
+            os.close(fd)
+    connection = sqlite3.connect(path, timeout=0)
+    try:
+        after = path.lstat()
+        if (before.st_ino, before.st_dev) != (after.st_ino, after.st_dev):
+            raise MemoryError("open_node_publication_path_changed")
+        connection.execute("PRAGMA trusted_schema=OFF")
+        connection.execute("PRAGMA journal_mode=WAL")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as exc:
+            if str(exc) in ("database is locked", "database table is locked"):
+                raise MemoryError("open_node_publication_busy") from None
+            raise
+        yield
+    finally:
+        connection.close()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run an owner-configured finite open routing node")
     parser.add_argument("--config", required=True, type=Path)
@@ -1007,7 +1081,7 @@ def main(argv=None):
     # A second process must not sign a different successor to the same saved
     # revision. The existing cross-platform protected file lock is held for
     # this node's lifetime; a crashed process releases the OS lock naturally.
-    with _exclusive_store(_absolute_path(args.config)):
+    with _exclusive_store(_absolute_path(args.config)), _publication_lock(args.config):
         _run_node(args.config)
 
 

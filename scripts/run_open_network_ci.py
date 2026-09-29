@@ -45,7 +45,7 @@ MODULES = tuple("tests.test_open_" + name for name in (
     "repair_service",
     "repair_service_budget",
     "repair_http",
-    "repair_client", "repair_client_typescript", "repair_admin", "repair_runtime_review", "repair_bound",
+    "repair_client", "repair_client_typescript", "repair_admin", "repair_admin_typescript", "repair_runtime_review", "repair_bound",
     "repair_bound_typescript", "repair_empty", "repair_empty_typescript", "repair_empty_review", "repair_empty_access", "repair_empty_http", "repair_empty_client", "repair_empty_client_typescript",
     "repair_bind_http", "repair_offer_access", "repair_offer_http", "repair_offer_client", "repair_offer_http_typescript", "repair_occupied", "repair_occupied_typescript", "repair_occupied_access", "repair_occupied_client", "repair_put_http", "repair_put_client", "repair_put_recovery", "repair_roundtrip", "repair_receipt", "repair_occupied_client_typescript")) + (
     "tests.test_open_repair_stage", "tests.test_open_repair_index", "tests.test_open_repair_index_access",
@@ -54,7 +54,7 @@ MODULES = tuple("tests.test_open_" + name for name in (
     "tests.test_open_repair_index_prepare", "tests.test_open_repair_index_prepare_admin",
     "tests.test_open_repair_provision", "tests.test_open_repair_onboarding",
     "tests.test_open_repair_bind_recovery", "tests.test_open_repair_remote_setup", "tests.test_open_repair_remote_provision",
-    "tests.test_open_repair_status_observer", "tests.test_open_repair_mailbox_resources", "tests.test_open_repair_mailbox_activation", "tests.test_open_repair_mailbox_range", "tests.test_open_repair_mailbox_root", "tests.test_open_repair_mailbox_status", "tests.test_open_repair_mailbox_source",
+    "tests.test_open_repair_status_observer", "tests.test_open_repair_mailbox_resources", "tests.test_open_repair_copy_resources", "tests.test_open_repair_copy_prepare", "tests.test_open_repair_copy_state", "tests.test_open_repair_copy_service", "tests.test_open_repair_copy_upload", "tests.test_open_repair_mailbox_activation", "tests.test_open_repair_mailbox_range", "tests.test_open_repair_mailbox_root", "tests.test_open_repair_mailbox_status", "tests.test_open_repair_mailbox_source",
     "tests.test_open_provider_merge",
     "tests.test_continuation_trial", "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {
@@ -235,7 +235,7 @@ def initialize(reports, mode, seed):
             "open-contact.ts", "open-contact-state.ts", "open-contact-client.ts",
             "open-provider.ts", "open-provider-client.ts", "open-blob.ts", "open-repair-wire.ts", "open-repair-history.ts", "open-repair-original.ts", "open-repair-resource.ts",
             "open-repair-bootstrap.ts", "open-repair-status.ts", "open-repair-mailbox-range.ts", "open-repair-ack.ts", "open-capacity.ts",
-            "open-repair-probe.ts", "open-repair-proof.ts", "open-repair-client.ts",
+            "open-repair-probe.ts", "open-repair-proof.ts", "open-repair-client.ts", "open-repair-admin.ts",
             "open-repair-bound.ts", "open-repair-empty.ts", "open-repair-occupied.ts",
             "open-delivery.ts", "open-delivery-control.ts", "open-delivery-client.ts",
             "agent.ts", "peer.ts", "io.ts", "crypto.ts", "nodes.ts")]
@@ -251,7 +251,7 @@ def initialize(reports, mode, seed):
                     "memory_vault_open_repair_resource.py", "tests/open_repair_resource_fixtures.py",
                     "memory_vault_open_repair_bootstrap.py", "memory_vault_open_repair_status.py",
                     "memory_vault_open_repair_ack.py", "tests/open_repair_ack_fixtures.py",
-                    "memory_vault_open_repair_state.py", "memory_vault_open_repair_mailbox_resources.py", "memory_vault_open_repair_mailbox_activation.py", "memory_vault_open_repair_mailbox_range.py", "memory_vault_open_repair_mailbox_root.py", "memory_vault_open_repair_mailbox_status.py", "memory_vault_open_repair_mailbox_source.py", "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
+                    "memory_vault_open_repair_state.py", "memory_vault_open_repair_mailbox_resources.py", "memory_vault_open_repair_copy_resources.py", "memory_vault_open_repair_copy_prepare.py", "memory_vault_open_repair_copy_authority.py", "memory_vault_open_repair_copy_state.py", "memory_vault_open_repair_copy_service.py", "memory_vault_open_repair_copy_upload.py", "memory_vault_open_repair_copy_client.py", "memory_vault_open_repair_mailbox_activation.py", "memory_vault_open_repair_mailbox_range.py", "memory_vault_open_repair_mailbox_root.py", "memory_vault_open_repair_mailbox_status.py", "memory_vault_open_repair_mailbox_source.py", "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
                     "memory_vault_open_repair_probe.py",
                     "memory_vault_open_repair_proof.py",
                     "memory_vault_open_repair_access.py",
@@ -350,7 +350,7 @@ class DiscardOutput(io.TextIOBase):
 
 class SyntheticResult(unittest.TestResult):
     def __init__(self,reports):
-        super().__init__();self.reports=reports;self.entries=[]
+        super().__init__();self.reports=reports;self.entries=[];self.failfast=True
 
     def _exc_info_to_string(self,err,test):
         return err[0].__name__  # Never serialize assertion operands, keys or paths.
@@ -366,13 +366,25 @@ class SyntheticResult(unittest.TestResult):
                     frames.append({"source":source.relative_to(ROOT).as_posix(),"line":trace.tb_lineno})
                 trace=trace.tb_next
             item["source_frames"]=frames
+            # Preserve a narrow protocol reason through assertion wrappers,
+            # without ever printing exception text, operands or arbitrary codes.
+            allowed={"repair_access_expired","repair_over_budget","repair_resource_expired","repair_service_capacity",
+                "repair_status_mismatch","repair_status_operation","repair_status_rollback",
+                "repair_status_conflict","repair_status_missing","repair_authority_revoked",
+                "open_network_unavailable"}
+            cause=error[1];seen=set()
+            while cause is not None and len(seen)<8 and id(cause) not in seen:
+                seen.add(id(cause));code=getattr(cause,"code",None)
+                if type(code) is str and code in allowed:
+                    item["protocol_code"]=code;break
+                cause=cause.__cause__ or cause.__context__
         self.entries.append(item);self.reports.event(item,error=state not in {"passed","subtest_passed"})
 
     def addSuccess(self,test):super().addSuccess(test);self.record(test,"passed")
     def addFailure(self,test,err):super().addFailure(test,err);self.record(test,"failed",err)
     def addError(self,test,err):super().addError(test,err);self.record(test,"error",err)
-    def addSkip(self,test,reason):super().addSkip(test,"reason omitted");self.record(test,"skipped")
-    def addExpectedFailure(self,test,err):super().addExpectedFailure(test,err);self.record(test,"expected_failure",err)
+    def addSkip(self,test,reason):super().addSkip(test,"reason omitted");self.record(test,"skipped");self.stop()
+    def addExpectedFailure(self,test,err):super().addExpectedFailure(test,err);self.record(test,"expected_failure",err);self.stop()
     def addUnexpectedSuccess(self,test):super().addUnexpectedSuccess(test);self.record(test,"unexpected_success")
     def addSubTest(self,test,subtest,err):
         super().addSubTest(test,subtest,err);self.record(test,"subtest_passed" if err is None else "subtest_failed",err)
@@ -381,13 +393,18 @@ class SyntheticResult(unittest.TestResult):
 def run_light(reports):
     if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
     result=SyntheticResult(reports)
+    # A rejected candidate cannot become accepted by running more cases. Stop
+    # on the first disqualifying result, retaining cleanup and explicit coverage.
     # Test exceptions remain classified, but raw provider errors/fixture paths
     # are not copied into either uploaded reports or public console output.
     with contextlib.redirect_stdout(DiscardOutput()),contextlib.redirect_stderr(DiscardOutput()):
         suite=unittest.defaultTestLoader.loadTestsFromNames(MODULES)
+        planned=suite.countTestCases()
         suite.run(result)
-    passed=result.testsRun>0 and result.wasSuccessful() and not result.skipped and not result.expectedFailures
+    complete=planned>0 and result.testsRun==planned
+    passed=complete and result.wasSuccessful() and not result.skipped and not result.expectedFailures
     reports.write("results.json",{"schema_version":"memory-vault-open-ci-tests/v1","tests_run":result.testsRun,
+        "tests_planned":planned,"complete":complete,"stopped_early":result.testsRun<planned,
         "passed":passed,"skipped":len(result.skipped),"failures":len(result.failures),"errors":len(result.errors),
         "expected_failures":len(result.expectedFailures),"unexpected_successes":len(result.unexpectedSuccesses),"tests":result.entries})
     return passed
@@ -446,14 +463,15 @@ def main():
     if args.phase=="finalize":return 0 if finalize(reports) else 1
     def interrupted(signum,frame):raise KeyboardInterrupt
     for signum in (signal.SIGINT,signal.SIGTERM,signal.SIGALRM):signal.signal(signum,interrupted)
-    # The expanded real-HTTP suite needs more than its former 26-minute cap.
+    # The expanded real-HTTP suite exceeded its former 40-minute CI wall cap.
     # Keep a finite limit and leave time for finalization and bounded reports.
-    signal.alarm((40 if args.mode == "light" else 26)*60)
+    signal.alarm((55 if args.mode == "light" else 26)*60)
     reports.status("running")
     try:
         record_runtime(reports,args.mode,args.seed)
         passed=run_scale(reports,args.seed) if args.mode=="scale" else run_light(reports)
-        reports.status("passed" if passed else "failed",passed=passed,complete=True)
+        complete=args.mode=="scale" or json.loads((reports.directory/"results.json").read_text())["complete"]
+        reports.status("passed" if passed else "failed",passed=passed,complete=complete)
         return 0 if passed else 1
     except KeyboardInterrupt:
         reports.status("interrupted");reports.event({"event":"interrupted_or_timed_out"},error=True);return 130

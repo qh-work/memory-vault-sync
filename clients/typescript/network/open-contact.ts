@@ -9,7 +9,7 @@ import {
   decryptBytes, decodeBase64url, encodeBase64url, sha256,
 } from './crypto.ts';
 import type {DocumentInput, SigningIdentityDocument, EncryptionIdentityDocument} from './crypto.ts';
-import {verifyNode} from './open-control.ts';
+import {verifyContact,verifyNode} from './open-control.ts';
 import type {SignedNode, SignedOpen} from './open-control.ts';
 
 export const PROFILE = 'memory-vault-open-contact-control/v1';
@@ -22,6 +22,7 @@ export const SLOT_BYTES = MAX_REQUEST_BYTES + MAX_DECISION_BYTES + 512;
 export const KINDS: Readonly<Record<string, readonly string[]>> = {
   'resource.lease': ['node_key_id','storage_epoch','owner_key_id','owner_encryption_key','lease_id','resource_id','purpose','max_items','max_bytes'],
   'contact.policy': ['node_key_id','storage_epoch','lease_id','lease_sha256','resource_id','encryption_key','revision','status','max_pending'],
+  'contact.directory_maintenance': ['grant_id','contact_sha256','publisher_signing_key','publisher_storage_epoch','lease_id','lease_sha256','policy_sha256','resource_id','max_lease_seconds','max_attempts','max_requests','max_bytes'],
   'contact.request': ['request_id','encryption_key','recipient_key_id','recipient_encryption_key_id','node_key_id','storage_epoch','lease_id','resource_id','policy_sha256','request_class'],
   'contact.challenge': ['request_id','request_sha256','subject_key_id','subject_encryption_key_id','recipient_key_id','node_key_id','storage_epoch','policy_sha256','purpose','challenge_id','jwe'],
   'contact.grant': ['request_id','request_sha256','subject_key_id','subject_encryption_key_id','recipient_encryption_key_id','node_key_id','storage_epoch','resource_id','operations','resource_lease'],
@@ -33,6 +34,7 @@ export const COMMON = ['schema_version','kind','signing_key','issued_at','expire
 export const ACTIONS: Readonly<Record<string, readonly string[]>> = {
   lease: ['encryption_key','purpose','max_items','max_bytes','lease_seconds','allocation_id'],
   'policy.put': ['lease','policy'], 'policy.get': ['recipient_key_id'],
+  'directory.maintain': ['contact','policy','lease','authorization'],
   challenge: ['request','purpose'], submit: ['request','challenge','answer'],
   poll: ['lease_id'], decide: ['request','decision'], result: ['request','challenge','answer'],
 };
@@ -80,8 +82,11 @@ function body(action:unknown,value:unknown,now?:number):Obj {
   const selected=oneOf(action,Object.keys(ACTIONS)),raw=fields(value,ACTIONS[selected]);
   if(selected==='lease'){
     validateEncryptionPublic(raw.encryption_key);limits(raw);limit(raw.lease_seconds,MAX_SECONDS);opaqueId(raw.allocation_id);
-  }else if(selected==='policy.put'){
+  }else if(selected==='policy.put'||selected==='directory.maintain'){
     verifyDocument(raw.lease,'resource.lease',{now});verifyDocument(raw.policy,'contact.policy',{now});
+    if(selected==='directory.maintain'){
+      verifyContact(raw.contact,{now});verifyDocument(raw.authorization,'contact.directory_maintenance',{now});
+    }
   }else if(selected==='policy.get')key(raw.recipient_key_id);
   else if(selected==='poll')opaqueId(raw.lease_id);
   else{
@@ -107,7 +112,10 @@ export function verifyDocument(value:unknown,kind:string,options:ContactOptions=
   for(const name of ['lease_id','resource_id','request_id','challenge_id','storage_epoch'])if(name in raw)opaqueId(raw[name]);
   for(const name of ['lease_sha256','request_sha256','policy_sha256'])if(name in raw)digestHex(raw[name]);
   for(const name of ['encryption_key','owner_encryption_key'])if(name in raw)validateEncryptionPublic(raw[name]);
-  if(kind==='resource.lease'){
+  if(kind==='contact.directory_maintenance'){
+    opaqueId(raw.grant_id);opaqueId(raw.publisher_storage_epoch);validateSigningPublic(raw.publisher_signing_key);digestHex(raw.contact_sha256);
+    limit(raw.max_lease_seconds,300);limit(raw.max_attempts,32);limit(raw.max_requests,256);limit(raw.max_bytes,16*1024*1024);
+  }else if(kind==='resource.lease'){
     limits(raw);if(raw.signing_key.key_id!==raw.node_key_id)fail('contact_wrong_node');
   }else if(kind==='contact.policy'){
     safeInteger(raw.revision,1);oneOf(raw.status,['active','revoked']);limit(raw.max_pending,32);
@@ -157,6 +165,37 @@ export function verifyPolicy(value:unknown,options:PolicyOptions):Obj {
     raw.lease_sha256!==documentSha256(options.lease as DocumentInput)||raw.max_pending>resource.max_items||raw.expires_at>resource.expires_at||
     ['node_key_id','storage_epoch','lease_id','resource_id'].some(name=>raw[name]!==resource[name]))fail('contact_policy_mismatch');
   return raw;
+}
+export interface DirectoryOptions extends PolicyOptions {contact:SignedOpen;policy:SignedOpen;}
+/** Publication of one unchanged public contact, never renewal of its parent permissions. */
+export function verifyDirectoryAuthorization(value:unknown,options:DirectoryOptions):Obj {
+  const grant=verifyDocument(value,'contact.directory_maintenance',options),recipient=verifyContact(options.contact,options),
+    resource=verifyLease(options.lease,options),permission=verifyPolicy(options.policy,options),publisher=verifyNode(options.node,options);
+  const endpoint={kind:'node',node_key_id:publisher.signing_key.key_id,base_url:publisher.base_url,storage_epoch:publisher.storage_epoch};
+  if(recipient.status!=='active'||!recipient.allow_discovery||permission.status!=='active'||resource.purpose!=='knock'||
+    !same(grant.signing_key,recipient.signing_key)||!same(permission.signing_key,recipient.signing_key)||
+    !same(recipient.encryption_key,permission.encryption_key)||!same(grant.publisher_signing_key,publisher.signing_key)||
+    grant.publisher_storage_epoch!==publisher.storage_epoch||!recipient.endpoints.some(item=>same(item,endpoint))||
+    grant.lease_id!==resource.lease_id||grant.resource_id!==resource.resource_id||
+    grant.expires_at>Math.min(recipient.expires_at,permission.expires_at,resource.expires_at)||
+    grant.issued_at<Math.max(recipient.issued_at,permission.issued_at,resource.issued_at)||
+    grant.contact_sha256!==documentSha256(options.contact)||grant.policy_sha256!==documentSha256(options.policy)||
+    grant.lease_sha256!==documentSha256(options.lease as DocumentInput))fail('contact_directory_authority_mismatch');
+  return grant;
+}
+export function issueDirectoryAuthorization(signer:SigningIdentityDocument,options:DirectoryOptions&{
+  max_attempts?:number;max_requests?:number;max_bytes?:number;max_lease_seconds?:number;
+}):SignedOpen {
+  const {contact,policy,lease,node}=options,resource=(lease as SignedOpen).payload,issued=currentTime(options.now);
+  const result=signDocument(signer,'contact.directory_maintenance',{issued_at:issued,
+    expires_at:Math.min(contact.payload.expires_at,policy.payload.expires_at,resource.expires_at),
+    grant_id:'directory_'+documentSha256({contact,policy,lease}),contact_sha256:documentSha256(contact),
+    publisher_signing_key:node.payload.signing_key,publisher_storage_epoch:resource.storage_epoch,
+    lease_id:resource.lease_id,lease_sha256:documentSha256(lease as DocumentInput),policy_sha256:documentSha256(policy),
+    resource_id:resource.resource_id,max_lease_seconds:options.max_lease_seconds===undefined?300:options.max_lease_seconds,
+    max_attempts:options.max_attempts===undefined?32:options.max_attempts,max_requests:options.max_requests===undefined?256:options.max_requests,
+    max_bytes:options.max_bytes===undefined?16*1024*1024:options.max_bytes});
+  verifyDirectoryAuthorization(result,{...options,now:issued});return result;
 }
 export function verifyRequest(value:unknown,options:RequestOptions):Obj {
   const raw=verifyDocument(value,'contact.request',options),owner=verifyPolicy(options.policy,options);
@@ -210,8 +249,8 @@ export function verifyRpc(value:unknown,options:NodeOptions):Obj {
   const raw=verifyDocument(value,'contact.rpc',options);nodeBinding(raw,options.node,options);
   const body=raw.body;
   if(['challenge','submit','result'].includes(raw.action)&&!same(body.request.payload.signing_key,raw.signing_key))fail('contact_wrong_subject');
-  if(['policy.put','decide'].includes(raw.action)){
-    const inner=raw.action==='policy.put'?body.policy:body.decision;
+  if(['policy.put','directory.maintain','decide'].includes(raw.action)){
+    const inner=raw.action==='policy.put'?body.policy:raw.action==='directory.maintain'?body.authorization:body.decision;
     if(!same(inner.payload.signing_key,raw.signing_key))fail('contact_wrong_subject');
   }
   return raw;
@@ -230,9 +269,17 @@ export function verifyResponse(value:unknown,options:NodeOptions&{request:unknow
     if(typeof error.code!=='string'||/^[a-z][a-z0-9_]{1,63}$/.exec(error.code)?.[0]!==error.code||typeof error.retryable!=='boolean')fail('contact_invalid_document');
   }else{
     const action=original.action,expected:Record<string,string[]>={lease:['lease'],'policy.put':['state'],'policy.get':['lease','policy'],
+      'directory.maintain':['state','job_id','expires_at','attempts','requests','bytes','directory_expires_at','last_error'],
       challenge:['challenge'],submit:['state','request_sha256'],poll:['requests'],decide:['state','request_sha256'],result:['state','decision']};
     fields(body,expected[action]);
-    if(action==='lease'){
+    if(action==='directory.maintain'){
+      const grant=original.body.authorization.payload;
+      oneOf(body.state,['pending','running','leased','degraded','stopped','exhausted']);
+      if(body.job_id!==grant.grant_id||body.expires_at!==grant.expires_at)fail('contact_directory_response_mismatch');
+      for(const [name,maximum] of [['attempts','max_attempts'],['requests','max_requests'],['bytes','max_bytes']])limit(body[name],grant[maximum],0);
+      if(body.directory_expires_at!==null)limit(body.directory_expires_at,grant.expires_at);
+      if(body.last_error!==null&&(typeof body.last_error!=='string'||/^[a-z][a-z0-9_]{1,63}$/.exec(body.last_error)?.[0]!==body.last_error))fail('contact_invalid_document');
+    }else if(action==='lease'){
       const lease=verifyLease(body.lease,options),wanted=original.body;
       if(lease.owner_key_id!==original.signing_key.key_id||!same(lease.owner_encryption_key,wanted.encryption_key)||
         ['purpose','max_items','max_bytes'].some(name=>lease[name]!==wanted[name])||lease.expires_at-lease.issued_at>wanted.lease_seconds)fail('contact_lease_mismatch');

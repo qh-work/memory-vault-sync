@@ -107,6 +107,9 @@ class OpenDeliveryClient:
                     session BLOB NOT NULL, phase TEXT NOT NULL, result BLOB,
                     receipt BLOB, receipt_sent INTEGER NOT NULL DEFAULT 0,
                     created_at INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS open_delivery_retry_cursor(
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    created_at INTEGER NOT NULL, message_id TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS open_delivery_inbox_phase
                     ON open_delivery_inbox(phase,created_at,message_id);
             """)
@@ -593,6 +596,7 @@ class OpenDeliveryClient:
             (('request', 'contact.request'), ('policy', 'contact.policy'))}
         if canonical_bytes(session['authority']) != canonical_bytes(expected):
             raise MemoryError('network_inbox_identity_conflict')
+        return verified
 
     def _stage_inbox(self, *, message_id, sender_key_id, envelope, body, session):
         raw = canonical_bytes(document(envelope, maximum=MAX_ENVELOPE_BYTES))
@@ -866,16 +870,33 @@ class OpenDeliveryClient:
         return dict(messages=messages, errors=[], state='observed', body_transport='mailbox_retained_copy',
             receipt_state='retained_for_independent_return')
 
+    def _pending_receipt_batch(self):
+        """Four attempts per poll, rotating across durable unsatisfied work."""
+        eligible = "(phase='staged' OR (phase='saved' AND receipt_sent=0))"
+        select = "SELECT message_id,phase,created_at FROM open_delivery_inbox WHERE " + eligible
+        order = " ORDER BY created_at,message_id LIMIT ?"
+        with self.participant.state.db() as db:
+            cursor = db.execute("SELECT created_at,message_id FROM open_delivery_retry_cursor WHERE singleton=1").fetchone()
+            if cursor is None:
+                return db.execute(select+order, (4,)).fetchall()
+            stamp = (integer(cursor['created_at']), opaque(cursor['message_id']))
+            rows = db.execute(select+" AND (created_at,message_id)>(?,?)"+order, (*stamp,4)).fetchall()
+            if len(rows)<4:
+                rows += db.execute(select+" AND (created_at,message_id)<=(?,?)"+order, (*stamp,4-len(rows))).fetchall()
+            return rows
+
+    def _advance_pending_receipt(self, row):
+        stamp = (integer(row['created_at']), opaque(row['message_id']))
+        with self.participant.state.db() as db:
+            db.execute("INSERT OR REPLACE INTO open_delivery_retry_cursor VALUES(1,?,?)", stamp)
+
     async def receive(self, limit=4, *, _pending_only=False, _skip_pending=False, _deadline=None):
         if type(limit) is not int or not 1 <= limit <= 4:
             raise MemoryError("network_invalid_receive_limit")
         budget = _DeliveryBudget()
         if _deadline is not None:budget.deadline=min(budget.deadline,_deadline)
         messages, errors = [], []
-        with self.participant.state.db() as db:
-            pending = db.execute("SELECT message_id,phase FROM open_delivery_inbox WHERE phase='staged' OR (phase='saved' AND receipt_sent=0) ORDER BY created_at,message_id LIMIT 4").fetchall()
-        if _skip_pending:
-            pending=[]
+        pending = [] if _skip_pending else self._pending_receipt_batch()
         for pending_row in pending:
             if len(messages) >= limit:
                 break
@@ -888,6 +909,10 @@ class OpenDeliveryClient:
                     await self._send_receipt(message_id, budget)
             except MemoryError as exc:
                 errors.append({"message_id": message_id, "code": exc.code, "retryable": exc.retryable})
+            finally:
+                # A refused or separately authorized receipt remains pending;
+                # moving the cursor never claims it was sent or expands access.
+                self._advance_pending_receipt(pending_row)
         if _pending_only:
             return dict(messages=messages,errors=errors[:4],network_accessed=budget.requests>0)
         for candidate in self._contact_sessions(outgoing=False):

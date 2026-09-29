@@ -29,6 +29,21 @@ def synthetic_report():
 
 
 class OpenNetworkCITests(unittest.TestCase):
+    def test_failure_reason_is_allowlisted_through_exception_wrappers(self):
+        from memory_vault_open_repair_wire import RepairWireError
+        for code in ('repair_access_expired','synthetic_private_value'):
+            reports=mock.Mock();result=ci.SyntheticResult(reports)
+            try:
+                try:raise RepairWireError(code)
+                except RepairWireError as error:raise AssertionError('synthetic private assertion text') from error
+            except AssertionError:
+                result.record(self,'failed',sys.exc_info())
+            item=result.entries[0]
+            self.assertEqual(item.get('protocol_code'),'repair_access_expired' if code=='repair_access_expired' else None)
+            serialized=json.dumps(item)
+            self.assertNotIn('synthetic_private_value',serialized)
+            self.assertNotIn('synthetic private assertion text',serialized)
+
     def test_maximal_failure_diagnostics_fit_child_and_report_caps(self):
         from tests import open_routing_acceptance as acceptance
         value=synthetic_report();graph=[]
@@ -120,6 +135,50 @@ class OpenNetworkCITests(unittest.TestCase):
                 self.assertFalse(ci.run_light(reports))
                 combined="".join(p.read_text() for p in Path(temporary).iterdir())
                 self.assertNotIn("synthetic secret",combined);self.assertNotIn("/synthetic/private",combined)
+
+    def test_light_stops_after_disqualifying_result_and_keeps_cleanup(self):
+        visited=[]
+        class First(unittest.TestCase):
+            def setUp(self):self.addCleanup(visited.append,'cleaned')
+            def test_failure(self):self.fail('synthetic failure')
+            def test_error(self):raise RuntimeError('synthetic error')
+            def test_skip(self):self.skipTest('synthetic skip')
+            @unittest.expectedFailure
+            def test_expected(self):self.fail('synthetic expected failure')
+            @unittest.expectedFailure
+            def test_unexpected(self):pass
+            def test_subtest(self):
+                with self.subTest(synthetic=1):self.fail('synthetic subtest')
+        class Later(unittest.TestCase):
+            def runTest(self):visited.append('later')
+        for name in ('failure','error','skip','expected','unexpected','subtest'):
+            visited.clear();suite=unittest.TestSuite([First('test_'+name),Later()])
+            with self.subTest(name=name),tempfile.TemporaryDirectory() as temporary, \
+                    mock.patch.object(unittest.defaultTestLoader,'loadTestsFromNames',return_value=suite), \
+                    mock.patch('sys.__stdout__',io.StringIO()):
+                reports=ci.Reports(temporary);self.assertFalse(ci.run_light(reports))
+                result=json.loads((Path(temporary)/'results.json').read_text())
+                self.assertEqual(visited,['cleaned'])
+                self.assertEqual((result['tests_run'],result['tests_planned']),(1,2))
+                self.assertFalse(result['complete']);self.assertTrue(result['stopped_early'])
+                reports.status('failed',passed=False,complete=result['complete'])
+                self.assertFalse(ci.finalize(reports))
+
+    def test_light_success_requires_every_planned_case(self):
+        visited=[]
+        class Passing(unittest.TestCase):
+            def runTest(self):visited.append('passed')
+        suite=unittest.TestSuite([Passing(),Passing()])
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(unittest.defaultTestLoader,'loadTestsFromNames',return_value=suite), \
+                mock.patch('sys.__stdout__',io.StringIO()):
+            reports=ci.Reports(temporary);self.assertTrue(ci.run_light(reports))
+            result=json.loads((Path(temporary)/'results.json').read_text())
+            self.assertEqual(len(visited),2)
+            self.assertEqual((result['tests_run'],result['tests_planned']),(2,2))
+            self.assertTrue(result['complete']);self.assertFalse(result['stopped_early'])
+            reports.status('passed',passed=True,complete=result['complete'])
+            self.assertTrue(ci.finalize(reports))
 
     def test_scale_command_and_progress_capture_use_only_tiny_fake_child(self):
         original=subprocess.Popen;seen=[];value=synthetic_report()

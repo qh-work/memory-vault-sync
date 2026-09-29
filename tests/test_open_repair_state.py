@@ -19,7 +19,8 @@ class RepairStateTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="memory-vault-synthetic-ack-")
         self.path = Path(self.temp.name) / "network.sqlite3"
-        self.fixture = ack_unbound_fixture()
+        self.fixture = ack_unbound_fixture(capacity_overrides=getattr(self, "capacity_overrides", None),
+            limit_overrides=getattr(self, "limit_overrides", None))
         self.now = [2_000_000_001]
         self.connect()
 

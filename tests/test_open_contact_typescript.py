@@ -87,6 +87,55 @@ class OpenContactTypeScriptTests(unittest.TestCase):
                 self.assertFalse(result["ok"], result)
                 self.assertNotEqual(result["code"], "untyped_error", result)
 
+    def directory_originals(self):
+        from memory_vault_open_contact_directory import issue_authorization
+        from memory_vault_open_control import issue_contact
+        h=self.py
+        contact=issue_contact(h.recipient,encryption_key=h.recipient_encryption.public_descriptor(),revision=1,
+            allow_discovery=True,endpoints=[dict(kind='node',node_key_id=h.server.key_id,
+                base_url=h.node['payload']['base_url'],storage_epoch=h.node['payload']['storage_epoch'])],
+            issued_at=h.now,expires_at=h.now+600)
+        options=dict(**self.request_options,contact=contact)
+        return options,issue_authorization(h.recipient,**options)
+
+    def test_native_directory_authority_rpc_and_bounded_response_match_python(self):
+        from memory_vault_open_contact_directory import verify_authorization
+        options,grant=self.directory_originals();h=self.py
+        body={name:options[name] for name in ('contact','policy','lease')};body['authorization']=grant
+        rpc=sign_rpc(h.recipient,node=h.node,action='directory.maintain',body=body,now=h.now)
+        summary=dict(state='pending',job_id=grant['payload']['grant_id'],expires_at=grant['payload']['expires_at'],
+            attempts=0,requests=0,bytes=0,directory_expires_at=None,last_error=None)
+        response=sign_response(h.server,request=rpc,node=h.node,body=summary,now=h.now)
+        checked,signed,call,reply=self.ts([
+            self.call('verifyDirectoryAuthorization',grant,options),
+            self.call('issueDirectoryAuthorization',self.signing_document('recipient'),options),
+            self.call('verifyRpc',rpc,self.options),
+            self.call('verifyResponse',response,dict(**self.options,request=rpc))])
+        for result in (checked,signed,call,reply):self.assertTrue(result['ok'],result)
+        self.assertEqual(signed['value'],grant)
+        self.assertEqual(checked['value'],verify_authorization(signed['value'],**options))
+        self.assertEqual(reply['value']['body'],summary)
+        cases=[]
+        for field,value in (('job_id','wrong_job'),('expires_at',h.now+601),('attempts',33),
+                            ('requests',257),('bytes',16*1024*1024+1),('directory_expires_at',h.now+601),
+                            ('last_error','/synthetic/private')):
+            bad=sign_response(h.server,request=rpc,node=h.node,body={**summary,field:value},now=h.now)
+            bound=dict(**self.options,request=rpc)
+            cases.append((field,'verifyResponse',bad,bound,lambda value,opts=bound:verify_response(value,**opts)))
+        self.assert_rejections(cases)
+
+    def test_native_directory_authority_rejects_substitution_and_unbounded_grants(self):
+        from memory_vault_open_contact_directory import verify_authorization
+        options,grant=self.directory_originals();h=self.py;cases=[]
+        for field,value in (('publisher_signing_key',h.other.public_descriptor()),('publisher_storage_epoch','wrong_epoch'),
+                            ('contact_sha256','0'*64),('policy_sha256','0'*64),('lease_sha256','0'*64),
+                            ('lease_id','wrong_lease'),('resource_id','wrong_resource'),('expires_at',h.now+601),
+                            ('issued_at',h.now-1),('max_attempts',33),('max_requests',257),
+                            ('max_bytes',16*1024*1024+1),('max_lease_seconds',301)):
+            bad=copy.deepcopy(grant);bad['payload'][field]=value;bad['proof']=h.recipient.sign_message(bad['payload'])
+            cases.append((field,'verifyDirectoryAuthorization',bad,options,lambda value:verify_authorization(value,**options)))
+        self.assert_rejections(cases)
+
     def test_all_signed_documents_verify_and_serialize_identically(self):
         h = self.py
         challenge, _ = issue_challenge(h.server, request=h.request, node=h.node, purpose="submit", now=h.now)

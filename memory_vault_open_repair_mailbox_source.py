@@ -1040,7 +1040,7 @@ class MailboxMessageStaging:
         s=self.source;budget=wire.RepairBudget(s.policy);now=s._now()
         if type(draft_raw) is not bytes or not 0<len(draft_raw)<=131072:wire._fail('repair_message_capacity')
         draft=wire.parse_new_wire(draft_raw,s.policy,budget)
-        fields=resource._fields(draft.value,{'disclosure','disclosure_status','attempt','destination','slot','contact'})
+        fields=resource._fields(draft.value,{'disclosure','disclosure_status','attempt','destination','slot','contact'}|({'ack_configuration'} if isinstance(draft.value,dict) and 'ack_configuration' in draft.value else set()))
         def decode(value):return decode_entry(value,s.policy,budget)
         attempt,destination,consent,consent_status=(decode(fields[name]) for name in ('attempt','destination','disclosure','disclosure_status'))
         def control(entry,kind,names,signer):
@@ -1078,7 +1078,7 @@ class MailboxMessageStaging:
         ap,attempt_ref=control(attempt,'delivery.attempt',
             'issued_at expires_at attempt_id message_id envelope_ref sender recipient destination_ref slot_key operation disclosure_ref ack_grant_ref',slot['sender']['signing_key_id'])
         original._opaque(ap['attempt_id']);original._opaque(dp['destination_id'])
-        if (ap['ack_grant_ref'] is not None or ap['operation']!='message.store' or ap['disclosure_ref']!=consent['ref']
+        if (ap['operation']!='message.store' or ap['disclosure_ref']!=consent['ref']
                 or ap['destination_ref']!=destination_ref.as_dict() or dp['slot_ref']!=inputs['slot']['ref']
                 or any(p['slot_key']!=key or p['sender']!=slot['sender'] or p['recipient']!=slot['recipient'] for p in (ap,dp))):
             wire._fail('repair_message_mismatch')
@@ -1111,6 +1111,18 @@ class MailboxMessageStaging:
             sender_encryption_key=checked.originals['request'].payload['encryption_key'],recipient_signing_key=owner['signing_key'],
             recipient_encryption_key=owner['encryption_key'],now=now)
         if verified['context']['message_id']!=ap['message_id']:wire._fail('repair_message_mismatch')
+        from memory_vault_open_repair_mailbox_activation import ACK_CONFIGURATION_ROLES,verify_mailbox_ack_configuration
+        if ap['ack_grant_ref'] is None:
+            if 'ack_configuration' in fields:wire._fail('repair_message_mismatch')
+        else:
+            if 'ack_configuration' not in fields or not ACK_CONFIGURATION_ROLES<=set(cp['allowed_roles']):
+                wire._fail('repair_status_disclosure')
+            configuration=resource._fields(fields['ack_configuration'],ACK_CONFIGURATION_ROLES)
+            configuration={name:decode(value) for name,value in configuration.items()}
+            if ap['ack_grant_ref']!=configuration['ack.write_grant']['ref']:wire._fail('repair_message_mismatch')
+            verify_mailbox_ack_configuration(configuration,
+                sender=dict(signing_key=checked.originals['request'].payload['signing_key'],encryption_key=checked.originals['request'].payload['encryption_key']),
+                recipient=owner,message_id=ap['message_id'],envelope_ref=ap['envelope_ref'],at=now,policy=s.policy,budget=budget)
         requirements=[];deadlines=[ap['expires_at'],dp['expires_at'],cp['consent_until'],dp['windows']['admit_until'],dp['windows']['retain_until']]
         deadlines.extend(value.payload['expires_at'] for value in checked.originals.values())
         def requirement(kind,subject,revision,mask,issuer):
@@ -1221,6 +1233,11 @@ class MailboxMessageStaging:
                 add(role,decoded(draft[name]))
             if not {'contact.request','delivery.attempt','message.disclosure','authority.status.disclosure'}<=set(payloads['message.disclosure']['allowed_roles']):
                 wire._fail('repair_status_disclosure')
+            if 'ack_configuration' in draft:
+                from memory_vault_open_repair_mailbox_activation import ACK_CONFIGURATION_ROLES
+                configuration=resource._fields(draft['ack_configuration'],ACK_CONFIGURATION_ROLES)
+                if not ACK_CONFIGURATION_ROLES<=set(payloads['message.disclosure']['allowed_roles']):wire._fail('repair_status_disclosure')
+                for role,value in configuration.items():add(role,decoded(value))
             slot=add('mailbox.slot',entries['slot']);root=slot['slot_key']['root_key']
             for role,name in (('mailbox.read_grant','read'),('mailbox.maintenance_root','maintenance'),('bootstrap.mailbox_feed','bootstrap'),('resource.slot_activation','activation')):
                 add(role,entries[name])
@@ -1335,6 +1352,7 @@ class MailboxMessageStaging:
             slot_digest=budget._hash(wire._canonical(key,budget))
             expected=history._ROLES['mailbox_member']-{'ack.root_authority','ack.write_grant','bootstrap.ack_offer',
                 'historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'}
+            if payloads['delivery.attempt']['ack_grant_ref'] is not None:expected=history._ROLES['mailbox_member']
             if set(docs)!=expected or resolved.manifest.value['message_id']!=message_id or payloads['delivery.attempt']['sender']['signing_key_id']!=sender:
                 wire._fail('repair_message_mismatch')
             for role,mask in (('mailbox.slot',66),('mailbox.read_grant',2),('mailbox.maintenance_root',66),('bootstrap.mailbox_feed',10),('message.disclosure',66)):

@@ -60,8 +60,20 @@ def service_for_packet(state, payload):
             WHERE h.digest=? LIMIT 2""", (parent.raw_sha256,)).fetchall()
     else:
         _fail("repair_invalid_probe")
+    if state.db.execute("SELECT 1 FROM sqlite_master WHERE name='open_repair_copy_read_config'").fetchone():
+        if kind=='bootstrap.probe':
+            copies=state.db.execute("SELECT 'replica_unbound' FROM open_repair_copy_read_config WHERE owner=? AND grant_sha256=? LIMIT 2",
+                (subject['signing_key']['key_id'],digest)).fetchall()
+        elif kind=='bootstrap.answer':
+            copies=state.db.execute("SELECT 'replica_unbound' FROM open_repair_bootstrap_challenges c JOIN open_repair_copy_read_config r ON c.resource_id=r.resource_id WHERE c.challenge_digest=? LIMIT 2",(parent.raw_sha256,)).fetchall()
+        else:
+            copies=state.db.execute("SELECT 'replica_unbound' FROM open_repair_bootstrap_handles h JOIN open_repair_copy_read_config r ON h.resource_id=r.resource_id WHERE h.digest=? LIMIT 2",(parent.raw_sha256,)).fetchall()
+        rows=list(rows)+list(copies)
     if len(rows) != 1:
         _fail("repair_service_unavailable")
+    if rows[0][0] == "replica_unbound":
+        from memory_vault_open_repair_copy_service import ReplicaReadService
+        service=ReplicaReadService(state);service.initialize();return service
     if rows[0][0] == "unbound":
         return RepairBootstrapService(state)
     if rows[0][0] == "empty":

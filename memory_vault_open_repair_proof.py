@@ -25,12 +25,19 @@ EMPTY_FIXED_ROLES = empty.ROLES | CURRENT_ROLES | {"history.ack_empty", "ack.emp
 OCCUPIED_FIXED_ROLES = occupied.ROLES | CURRENT_ROLES | {"history.ack_occupied_inputs", "ack.commit", "ack.head", "current.status.ack_disclosure"}
 SOURCE_STATES = {"unbound": (FIXED_ROLES, 1), "empty": (EMPTY_FIXED_ROLES, 2),
                  "occupied": (OCCUPIED_FIXED_ROLES, 3)}
+REPLICA_FIXED_ROLES = ack.ROLES | frozenset(('history.ack_unbound','ack.slot_custody',
+    'copy.reservation_consent','copy.allocation','copy.offer','copy.assignment','copy.owner_disclosure',
+    'copy.source_disclosure','copy.current_status','replica.manifest','replica.custody',
+    'return.owner','return.source','return.maintainer','current.status.replica_read'))
+SOURCE_STATES['replica_unbound'] = (REPLICA_FIXED_ROLES, 1)
 OFFER_CURRENT_ROLES = (CURRENT_ROLES - {"current.status.ack_read", "current.status.ack_owner_bootstrap"}) | {"current.status.ack_write", "current.status.ack_offer_bootstrap"}
 OFFER_FIXED_ROLES = empty.ROLES | OFFER_CURRENT_ROLES | {"history.ack_empty", "ack.empty_custody", "ack.head"}
 MAILBOX_CURRENT_ROLES = frozenset("current.status."+name for name in
     "root root_read root_bootstrap catalog anchor_resource slot read maintenance bootstrap data_resource metadata_resource".split())
 MAILBOX_ROOT_ROLES = history._ROLES["mailbox_root"] | MAILBOX_CURRENT_ROLES | {"history.mailbox_root","root.custody"}
 MAILBOX_FEED_CURRENT_ROLES = frozenset('current.status.'+name for name in 'slot read maintenance bootstrap disclosure metadata_resource'.split())
+MAILBOX_ACK_CONFIGURATION_ROLES = frozenset(('ack.root_authority','ack.write_grant','bootstrap.ack_offer',
+    'historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'))
 MAILBOX_FEED_ROLES = (history._ROLES['mailbox_feed'] | history._ROLES['mailbox_member'] | MAILBOX_FEED_CURRENT_ROLES | {'history.mailbox_feed','feed.custody'}) - {
     'ack.root_authority','ack.write_grant','bootstrap.ack_offer','historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'}
 CONSUMER_STATES = {"ack_owner": SOURCE_STATES, "ack_offer": {"empty": (OFFER_FIXED_ROLES, 2)},
@@ -84,14 +91,16 @@ def _manifest(value, expected, maximum_items, expected_source_state=None):
         if item["role"] != "history.raw_pack":
             roles.add(item["role"])
     states = CONSUMER_STATES[consumer]
-    matches = [state for state, (fixed, _) in states.items() if roles == fixed]
+    optional=MAILBOX_ACK_CONFIGURATION_ROLES if consumer=='mailbox_feed' else frozenset()
+    if roles&optional and not optional<=roles:_fail()
+    matches = [state for state, (fixed, _) in states.items() if roles-optional == fixed]
     if len(matches) != 1:
         _fail()
     source_state = matches[0]
     if expected_source_state is not None and source_state != expected_source_state:
         _fail("repair_proof_mismatch")
     fixed_roles, minimum_packs = states[source_state]
-    service_roles = fixed_roles | {"history.raw_pack"}
+    service_roles = fixed_roles | optional | {"history.raw_pack"}
     if (payload["schema_version"] != SCHEMA or payload["kind"] != "bootstrap.proof_manifest" or
             payload["consumer"] != consumer or
             payload["subject"] != probe._dual(expected["subject"]) or payload["target"] != probe._dual(expected["target"]) or
@@ -130,6 +139,9 @@ def _manifest(value, expected, maximum_items, expected_source_state=None):
             'resource.data_allocate','resource.metadata_allocate','resource.data_offer','resource.metadata_offer',
             'resource.slot_activation','resource.data_active','resource.metadata_active','feed.head','feed.checkpoint','history.mailbox_feed','feed.custody'}
         if any(counts.get(role)!=1 for role in singleton) or any(counts.get(role,0)<1 for role in fixed_roles):_fail()
+    elif source_state=="replica_unbound":
+        repeated={"copy.current_status","current.status.replica_read"}
+        if any(counts.get(role)!=1 for role in fixed_roles-repeated) or any(not 1<=counts.get(role,0)<=16 for role in repeated):_fail()
     elif any(counts.get(role) != 1 for role in fixed_roles):
         _fail()
     if len(packs) < minimum_packs:

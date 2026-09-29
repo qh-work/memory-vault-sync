@@ -9,7 +9,7 @@ import {transaction} from './io.ts';
 import {coordinate,issueContact,verifyContact,verifyNode} from './open-control.ts';
 import type {SignedNode} from './open-control.ts';
 import {LookupBudget} from './open-routing.ts';
-import {SLOT_BYTES,ContactError,limit,signDocument,signRpc,solveChallenge,verifyDecision,verifyPolicy,verifyResponse,verifyRequest,verifyRpc} from './open-contact.ts';
+import {SLOT_BYTES,ContactError,issueDirectoryAuthorization,limit,signDocument,signRpc,solveChallenge,verifyDecision,verifyPolicy,verifyResponse,verifyRequest,verifyRpc} from './open-contact.ts';
 import type {OpenParticipant} from './open-participant.ts';
 
 export const CONNECT_SCHEMA='memory-vault-open-contact-connect/v1';
@@ -101,11 +101,33 @@ export class OpenContactClient{
     catch(error){if(!(error instanceof NetworkCryptoError))throw error;
       return this.resolve({node_key_id:old.signing_key.key_id,base_url:old.base_url,storage_epoch:old.storage_epoch},budget);}
   }
-  async enable(node:SignedNode,options:{allocation_id:string;max_pending?:number;lease_seconds?:number;revision?:number}):Promise<Obj>{
+  private async selectedNode(keyId:string,budget:LookupBudget):Promise<SignedNode>{
+    coordinate(keyId);
+    const selected=this.participant.seeds.filter(seed=>seed.payload.signing_key.key_id===keyId);
+    if(selected.length!==1)throw new ContactError('contact_node_not_configured');
+    const before=verifyNode(selected[0],{allow_expired:true}),fixed=['signing_key','storage_epoch','base_url','roles'];
+    budget.check();budget.chargeRequest();
+    const reply=await this.participant.transport.requestNode(before.base_url,budget.deadline);
+    budget.chargeBytes(reply.wire_bytes);
+    const current=reply.response as unknown as SignedNode,after=verifyNode(current);
+    if(after.status!=='active'||fixed.some(name=>!same(after[name],before[name]))||after.revision<before.revision||
+      (after.revision===before.revision&&!same(current,selected[0])))throw new ContactError('contact_selected_node_mismatch');
+    this.participant.acceptContactControl(current);
+    const challenged=await this.participant.challengeContactNode(current,budget),checked=verifyNode(challenged);
+    if(checked.status!=='active'||fixed.some(name=>!same(checked[name],after[name]))||checked.revision<after.revision||
+      (checked.revision===after.revision&&!same(challenged,current)))throw new ContactError('contact_selected_node_mismatch');
+    return challenged;
+  }
+  async enable(node:SignedNode|undefined,options:{node_key_id?:string;allocation_id:string;max_pending?:number;lease_seconds?:number;revision?:number;maintain_directory?:boolean}):Promise<Obj>{
     const maxPending=options.max_pending===undefined?4:options.max_pending,leaseSeconds=options.lease_seconds===undefined?600:options.lease_seconds,
-      revision=options.revision===undefined?1:options.revision;
+      revision=options.revision===undefined?1:options.revision,maintainDirectory=options.maintain_directory===undefined?false:options.maintain_directory;
     limit(maxPending,32);limit(leaseSeconds,86400);limit(revision,9007199254740991);opaqueId(options.allocation_id);
+    if(typeof maintainDirectory!=='boolean')throw new ContactError('contact_invalid_directory_opt_in');
+    if((node===undefined)===(options.node_key_id===undefined))throw new ContactError('contact_invalid_node_selection');
     const budget=new LookupBudget(),publicKey=validateEncryptionIdentity(this.encryption);
+    if(options.node_key_id!==undefined)node=await this.selectedNode(options.node_key_id,budget);
+    // Exactly one node selection was required above; no implicit routing choice.
+    if(node===undefined)throw new ContactError('contact_invalid_node_selection');
     const allocation={encryption_key:publicKey,purpose:'knock',max_items:maxPending,max_bytes:maxPending*SLOT_BYTES,
       lease_seconds:leaseSeconds,allocation_id:options.allocation_id};
     signRpc(this.participant.identity,{node,action:'lease',body:allocation});
@@ -129,9 +151,22 @@ export class OpenContactClient{
       endpoints:[{kind:'node',node_key_id:raw.node_key_id,base_url:node.payload.base_url,storage_epoch:raw.storage_epoch}],
       issued_at:raw.issued_at,expires_at:Math.min(raw.issued_at+3600,raw.expires_at)});
     const published=await this.participant.publishContact(contact,Math.min(300,leaseSeconds));
+    let maintenance:Obj|null=null;
+    if(maintainDirectory){
+      let maintained:Obj;
+      try{maintained=this.load('directory',raw.lease_id);}
+      catch(error){
+        if(!(error instanceof ContactError)||error.code!=='contact_local_missing')throw error;
+        this.reserve([['directory',raw.lease_id]],contact.payload.expires_at);
+        maintained={contact,policy,lease,authorization:issueDirectoryAuthorization(this.participant.identity,{contact,policy,lease,node})};
+        this.save('directory',raw.lease_id,maintained,contact.payload.expires_at);
+      }
+      if(!same(maintained.contact,contact)||!same(maintained.policy,policy)||!same(maintained.lease,lease))throw new ContactError('contact_local_conflict');
+      maintenance=await this.call(node,'directory.maintain',maintained,budget);
+    }
     return {state:'active',lease_id:raw.lease_id,expires_at:raw.expires_at,directory_state:published.state,
       directory_expires_at:published.leases.length?Math.min(...published.leases.map((lease:Obj)=>lease.payload.expires_at)):null,
-      confirmed_index_leases:published.confirmed_leases,open_messaging_supported:false};
+      confirmed_index_leases:published.confirmed_leases,directory_maintenance:maintenance,open_messaging_supported:false};
   }
   async request(recipientKeyId:string,options:{request_id:string}):Promise<Obj>{
     const requestId=opaqueId(options.request_id),budget=new LookupBudget();let session:Obj;
@@ -242,8 +277,11 @@ export class OpenContactClient{
     const variants:Record<string,string[]>={enable:['node','allocation_id','max_pending','lease_seconds','revision'],request:['recipient_key_id'],poll:['lease_id'],
       decide:['request_ref','decision','max_items','max_bytes'],result:['request_id']};
     if(raw.schema_version!==CONNECT_SCHEMA||typeof action!=='string'||!Object.hasOwn(variants,action))throw new ContactError('contact_invalid_connect');
+    if(action==='enable'&&Object.hasOwn(raw,'maintain_directory'))variants.enable.push('maintain_directory');
+    if(action==='enable'&&Object.hasOwn(raw,'node_key_id'))variants.enable=variants.enable.filter(name=>name!=='node').concat('node_key_id');
     objectFields(raw,['schema_version','action',...variants[action]]);
-    if(action==='enable')return this.enable(raw.node,{allocation_id:raw.allocation_id,max_pending:raw.max_pending,lease_seconds:raw.lease_seconds,revision:raw.revision});
+    if(action==='enable')return this.enable(raw.node,{node_key_id:raw.node_key_id,allocation_id:raw.allocation_id,max_pending:raw.max_pending,
+      lease_seconds:raw.lease_seconds,revision:raw.revision,maintain_directory:raw.maintain_directory});
     if(action==='request')return this.request(raw.recipient_key_id,{request_id:requestId!});
     if(action==='poll')return this.poll(raw.lease_id);
     if(action==='decide')return this.decide(raw.request_ref,{decision:raw.decision,max_items:raw.max_items,max_bytes:raw.max_bytes});

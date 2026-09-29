@@ -147,7 +147,7 @@ fields:
 
 | Action | Additional fields |
 | --- | --- |
-| `enable` | `node`, `allocation_id`, `max_pending`, `lease_seconds`, `revision`; Python optionally accepts boolean `maintain_directory`, or replaces `node` with the public `node_key_id` of an already configured seed |
+| `enable` | `node`, `allocation_id`, `max_pending`, `lease_seconds`, `revision`; optionally accepts boolean `maintain_directory`, or replaces `node` with the public `node_key_id` of an already configured seed |
 | `request` | `recipient_key_id`; use the outer `connect.request_id` for retries |
 | `poll` | `lease_id` |
 | `decide` | `request_ref`, `decision`, `max_items`, `max_bytes` |
@@ -161,7 +161,8 @@ from a verified approval.
 
 ## Optional directory maintenance while B is offline
 
-Python B can explicitly enable `maintain_directory:true`. It retains a separate
+Python B and native TypeScript source after alpha.0.22 can explicitly enable
+`maintain_directory:true`. They retain a separate
 B-signed `contact.directory_maintenance` original binding the exact public
 contact, policy and knock lease hashes, R's complete signing key and storage
 epoch, the resource, deadline, maximum index-lease duration and finite work
@@ -174,6 +175,10 @@ services. The node's ordinary maintenance loop performs at most one due job per
 turn under its existing routing/network budget. Attempts reserve request and
 response work before IO; failures and interrupted turns retain their charge.
 Exact enrollment retries never reset the job's counters or expiry.
+The two clients share the same durable enrollment bytes; changing runtime after
+a lost response creates no new authorization or work budget. Node selection by
+key refreshes only the configured origin and challenges the current signed
+introduction while retaining its key, epoch, origin and roles.
 
 Supporting Python directories accept `delegated_put` only when R signs the outer
 request and presents B's exact authority plus the original contact, policy,
@@ -182,6 +187,8 @@ format, so ordinary Python and native TypeScript discovery remains compatible.
 Ordinary `put` and `renew` remain owner-only. This public directory operation
 uses the existing signing-key contact model; it grants no private ACK read,
 delivery, Vault, model execution or X25519-possession authority.
+Native Node hosts do not yet run the directory worker and return the explicit
+`contact_directory_unsupported` error; support in the client grants no host capability.
 
 Maintenance ends at the earliest parent expiry, exhausted finite work or known
 revocation/conflict. R's epoch change invalidates its authority. A stopped or

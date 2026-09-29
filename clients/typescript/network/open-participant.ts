@@ -27,7 +27,7 @@ function code(error:unknown):string{
 const same=(a:unknown,b:unknown)=>Buffer.from(canonicalBytes(a)).equals(Buffer.from(canonicalBytes(b)));
 export interface ParticipantOptions{seeds:SignedNode[];descriptor?:SignedNode;allow_loopback?:boolean;index_policy?:IndexOptions;contact_policy?:ContactStateOptions;}
 export class OpenParticipant{
-  readonly identity:SigningIdentityDocument;readonly descriptor:SignedNode|null;
+  readonly identity:SigningIdentityDocument;descriptor:SignedNode|null;
   readonly table:RoutingTable;readonly transport:OpenHTTPTransport;readonly seeds:SignedNode[];
   readonly keyId:string;
   private readonly database:DatabaseSync;private readonly checkpoints:OpenCheckpoints;
@@ -66,6 +66,27 @@ export class OpenParticipant{
     }catch(error){this.database.close();this.transport.close();throw error;}
   }
   close():void{if(this.closed)return;this.closed=true;this.transport.close();this.database.close();}
+  /** Install an owner-signed successor without resetting contact or index state. */
+  refreshDescriptor(value:SignedNode):void{
+    this.ready();if(!this.descriptor)fail('open_node_not_configured');
+    const next=document(canonicalBytes(value),4096) as unknown as SignedNode;
+    const raw=verifyNode(next),previous=verifyNode(this.descriptor,{allow_expired:true});
+    if(raw.status!=='active')fail('open_control_revoked');
+    if((['signing_key','storage_epoch','base_url','roles'] as const).some(name=>!same(raw[name],previous[name])))
+      fail('open_node_publication_binding_mismatch');
+    if(same(next,this.descriptor))return;
+    this.accept(next);
+    this.descriptor=next;
+    if(this.index)this.index.node=next;
+    if(this.contact)this.contact.node=next;
+  }
+  /** Public signed snapshot only; no configuration or private identity material. */
+  currentIntroduction():SignedNode{
+    this.ready();if(!this.descriptor)fail('open_node_not_configured');
+    const snapshot=document(canonicalBytes(this.descriptor),4096) as unknown as SignedNode;
+    const raw=verifyNode(snapshot);if(raw.status!=='active')fail('open_control_revoked');
+    return snapshot;
+  }
   private ready():void{if(this.closed)fail('open_transport_closed');}
   private serial<T>(operation:()=>Promise<T>):Promise<T>{
     const next=this.tail.then(()=>{this.ready();return operation();});this.tail=next.catch(()=>undefined);return next;
@@ -75,6 +96,9 @@ export class OpenParticipant{
   contactStorage<T>(operation:(database:DatabaseSync)=>T):T{this.ready();return operation(this.database);}
   acceptContactControl(value:SignedNode|SignedContact):void{this.accept(value);}
   lookupContactResource(target:string,budget:LookupBudget){this.ready();return this.lookup(target,'general',budget);}
+  async challengeContactNode(node:SignedNode,budget:LookupBudget):Promise<SignedNode>{
+    return (await this.call(node,'hello',{node:null},budget)).node;
+  }
   /** Provider controls share protected transport state, never canonical Vault records. */
   providerStorage<T>(operation:(database:DatabaseSync)=>T):T{this.ready();return operation(this.database);}
   acceptProviderControl(node:SignedNode):void{this.accept(node);}

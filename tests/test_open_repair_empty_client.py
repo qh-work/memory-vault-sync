@@ -114,9 +114,9 @@ class EmptyClientHTTPTests(unittest.TestCase):
         self.assertEqual(result.proof.manifest.value["response_profile"],"ack_owner_service_v1")
         self.assertEqual(len(result.proof.manifest.value["children"]),22)
         self.assertEqual(len(result.originals),12)
-        self.assertEqual(result.metrics["requests"],14)
+        self.assertEqual(result.metrics["requests"],12)
         self.assertEqual(result.metrics["signature_checks"],32)
-        self.assertEqual(self.host.fixture.usage()[0:2],(14,366))
+        self.assertEqual(self.host.fixture.usage()[0:2],(12,314))
 
     def test_independent_writer_and_message_cannot_be_replaced_by_source_assertions(self):
         other=dict(signing_key=self.f["signers"]["owner"].public_descriptor(),

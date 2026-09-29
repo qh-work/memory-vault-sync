@@ -108,6 +108,8 @@ function newFile(value: string, encoded: Uint8Array): fs.Stats {
     throw error;
   } finally { fs.closeSync(fd); }
 }
+export {newFile as writeNewPrivate};
+
 function encoded(value: unknown, maximum = 65536): Uint8Array {
   return Buffer.concat([canonicalBytes(value, maximum), Buffer.from('\n')]);
 }

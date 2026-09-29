@@ -266,6 +266,10 @@ class MailboxSourceTests(unittest.TestCase):
         remote=Remote();remote.participant=participant;remote.base_url=base
         return remote
 
+    def test_custody_recovery_rejects_tampered_pack_over_http(self):
+        self.corrupt_history_pack=True
+        self.test_custody_recovery_client_fetches_http_and_rejects_retained_revocation()
+
     def test_custody_recovery_client_fetches_http_and_rejects_retained_revocation(self):
         from memory_vault_open_repair_client import MailboxRootRecoveryClient
         from memory_vault_open_repair_mailbox_source import MailboxRecoveryService
@@ -284,7 +288,33 @@ class MailboxSourceTests(unittest.TestCase):
         client=MailboxRootRecoveryClient(h.f["signers"]["owner"],h.f["encryption"]["owner"],limit_policy=dict(h.source.limits),
             allow_loopback=True,clock=lambda:h.now,status_observer=observed.append)
         self.addCleanup(client.close)
-        result=client.recover(remote.base_url,**options)
+        import base64
+        manifest_children={};downloaded=[]
+        real_request=client.transport.request_repair
+        corrupt_pack=[getattr(self,"corrupt_history_pack",False)]
+        def traced(base,raw,**kwargs):
+            value=real_request(base,raw,**kwargs)
+            if kwargs.get('child'):
+                index=json.loads(raw)['payload']['child_index'];child=manifest_children[index]
+                downloaded.append(json.dumps(child['ref'],sort_keys=True))
+                if corrupt_pack[0] and child['role']=='history.raw_pack':
+                    return bytes([value[0]^1])+value[1:]
+            else:
+                wrapper=json.loads(value)
+                if 'manifest_raw_base64url' in wrapper:
+                    encoded=wrapper['manifest_raw_base64url']
+                    manifest=json.loads(base64.urlsafe_b64decode(encoded+'='*((-len(encoded))%4)))
+                    manifest_children.update({item['index']:item for item in manifest['children']})
+            return value
+        with patch.object(client.transport,'request_repair',traced):
+            if corrupt_pack[0]:
+                with self.assertRaisesRegex(RepairWireError,'repair_ref_mismatch'):
+                    client.recover(remote.base_url,**options)
+                return
+            result=client.recover(remote.base_url,**options)
+        packed_refs={json.dumps(row.original.ref.as_dict(),sort_keys=True) for row in result.source['manifest'].roles}
+        self.assertFalse(set(downloaded)&packed_refs,'already packed originals were fetched twice')
+
         self.assertEqual(result.source["custody"].raw,custody["raw"])
         self.assertGreater(result.metrics["requests"],2)
         self.assertTrue(observed)

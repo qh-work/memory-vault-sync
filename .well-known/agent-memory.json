@@ -1,20 +1,20 @@
 {
   "schema_version": "memory-vault-discovery/v1",
   "name": "Memory Vault",
-  "implementation_version": "0.28.0-alpha.0.13",
+  "implementation_version": "0.28.0-alpha.0.23",
   "implementation_status": "alpha_preview",
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
-  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.13",
+  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.20",
   "release_publication_verified": true,
   "release_assets": {
-    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.13/memory-vault-client-v0.28.0-alpha.0.13.zip",
-    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.13/memory-vault-protocol-v0.28.0-alpha.0.13.zip",
-    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.13/memory-vault-review-v0.28.0-alpha.0.13.zip",
-    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.13/memory-vault-network-test-v0.28.0-alpha.0.13.zip",
-    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.13/SHA256SUMS"
+    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.20/memory-vault-client-v0.28.0-alpha.0.20.zip",
+    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.20/memory-vault-protocol-v0.28.0-alpha.0.20.zip",
+    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.20/memory-vault-review-v0.28.0-alpha.0.20.zip",
+    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.20/memory-vault-network-test-v0.28.0-alpha.0.20.zip",
+    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.20/SHA256SUMS"
   },
-  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.12",
+  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.14",
   "relative_links_base": "this discovery document",
   "start_here": "../AI_START_HERE.md",
   "specification": "../PROTOCOL.md",
@@ -46,9 +46,9 @@
   "automatic_sync_default": false,
   "readme_is_installation": false,
   "runtime_tests_run_for_release": true,
-  "runtime_test_scope": "Five targeted synthetic HTTP workflows passed using the extracted alpha.0.13 Python client runtime and child nodes: mailbox provisioning/restoration; interrupted two-message admission with lost-reply retention; cold selected-memory import/resume; independent receipt return/recovery; and Agent ACK preparation/export through selected-memory delivery and original-node-offline receipt recovery. Exact-source full cloud regression is pending. No external adoption, global reliability or thousand-agent capacity claim.",
+  "runtime_test_scope": "Seventeen synthetic native-command, mailbox, receipt, restart and replica checks passed using the extracted alpha.0.20 runtime. Its exact-source full cloud regression passed 1072 tests across 114 modules, with all 256 reported source hashes matching 24f93b04f78926d39e073ff5b3463cfc77ea64a6. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish external adoption, global reliability or thousand-agent capacity.",
   "runtime_test_report": "../docs/RELEASE.md",
-  "full_runtime_test_suite_run": false,
+  "full_runtime_test_suite_run": true,
   "runtime_parity_verified": false,
   "independent_adoption_verified": false,
   "discovery_scope": "repository document, not an active service endpoint or a vendor directory registration",
@@ -88,7 +88,9 @@
     "mailbox_authorization_scope": "Receiver-local approved contact and registered mailbox; durable exact destination/status originals and bounded paged export; explicit owner status revision coordination; no fresh remote permission claim.",
     "python_agent_ack_preparation": true,
     "python_agent_ack_invitation_export": true,
-    "python_agent_mailbox_retain": true
+    "python_agent_mailbox_retain": true,
+    "python_mailbox_ack_configuration": true,
+    "python_cold_mailbox_receipt_return": true
   },
   "continuation_trial": {
     "guide": "../docs/CONTINUATION_TRIAL.md",

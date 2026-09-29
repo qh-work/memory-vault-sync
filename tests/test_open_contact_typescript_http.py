@@ -34,11 +34,17 @@ const {Agent}=await import('./agent.ts');
 const chunks=[];let size=0;
 for await(const chunk of process.stdin){size+=chunk.length;if(size>1048576)throw Error('synthetic input limit');chunks.push(chunk);}
 const input=JSON.parse(Buffer.concat(chunks).toString('utf8')),results=[],calls=[];
+if(input.now!==undefined)Date.now=()=>input.now*1000;
 const original=OpenHTTPTransport.prototype.request;
+let lostDirectoryReply=false;
 OpenHTTPTransport.prototype.request=async function(base,value,deadline){
   const call={request:value,response:null,observed_address:null};calls.push(call);
   const reply=await original.call(this,base,value,deadline);
-  call.response=reply.response;call.observed_address=reply.observed_address;return reply;
+  call.response=reply.response;call.observed_address=reply.observed_address;
+  if(input.lose_directory_reply&&!lostDirectoryReply&&value.payload.action==='directory.maintain'){
+    lostDirectoryReply=true;const error=new Error('synthetic lost directory reply');error.code='open_request_failed';throw error;
+  }
+  return reply;
 };
 let participant;
 try{
@@ -133,6 +139,89 @@ class ContactTypeScriptHTTPTests(unittest.TestCase):
             for candidate in checked['body'].get('nodes',[]):
                 key=candidate['payload']['signing_key']['key_id'];introduced.add(key);known[key]=candidate
         self.assertTrue(traversed,'No response-derived real HTTP hop')
+
+    def test_native_offline_directory_maintenance_and_shared_restart_preserve_authority(self):
+        from tests.test_open_contact_directory_maintenance import DirectoryMaintenanceHTTPTests
+        h=DirectoryMaintenanceHTTPTests('test_offline_recipient_restart_and_original_expiry_over_real_http')
+        self.addCleanup(h.doCleanups);h.setUp()
+        asyncio.run(h.r['participant'].join())
+        asyncio.run(h.d['participant'].maintain())
+        signer=h.b.identity;encryption=h.b.encryption
+        identity_bytes=(h.root/'recipient/identity.json').read_bytes()
+        h.b.participant.close()
+        invitation=dict(schema_version=CONNECT_SCHEMA,action='enable',node_key_id=h.r['signer'].key_id,
+            allocation_id='synthetic_native_directory',max_pending=4,lease_seconds=900,revision=1,maintain_directory=True)
+        def native(operations,**faults):
+            return self.ts(mode='contact',identity=json.loads(identity_bytes),encryption=encryption.private_document(),
+                state=str(h.root/'recipient/transport'),seeds=[h.d['node'],h.r['node']],now=h.now,operations=operations,**faults)
+        lost=native([dict(op='dispatch',invitation=invitation)],lose_directory_reply=True)
+        self.assertEqual(lost['results'][0]['code'],'open_request_failed')
+        admitted=h.job();self.assertIsNotNone(admitted)
+        enabled=self.values(native([dict(op='dispatch',invitation=invitation)]))[0]
+        self.assertEqual(h.job(),admitted)
+        self.assertEqual(enabled['directory_maintenance']['state'],'pending')
+        self.assertEqual(h.find()['state'],'found')
+        original=h.job();self.assertEqual(original[1:4],(0,0,0))
+        # Native B has exited. The initial directory lease expires without any B work.
+        h.now+=301;self.assertNotEqual(h.find()['state'],'found')
+        maintained=h.maintain()['directory_maintenance']
+        self.assertEqual(maintained['state'],'degraded');self.assertGreater(maintained['directory_expires_at'],h.now)
+        self.assertEqual(h.find()['state'],'found');before=h.job()
+        self.assertGreater(before[1],0);self.assertGreater(before[2],0);self.assertGreater(before[3],0)
+        h.restart(h.r)
+        again=self.values(native([dict(op='dispatch',invitation=invitation)]))[0]
+        self.assertEqual(again['lease_id'],enabled['lease_id']);self.assertEqual(h.job(),before)
+        # The Python client can continue the very same native enrollment and budget.
+        participant=OpenParticipant(signer,h.root/'recipient/transport',seeds=[h.d['node'],h.r['node']],allow_loopback=True)
+        participant.table.now=lambda:h.now
+        self.addCleanup(participant.close)
+        resumed=OpenContactClient(participant,encryption)
+        repeated=asyncio.run(resumed.enable(node_key_id=h.r['signer'].key_id,allocation_id=invitation['allocation_id'],
+            max_pending=4,lease_seconds=900,revision=1,maintain_directory=True))
+        self.assertEqual(repeated['directory_maintenance']['job_id'],enabled['directory_maintenance']['job_id'])
+        self.assertEqual(h.job(),before);participant.close()
+        # A is newly admitted only through a real challenge; directory upkeep itself grants no delivery.
+        queued=asyncio.run(h.a.request(signer.key_id,request_id='synthetic_after_directory_renewal'))
+        self.assertEqual(queued['state'],'contact_queued');self.assertFalse(queued['recipient_approved'])
+        polled=self.values(native([dict(op='poll',lease_id=enabled['lease_id'])]))[0]
+        self.assertEqual(len(polled['requests']),1)
+        decided=self.values(native([dict(op='decide',request_ref=polled['requests'][0]['request_ref'],
+            options=dict(decision='approved',max_items=1,max_bytes=8192))]))[0]
+        self.assertEqual(decided['state'],'decided')
+        self.assertEqual(asyncio.run(h.a.result('synthetic_after_directory_renewal'))['state'],'approved')
+        h.now+=301;h.maintain();self.assertEqual(h.find()['state'],'found')
+        self.assertEqual(bytes(h.job()[4]),bytes(original[4]))
+        h.now=enabled['expires_at'];h.maintain()
+        self.assertEqual(h.job()[0],'stopped');self.assertNotEqual(h.find()['state'],'found')
+        self.assertEqual((h.root/'recipient/identity.json').read_bytes(),identity_bytes)
+
+    def test_native_selected_node_mismatch_and_opt_in_errors_allocate_nothing(self):
+        from memory_vault_open_control import issue_node
+        host=self.host(1,set());owner,_=self.identity('selected-owner');other,_=self.identity('wrong-operator')
+        old=host.nodes[0]['payload']
+        wrong=issue_node(other,base_url=old['base_url'],storage_epoch=old['storage_epoch'],roles=old['roles'],
+            revision=old['revision'],issued_at=old['issued_at'],expires_at=old['expires_at'])
+        failed=self.native('selected-owner',[wrong],[dict(op='enable',options=dict(
+            node_key_id=other.key_id,allocation_id='synthetic_wrong_operator',maintain_directory=True))])
+        self.assertEqual(failed['results'][0]['code'],'contact_selected_node_mismatch')
+        self.assertEqual(failed['calls'],[])
+        bad=self.native('selected-owner',host.nodes,[dict(op='enable',node=host.nodes[0],
+            options=dict(allocation_id='synthetic_invalid_opt_in',maintain_directory='true')),
+            dict(op='enable',node=host.nodes[0],options=dict(node_key_id=old['signing_key']['key_id'],allocation_id='synthetic_ambiguous_node'))])
+        self.assertEqual([row['code'] for row in bad['results']],['contact_invalid_directory_opt_in','contact_invalid_node_selection'])
+        self.assertEqual(bad['calls'],[])
+        with sqlite3.connect(self.root/'node_0/transport/network.sqlite3') as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM open_contact_resource_leases').fetchone()[0],0)
+
+    def test_native_host_explicitly_refuses_unimplemented_directory_worker(self):
+        host=self.host(1,{0});self.identity('directory-owner')
+        failed=self.native('directory-owner',host.nodes,[dict(op='enable',node=host.nodes[0],
+            options=dict(allocation_id='synthetic_unsupported_worker',maintain_directory=True))])
+        self.assertEqual(failed['results'][0]['code'],'contact_directory_unsupported')
+        enrollment=[call for call in failed['calls'] if call['request']['payload']['action']=='directory.maintain']
+        self.assertEqual(len(enrollment),1)
+        checked=verify_contact_response(enrollment[0]['response'],request=enrollment[0]['request'],node=host.nodes[0])
+        self.assertEqual(checked['body']['error']['code'],'contact_directory_unsupported')
 
     def test_native_current_policy_poll_then_decide_after_same_lease_revision_and_restart(self):
         host=self.host(1,{0});b,_=self.identity('revision-owner')
@@ -407,8 +496,10 @@ class ContactTypeScriptHTTPTests(unittest.TestCase):
     def test_native_agent_explicit_connect_rejection_and_fixed_privacy_boundary(self):
         host=self.host(1,set(),delivery=True);b,be=self.identity('owner');owner=self.agent_config('owner',host.nodes)
         def connect(action,**values):return {'op':'connect','invitation':{'schema_version':CONNECT_SCHEMA,'action':action,**values}}
-        enabled=self.agent(owner,[connect('enable',node=host.nodes[0],allocation_id='synthetic_knock',max_pending=1,lease_seconds=600,revision=1)])[0]
+        enabled=self.agent(owner,[connect('enable',node_key_id=host.nodes[0]['payload']['signing_key']['key_id'],
+            allocation_id='synthetic_knock',max_pending=1,lease_seconds=600,revision=1,maintain_directory=True)])[0]
         self.assertTrue(enabled['ok'],enabled);lease=enabled['result']['lease_id']
+        self.assertEqual(enabled['result']['directory_maintenance']['state'],'pending')
         a,ae=self.identity('sender');sender=self.agent_config('sender',host.nodes)
         identity_before={name:(self.root/name/'identity.json').read_bytes() for name in ['owner','sender']}
         request=connect('request',recipient_key_id=b.key_id);request['request_id']='req_synthetic_contact'

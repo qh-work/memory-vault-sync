@@ -23,10 +23,19 @@ def case_for(trial, label):
     return next((token, case) for token, case in trial.cases.items() if case["label"] == label)
 
 
+class ReadEvidence(str):
+    """Keep the nonce actually returned by a read alongside its event ID."""
+    def __new__(cls, response):
+        result = super().__new__(cls, response['evidence_event_id'])
+        result.resolution_nonce = response['resolution_nonce']
+        return result
+
+
 def answer_for(label, evidence="", **changes):
     availability, goal, action = EXPECTED[label]
     value = dict(answer=availability, goal=goal, proposed_action=action,
-                 evidence_event_id=evidence, answer_text=FALSIFIER, falsifier_quote=FALSIFIER)
+                 evidence_event_id=str(evidence), resolution_nonce=getattr(evidence, 'resolution_nonce', ''),
+                 answer_text=FALSIFIER, falsifier_quote=FALSIFIER)
     value.update(changes)
     return value
 
@@ -34,7 +43,7 @@ def answer_for(label, evidence="", **changes):
 def completed_read(trial, token):
     response = trial.read(token)
     trial.complete_read(response["evidence_event_id"])
-    return response["evidence_event_id"]
+    return ReadEvidence(response)
 
 
 class ContinuationTrialTests(unittest.TestCase):
@@ -85,7 +94,7 @@ class ContinuationTrialTests(unittest.TestCase):
                 self.assertEqual(current["case_id"], assignment["case_id"])
                 self.assertEqual(current["world"], None if availability == "unknown" else
                                  {"revision": 2, "service": availability, "goal": goal})
-                event_id = current["evidence_event_id"]
+                event_id = ReadEvidence(current)
                 value = answer_for(case["label"], event_id)
                 result, _ = request(assignment["submit_url"], value)
                 self.assertEqual(result, {"submission_frozen": True})
@@ -124,6 +133,56 @@ class ContinuationTrialTests(unittest.TestCase):
                 self.assertTrue(score["current_answer_correct"])
                 self.assertFalse(score["fact_verified"])
                 self.assertEqual(score["reasons"], ["no_matching_pre_submission_source_read"])
+
+    def test_read_then_recalled_answer_without_live_nonce_fails(self):
+        for label in EXPECTED:
+            with self.subTest(label=label):
+                trial = Trial();token, case = case_for(trial, label)
+                evidence = completed_read(trial, token)
+                trial.submit(token, answer_for(label, evidence, resolution_nonce=''))
+                score = trial.score(case)
+                self.assertTrue(score['source_read_recorded'])
+                self.assertTrue(score['current_answer_correct'])
+                self.assertFalse(score['passed'])
+                self.assertFalse(score['fact_verified'])
+                self.assertFalse(score['live_resolution_returned'])
+                self.assertEqual(score['reasons'], ['missing_or_wrong_live_resolution_nonce'])
+
+    def test_nonce_cannot_be_borrowed_from_another_read_row_or_run(self):
+        for mismatch in ('read', 'row', 'run'):
+            with self.subTest(mismatch=mismatch):
+                trial = Trial();token, case = case_for(trial, 'old_still_true')
+                evidence = completed_read(trial, token)
+                other = trial if mismatch != 'run' else Trial()
+                other_token = token if mismatch == 'read' else case_for(other, 'unchanged_control')[0]
+                other_evidence = completed_read(other, other_token)
+                self.assertNotEqual(evidence.resolution_nonce, other_evidence.resolution_nonce)
+                trial.submit(token, answer_for(case['label'], evidence,
+                    resolution_nonce=other_evidence.resolution_nonce))
+                self.assertFalse(trial.score(case)['passed'])
+
+    def test_nonce_is_absent_from_stored_memory_and_assignment_even_when_still_true(self):
+        nonces = []
+        for _ in range(2):
+            trial = Trial();token, case = case_for(trial, 'old_still_true')
+            assignments = encoded(trial.assignments('http://127.0.0.1:12345'))
+            evidence = completed_read(trial, token)
+            nonces.append(evidence.resolution_nonce)
+            self.assertNotIn(evidence.resolution_nonce.encode(), assignments)
+            self.assertNotIn(evidence.resolution_nonce, MEMORY)
+            trial.submit(token, answer_for(case['label'], evidence))
+            self.assertTrue(trial.score(case)['passed'])
+            self.assertEqual(trial.report()['schema_version'], 'memory-vault-continuation-trial/v2')
+        self.assertNotEqual(*nonces)
+
+    def test_v1_submission_without_nonce_is_rejected_without_freezing_answer(self):
+        trial = Trial();token, case = case_for(trial, 'old_still_true')
+        evidence = completed_read(trial, token)
+        answer = answer_for(case['label'], evidence);del answer['resolution_nonce']
+        with self.assertRaisesRegex(ValueError, 'invalid_submission'):trial.submit(token, answer)
+        self.assertIsNone(case['submission'])
+        trial.submit(token, answer_for(case['label'], evidence))
+        self.assertTrue(trial.score(case)['passed'])
 
     def test_client_trace_fields_are_rejected_and_invented_event_does_not_count(self):
         trial = Trial()
@@ -285,7 +344,7 @@ class ContinuationTrialTests(unittest.TestCase):
                 event_id = ""
                 if outcome != "no_read":
                     response = trial.read(token)
-                    event_id = response["evidence_event_id"]
+                    event_id = ReadEvidence(response)
                     self.assertIsNone(response["world"])
                     self.assertEqual(response["outcome"], "unavailable")
                     if outcome == "completed":

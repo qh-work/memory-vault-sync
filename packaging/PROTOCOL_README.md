@@ -1,4 +1,4 @@
-# Memory Vault v0.28.0-alpha.0.13 — independent protocol
+# Memory Vault v0.28.0-alpha.0.23 — independent protocol
 
 This alpha.0.10 candidate adds independent remote source preparation using
 only the sender's configuration and a selected public origin/key, plus durable
@@ -51,7 +51,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.13;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.23;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility

@@ -451,9 +451,56 @@ def verify_mailbox_member_setup(resolved, *, expected_slot, expected_owner, expe
     return dict(originals=checked,resources=checked_resources,contact=verified,roles=roles,accepted_at=accepted_at)
 
 
+ACK_CONFIGURATION_ROLES = frozenset(('ack.root_authority','ack.write_grant','bootstrap.ack_offer',
+    'historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'))
+
+
+def verify_mailbox_ack_configuration(entries, *, sender, recipient, message_id, envelope_ref, at, policy, budget):
+    """Authenticate A's lookup configuration, never an ACK service promise."""
+    import memory_vault_open_repair_bound as bound
+    import memory_vault_open_repair_status as status
+    from memory_vault_open_repair_state import INDEX_WORKFLOW_LIMITS
+    resource._fields(entries,ACK_CONFIGURATION_ROLES)
+    write=resource._fields(original.parse_original_control(entries['ack.write_grant']['raw'],policy,budget).value['payload'],resource.COMMON|bound._WRITE_FIELDS)
+    checked=bound.verify_ack_offer_bootstrap_original(entries['bootstrap.ack_offer'],
+        dict(root=entries['ack.root_authority'],write=entries['ack.write_grant']),
+        expected_ack_slot=write['ack_slot'],expected_owner=sender,expected_receipt_writer=recipient,
+        expected_message_id=message_id,expected_envelope_ref=envelope_ref,at=at,
+        limit_policy=INDEX_WORKFLOW_LIMITS,policy=policy,budget=budget)
+    root=checked.originals['root'].payload['ack_slot']['root_key']
+    duties=[]
+    for name,role,mask in (('root','ack_root',3),('write','ack_write',1),('bootstrap','ack_offer_bootstrap',3)):
+        item=checked.originals[name]
+        duties.append(dict(role=role,scope_kind='authority',scope_id=status.status_scope(root,'authority',
+            dict(authority_kind=item.payload['kind'],authority_sha256=item.ref.raw_sha256),policy,budget),
+            document_revision=item.payload['revision'],operation_mask=mask))
+    revisions={};floors={};observations=[]
+    for duty in duties:
+        entry=entries['historical.status.'+duty['role']]
+        preview=status._fields(original.parse_original_control(entry['raw'],policy,budget).value['payload'],status._PAYLOAD)
+        resource._array(preview['entries'])
+        present={(status._fields(v,status._ENTRY)['scope_kind'],v['scope_id']) for v in preview['entries']}
+        required=[{k:v[k] for k in ('scope_kind','scope_id','document_revision','operation_mask')}
+            for v in duties if (v['scope_kind'],v['scope_id']) in present]
+        if (duty['scope_kind'],duty['scope_id']) not in present:wire._fail('repair_status_missing')
+        observed=status.verify_status_original(entry,expected_root=root,expected_signing_key=sender['signing_key'],at=at,
+            allowed_scopes=[{k:v[k] for k in ('scope_kind','scope_id')} for v in duties],required=required,policy=policy,budget=budget)
+        revision=observed.payload['revision']
+        if revision in revisions and revisions[revision]!=observed.canonical_sha256:wire._fail('repair_status_conflict')
+        revisions[revision]=observed.canonical_sha256;observations.append(observed)
+        for row in observed.payload['entries']:
+            floors.setdefault((row['scope_kind'],row['scope_id']),[]).append((revision,row['minimum_document_revision']))
+    for values in floors.values():
+        minimum=0
+        for _,value in sorted(values):
+            if value<minimum:wire._fail('repair_status_rollback')
+            minimum=value
+    return dict(originals=checked.originals,statuses=tuple(observations))
+
+
 def verify_mailbox_member_inputs(resolved, *, expected_slot, expected_owner, expected_sender,
         expected_target, target_storage_epoch, accepted_at, limit_policy, policy, budget):
-    """Verify the original non-ACK message authority at its actual admission.
+    """Verify original message and optional ACK configuration at admission.
 
     Current revocations, custody and the source event graph remain separate.
     """
@@ -464,7 +511,7 @@ def verify_mailbox_member_inputs(resolved, *, expected_slot, expected_owner, exp
     roles=graph['roles'];m=resolved.manifest.value;root=m['root_key'];key=m['slot_key'];at=accepted_at
     expected_roles=history._ROLES['mailbox_member']-{'ack.root_authority','ack.write_grant','bootstrap.ack_offer',
         'historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'}
-    if set(roles)!=expected_roles:_mismatch()
+    if set(roles) not in (expected_roles,expected_roles|ACK_CONFIGURATION_ROLES):_mismatch()
     def control(role,kind,fields,signer):
         entry=roles[role];signed=resource._fields(wire.parse_new_wire(entry['raw'],policy,budget).value,{'payload','proof'})
         p=resource._fields(signed['payload'],resource.COMMON|set(fields.split()))
@@ -483,7 +530,7 @@ def verify_mailbox_member_inputs(resolved, *, expected_slot, expected_owner, exp
     for p,identifier in ((dp,'destination_id'),(ap,'attempt_id'),(cp,'consent_id')):
         original._opaque(p[identifier])
         if p['slot_key']!=key or p['sender']!=slot['sender'] or p['recipient']!=slot['recipient']:_mismatch()
-    if (ap['operation']!='message.store' or ap['ack_grant_ref'] is not None or ap['message_id']!=m['message_id']
+    if (ap['operation']!='message.store' or ap['message_id']!=m['message_id']
             or ap['envelope_ref']!=m['envelope_ref'] or cp['envelope_ref']!=m['envelope_ref']
             or m['attempt_ref']!=roles['delivery.attempt']['ref'] or ap['destination_ref']!=roles['delivery.destination']['ref']
             or ap['disclosure_ref']!=roles['message.disclosure']['ref'] or dp['slot_ref']!=roles['mailbox.slot']['ref']):_mismatch()
@@ -512,6 +559,16 @@ def verify_mailbox_member_inputs(resolved, *, expected_slot, expected_owner, exp
     if (returned['subject']!=slot['recipient'] or returned['consumer']!='mailbox_feed'
             or returned['roles']!=['authority.status.disclosure','message.disclosure']
             or not at<wire.u53(returned['until'])<=cp['consent_until']):wire._fail('repair_status_disclosure')
+    ack_configuration=None
+    if ap['ack_grant_ref'] is None:
+        if set(roles)!=expected_roles:_mismatch()
+    else:
+        if set(roles)!=expected_roles|ACK_CONFIGURATION_ROLES or not ACK_CONFIGURATION_ROLES<=set(allowed):
+            wire._fail('repair_status_disclosure')
+        if ap['ack_grant_ref']!=roles['ack.write_grant']['ref']:_mismatch()
+        ack_configuration=verify_mailbox_ack_configuration({name:roles[name] for name in ACK_CONFIGURATION_ROLES},
+            sender=expected_sender,recipient=expected_owner,message_id=m['message_id'],envelope_ref=m['envelope_ref'],
+            at=at,policy=policy,budget=budget)
     obligations=[]
     def add(role,kind,subject,revision,bits,signer):
         obligations.append(dict(role=role,scope_kind=kind,scope_id=status.status_scope(root,kind,subject,policy,budget),
@@ -550,7 +607,7 @@ def verify_mailbox_member_inputs(resolved, *, expected_slot, expected_owner, exp
         for _,value in sorted(observations):
             if value<minimum:wire._fail('repair_status_rollback')
             minimum=value
-    graph.update(destination=dp,attempt=ap,disclosure=cp,statuses=tuple(statuses),obligations=tuple(obligations))
+    graph.update(destination=dp,attempt=ap,disclosure=cp,statuses=tuple(statuses),obligations=tuple(obligations),ack_configuration=ack_configuration)
     return graph
 
 

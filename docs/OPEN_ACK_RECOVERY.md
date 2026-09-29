@@ -65,6 +65,71 @@ both its original parent budgets and those ceilings. The client also applies
 its independent finite parsing and verification limits. Exhaustion reports an
 error; it does not establish that a slot is empty.
 
+## Development: reading an unbound replacement replica
+
+The source checkout can serve an already committed unbound ACK replica through
+the same protected HTTP route. The replacement operator initializes
+`ReplicaReadService(state)` and calls `configure(resource_id, context=...,
+consents=..., current_statuses=...)` locally in the node's existing protected
+transport database. The context contains independently held `expected_ack_slot`,
+`expected_owner`, `expected_source`, `source_storage_epoch`, and
+`expected_maintainer`. Configuration contains public signed originals only.
+
+The owner, original source and maintainer must each sign a separate
+`ack.replica_return_consent` for the exact replacement keys/epoch, assignment,
+original source custody and bootstrap grant. Each consent permits only that
+issuer's exact originals and named status scopes. Existing COPY or directory
+permission does not supply this return permission. These consents can be
+prepared before the copy commitment without contacting their issuers again
+within the original finite authorization windows.
+
+The response explicitly identifies `replica_unbound`; it cannot be accepted as
+an original source or a bound/occupied replica. Both signing and encryption key
+possession are checked before proof publication. Full original bytes, replica
+custody, return consents and current statuses are available through authenticated
+range reads. Challenges, responses, replay records, status floors and actual
+work charges survive restart in the same database and capacity reservation.
+Remembered revocation prevents an old handle from continuing to read.
+
+The Python `AckOwnerRecoveryClient.recover_replica` method consumes this explicit
+profile. Along with the same `base_url`, `target_node_entry`, `expected_target`,
+`expected_ack_slot`, `root_entry`, `read_entry` and `bootstrap_entry` as ordinary
+recovery, supply independently held `expected_source`, `source_storage_epoch`
+and `expected_maintainer`. The target is the replacement; the source is the
+original custody issuer. The method authenticates the endpoint, completes both
+key-possession checks, fetches exact originals, reconstructs the original and
+replica storage events and verifies all three return consents and current READ.
+Its `replica` result preserves both events; an unbound result is not a saved
+recipient receipt.
+
+Supply previous `known_statuses` and `archive_statuses` on subsequent calls.
+The returned `archive_statuses` includes authenticated historical, copy-time,
+retained and current observations, bounded to 32 distinct originals. Convert each
+entry to `{raw: item.raw, ref: item.ref.as_dict()}` for the next call and persist
+those exact bytes in the caller's existing protected state. Expiration does not
+remove a remembered revocation or revision floor. The optional `status_observer`
+is called with authenticated current observations before a later denial, so
+integrations can retain them even when recovery fails. The client creates no
+separate local database and never imports these originals into the Vault.
+
+This operator API, HTTP service and Python client are development functionality.
+The alpha.0.19 candidate recovery command is described below. Native TypeScript
+replica recovery, first-receipt admission on a replacement, occupied replica
+recovery and automatic replacement selection remain unfinished. Explicit Python
+remote reservation and copy upload are available in the alpha.0.16 candidate;
+published alpha.0.14 archives do not include these features.
+
+## Development after alpha.0.18: reuse packed replica originals
+
+The Python replica recovery client fetches the proof's exact history manifest and
+packs first. It reuses their validated full original references for matching
+proof children, avoiding a second network download of the same bytes. Every
+advertised original still counts toward the logical proof-byte ceiling, and the
+complete source/copy/custody chain, independent return consents, current statuses
+and deadline checks remain required. Opaque reference keys are preserved; a
+matching digest alone is insufficient. This optimization is later than the
+immutable alpha.0.18 candidate.
+
 ## Owner recovery command
 
 Prepare a private UTF-8 JSON request from the owner's retained originals:
@@ -121,9 +186,181 @@ The finite input limits are 16 known entries and 32 archive entries, with at
 most 32 distinct originals in their union. Output exceeding either retained
 limit reports `repair_status_history_capacity` without writing an output. Keep
 previous evidence files; expiration alone does not permit deleting conflict
-witnesses. This development client does not maintain
-a separate persistent recipient-side status database automatically. Source-side
-floors are durable in the existing protected transport database.
+witnesses. Development after alpha.0.18 also persists authenticated owner/source
+status originals for `recover-ack`, `recover-empty`, and `recover-occupied` in
+the existing protected transport database. These commands share one original-source
+journal per root; the replica journal remains separate because its typed disclosure
+scopes differ. A failed command retains authenticated revocations before refusing
+access, and a subsequent command loads them even when its request omits the prior
+arrays. Existing whole-document scope checks remain in force; retained originals
+with incompatible scopes cause refusal rather than being silently projected or
+discarded. The shared journal capacity is 16 root/domain records, 32 originals and
+256 KiB per record; exhaustion refuses further recovery. Programmatic Python and
+TypeScript callers must still retain and supply both arrays themselves. Source-side
+floors are also durable in the existing protected transport database.
+
+## Native recovery commands (development after alpha.0.19)
+
+The source checkout now includes a native Node command for original-source
+`recover-ack`, `recover-empty`, and `recover-occupied`. From
+`clients/typescript/network`, install the locked dependencies with
+`npm ci --ignore-scripts`, then use Node 22.19 or later:
+
+```sh
+node --experimental-strip-types open-repair-admin.ts recover-occupied \
+  --network-config /absolute/private/open-agent/open-config.json \
+  --request /absolute/private/occupied-request.json \
+  --output /absolute/private/new-occupied-evidence.json \
+  --repair-profile receipt --timeout 60
+```
+
+Use the same private request schemas and exact originals as the Python command
+for the selected phase. The native command uses the existing identity and
+protected transport database. It performs native signature verification and
+HTTP requests, and does not launch Python or open the content Vault. It exports
+an actual recipient receipt only for an authenticated occupied source; empty
+and unbound results report `recipient_saved:false`.
+
+Both command implementations share the original-source status journal and its
+capacity limits described above. Authenticated revocations survive a failed
+command, process restart, and switching between Python and Node. Unauthenticated
+status documents cannot enter that journal. Output must name a new file;
+existing files are preserved. The optional profiles and 60-second timeout
+ceiling match Python and cannot enlarge signed grants. Programmatic callers
+can supply a synchronous `statusObserver` to persist authenticated observations
+before access refusal; it supplies observations, never authorization.
+
+These native commands are included in the alpha.0.20 candidate source, but not
+in the frozen alpha.0.19 archives.
+Replica recovery and maintainer copy commands remain Python-only.
+
+## Maintainer copy commands (alpha.0.20 candidate)
+
+`copy-reserve` and `copy-upload` use the maintainer's existing open-client identity
+and protected transport journal. They never open the content Vault. Both accept
+`--network-config`, `--request`, `--output`, `--timeout` (at most 60 seconds), and
+an explicit `--repair-profile receipt-index` when the original grants fund that
+ceiling. Requests and new-only results are private JSON files. A failed or lost
+reply can be retried with the same request and journal inside the original
+permission window; restarting does not renew a grant.
+
+```sh
+python -B memory_vault_open_repair_admin.py copy-reserve \
+  --network-config /absolute/private/maintainer/open-config.json \
+  --request /absolute/private/copy-reservation.json \
+  --output /absolute/private/new-reservation-result.json --repair-profile receipt-index
+python -B memory_vault_open_repair_admin.py copy-upload \
+  --network-config /absolute/private/maintainer/open-config.json \
+  --request /absolute/private/copy-upload.json \
+  --output /absolute/private/new-copy-result.json --repair-profile receipt-index
+```
+
+Both requests use `schema_version: memory-vault-open-ack-copy-request/v1`.
+They have these exact fields:
+
+| Field | Value |
+| --- | --- |
+| `operation` | `reserve` or `upload`, matching the command |
+| `node` | Independently held signed replacement-node original |
+| `ack_slot`, `owner`, `source`, `source_storage_epoch` | Independently held original source expectations; owner/source contain both public key descriptors |
+| `manifest`, `custody` | Original unbound source manifest and source custody entries |
+| `reservation` | Owner's exact signed reservation disclosure consent |
+| `intent` | Complete explicit copy intent, including the selected destination's keys and storage epoch |
+| `originals` | Up to 64 exact packed source originals, as `{raw_base64url,ref}` |
+| `current_statuses` | Up to 16 signed current authority-status original entries |
+
+Every original entry uses `{raw_base64url,ref}` with the full opaque reference.
+`copy-reserve` authenticates the destination, reserves actual capacity, verifies
+the signed offer, and creates the maintainer's durable original assignment. Its
+`capacity_reserved_and_assigned` result contains `allocation`, `offer`, and
+`assignment`; it has not uploaded or committed a replica.
+
+An upload request additionally contains those three exact entries plus separately
+signed `owner_disclosure` and `source_disclosure` entries for that assignment.
+The command rechecks their originals and current authority, verifies destination
+possession before disclosure, uploads the packed originals, commits, and verifies
+the returned manifest/custody chain. `replica_committed` exports both full entries.
+Neither result is a saved-message receipt or READ permission. The owner, source
+and maintainer must still supply separate return consents to configure recovery.
+Automatic destination selection and occupied/empty replica copies remain open.
+
+### Enable separately authorized replica reads
+
+On the existing replacement node, install the independently signed return
+permissions using its private node configuration:
+
+```sh
+python -B memory_vault_open_repair_admin.py configure-replica \
+  --node-config /absolute/private/replacement/node-config.json \
+  --request /absolute/private/replica-read-config.json \
+  --output /absolute/private/new-config-result.json
+```
+
+The private request has exactly `schema_version` (value
+`memory-vault-open-ack-replica-read-config/v1`), `resource_id`, `context`,
+`consents`, and `current_statuses`. The context contains independently held
+`expected_ack_slot`, `expected_owner`, `expected_source`, `source_storage_epoch`
+and `expected_maintainer`. `consents` contains `owner`, `source`, and `maintainer`
+return-consent original entries; `current_statuses` contains up to 16 signed
+status originals. Entries use `{raw_base64url,ref}`. The resource must already
+contain the committed replica and match every binding in the original grants.
+
+This local command starts no listener and preserves the node's keys and config.
+It verifies current READ authority before persisting the service configuration;
+a later invocation can install newly signed statuses without discarding remembered
+revocations. An existing output is refused before any state change. `configured`
+is local service readiness, not proof of an owner's successful recovery.
+
+## Unbound replica command (alpha.0.19 candidate)
+
+A new replacement node can explicitly accept finite remote copy reservations:
+
+```sh
+python -B memory_vault_open_setup.py --directory /absolute/private/new-replacement \
+  --base-url "$MV_NODE_ORIGIN" --enable-repair --repair-profile receipt-index \
+  --enable-remote-copy
+```
+
+Setup writes a new private configuration; start the node separately as above.
+`--enable-remote-copy` requires `--enable-repair` and is off by default. Its
+per-caller limits persist across restarts; capacity reservation still requires
+separate signed COPY/disclosure and READ/return permissions.
+
+`recover-replica` uses the existing owner's network configuration to recover an
+explicitly authorized replacement copy. This command is later than the immutable
+alpha.0.16 candidate. Its private request uses
+`memory-vault-open-ack-replica-unbound-recovery-request/v1` and the unbound fields
+above, with `target`/`node` naming replacement P. Add `source` (original R's
+independently held signing/encryption descriptors), `source_storage_epoch`, and
+`maintainer` (M's independently held descriptors). Root/read/bootstrap remain
+A's original grants. The response cannot supply these trusted expectations.
+A/R/M/P must be distinct as required by the replica READ profile.
+
+```sh
+python -B memory_vault_open_repair_admin.py recover-replica \
+  --network-config /absolute/private/open-agent/open-config.json \
+  --request /absolute/private/replica-recovery-request.json \
+  --output /absolute/private/new-replica-evidence.json \
+  --repair-profile receipt-index --timeout 60
+```
+
+The explicit profile is a client acceptance ceiling; it does not enlarge the
+source's signed grants. The command performs the real possession exchange,
+fetches originals, checks the complete original and replacement custody chains,
+and verifies current return authority. Its private new-only output includes
+`replica_custody`, both source/replacement bindings, full original references and
+status archives. `ack_replica_unbound_source_recovered` has
+`recipient_saved:false`: an unbound replacement is not a received message.
+Existing files are never overwritten, and the content Vault is not opened.
+
+For this command, authenticated status observations persist in the existing
+protected transport database, including observations from rejected recoveries.
+The journal is keyed by the owner's root, not the output filename or replacement
+URL. Subsequent commands reuse relevant A/R/M/P observations and verify them
+again. It preserves opaque full status references and caps history at 16 roots,
+32 originals and 256 KiB per root. Capacity exhaustion refuses further recovery;
+it does not discard remembered revocations. Continue retaining exported evidence
+and supply any additional independently held status originals in the request.
 
 ## Message-bound empty recovery
 

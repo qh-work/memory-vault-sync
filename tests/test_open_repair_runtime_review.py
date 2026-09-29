@@ -83,10 +83,12 @@ class RepairRuntimeHistoryTests(unittest.TestCase):
         self.assertTrue(case.host.fixture.observe(case.host.fixture.statuses(revision=9)).allowed)
         code,output,error=case.call()
         self.assertEqual((code,error),(0,""))
+        # Exact known originals avoid six child reads; the second request also
+        # reuses the two current status originals archived by the first recovery.
         first=json.loads(case.output.read_bytes())
         self.assertEqual(len(first["archive_statuses"]),18)
         self.assertEqual(len(first["known_statuses"]),2)
-        self.assertEqual(json.loads(output)["requests"],17)
+        self.assertEqual(json.loads(output)["requests"],11)
         usage_before=case.host.fixture.usage()
         case.request["known_statuses"]=first["known_statuses"]
         case.request["archive_statuses"]=first["archive_statuses"]
@@ -98,7 +100,7 @@ class RepairRuntimeHistoryTests(unittest.TestCase):
         self.assertEqual(len(second["archive_statuses"]),18)
         self.assertEqual(len(second["known_statuses"]),2)
         self.assertEqual(second["metrics"]["signature_checks"],40)
-        self.assertEqual(json.loads(output)["requests"],17)
+        self.assertEqual(json.loads(output)["requests"],9)
         self.assertGreater(case.host.fixture.usage()[1],usage_before[1])
         self.assertFalse(case.vault.exists())
 

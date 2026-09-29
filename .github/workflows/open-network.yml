@@ -52,7 +52,7 @@ jobs:
     name: Open protocol and real local HTTP regression
     if: github.event_name != 'pull_request' || github.event.action != 'labeled'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     concurrency:
       group: open-network-light-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
