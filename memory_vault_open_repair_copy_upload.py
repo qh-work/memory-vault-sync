@@ -29,6 +29,7 @@ class RepairCopyUpload:
         self.store.initialize()
         with self.state._transaction():
             for sql in (
+                'CREATE TABLE IF NOT EXISTS open_repair_copy_upload_routes(intent_digest TEXT PRIMARY KEY,resource_id TEXT NOT NULL UNIQUE)',
                 'CREATE TABLE IF NOT EXISTS open_repair_copy_upload_sessions(resource_id TEXT PRIMARY KEY,intent BLOB NOT NULL,challenge BLOB NOT NULL,nonce BLOB NOT NULL,answer BLOB,handle BLOB,closed BLOB,result BLOB,expires_at INTEGER NOT NULL)',
                 'CREATE TABLE IF NOT EXISTS open_repair_copy_upload_chunks(resource_id TEXT NOT NULL,child_index INTEGER NOT NULL,offset INTEGER NOT NULL,digest TEXT NOT NULL,raw BLOB NOT NULL,response BLOB NOT NULL,PRIMARY KEY(resource_id,child_index,offset))',
                 'CREATE TABLE IF NOT EXISTS open_repair_copy_upload_work(id TEXT PRIMARY KEY,resource_id TEXT NOT NULL,allowance INTEGER NOT NULL,actual INTEGER,wire_bytes INTEGER NOT NULL)'):
@@ -123,15 +124,29 @@ class RepairCopyUpload:
                 parents=self._parents(saved,budget)
                 if parents['intent']!=entry:wire._fail('repair_stage_replay_conflict')
                 stage.verify_stage_challenge(parents['challenge'],entry,**options)
-                with self.state._transaction():self._live(row,saved,budget);self._output(rid,caps,parents['challenge']['raw'],attempt)
+                with self.state._transaction():
+                    self._live(row,saved,budget)
+                    self._route(row,caps,entry)
+                    self._output(rid,caps,parents['challenge']['raw'],attempt)
                 return parents['challenge']
             challenge=stage.issue_stage_challenge(entry,signer=self.state.identity,expires_at=checked.payload['expires_at'],**options)
             values=(_dump(entry),_dump(challenge.original),challenge.nonce)
             with self.state._transaction():
-                self._live(row,None,budget);self._room(row,caps,sum(map(len,values))+ROW_CHARGE)
+                self._live(row,None,budget);self._room(row,caps,sum(map(len,values))+2*ROW_CHARGE)
                 self.db.execute('INSERT INTO open_repair_copy_upload_sessions VALUES(?,?,?,?,NULL,NULL,NULL,NULL,?)',(rid,*values,checked.payload['expires_at']))
+                self._route(row,caps,entry)
                 self._output(rid,caps,challenge.original.raw,attempt)
             return dict(raw=challenge.original.raw,ref=challenge.original.ref.as_dict())
+
+    def _route(self,row,caps,entry):
+        digest=wire.raw_ref(entry['ref']).raw_sha256
+        held=self.state._one('SELECT * FROM open_repair_copy_upload_routes WHERE intent_digest=? OR resource_id=?',
+            (digest,row['resource_id']))
+        if held is not None:
+            if held['intent_digest']!=digest or held['resource_id']!=row['resource_id']:wire._fail('repair_stage_replay_conflict')
+            return
+        self._room(row,caps,ROW_CHARGE)
+        self.db.execute('INSERT INTO open_repair_copy_upload_routes VALUES(?,?)',(digest,row['resource_id']))
 
     def answer(self,rid,entry):
         budget=wire.RepairBudget(self.state.policy)
@@ -258,3 +273,23 @@ class RepairCopyUpload:
             one('copy.owner_disclosure'),one('copy.source_disclosure'),expected_ack_slot=expected_ack_slot,
             expected_owner=expected_owner,expected_source=expected_source,source_storage_epoch=source_storage_epoch,
             expected_maintainer=expected_maintainer,current_statuses=roles['copy.current_status'],limit_policy=self.state.limits)
+
+
+def copy_upload_resource(db,payload):
+    """Bounded route selection only; the selected receiver authenticates the packet."""
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='open_repair_copy_resources'").fetchone():return None
+    kind=payload.get('kind')
+    if kind=='proof.stage_intent':
+        manifest=payload.get('manifest')
+        if not isinstance(manifest,dict) or manifest.get('consumer')!='ack_copy_unbound':return None
+        try:caller=payload['subject']['signing_key']['key_id'];allocation=payload['allocation_id']
+        except (KeyError,TypeError):wire._fail('repair_invalid_stage')
+        if type(caller) is not str or type(allocation) is not str:wire._fail('repair_invalid_stage')
+        rows=db.execute('SELECT resource_id FROM open_repair_copy_resources WHERE caller=? AND allocation_id=? LIMIT 2',(caller,allocation)).fetchall()
+        if len(rows)!=1:wire._fail('repair_copy_upload_missing')
+        return rows[0][0]
+    if kind not in ('proof.stage_answer','proof.stage_close','proof.stage_child'):return None
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='open_repair_copy_upload_routes'").fetchone():return None
+    reference=wire.raw_ref(payload.get('intent_ref'))
+    row=db.execute('SELECT resource_id FROM open_repair_copy_upload_routes WHERE intent_digest=?',(reference.raw_sha256,)).fetchone()
+    return row[0] if row else None

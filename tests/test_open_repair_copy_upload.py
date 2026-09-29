@@ -131,3 +131,110 @@ class CopyUploadTests(unittest.TestCase):
         self.restart();self.assertTrue(self.upload.answer(self.rid,answer)['raw'])
         self.assertEqual(self.state.db.execute('SELECT requests FROM open_repair_copy_work WHERE resource_id=?',(self.rid,)).fetchone()[0],3)
         self.assertEqual(self.state.db.execute('SELECT count(*) FROM open_repair_copy_upload_work WHERE actual IS NOT NULL').fetchone()[0],3)
+
+
+class CopyUploadHTTPTests(unittest.TestCase):
+    def setUp(self):
+        import threading,time
+        from pathlib import Path
+        from unittest.mock import patch
+        from memory_vault_open_control import issue_node
+        from memory_vault_open_node import OpenHTTPServer
+        from memory_vault_open_transport import OpenHTTPTransport
+        self.case=CopyUploadTests();self.case.setUp();self.addCleanup(self.case.doCleanups)
+        self.h=self.case.h;self.errors=[]
+        self.clock=patch('time.time',return_value=self.h.base.now);self.clock.start();self.addCleanup(self.clock.stop)
+        with patch('socket.getfqdn',return_value='localhost'):self.server=OpenHTTPServer(('127.0.0.1',0),None)
+        self.addCleanup(self.server.server_close)
+        state=self.case.state;self.base='http://127.0.0.1:'+str(self.server.server_port)
+        self.descriptor=issue_node(state.identity,base_url=self.base,storage_epoch=state.node['payload']['storage_epoch'],
+            roles=['directory','router'],revision=2,issued_at=self.h.base.now-1,expires_at=self.h.base.now+3599)
+        self.directory=Path(self.h.destination.temp.name)
+        for name in ('network.sqlite3','network.sqlite3-wal','network.sqlite3-shm'):
+            path=self.directory/name
+            if path.exists():path.chmod(0o600)
+        self.start();self.addCleanup(self.stop)
+        self.transport=OpenHTTPTransport(allow_loopback=True);self.addCleanup(self.transport.close)
+
+    def start(self):
+        import threading
+        from memory_vault_open_node import OpenParticipant
+        state=self.case.state
+        self.participant=OpenParticipant(state.identity,self.directory,seeds=[],descriptor=self.descriptor,
+            encryption_identity=state.encryption_identity,allow_loopback=True,
+            repair_policy=dict(enabled=True,limit_policy=self.h.f['expected']['limit_policy']))
+        for name in ('handle_repair','handle_blob'):
+            original=getattr(self.participant,name)
+            def observed(*args,method=original):
+                try:return method(*args)
+                except Exception as error:self.errors.append(getattr(error,'code',type(error).__name__));raise
+            setattr(self.participant,name,observed)
+        self.server.participant=self.participant
+        self.thread=threading.Thread(target=self.server.serve_forever,kwargs=dict(poll_interval=.02),daemon=True);self.thread.start()
+
+    def stop(self):
+        self.server.shutdown();self.server.server_close();self.thread.join(3);self.participant.close()
+
+    def restart(self):
+        from unittest.mock import patch
+        from memory_vault_open_node import OpenHTTPServer
+        address=self.server.server_address;self.stop()
+        with patch('socket.getfqdn',return_value='localhost'):self.server=OpenHTTPServer(address,None)
+        self.start()
+
+    def send(self,entry):
+        import time,hashlib
+        from memory_vault import MemoryError
+        try:raw=self.transport.request_repair(self.base,entry['raw'],deadline=time.monotonic()+15)
+        except MemoryError as error:raise AssertionError(self.errors) from error
+        digest=hashlib.sha256(raw).hexdigest()
+        return dict(raw=raw,ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw)))
+
+    def send_frame(self,raw):
+        import time
+        from memory_vault import MemoryError
+        from memory_vault_open_blob import decode_blob_frame,encode_blob_frame
+        frame=decode_blob_frame(raw)
+        try:reply=self.transport.request_blob(self.base,frame.header,frame.chunk,deadline=time.monotonic()+15)
+        except MemoryError as error:raise AssertionError(self.errors) from error
+        return encode_blob_frame(reply.header,reply.chunk)
+
+    def test_http_upload_restarts_and_keeps_commit_separate(self):
+        c=self.case;challenge=self.send(c.intent);self.restart()
+        answer=entry(stage.solve_stage_challenge(c.intent,challenge,signer=self.h.f['signers']['maintainer'],
+            encryption_identity=self.h.f['encryption']['maintainer'],expires_at=self.h.base.now+35,**c.options()))
+        c.handle=self.send(answer)
+        stage.verify_stage_handle(c.handle,c.intent,**c.options())
+        first=c.frame(0);response=self.send_frame(first);self.restart()
+        self.assertEqual(self.send(c.intent),challenge);self.assertEqual(self.send(answer),c.handle)
+        self.assertEqual(self.send_frame(first),response)
+        for i,row in enumerate(c.rows):
+            for offset in range(0,len(row['raw']),stage.STAGE_CHUNK_BYTES):
+                if i==0 and offset==0:continue
+                frame=c.frame(i,offset);returned=self.send_frame(frame)
+                stage.verify_stage_child_response_frame(returned,frame,c.intent,c.handle,**c.options())
+        close=entry(stage.make_stage_close(c.intent,c.handle,signer=self.h.f['signers']['maintainer'],
+            expires_at=self.h.base.now+25,**c.options()))
+        result=self.send(close);self.restart();self.assertEqual(self.send(close),result)
+        stage.verify_stage_result(result,close,c.intent,c.handle,**c.options())
+        with self.participant.state.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_commits').fetchone()[0],0)
+            upload=RepairCopyUpload(self.participant._repair_service(db).state);upload.initialize()
+            custody=upload.commit_closed(c.rid,**c.context)
+            self.assertEqual(json.loads(custody['raw'])['payload']['original_custody_ref'],self.h.f['custody']['ref'])
+        self.assertEqual(self.errors,[])
+
+    def test_http_rejects_unrelated_signer_without_charging_reserved_resource(self):
+        payload=json.loads(self.case.intent['raw'])['payload']
+        wrong=signed_entry(payload,self.h.f['signers']['owner'],'synthetic_http_wrong_uploader')
+        with self.assertRaises(AssertionError):self.send(wrong)
+        with self.participant.state.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_upload_work').fetchone()[0],0)
+            self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_upload_sessions').fetchone()[0],0)
+        self.assertTrue(self.errors)
+
+    def test_http_upload_respects_operator_repair_switch(self):
+        self.participant.repair_policy['enabled']=False
+        with self.assertRaisesRegex(AssertionError,'open_repair_closed'):self.send(self.case.intent)
+        with self.participant.state.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_upload_sessions').fetchone()[0],0)

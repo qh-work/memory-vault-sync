@@ -2709,8 +2709,17 @@ sessions and replay metadata consume the original metadata capacity. Existing
 shared capacity must remain present. No private staging database or extra resource
 reservation is created, and no live obligations are evicted to make room.
 
-This storage integration is not yet routed through the HTTP node or exposed by a
-remote-copy client. The sending caller must verify advance disclosure and target
-dual possession before transfer. HTTP orchestration, operator admission, current
-status refresh and later occupied/empty variants remain separate unfinished work.
+The node routes this explicit profile through its existing repair control and
+MVOB1 blob endpoints only when the operator enables repair and an exact local
+copy reservation already exists. Intent selection uses the reserved maintainer
+and allocation; later packets use the durably retained intent digest. The
+receiver still authenticates the complete packet and full parent references.
+Directory publication keeps its separate consumer and application state.
+
+Actual HTTP upload survives restart during challenge/answer and chunk transfer,
+returns exact saved responses, and closes before a separate local authorized
+commit. This does not expose remote allocation or remote commit authorization.
+A remote-copy client still needs to verify advance disclosure and target dual
+possession, persist outbound retries, and coordinate current status. Automated
+orchestration and later occupied/empty variants remain unfinished.
 The immutable alpha.0.15 candidate does not contain this later receiver.

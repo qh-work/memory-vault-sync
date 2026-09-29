@@ -353,6 +353,12 @@ class OpenParticipant:
         packet = dict(raw=parsed.raw, ref=dict(namespace="meta", key=digest, raw_sha256=digest, size=len(parsed.raw)))
         with self.state.db() as db:
             if kind in INDEX_KINDS:
+                from memory_vault_open_repair_copy_upload import RepairCopyUpload, copy_upload_resource
+                rid=copy_upload_resource(db,payload)
+                if rid is not None:
+                    service=RepairCopyUpload(self._repair_service(db).state);service.initialize()
+                    method={'proof.stage_intent':'intent','proof.stage_answer':'answer','proof.stage_close':'close'}[kind]
+                    return getattr(service,method)(rid,packet)['raw'],False
                 return self._repair_index_service(db).handle(kind, packet).raw, False
             service = self._repair_service(db, payload)
             if payload.get("consumer") in ("mailbox_root","mailbox_feed"):
@@ -768,7 +774,13 @@ class OpenParticipant:
                 raise MemoryError("open_repair_closed")
             from memory_vault_open_blob import decode_blob_frame, encode_blob_frame
             with self.state.db() as db:
-                raw = self._repair_index_service(db).handle_blob(encode_blob_frame(request, chunk))
+                from memory_vault_open_repair_copy_upload import RepairCopyUpload, copy_upload_resource
+                rid=copy_upload_resource(db,payload)
+                if rid is not None:
+                    service=RepairCopyUpload(self._repair_service(db).state);service.initialize()
+                    raw=service.child(rid,encode_blob_frame(request,chunk))
+                else:
+                    raw = self._repair_index_service(db).handle_blob(encode_blob_frame(request, chunk))
             frame = decode_blob_frame(raw)
             return frame.header, frame.chunk
         from memory_vault_open_blob import verify_blob_request, sign_blob_response
