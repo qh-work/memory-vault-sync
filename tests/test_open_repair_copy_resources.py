@@ -183,7 +183,7 @@ class RemoteCopyAllocationTests(unittest.TestCase):
         from memory_vault_open_transport import OpenHTTPTransport
         from memory_vault import MemoryError
         h=self.h;state=h.local.state
-        self.enterContext(patch('time.time',return_value=h.local.now[0]))
+        clock=patch('time.time',return_value=h.local.now[0]);clock.start();self.addCleanup(clock.stop)
         directory=Path(h.local.temp.name)
         for name in ('network.sqlite3','network.sqlite3-wal','network.sqlite3-shm'):
             path=directory/name
@@ -221,8 +221,8 @@ class RemoteCopyClientHTTPTests(unittest.TestCase):
         from memory_vault_open_node import OpenHTTPServer
         from memory_vault_open_transport import OpenHTTPTransport
         from tests.test_open_repair_copy_prepare import CopyPreparationTests
-        self.h=CopyPreparationTests();self.h.setUp();self.addCleanup(self.h.doCleanups)
-        self.enterContext(patch('time.time',return_value=self.h.now))
+        self.h=CopyPreparationTests();self.addCleanup(self.h.doCleanups);self.h.setUp()
+        clock=patch('time.time',return_value=self.h.now);clock.start();self.addCleanup(clock.stop)
         with patch('socket.getfqdn',return_value='localhost'):self.server=OpenHTTPServer(('127.0.0.1',0),None)
         self.directory=Path(self.h.destination.temp.name);state=self.h.destination.state
         for name in ('network.sqlite3','network.sqlite3-wal','network.sqlite3-shm'):
