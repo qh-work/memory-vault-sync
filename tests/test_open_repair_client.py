@@ -87,7 +87,7 @@ class RepairClientTests(unittest.TestCase):
         self.assertEqual(len(result.proof.manifest.value["children"]), 21)
         self.assertEqual(len(result.originals), 13)
         self.assertEqual(len(result.current_statuses), 2)
-        self.assertEqual(result.metrics["requests"], 15)
+        self.assertEqual(result.metrics["requests"], 11)
         self.assertEqual(result.metrics["signature_checks"], 22)
         for ref, raw in result.originals.items():
             self.assertEqual((len(raw),hashlib.sha256(raw).hexdigest()), (ref.size,ref.raw_sha256))
@@ -158,7 +158,7 @@ class RepairClientTests(unittest.TestCase):
         result = self.recover(known_statuses=known, archive_statuses=known)
         self.assertEqual(len(result.originals), 13)
         self.assertEqual(result.metrics["signature_checks"], 24)
-        self.assertEqual(result.metrics["requests"], 15)
+        self.assertEqual(result.metrics["requests"], 11)
 
     def test_archived_old_revision_fork_is_rejected_before_network(self):
         known = self.http.fixture.statuses(revision=3)[0]
@@ -213,7 +213,7 @@ class RepairClientTests(unittest.TestCase):
         before = self.authorities()
         self.assertCode("repair_status_rollback", self.recover,
                         known_statuses=self.http.fixture.statuses())
-        self.assertEqual(len(self.transport.calls), 15)
+        self.assertEqual(len(self.transport.calls), 11)
         self.assertEqual(self.authorities(), before)
 
     def test_known_target_scope_is_checked_against_recovered_actual_resource(self):
@@ -222,14 +222,14 @@ class RepairClientTests(unittest.TestCase):
         payload["entries"][0]["scope_id"] = "ac" * 32
         known = signed_entry(payload, self.f["signers"]["target"], "different_resource")
         self.assertCode("repair_status_disclosure", self.recover, known_statuses=[known])
-        self.assertEqual(len(self.transport.calls), 15)
+        self.assertEqual(len(self.transport.calls), 11)
 
     def test_retained_originals_cannot_equivocate_with_historical_source_status(self):
         payload = copy.deepcopy(self.f["docs"]["owner_status"]["payload"])
         payload["valid_until"] -= 1
         known = signed_entry(payload, self.f["signers"]["owner"], "historical_equivocation")
         self.assertCode("repair_status_conflict", self.recover, known_statuses=[known])
-        self.assertEqual(len(self.transport.calls), 15)
+        self.assertEqual(len(self.transport.calls), 11)
 
     def test_malformed_current_entries_are_protocol_errors_not_python_type_errors(self):
         result = self.recover()

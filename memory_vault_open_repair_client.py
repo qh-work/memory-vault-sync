@@ -149,6 +149,15 @@ class AckOwnerRecoveryClient:
             max_proof_items=grant["limits"]["max_proof_items"],max_proof_bytes=grant["limits"]["max_proof_bytes"],policy=self.policy,budget=budget,
             expected_source_state=source_state)
         proof_bytes = len(response)+len(held.handle.raw)+len(held.manifest.raw)
+        # Exact originals already supplied by the caller still undergo the
+        # full source/history verification below; fetching identical bytes
+        # again would needlessly consume the source's finite request grant.
+        available={item.ref:item.raw for item in setup.originals.values()}
+        for item in retained:
+            raw,ref=ack._entry(item)
+            if len(raw)==ref.size and budget._hash(raw)==ref.raw_sha256:
+                available[ref]=raw
+        available[ack._entry(target_node_entry)[1]]=node.document.raw
         originals,roles = {},{}
         for item in held.manifest.value["children"]:
             reference = wire.raw_ref(item["ref"])
@@ -157,19 +166,23 @@ class AckOwnerRecoveryClient:
                 continue
             if reference.size>self.policy.max_document_bytes or proof_bytes+reference.size>grant["limits"]["max_proof_bytes"]:
                 _fail("repair_over_budget")
-            chunks,offset = [],0
-            while offset<reference.size:
-                count = min(proof.MAX_CHILD_BYTES,reference.size-offset)
-                child = proof.make_bootstrap_child_request(self.identity,held,subject=self.subject,target=expected["target"],
-                    at=self._now(),expires_at=held.handle.payload["expires_at"],child_index=item["index"],offset=offset,
-                    requested_bytes=count,policy=self.policy,budget=budget)
-                received = request(child.raw,child=True)
-                if len(received)!=count:
-                    _fail("repair_ref_mismatch")
-                budget._bytes("input_bytes",len(received))
-                chunks.append(received);offset+=count
-            budget._bytes("output_bytes",reference.size)
-            assembled = b"".join(chunks)
+            if reference in available:
+                assembled=available[reference]
+                budget._bytes('input_bytes',len(assembled))
+            else:
+                chunks,offset = [],0
+                while offset<reference.size:
+                    count = min(proof.MAX_CHILD_BYTES,reference.size-offset)
+                    child = proof.make_bootstrap_child_request(self.identity,held,subject=self.subject,target=expected["target"],
+                        at=self._now(),expires_at=held.handle.payload["expires_at"],child_index=item["index"],offset=offset,
+                        requested_bytes=count,policy=self.policy,budget=budget)
+                    received = request(child.raw,child=True)
+                    if len(received)!=count:
+                        _fail("repair_ref_mismatch")
+                    budget._bytes("input_bytes",len(received))
+                    chunks.append(received);offset+=count
+                budget._bytes("output_bytes",reference.size)
+                assembled = b"".join(chunks)
             if budget._hash(assembled)!=reference.raw_sha256:
                 _fail("repair_ref_mismatch")
             proof_bytes+=len(assembled)

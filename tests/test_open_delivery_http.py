@@ -150,7 +150,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         import memory_vault_open_repair_wire as wire
         from memory_vault_open_provider import issue_status
         from tests.test_open_repair_status import status_entry
-        if self._testMethodName in ('test_ack_configuration_survives_mailbox_custody','test_ack_configuration_admitted_over_http'):
+        if self._testMethodName in ('test_ack_configuration_survives_mailbox_custody','test_ack_configuration_admitted_over_http','test_cold_mailbox_returns_independent_receipt'):
             from dataclasses import replace
             DEFAULT_POLICY=replace(DEFAULT_POLICY,max_signature_checks=128)
         limits=dict(DEFAULT_LIMITS,max_proof_bytes=524288)
@@ -162,7 +162,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             self.call(self.a,op='connect',invitation=dict(schema_version=CONNECT_SCHEMA,action='result',request_id='req_delivery_contact'))
         else:self.decide(reference,'approved')
         selected={}
-        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):
             TrustStore(ClientConfig.load(self.b.client_config).trust_path).add(self.ai.public_descriptor())
             shared_memory=self.call(self.a,op='remember',request_id='req_mailbox_memory',kind='observation',
                 text='Synthetic mailbox memory: consult current evidence before reuse.')
@@ -443,7 +443,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         grant=json.loads(slot_entries['bootstrap']['raw'])['payload']
         # Requests use the live authenticated handle deadline. Fixture setup
         # and cold import can already consume 45 seconds on a cloud runner.
-        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):
             from dataclasses import replace
             from memory_vault_open_repair_client import MailboxFeedRecoveryClient,MailboxSetupJournal
             from tests.open_repair_ack_fixtures import signed_entry
@@ -626,7 +626,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         db.execute('INSERT INTO open_mailbox_admission_objects VALUES(?,?,?,?)',(missing,ref['raw_sha256'],ref['size'],value['raw']))
         db.commit()
         revoked=status_entry(issue_status(self.bi,root=root,revision=3,entries=[dict(value,status='revoked') for value in scoped],issued_at=now,valid_until=now+100))
-        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):
             observed.clear()
             with patch.object(client.transport,'request_repair',side_effect=AssertionError('unexpected network after retained revocation')):
                 with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
@@ -675,7 +675,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             verify_mailbox_member_inputs(changed,expected_slot=slot,expected_owner=owner,expected_sender=member_args['expected_sender'],
                 expected_target=source.target,target_storage_epoch=slot['writer_storage_epoch'],accepted_at=recovered['core']['accepted_at'],
                 limit_policy=limits,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
-        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):
             from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
             metadata_id=db.execute('SELECT metadata_id FROM open_mailbox_message_staging').fetchone()[0]
             MailboxStatusLedger(resources).observe(metadata_id,revoked,expected_signing_key=owner['signing_key'],
@@ -691,7 +691,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             child_index=child_request.payload['child_index'],offset=0,requested_bytes=feed_custody['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
         with self.assertRaisesRegex(AssertionError,'repair_authority_revoked'):
             service.child(dict(raw=denied_request.raw,ref=denied_request.ref.as_dict()))
-        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):
             with self.assertRaisesRegex(AssertionError,'repair_authority_revoked'):
                 service.child(body_packet)
             status_count=recipient_db.execute('SELECT count(*) FROM open_mailbox_setup_statuses').fetchone()[0]
@@ -841,15 +841,18 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             if request['op']=='send' and agent is self.a and not hasattr(self,'ack_configuration'):
                 from memory_vault_open_client import ACK_CONNECT_SCHEMA
                 prepared=old_call(self.a,op='connect',invitation=dict(schema_version=ACK_CONNECT_SCHEMA,action='prepare',
-                    request_id=request['request_id'],recipient=self.bi.key_id,text=request['text'],memory_ids=[],
+                    request_id=request['request_id'],recipient=self.bi.key_id,text=request['text'],memory_ids=request.get('memory_ids',[]),
                     source_url=ack_host.nodes[0]['payload']['base_url'],source_key_id=ack_host.identities[0].key_id,
                     repair_profile='receipt',lifetime=3600))
                 with self.a._network() as network:
                     self.ack_configuration=network._mailbox_ack_configuration(request['request_id'],prepared['message_id'])
                 self.assertEqual(set(self.ack_configuration),ACK_CONFIGURATION_ROLES)
+                self.ack_preparation_request_id=request['request_id']
             return old_call(agent,**request)
         self.call=call
         self.test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources()
+        if getattr(self,'ack_cold_return',False):
+            self._return_cold_ack(ack_host)
         from memory_vault_open_repair_mailbox_activation import verify_mailbox_ack_configuration
         from memory_vault_open_repair_state import DEFAULT_POLICY
         from memory_vault_open_repair_wire import RepairBudget,RepairWireError
@@ -867,6 +870,71 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         wrong_status['historical.status.ack_root']=wrong_status['historical.status.ack_write']
         with self.assertRaisesRegex(RepairWireError,'repair_status_missing'):
             verify_mailbox_ack_configuration(wrong_status,**arguments,budget=RepairBudget(DEFAULT_POLICY))
+
+    def test_cold_mailbox_returns_independent_receipt(self):
+        self.ack_cold_return=True
+        self.test_ack_configuration_survives_mailbox_custody()
+
+    def _return_cold_ack(self, ack_host):
+        import base64
+        from unittest.mock import patch
+        from memory_vault_open_client import ACK_CONNECT_SCHEMA
+        from memory_vault_open_delivery_client import OpenDeliveryClient
+        write=json.loads(self.ack_configuration['ack.write_grant']['raw'])['payload']
+        invitation=dict(schema_version=ACK_CONNECT_SCHEMA,action='return_mailbox_receipt',message_id=write['message_id'],
+            source_url=ack_host.nodes[0]['payload']['base_url'],source_key_id=ack_host.identities[0].key_id,repair_profile='receipt')
+        from memory_vault import MemoryError
+        from memory_vault_open_transport import OpenHTTPTransport
+        original_request=OpenHTTPTransport.request_repair
+        dropped=[]
+        def lose_reply(transport,*args,**kwargs):
+            reply=original_request(transport,*args,**kwargs)
+            try:kind=json.loads(reply).get('kind')
+            except (ValueError,UnicodeDecodeError):kind=None
+            if kind=='ack.put_response' and not dropped:
+                dropped.append(True)
+                raise MemoryError('synthetic_lost_ack_reply')
+            return reply
+        with patch.object(OpenHTTPTransport,'request_repair',new=lose_reply):
+            failed=self.b.handle(dict(op='connect',invitation=invitation))
+        self.assertEqual(dropped,[True]);self.assertFalse(failed['ok'])
+        self.assertEqual(failed['error']['code'],'synthetic_lost_ack_reply')
+        # A new client resumes the frozen put journal after R already committed.
+        with patch.object(OpenDeliveryClient,'call',side_effect=AssertionError('original delivery endpoint used')):
+            returned=self.call(self.b,op='connect',invitation=invitation)
+        self.assertEqual(returned['state'],'retained_at_ack_source')
+        self.assertTrue(returned['network_accessed'])
+        with self.b._network() as network:
+            with patch.object(network.participant.transport,'request_repair',side_effect=AssertionError('repeated ACK network call')):
+                again=network._ack_connect(invitation)
+        self.assertTrue(again['from_local_history']);self.assertFalse(again['network_accessed'])
+        self.assertEqual(again['receipt_ref'],returned['receipt_ref'])
+        # A changed destination never reuses the saved authorization request.
+        with self.b._network() as network:
+            with self.assertRaisesRegex(Exception,'open_ack_mailbox_return_conflict'):
+                network._ack_connect(dict(invitation,source_url='http://127.0.0.1:1'))
+            with network.participant.state.db() as db:
+                saved=db.execute('SELECT request FROM open_mailbox_ack_returns WHERE message_id=?',(write['message_id'],)).fetchone()[0]
+                db.execute('UPDATE open_mailbox_ack_returns SET request=? WHERE message_id=?',(b'{}',write['message_id']))
+            with self.assertRaisesRegex(Exception,'open_ack_mailbox_return_corrupt'):
+                network._ack_connect(invitation)
+            with network.participant.state.db() as db:
+                db.execute('UPDATE open_mailbox_ack_returns SET request=? WHERE message_id=?',(saved,write['message_id']))
+        chunks=[];cursor=None
+        while True:
+            query=dict(schema_version=ACK_CONNECT_SCHEMA,action='export_preparation',request_id=self.ack_preparation_request_id,part='owner_invitation')
+            if cursor is not None:query['cursor']=cursor
+            page=self.call(self.a,op='connect',invitation=query)
+            chunks.append(base64.b64decode(page['bundle_chunk']));cursor=page['next_cursor']
+            if cursor is None:break
+        owner_invitation=json.loads(b''.join(chunks))
+        with patch.object(OpenDeliveryClient,'call',side_effect=AssertionError('original delivery endpoint used')):
+            recovered=self.call(self.a,op='connect',invitation=owner_invitation)
+        self.assertEqual(recovered['message_id'],write['message_id'])
+        with self.a._network() as network:
+            with network.participant.state.db() as db:
+                row=db.execute('SELECT acknowledgement FROM open_delivery_outbox WHERE message_id=?',(write['message_id'],)).fetchone()
+                self.assertIsNotNone(row['acknowledgement'])
 
     def test_ack_configuration_admitted_over_http(self):
         self.ack_remote_admission=True

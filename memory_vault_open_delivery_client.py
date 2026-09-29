@@ -593,6 +593,7 @@ class OpenDeliveryClient:
             (('request', 'contact.request'), ('policy', 'contact.policy'))}
         if canonical_bytes(session['authority']) != canonical_bytes(expected):
             raise MemoryError('network_inbox_identity_conflict')
+        return verified
 
     def _stage_inbox(self, *, message_id, sender_key_id, envelope, body, session):
         raw = canonical_bytes(document(envelope, maximum=MAX_ENVELOPE_BYTES))

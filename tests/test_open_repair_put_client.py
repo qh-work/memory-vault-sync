@@ -35,7 +35,7 @@ class RepairPutClientTests(unittest.TestCase):
         result = self.client().put(self.host.http.base,receipt,disclosure,put,**options,**self.case.args)
         self.assertEqual(result.source.inputs["receipt"].raw,receipt["raw"])
         self.assertEqual(result.source.inputs["receipt"].ref.as_dict(),receipt["ref"])
-        self.assertEqual(result.metrics["requests"],15)
+        self.assertEqual(result.metrics["requests"],13)
         self.assertEqual(result.metrics["signature_checks"],66)
         self.assertEqual(self.host.source.db.execute("SELECT status FROM open_repair_ack_resources").fetchone()[0],"occupied")
 
@@ -46,7 +46,7 @@ class RepairPutClientTests(unittest.TestCase):
             self.client().put(self.host.http.base,receipt,disclosure,put,**options,**self.case.args)
         self.assertEqual(caught.exception.code,"repair_disclosure_permission")
         self.assertEqual(self.host.source.db.execute("SELECT status FROM open_repair_ack_resources").fetchone()[0],"empty")
-        self.assertEqual(self.host.source.db.execute("SELECT requests FROM open_repair_bootstrap_usage").fetchone()[0],14)
+        self.assertEqual(self.host.source.db.execute("SELECT requests FROM open_repair_bootstrap_usage").fetchone()[0],12)
 
     def test_insufficient_remaining_client_budget_refuses_before_receipt_upload(self):
         receipt,disclosure,put,options = self.inputs
@@ -54,4 +54,41 @@ class RepairPutClientTests(unittest.TestCase):
             self.client(signatures=64).put(self.host.http.base,receipt,disclosure,put,**options,**self.case.args)
         self.assertEqual(caught.exception.code,"repair_over_budget")
         self.assertEqual(self.host.source.db.execute("SELECT status FROM open_repair_ack_resources").fetchone()[0],"empty")
-        self.assertEqual(self.host.source.db.execute("SELECT requests FROM open_repair_bootstrap_usage").fetchone()[0],14)
+        self.assertEqual(self.host.source.db.execute("SELECT requests FROM open_repair_bootstrap_usage").fetchone()[0],12)
+
+
+    def test_prepared_return_uses_one_preflight_and_same_work_meter(self):
+        receipt,disclosure,put,options=self.inputs
+        client=self.client()
+        prepared=client.prepare_return(self.host.http.base,**self.case.args)
+        with patch.object(client,'preflight',side_effect=AssertionError('duplicate preflight')):
+            result=client.put(self.host.http.base,receipt,disclosure,put,**options,**self.case.args)
+        self.assertEqual(result.source.inputs['receipt'].raw,receipt['raw'])
+        self.assertEqual(result.metrics['signature_checks'],66)
+        self.assertEqual(result.metrics['requests'],13)
+        self.assertIsNone(client._prepared_return)
+
+    def test_prepared_return_rejects_changed_target_before_upload(self):
+        receipt,disclosure,put,options=self.inputs
+        client=self.client();client.prepare_return(self.host.http.base,**self.case.args)
+        before=self.host.source.db.execute('SELECT requests FROM open_repair_bootstrap_usage').fetchone()[0]
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_proof_mismatch'):
+            client.put('http://127.0.0.1:1',receipt,disclosure,put,**options,**self.case.args)
+        self.assertIsNone(client._prepared_return)
+        self.assertEqual(self.host.source.db.execute('SELECT requests FROM open_repair_bootstrap_usage').fetchone()[0],before)
+
+    def test_prepared_return_keeps_deadline_and_signature_limit(self):
+        receipt,disclosure,put,options=self.inputs
+        client=self.client(signatures=64);client.prepare_return(self.host.http.base,**self.case.args)
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_over_budget'):
+            client.put(self.host.http.base,receipt,disclosure,put,**options,**self.case.args)
+        self.assertEqual(self.host.source.db.execute('SELECT status FROM open_repair_ack_resources').fetchone()[0],'empty')
+
+    def test_prepared_return_cannot_extend_elapsed_deadline(self):
+        receipt,disclosure,put,options=self.inputs
+        client=self.client();client.prepare_return(self.host.http.base,**self.case.args)
+        started=client._prepared_return[4]
+        with patch('memory_vault_open_repair_put_client.time.monotonic',return_value=started+31):
+            with self.assertRaisesRegex(wire.RepairWireError,'repair_access_expired'):
+                client.put(self.host.http.base,receipt,disclosure,put,**options,**self.case.args)
+        self.assertEqual(self.host.source.db.execute('SELECT status FROM open_repair_ack_resources').fetchone()[0],'empty')

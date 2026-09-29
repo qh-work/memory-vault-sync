@@ -310,9 +310,8 @@ optional configuration only as a complete six-role set.
 
 An existing combined-status preparation cannot be projected into this format;
 use a separately prepared new send. Retention and feed recovery do not establish
-ACK service availability or recipient acknowledgement. Automatic publication
-from a cold mailbox receipt is still pending; existing explicit receipt return
-and recovery remain available through their independent invitations.
+ACK service availability or recipient acknowledgement. Receipt return remains
+an explicit recipient operation; it is never implied by mailbox retention.
 
 New split-status setups require a source running this development extension;
 the published alpha.0.13 source does not accept the extra setup field. Previously
@@ -325,3 +324,40 @@ limits expansion to the declared original size, at most 131,072 bytes, rejects
 trailing or incomplete streams, and checks the original byte hash before staging.
 The original signed documents remain unchanged. Ordinary drafts keep the legacy
 encoding; saved admission requests replay their exact original bytes.
+
+## Development: return a receipt after cold mailbox delivery
+
+After the ordinary `receive` operation saves a message or selected memories from
+its configured mailbox, B can call `connect` with this invitation:
+
+```json
+{
+  "schema_version": "memory-vault-open-ack-connect/v1",
+  "action": "return_mailbox_receipt",
+  "message_id": "msg_REPLACE_WITH_RECEIVED_MESSAGE_ID",
+  "source_url": "https://source.example",
+  "source_key_id": "ed25519_REPLACE_WITH_SOURCE_KEY_ID",
+  "repair_profile": "receipt"
+}
+```
+
+B authenticates the complete retained inbox evidence and selects the exact
+sender-authorized receipt configuration for that message. It proves the selected
+source's keys and current empty ACK history independently before preparing its
+receipt return. No separate recipient invitation from A is needed. An absent
+configuration, unsaved inbox, changed source or damaged journal fails closed.
+The source must remain reachable and the original authorization must remain valid.
+
+The protected local journal freezes the verified request before publishing the
+actual saved receipt, with at most 16 returns and no silent eviction. Identical
+retries use the original request; completed retries report local history without
+claiming a fresh source check. A still retrieves the original receipt through its
+own independent owner recovery operation. This development action requires the
+updated client and the separately prepared ACK configuration described above.
+
+The receipt client reuses its just-verified preflight only once, with the same
+work meter, target, message, original authorities and deadline. Supplied originals
+whose complete raw references match the signed proof manifest are reused locally;
+the complete history, signatures and current status checks still run. This avoids
+spending a finite source grant on duplicate downloads. A saved put journal can
+recover a lost successful reply without preparing a different receipt.

@@ -1,4 +1,25 @@
-# Memory Vault v0.28.0-alpha.0.13 — Agent mailbox retention and independent receipts
+# Memory Vault v0.28.0-alpha.0.14 — cold mailbox receipt return
+
+A sender can retain its separately prepared ACK authority with a mailbox message
+using `ack_request_id`. Complete signed configuration survives mailbox admission,
+restart and cold feed recovery. B can then call `return_mailbox_receipt` with the
+saved message and an independently selected source origin/key; no separately
+transferred recipient invitation is required. The actual saved receipt is returned
+to the ACK source, and A recovers it through its own original read permission.
+
+The receiver keeps its exact request and put journal so a lost successful reply
+resumes after restart. Fresh preflight is reused once with the original work meter
+and deadline; exact supplied originals avoid duplicate downloads while all source,
+history and current-status verification remains active. Finite source permissions
+and network request limits are unchanged. ACK-bearing mailbox drafts use bounded
+compression under the existing request limit and retain unchanged original bytes.
+
+This extension requires updated clients and sources for separately signed root
+status and compressed mailbox admission. Older journaled combined-status setups
+retain exact retries; their signed status cannot be projected into the new mailbox
+configuration. Automatic replacement-node repair and full native TypeScript
+mailbox-client parity remain unfinished.
+
 
 The sender can submit `connect` with mailbox action `retain` and the receiver's
 exported authorization. This prepares and admits the exact existing ciphertext
@@ -42,8 +63,8 @@ independently authorized ACK source and recovers receipts into the sender's
 actual outbox. Mailbox storage success does not claim recipient acknowledgement.
 Mailbox READ permission does not grant receipt publication or recovery.
 
-See the [mailbox and contact guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.13/docs/OPEN_NETWORK_CONTACT.md)
-and [independent receipt guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.13/docs/OPEN_ACK_PROVISIONING.md).
+See the [mailbox and contact guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.14/docs/OPEN_NETWORK_CONTACT.md)
+and [independent receipt guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.14/docs/OPEN_ACK_PROVISIONING.md).
 Use the client archive with the published checksums and source-bound validation
 record. This candidate is not a claim of a completed public release until that
 record and downloadable assets are available.

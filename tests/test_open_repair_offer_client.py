@@ -41,7 +41,7 @@ class RepairOfferClientTests(unittest.TestCase):
         self.assertEqual(result.source.authorities.originals["write"].ref.as_dict(),self.host.write["ref"])
         self.assertEqual(result.source.authorities.originals["bootstrap"].ref.as_dict(),self.host.offer["ref"])
         self.assertEqual(len(result.originals),12)
-        self.assertEqual(result.metrics["requests"],14)
+        self.assertEqual(result.metrics["requests"],12)
         self.assertEqual(result.metrics["signature_checks"],30)
 
     def test_known_writer_revocation_refuses_before_any_probe(self):
@@ -60,5 +60,5 @@ class RepairOfferClientTests(unittest.TestCase):
         with self.host.source.state._transaction():
             self.assertTrue(gate.check_locked(prepared).allowed)
         result = self.client.preflight(self.host.http.base,known_statuses=[revoked],**self.args)
-        self.assertEqual(result.metrics["requests"],15)  # The newer current T is an additional exact original.
+        self.assertEqual(result.metrics["requests"],12)  # The known current original is reused by exact raw reference.
         self.assertEqual(result.source.authorities.originals["write"].ref.as_dict(),self.host.write["ref"])

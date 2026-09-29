@@ -1,4 +1,4 @@
-# Memory Vault v0.28.0-alpha.0.13 independent review kit
+# Memory Vault v0.28.0-alpha.0.14 independent review kit
 
 This alpha.0.10 candidate adds independent remote source preparation using
 only the sender's configuration and a selected public origin/key, plus durable

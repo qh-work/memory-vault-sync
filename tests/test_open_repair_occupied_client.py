@@ -83,7 +83,7 @@ class OccupiedClientTests(unittest.TestCase):
         children=result.proof.manifest.value["children"]
         self.assertEqual(len(children),25)
         self.assertEqual(len([row for row in children if row["role"]=="history.raw_pack"]),3)
-        self.assertEqual(result.metrics["requests"],len(result.originals)+2)
+        self.assertEqual(result.metrics["requests"],len(result.originals)-1)  # Three supplied raw references match this source manifest.
         self.assertLessEqual(result.metrics["signature_checks"],self.client.policy.max_signature_checks)
 
     def test_legacy_two_role_consent_is_not_silently_upgraded_by_server_or_client(self):
