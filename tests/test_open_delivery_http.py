@@ -438,13 +438,30 @@ class MailboxStagingHTTPTests(unittest.TestCase):
                 digest=hashlib.sha256(raw).hexdigest()
                 return dict(raw=raw,ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw)))
             def answer(self,packet):
+                before=len(server_errors)
                 try:return transport.request_repair(base,packet['raw'],deadline=time.monotonic()+15)
-                except Exception as error:raise AssertionError('synthetic feed server errors: '+repr(server_errors)) from error
+                except Exception as error:raise AssertionError('synthetic feed server errors: '+repr(server_errors[before:])) from error
             def child(self,packet):
+                before=len(server_errors)
                 try:return transport.request_repair(base,packet['raw'],child=True,deadline=time.monotonic()+15)
-                except Exception as error:raise AssertionError('synthetic feed server errors: '+repr(server_errors)) from error
+                except Exception as error:raise AssertionError('synthetic feed server errors: '+repr(server_errors[before:])) from error
         service=RemoteFeed()
         grant=json.loads(slot_entries['bootstrap']['raw'])['payload']
+        def fresh_feed_proof():
+            expected=dict(expected_subject=owner,expected_target=source.target,target_storage_epoch=slot['writer_storage_epoch'],
+                bootstrap_grant_sha256=slot_entries['bootstrap']['ref']['raw_sha256'],selector=grant['selector'],at=int(time.time()),consumer='mailbox_feed')
+            pending=probe.make_bootstrap_probe(self.bi,expires_at=expected['at']+55,**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            packet=dict(raw=pending.original.raw,ref=pending.original.ref.as_dict())
+            challenge=service.challenge(packet)
+            expected['at']=int(time.time())
+            answer=probe.solve_bootstrap_challenge(packet,challenge,signer=self.bi,encryption_identity=owner_encryption,
+                target_nonce=pending.nonce,expires_at=min(expected['at']+50,json.loads(challenge['raw'])['payload']['expires_at']),**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            response=service.answer(dict(raw=answer.raw,ref=answer.ref.as_dict()))
+            checked=proof.verify_bootstrap_proof_response(response,expected_subject=owner,expected_target=source.target,
+                target_storage_epoch=slot['writer_storage_epoch'],selector=grant['selector'],bootstrap_grant_ref=slot_entries['bootstrap']['ref'],
+                probe_ref=packet['ref'],challenge_ref=challenge['ref'],answer_ref=answer.ref.as_dict(),at=int(time.time()),
+                max_proof_items=64,max_proof_bytes=524288,consumer='mailbox_feed',expected_source_state='feed',policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            return checked,response
         # Requests use the live authenticated handle deadline. Fixture setup
         # and cold import can already consume 45 seconds on a cloud runner.
         if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):
@@ -555,19 +572,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             child_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=checked.handle.payload['expires_at'],
                 child_index=child['index'],offset=0,requested_bytes=child['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
         else:
-            expected=dict(expected_subject=owner,expected_target=source.target,target_storage_epoch=slot['writer_storage_epoch'],
-                bootstrap_grant_sha256=slot_entries['bootstrap']['ref']['raw_sha256'],selector=grant['selector'],at=int(time.time()),consumer='mailbox_feed')
-            pending=probe.make_bootstrap_probe(self.bi,expires_at=expected['at']+55,**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
-            packet=dict(raw=pending.original.raw,ref=pending.original.ref.as_dict())
-            challenge=service.challenge(packet)
-            expected['at']=int(time.time())
-            answer=probe.solve_bootstrap_challenge(packet,challenge,signer=self.bi,encryption_identity=owner_encryption,
-                target_nonce=pending.nonce,expires_at=min(expected['at']+50,json.loads(challenge['raw'])['payload']['expires_at']),**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
-            response=service.answer(dict(raw=answer.raw,ref=answer.ref.as_dict()))
-            checked=proof.verify_bootstrap_proof_response(response,expected_subject=owner,expected_target=source.target,
-                target_storage_epoch=slot['writer_storage_epoch'],selector=grant['selector'],bootstrap_grant_ref=slot_entries['bootstrap']['ref'],
-                probe_ref=packet['ref'],challenge_ref=challenge['ref'],answer_ref=answer.ref.as_dict(),at=int(time.time()),
-                max_proof_items=64,max_proof_bytes=524288,consumer='mailbox_feed',expected_source_state='feed',policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            checked,response=fresh_feed_proof()
             child=next(v for v in checked.manifest.value['children'] if v['role']=='feed.custody')
             child_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=checked.handle.payload['expires_at'],
                 child_index=child['index'],offset=0,requested_bytes=child['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
@@ -679,6 +684,14 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             verify_mailbox_member_inputs(changed,expected_slot=slot,expected_owner=owner,expected_sender=member_args['expected_sender'],
                 expected_target=source.target,target_storage_epoch=slot['writer_storage_epoch'],accepted_at=recovered['core']['accepted_at'],
                 limit_policy=limits,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+        # The preceding independent integrity checks can outlive a short handle.
+        # Obtain a new, charged possession proof before revocation, rather than
+        # attempting to sign a child request against an expired old handle.
+        denial_proof,_=fresh_feed_proof()
+        denial_child=next(v for v in denial_proof.manifest.value['children'] if v['role']=='feed.custody')
+        denied_request=proof.make_bootstrap_child_request(self.bi,denial_proof,subject=owner,target=source.target,
+            at=int(time.time()),expires_at=denial_proof.handle.payload['expires_at'],
+            child_index=denial_child['index'],offset=0,requested_bytes=feed_custody['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
         if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):
             from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
             metadata_id=db.execute('SELECT metadata_id FROM open_mailbox_message_staging').fetchone()[0]
@@ -691,8 +704,6 @@ class MailboxStagingHTTPTests(unittest.TestCase):
                 staging.stage_delivered(raw,revoked)
             with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
                 staging.stage_delivered(raw,owner_status)
-        denied_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=checked.handle.payload['expires_at'],
-            child_index=child_request.payload['child_index'],offset=0,requested_bytes=feed_custody['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
         with self.assertRaisesRegex(AssertionError,'repair_authority_revoked'):
             service.child(dict(raw=denied_request.raw,ref=denied_request.ref.as_dict()))
         if self._testMethodName=='test_remote_feed_client_recovers_complete_index' or getattr(self,'ack_cold_return',False):

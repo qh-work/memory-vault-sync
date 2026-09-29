@@ -1,6 +1,6 @@
 # Memory Vault development status
 
-The current build target is **alpha.0.17 (candidate, not yet published)**.
+The current build target is **alpha.0.18 (candidate, not yet published)**.
 
 This candidate adds explicit `copy-reserve`, `copy-upload`, `configure-replica`,
 and `recover-replica` commands. They use existing local identities and protected
@@ -11,6 +11,17 @@ remote copy reservations. No command opens the private content Vault. The replic
 recovery example explicitly selects the existing 60-second client ceiling for
 slower supported Python runtimes; signed deadlines and resource budgets remain
 unchanged. These additions are later than the immutable alpha.0.16 candidate.
+
+The alpha.0.16 full run was incomplete: one long mailbox fixture attempted to
+sign a child request after its short handle expired, and the growing suite later
+hit its 40-minute CI wall limit. Alpha.0.17 retained those same test/CI inputs and
+its full run was cancelled after that diagnosis; both remain unpublished. The
+fixture now performs a fresh, charged possession exchange before its independent
+revocation check and reports only the current request's server errors. CI allows
+55 minutes inside a 60-minute job; protocol deadlines and grants are unchanged.
+Alpha.0.17 did pass 14 extracted-runtime workflows and supported Python 3.10.
+Those results do not relabel either older candidate as a full-suite pass. This
+alpha.0.18 candidate requires separate exact-source acceptance.
 
 The immutable **alpha.0.15 candidate remains unpublished**. Its full cloud run
 [36536522221](https://github.com/qh-work/memory-vault-sync/actions/runs/36536522221)
@@ -63,7 +74,7 @@ binding, recipient-authorized upload, three-generation source verification,
 independent signed-receipt reads and a private recovery command. The release
 manifest and uploaded assets establish publication separately.
 
-Current source target: **0.28.0-alpha.0.17**, an open encrypted-delivery preview.
+Current source target: **0.28.0-alpha.0.18**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use

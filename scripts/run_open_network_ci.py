@@ -458,9 +458,9 @@ def main():
     if args.phase=="finalize":return 0 if finalize(reports) else 1
     def interrupted(signum,frame):raise KeyboardInterrupt
     for signum in (signal.SIGINT,signal.SIGTERM,signal.SIGALRM):signal.signal(signum,interrupted)
-    # The expanded real-HTTP suite needs more than its former 26-minute cap.
+    # The expanded real-HTTP suite exceeded its former 40-minute CI wall cap.
     # Keep a finite limit and leave time for finalization and bounded reports.
-    signal.alarm((40 if args.mode == "light" else 26)*60)
+    signal.alarm((55 if args.mode == "light" else 26)*60)
     reports.status("running")
     try:
         record_runtime(reports,args.mode,args.seed)

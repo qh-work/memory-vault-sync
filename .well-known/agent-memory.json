@@ -1,7 +1,7 @@
 {
   "schema_version": "memory-vault-discovery/v1",
   "name": "Memory Vault",
-  "implementation_version": "0.28.0-alpha.0.17",
+  "implementation_version": "0.28.0-alpha.0.18",
   "implementation_status": "alpha_preview",
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
@@ -46,7 +46,7 @@
   "automatic_sync_default": false,
   "readme_is_installation": false,
   "runtime_tests_run_for_release": true,
-  "runtime_test_scope": "Four synthetic real-HTTP workflows passed using extracted alpha.0.14 runtime and child nodes: mailbox provision/register; ACK-bearing interrupted admission and cold proof recovery; cold selected-memory import with receipt return, lost-reply restart and owner recovery; independent Agent ACK preparation/export with the original delivery node offline. The published alpha.0.14 exact-source full cloud regression failed two cases; follow-up fix commit fed27ad passed full regression. Candidate alpha.0.15 full regression failed fixture setup/service-start cases and remains unpublished. Later fixes passed the affected 21 local workflows; alpha.0.16 passed thirteen extracted-runtime HTTP workflows and still awaited full acceptance when alpha.0.17 was prepared. Alpha.0.17 adds explicit replica commands and requires its own acceptance. No external adoption, global reliability or thousand-agent capacity claim.",
+  "runtime_test_scope": "Four synthetic real-HTTP workflows passed using extracted alpha.0.14 runtime and child nodes: mailbox provision/register; ACK-bearing interrupted admission and cold proof recovery; cold selected-memory import with receipt return, lost-reply restart and owner recovery; independent Agent ACK preparation/export with the original delivery node offline. The published alpha.0.14 exact-source full cloud regression failed two cases; follow-up fix commit fed27ad passed full regression. Candidate alpha.0.15 full regression failed fixture setup/service-start cases and remains unpublished. Later fixes passed the affected 21 local workflows; Alpha.0.16 passed thirteen extracted-runtime workflows but its full run recorded an expired-handle fixture error and hit the CI wall limit. Alpha.0.17 passed fourteen extracted-runtime workflows and supported Python 3.10; its full run was cancelled after confirming the same test defect. Both remain unpublished. Alpha.0.18 includes the fixture/CI corrections and requires its own acceptance. No external adoption, global reliability or thousand-agent capacity claim.",
   "runtime_test_report": "../docs/RELEASE.md",
   "full_runtime_test_suite_run": false,
   "runtime_parity_verified": false,

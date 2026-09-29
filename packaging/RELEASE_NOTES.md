@@ -1,4 +1,15 @@
-# Memory Vault v0.28.0-alpha.0.17 — replica creation and recovery commands
+# Memory Vault v0.28.0-alpha.0.18 — replica creation and recovery commands
+
+The alpha.0.16 full run was incomplete: one long mailbox fixture attempted to
+sign a child request after its short handle expired, and the growing suite later
+hit its 40-minute CI wall limit. Alpha.0.17 retained those same test/CI inputs and
+its full run was cancelled after that diagnosis; both remain unpublished. The
+fixture now performs a fresh, charged possession exchange before its independent
+revocation check and reports only the current request's server errors. CI allows
+55 minutes inside a 60-minute job; protocol deadlines and grants are unchanged.
+Alpha.0.17 did pass 14 extracted-runtime workflows and supported Python 3.10.
+Those results do not relabel either older candidate as a full-suite pass. This
+alpha.0.18 candidate requires separate exact-source acceptance.
 
 This candidate adds explicit `copy-reserve`, `copy-upload`, `configure-replica`,
 and `recover-replica` commands. They use existing local identities and protected
@@ -48,7 +59,7 @@ The full alpha.0.15 candidate regression exposed a fixture argument mismatch and
 cleanup registered too late after failed initialization. Both are corrected; the
 21 affected workflows pass sequentially on later source. The immutable alpha.0.15
 candidate remains unpublished and failed, rather than being relabeled as passing.
-This alpha.0.17 candidate requires its own exact-source full result.
+This alpha.0.18 candidate requires its own exact-source full result.
 
 Automatic replacement selection, first-receipt admission on a replacement,
 occupied/empty replica transfer and the complete native TypeScript replica client
@@ -61,8 +72,8 @@ finite resources; the project supplies no public seed. Complete native
 TypeScript mailbox parity, scalable partial feeds, external adoption and
 thousand-agent capacity remain unverified or unfinished.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.17/docs/OPEN_NETWORK_QUICKSTART.md),
-[mailbox guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.17/docs/OPEN_NETWORK_CONTACT.md)
-and [ACK recovery guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.17/docs/OPEN_ACK_RECOVERY.md).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.18/docs/OPEN_NETWORK_QUICKSTART.md),
+[mailbox guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.18/docs/OPEN_NETWORK_CONTACT.md)
+and [ACK recovery guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.18/docs/OPEN_ACK_RECOVERY.md).
 Published alpha.0.14 archives stay unchanged. Its full cloud failure is historical;
 follow-up success does not retroactively validate those old bytes.
