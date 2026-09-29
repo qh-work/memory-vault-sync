@@ -386,14 +386,40 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             captured=[];recover_feed=MailboxFeedRecoveryClient.recover
             def capture_feed(reader,*args,**kwargs):
                 value=recover_feed(reader,*args,**kwargs);captured.append(value);return value
-            with patch.object(MailboxFeedRecoveryClient,'recover',new=capture_feed):
-                received=recipient_network.receive_mailbox(base,limit_policy=limits,status_observer=observed.append,**client_options)
+            # Remove the old transport before first reception, not after import.
+            db.execute('DELETE FROM open_delivery_messages WHERE message_id=?',(sent['message_id'],))
+            db.execute('DELETE FROM open_contact_resource_leases');db.commit()
+            from memory_vault_open_delivery_client import OpenDeliveryClient
+            with patch.object(MailboxFeedRecoveryClient,'recover',new=capture_feed), \
+                    patch.object(OpenDeliveryClient,'call',side_effect=AssertionError('legacy delivery endpoint used')), \
+                    patch.object(OpenDeliveryClient,'_finish_inbox',side_effect=RuntimeError('synthetic stop after durable receipt')):
+                with self.assertRaisesRegex(RuntimeError,'synthetic stop after durable receipt'):
+                    recipient_network.receive_mailbox(base,limit_policy=limits,status_observer=observed.append,**client_options)
             result=captured[0]
+            self.assertEqual(delivery._inbox(sent['message_id'])['phase'],'staged')
+            original_session=bytes(delivery._inbox(sent['message_id'])['session'])
+            corrupted=json.loads(original_session)
+            corrupted['mailbox']['originals'][0]['ref']['size']+=1
+            with recipient_network.participant.state.db() as inbox_db:
+                inbox_db.execute('UPDATE open_delivery_inbox SET session=? WHERE message_id=?',
+                    (canonical_bytes(corrupted),sent['message_id']))
+            with patch('memory_vault_open_delivery_client.NetworkClient._import_received_share',side_effect=AssertionError('unverified memory import')):
+                with self.assertRaisesRegex(Exception,'repair_ref_mismatch'):
+                    delivery._finish_inbox(sent['message_id'])
+            self.assertEqual(delivery._inbox(sent['message_id'])['phase'],'staged')
+            with recipient_network.participant.state.db() as inbox_db:
+                inbox_db.execute('UPDATE open_delivery_inbox SET session=? WHERE message_id=?',(original_session,sent['message_id']))
+            # A new client resumes solely from the protected inbox proof.
+            delivery=recipient_network._delivery()
+            with patch.object(recipient_network.participant.transport,'request_repair',side_effect=AssertionError('duplicate cold body fetch')), \
+                    patch.object(OpenDeliveryClient,'call',side_effect=AssertionError('legacy delivery endpoint used')):
+                received=recipient_network.receive(limit=1)
+            self.assertFalse(received['network_accessed'])
             self.assertEqual(received['errors'],[])
-            self.assertEqual(delivery._inbox(sent['message_id'])['receipt_sent'],1)
+            self.assertEqual(delivery._inbox(sent['message_id'])['receipt_sent'],0)
+            self.assertIsNotNone(delivery._inbox(sent['message_id'])['receipt'])
             self.assertEqual(received['messages'][0]['state'],'validated_saved')
             self.assertIn('Synthetic mailbox staging message',received['messages'][0]['text'])
-            self.assertEqual(received['body_transport'],'original_delivery_lease')
             self.assertEqual(received['messages'][0]['content_kind'],'memory_transfer')
             self.assertEqual(received['messages'][0]['share']['records_added'],1)
             recalled=self.call(self.b,op='recall',memory_id=shared_memory['memory_id'])
@@ -401,10 +427,8 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             with patch.object(delivery,'call',side_effect=AssertionError('duplicate body fetch')):
                 again=asyncio.run(delivery._receive_mailbox_feed(client,result,client_options,4))
             self.assertEqual(again['messages'],[])
-            # The cold copy remains readable after the legacy transport's
-            # stored object is removed. No legacy body endpoint participates.
-            db.execute('DELETE FROM open_delivery_messages WHERE message_id=?',(sent['message_id'],))
-            db.execute('DELETE FROM open_contact_resource_leases');db.commit()
+            self.assertEqual(again['body_transport'],'mailbox_retained_copy')
+            # The retained copy is also independently readable through its handle.
             try:
                 cold=client.read_member(base,result,result.entries[0],expected_slot=slot,
                     expected_sender=member_args['expected_sender'],expected_target=source.target)

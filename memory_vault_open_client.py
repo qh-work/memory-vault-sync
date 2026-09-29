@@ -92,7 +92,8 @@ class OpenNetworkClient:
         """Receive an explicitly selected mailbox using retained original grants.
 
         The caller supplies the finite mailbox profile already used in its
-        signed grants. Body retrieval currently requires the live delivery lease.
+        signed grants. Bodies come from the retained mailbox copy; receipts
+        remain available for the independently authorized return operation.
         """
         from dataclasses import replace
         from memory_vault_open_repair_client import MailboxFeedRecoveryClient

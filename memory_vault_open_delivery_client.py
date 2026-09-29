@@ -38,6 +38,7 @@ MAX_OUTBOX_RECORDS = 1024
 MAX_INBOX_RECORDS = 4096
 MAX_SESSION_BYTES = 32768
 MAX_INBOX_SESSION_BYTES = 65536
+MAX_MAILBOX_INBOX_SESSION_BYTES = 8 * 1024 * 1024
 MAX_RESULT_BYTES = 16384
 MAX_INTENT_BYTES = 49152
 
@@ -480,7 +481,9 @@ class OpenDeliveryClient:
 
     @staticmethod
     def _keys(session):
-        if "intent" in session:
+        if 'mailbox' in session:
+            session = session['authority']
+        elif "intent" in session:
             session = session["intent"]["payload"]["authority"]
         request, policy = session["request"]["payload"], session["policy"]["payload"]
         return {"sender_signing_key": request["signing_key"],
@@ -546,13 +549,38 @@ class OpenDeliveryClient:
             row = db.execute("SELECT * FROM open_delivery_inbox WHERE message_id=?", (message_id,)).fetchone()
         return dict(row) if row is not None else None
 
+    @staticmethod
+    def _inbox_session(value):
+        parsed = document(value, maximum=MAX_MAILBOX_INBOX_SESSION_BYTES)
+        if 'mailbox' not in parsed:
+            return document(parsed, maximum=MAX_INBOX_SESSION_BYTES)
+        return object_fields(parsed, {'mailbox', 'authority', 'source_node'})
+
+    def _verify_mailbox_inbox(self, session, row):
+        from memory_vault_open_repair_client import verify_mailbox_inbox_evidence
+        from memory_vault_open_repair_wire import RepairWireError
+        try:
+            verified = verify_mailbox_inbox_evidence(session['mailbox'], bytes(row['envelope']),
+                owner=dict(signing_key=self.identity.public_descriptor(), encryption_key=self.encryption.public_descriptor()),
+                encryption_identity=self.encryption, staged_at=row['created_at'])
+        except RepairWireError as exc:
+            raise MemoryError(exc.code) from exc
+        if (verified['core']['message_id'] != row['message_id']
+                or session['mailbox']['sender']['signing_key']['key_id'] != row['sender']):
+            raise MemoryError('network_inbox_identity_conflict')
+        roles = verified['setup']['roles']
+        expected = {name: document(roles[role]['raw']) for name, role in
+            (('request', 'contact.request'), ('policy', 'contact.policy'))}
+        if canonical_bytes(session['authority']) != canonical_bytes(expected):
+            raise MemoryError('network_inbox_identity_conflict')
+
     def _stage_inbox(self, *, message_id, sender_key_id, envelope, body, session):
         raw = canonical_bytes(document(envelope, maximum=MAX_ENVELOPE_BYTES))
         digest = hashlib.sha256(raw).hexdigest()
         content = validate_content(body)
         if content["kind"] not in {"message", "memory_transfer"}:
             raise MemoryError("open_delivery_invalid_content_kind")
-        proof = canonical_bytes(document(session, maximum=MAX_INBOX_SESSION_BYTES))
+        proof = canonical_bytes(self._inbox_session(session))
         with self.participant.state.db() as db:
             db.execute("BEGIN IMMEDIATE")
             prior = db.execute("SELECT * FROM open_delivery_inbox WHERE message_id=?", (message_id,)).fetchone()
@@ -574,10 +602,13 @@ class OpenDeliveryClient:
         if row["phase"] in {"saved", "rejected"}:
             return document(bytes(row["result"]), maximum=MAX_RESULT_BYTES)
         envelope_raw = bytes(row["envelope"])
-        session = document(bytes(row["session"]), maximum=MAX_INBOX_SESSION_BYTES)
+        session = self._inbox_session(bytes(row["session"]))
         if hashlib.sha256(envelope_raw).hexdigest() != row["envelope_sha256"]:
             raise MemoryError("network_inbox_identity_conflict")
-        verify_storage_receipt(session["storage_receipt"], node=session["source_node"], intent=session["intent"])
+        if 'mailbox' in session:
+            self._verify_mailbox_inbox(session, row)
+        else:
+            verify_storage_receipt(session["storage_receipt"], node=session["source_node"], intent=session["intent"])
         if self._keys(session)["recipient_signing_key"] != self.identity.public_descriptor():
             raise MemoryError("open_delivery_key_binding_mismatch")
         reopened = decrypt_envelope(envelope_raw, encryption_identity=self.encryption, **self._keys(session))
@@ -661,11 +692,16 @@ class OpenDeliveryClient:
         if row["receipt_sent"]:
             return
         receipt = self._saved_receipt(message_id)
+        if 'mailbox' in self._inbox_session(bytes(row['session'])):
+            # The original delivery node need not retain this message anymore.
+            # Keep the real receipt available to publish_saved_ack; do not mark
+            # it sent or infer an independent return grant from mailbox access.
+            return
         verify_recipient_receipt(receipt, recipient_signing_key=self.identity.public_descriptor(),
             sender_key_id=row["sender"], message_id=message_id,
             envelope_ref=envelope_ref(bytes(row["envelope"])))
         if node is None:
-            session = document(bytes(row["session"]), maximum=MAX_INBOX_SESSION_BYTES)
+            session = self._inbox_session(bytes(row["session"]))
             route_budget = budget.routing()
             try:
                 node = await self.contact._session_node({"node": session["source_node"]}, route_budget)
@@ -706,13 +742,13 @@ class OpenDeliveryClient:
                 db.execute("INSERT OR REPLACE INTO open_delivery_client_state VALUES(?,?)",
                            (key, canonical_bytes({"after_sequence": sequence})))
 
-    async def _receive_entry(self, session, entry, budget, *, _mailbox=None):
+    async def _receive_entry(self, session, entry, budget):
         object_fields(entry, {"message_id", "envelope_ref", "sequence"})
         opaque(entry["message_id"])
         ref = immutable_ref(entry["envelope_ref"])
         if ref["namespace"] != "object":
             raise MemoryError("open_delivery_envelope_mismatch")
-        sequence = integer(entry["sequence"], minimum=1) if _mailbox is None else None
+        sequence = integer(entry["sequence"], minimum=1)
         prior = self._inbox(entry["message_id"])
         if prior is not None:
             if prior["envelope_sha256"] != ref["raw_sha256"]:
@@ -735,17 +771,9 @@ class OpenDeliveryClient:
             raise MemoryError("open_delivery_approval_mismatch")
         stored = verify_storage_receipt(handle["storage_receipt"], node=handle["source_node"], intent=original)
         if (stored["message_id"] != entry["message_id"] or stored["envelope_ref"] != ref
-                or (sequence is not None and stored["sequence"] != sequence) or stored["stored_at"] > int(time.time()) + 30):
+                or stored["sequence"] != sequence or stored["stored_at"] > int(time.time()) + 30):
             raise MemoryError("open_delivery_receipt_mismatch")
         frozen = await self._download(node, handle, ref, budget)
-        if _mailbox is not None:
-            from memory_vault_open_repair_client import read_mailbox_admission
-            member, options = _mailbox
-            def read_original(reference):
-                if reference == ref:
-                    return frozen
-                return options['read_original'](reference)
-            read_mailbox_admission(member, **dict(options, read_original=read_original, at=int(time.time())))
         body = decrypt_envelope(frozen, encryption_identity=self.encryption, **self._keys(session))
         self._stage_inbox(message_id=entry["message_id"],
             sender_key_id=session["request"]["payload"]["signing_key"]["key_id"],
@@ -754,11 +782,10 @@ class OpenDeliveryClient:
         return self._finish_inbox(entry["message_id"]), True
 
     async def receive_mailbox(self, recovery_client, base_url, *, limit=4, **recovery_options):
-        """Recover mailbox discovery and save bodies while the delivery lease lives.
+        """Recover mailbox bodies and resume imports from durable exact proofs.
 
-        This online bridge uses the original delivery possession exchange for
-        body reads. It does not extend that lease or claim cold body transport.
-        Observations use the recipient's existing protected database.
+        Observations and pending inbox content use the existing protected DB.
+        Receipts are retained for the separately authorized independent return.
         """
         from memory_vault_open_repair_client import MailboxFeedRecoveryClient, MailboxSetupJournal
         if (not isinstance(recovery_client, MailboxFeedRecoveryClient)
@@ -773,10 +800,9 @@ class OpenDeliveryClient:
         return await self._receive_mailbox_feed(recovery_client, feed, recovery_options, limit)
 
     async def _receive_mailbox_feed(self, client, feed, options, limit):
-        from memory_vault_open_repair_client import verify_mailbox_admission
+        from memory_vault_open_repair_client import verify_mailbox_admission, mailbox_inbox_evidence
         from memory_vault_open_repair_wire import raw_ref
-        budget = _DeliveryBudget()
-        messages, errors = [], []
+        messages = []
         node = document(options['target_node_entry']['raw'])
         current = [dict(raw=value.raw, ref=value.ref.as_dict()) for value in feed.current_statuses]
         for member in feed.entries:
@@ -788,22 +814,34 @@ class OpenDeliveryClient:
                 current_statuses=current, known_statuses=options.get('known_statuses', ()),
                 at=int(time.time()), policy=client.policy, limit_policy=client.limits)
             verified = verify_mailbox_admission(member, **args)
-            roles = verified['setup']['roles']
-            session = {'node': node}
-            for name, role in (('request', 'contact.request'), ('policy', 'contact.policy'),
-                               ('lease', 'contact.knock_lease'), ('decision', 'contact.decision')):
-                session[name] = document(roles[role]['raw'])
-            core = verified['core']
-            entry = dict(message_id=core['message_id'], envelope_ref=core['envelope_ref'], sequence=None)
-            result, fresh = await self._receive_entry(session, entry, budget, _mailbox=(member, args))
+            core = verified['core'];message_id = core['message_id']
+            prior = self._inbox(message_id)
+            if prior is not None:
+                if prior['envelope_sha256'] != core['envelope_ref']['raw_sha256']:
+                    raise MemoryError('network_inbox_identity_conflict')
+                fresh = prior['phase'] == 'staged'
+                result = self._finish_inbox(message_id)
+            else:
+                recovered = client.read_member(feed.base_url, feed, member, expected_slot=options['expected_slot'],
+                    expected_sender=options['expected_sender'], expected_target=options['expected_target'],
+                    known_statuses=options.get('known_statuses', ()))
+                roles = recovered['setup']['roles']
+                authority = {name: document(roles[role]['raw']) for name, role in
+                    (('request', 'contact.request'), ('policy', 'contact.policy'))}
+                session = dict(authority=authority, source_node=node, mailbox=mailbox_inbox_evidence(feed, member,
+                    slot=options['expected_slot'], sender=options['expected_sender'], target=options['expected_target'],
+                    limits=client.limits, received_at=int(time.time())))
+                frozen = recovered['envelope']
+                body = decrypt_envelope(frozen, encryption_identity=self.encryption, **self._keys(session))
+                self._stage_inbox(message_id=message_id, sender_key_id=options['expected_sender']['signing_key']['key_id'],
+                    envelope=frozen, body=body, session=session)
+                result = self._finish_inbox(message_id);fresh = True
             if fresh:
                 messages.append(result)
             if result['state'] == 'validated_saved':
-                try:
-                    await self._send_receipt(core['message_id'], budget, node)
-                except MemoryError as exc:
-                    errors.append(dict(message_id=core['message_id'], code=exc.code, retryable=exc.retryable))
-        return dict(messages=messages, errors=errors, state='observed', body_transport='original_delivery_lease')
+                self._saved_receipt(message_id)
+        return dict(messages=messages, errors=[], state='observed', body_transport='mailbox_retained_copy',
+            receipt_state='retained_for_independent_return')
 
     async def receive(self, limit=4):
         if type(limit) is not int or not 1 <= limit <= 4:

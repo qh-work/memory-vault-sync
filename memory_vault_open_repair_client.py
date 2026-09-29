@@ -1487,6 +1487,74 @@ class RecoveredMailboxFeedProof:
     base_url: str
 
 
+MAILBOX_INBOX_SCHEMA = 'memory-vault-mailbox-inbox/v1'
+
+
+def mailbox_inbox_evidence(feed, member, *, slot, sender, target, limits, received_at):
+    """Persist exact remote originals alongside an already retrieved envelope."""
+    from memory_vault_network_crypto import b64url
+    children=feed.proof.manifest.value['children']
+    def reference(role):
+        values=[v['ref'] for v in children if v['role']==role]
+        if len(values)!=1:_fail('repair_proof_mismatch')
+        return values[0]
+    return dict(schema_version=MAILBOX_INBOX_SCHEMA,received_at=received_at,slot=slot,sender=sender,target=target,
+        limits=limits,member=member,manifest_ref=reference('history.mailbox_feed'),custody_ref=reference('feed.custody'),
+        originals=[dict(ref=ref.as_dict(),raw_base64url=b64url(raw)) for ref,raw in feed.originals.items()],
+        status_refs=[v.ref.as_dict() for v in feed.current_statuses])
+
+
+def verify_mailbox_inbox_evidence(evidence, envelope, *, owner, encryption_identity, staged_at):
+    """Reopen a durably received transfer without requiring a live old lease.
+
+    The local staged timestamp records receipt, not fresh permission to fetch.
+    All original source/member proofs and READ observations are checked again
+    at that time before a pending import resumes.
+    """
+    from dataclasses import replace
+    from memory_vault_network_crypto import object_fields, unb64url
+    from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_source_event
+    value=object_fields(evidence,{'schema_version','received_at','slot','sender','target','limits','member',
+        'manifest_ref','custody_ref','originals','status_refs'})
+    if value['schema_version']!=MAILBOX_INBOX_SCHEMA:_fail('repair_invalid_context')
+    at=wire.u53(value['received_at'])
+    if at>wire.u53(staged_at):_fail('repair_invalid_context')
+    policy=replace(DEFAULT_POLICY,max_signature_checks=512);budget=wire.RepairBudget(policy)
+    limits=wire.build_new_wire(value['limits'],policy,budget).value;bootstrap._limits(limits)
+    if (type(value['originals']) is not list or not 1<=len(value['originals'])<=limits['max_proof_items']
+            or type(value['status_refs']) is not list or not 1<=len(value['status_refs'])<=16):_fail('repair_over_budget')
+    originals={};total=0;resolver=wire.LocalRawResolver(policy,budget)
+    for entry in value['originals']:
+        object_fields(entry,{'ref','raw_base64url'});ref=wire.raw_ref(entry['ref'])
+        if ref.namespace!='meta' or ref in originals or ref.size>policy.max_document_bytes:_fail('repair_ref_mismatch')
+        raw=unb64url(entry['raw_base64url'],maximum=policy.max_document_bytes)
+        total+=len(raw)
+        if total>limits['max_proof_bytes']:_fail('repair_over_budget')
+        if len(raw)!=ref.size or budget._hash(raw)!=ref.raw_sha256:_fail('repair_ref_mismatch')
+        originals[ref]=raw
+        if resolver.put(ref.namespace,ref.key,raw).ref!=ref:_fail('repair_ref_mismatch')
+    def entry(reference):
+        ref=wire.raw_ref(reference)
+        if ref not in originals:_fail('repair_original_missing')
+        return dict(raw=originals[ref],ref=ref.as_dict())
+    source=verify_mailbox_feed_source_event(entry(value['manifest_ref']),resolver,entry(value['custody_ref']),
+        expected_slot=value['slot'],expected_owner=owner,expected_sender=value['sender'],expected_target=value['target'],
+        limit_policy=limits,policy=policy,budget=budget)
+    if not source['custody'].payload['stored_at']<=at<min(source['read_until'],source['retain_until']):_fail('repair_access_expired')
+    roles={v.role:dict(raw=v.original.raw,ref=v.original.ref.as_dict()) for v in source['manifest'].roles}
+    members=read_mailbox_index(roles['feed.head'],roles['feed.checkpoint'],expected_slot=value['slot'],
+        expected_signing_key=value['target']['signing_key'],encryption_identity=encryption_identity,
+        read_original=lambda reference:entry(reference)['raw'],at=at,max_messages=65536,policy=policy,budget=budget)
+    if value['member'] not in members:_fail('repair_mailbox_member_mismatch')
+    def read_original(reference):
+        if wire.raw_ref(reference).namespace=='object':return envelope
+        return entry(reference)['raw']
+    return read_mailbox_admission(value['member'],expected_slot=value['slot'],expected_signing_key=value['target']['signing_key'],
+        expected_owner=owner,expected_sender=value['sender'],expected_target=value['target'],encryption_identity=encryption_identity,
+        read_original=read_original,at=at,current_statuses=[entry(ref) for ref in value['status_refs']],
+        limit_policy=limits,policy=policy,budget=budget)
+
+
 class MailboxFeedRecoveryClient(MailboxRootRecoveryClient):
     """Recover and decrypt a selected mailbox index without known message IDs."""
     def read_member(self, base_url, feed, member, *, expected_slot, expected_sender,

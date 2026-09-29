@@ -1750,6 +1750,17 @@ A revoked, expired, missing or inactive dependency refuses the body read. B
 checks the complete E hash and rechecks member authority after assembly; E still
 requires ordinary envelope verification/decryption before any inbox import.
 
+A recipient may durably stage E and the complete raw feed/member originals in
+its existing protected inbox before importing a selected memory share. Resume
+rechecks the feed custody, encrypted index membership, member authority and
+whole READ observations at the recorded reception time, and then decrypts E
+again. A later resume is completion of that received transfer, not permission
+to perform a new remote read. Exact proof/body mismatches refuse import. The
+existing share transfer receipt makes a repeated Vault import idempotent.
+The original delivery lease is unnecessary for this path. A real recipient
+receipt is retained after saving; mailbox READ authority does not authorize
+its independent ACK publication or justify reporting that it reached A.
+
 ### 9.4 Complete permission closure at the client
 
 The client verifies its local grant and every full original RawRef needed for

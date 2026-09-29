@@ -12,7 +12,7 @@ from types import MappingProxyType
 from memory_vault import canonical_bytes
 from memory_vault_network_crypto import document
 import memory_vault_open_delivery as delivery
-from memory_vault_open_delivery_client import OpenDeliveryClient, MAX_INBOX_SESSION_BYTES, MAX_RESULT_BYTES
+from memory_vault_open_delivery_client import OpenDeliveryClient, MAX_RESULT_BYTES
 import memory_vault_open_repair_ack as ack
 import memory_vault_open_repair_bound as bound
 import memory_vault_open_repair_empty as empty
@@ -81,7 +81,7 @@ class SavedAckReceiptPublisher:
         if budget._hash(raw)!=row["envelope_sha256"]:
             _fail("repair_saved_tuple_mismatch")
         envelope_ref=delivery.envelope_ref(raw)
-        session=document(bytes(row["session"]),maximum=MAX_INBOX_SESSION_BYTES)
+        session=self.delivery._inbox_session(bytes(row["session"]))
         keys=self.delivery._keys(session)
         if (row["sender"]!=request["owner"]["signing_key"]["key_id"]
                 or envelope_ref!=request["envelope_ref"]
