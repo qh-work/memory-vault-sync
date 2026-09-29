@@ -54,14 +54,16 @@ class CopyPreparationTests(unittest.TestCase):
             minimum_document_revision=0,status='active',operation_mask=4))
         self.owner_status['entries'].sort(key=lambda e:(e['scope_kind'],e['scope_id']))
 
-    def prepare(self, **changes):
+    def prepare(self, *, offer=None, **changes):
         resolver,p,budget=load_fixture(self.f,self.p)
         kwargs=dict(expected_ack_slot=self.f['expected']['expected_ack_slot'],expected_owner=self.f['expected']['expected_owner'],
             expected_source=self.f['expected']['expected_target'],source_storage_epoch=self.f['expected']['target_storage_epoch'],
             current_statuses=[signed_entry(self.owner_status,self.f['signers']['owner'],'copy_current'),self.f['entries']['target_status']],
             at=self.now,limit_policy=self.f['expected']['limit_policy'],budget=budget)
         kwargs.update(changes)
-        return self.journal.prepare_unbound(self.f['manifest'],resolver,self.f['custody'],self.consent,self.intent,**kwargs)
+        method = self.journal.prepare_unbound if offer is None else self.journal.assign_unbound
+        if offer is not None:kwargs['offer_entry']=offer
+        return method(self.f['manifest'],resolver,self.f['custody'],self.consent,self.intent,**kwargs)
 
     def test_prepared_request_reserves_real_capacity_and_survives_restart(self):
         request=self.prepare()
@@ -150,3 +152,47 @@ class CopyPreparationTests(unittest.TestCase):
         raw=canonical_bytes(body);ref=dict(request['ref'],size=len(raw),raw_sha256=hashlib.sha256(raw).hexdigest())
         self.local.db.execute('UPDATE ack_copy_prepare_jobs SET request=?,ref=?',(raw,canonical_bytes(ref)));self.local.db.commit()
         with self.assertRaises(wire.RepairWireError):self.prepare()
+
+    def allocate_offer(self):
+        request=self.prepare();self.destination.now[0]=self.now
+        target=RepairCopyResources(self.destination.state);target.initialize()
+        return target.allocate(request,expected_caller=self.keys)
+
+    def test_real_offer_gets_exact_durable_owner_read_copy_assignment(self):
+        offer=self.allocate_offer();assignment=self.prepare(offer=offer)
+        p=json.loads(assignment['raw'])['payload']
+        self.assertEqual(p['operation_mask'],70)
+        self.assertEqual(p['resource_offer_ref'],offer['ref'])
+        self.assertEqual(p['resource'],json.loads(offer['raw'])['payload']['resource'])
+        self.assertEqual(p['bootstrap_grant_refs'],[self.f['entries']['bootstrap']['ref']])
+        self.assertEqual(p['scope'],self.intent['scope'])
+        self.assertIsNone(p['parent_assignment_ref'])
+        self.local.db.close();self.local.connect();self.open_journal()
+        self.assertEqual(self.prepare(offer=offer),assignment)
+        self.assertEqual(self.local.db.execute('SELECT count(*) FROM ack_copy_prepare_assignments').fetchone()[0],1)
+
+    def test_forged_offer_cannot_create_assignment(self):
+        offer=self.allocate_offer();body=json.loads(offer['raw']);body['payload']['resource']['resource_id']='changed_resource'
+        raw=canonical_bytes(body);offer=dict(raw=raw,ref=dict(offer['ref'],size=len(raw),raw_sha256=hashlib.sha256(raw).hexdigest()))
+        with self.assertRaises(wire.RepairWireError):self.prepare(offer=offer)
+        self.assertEqual(self.local.db.execute('SELECT count(*) FROM ack_copy_prepare_assignments').fetchone()[0],0)
+
+    def test_revocation_between_reservation_and_assignment_refuses_delegation(self):
+        offer=self.allocate_offer();self.owner_status['revision']=3
+        for entry in self.owner_status['entries']:entry['status']='revoked'
+        with self.assertRaises(wire.RepairWireError):self.prepare(offer=offer)
+        self.assertEqual(self.local.db.execute('SELECT count(*) FROM ack_copy_prepare_assignments').fetchone()[0],0)
+
+    def test_copy_only_current_root_cannot_delegate_read_or_retain(self):
+        offer=self.allocate_offer();self.owner_status['revision']=3
+        for entry in self.owner_status['entries']:entry['operation_mask']=4
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_status_operation'):self.prepare(offer=offer)
+        self.assertEqual(self.local.db.execute('SELECT count(*) FROM ack_copy_prepare_assignments').fetchone()[0],0)
+
+    def test_revoked_owner_read_grant_prevents_service_assignment(self):
+        offer=self.allocate_offer();self.owner_status['revision']=3
+        scope=status.status_scope(self.intent['root_key'],'authority',dict(authority_kind='ack.read_grant',
+            authority_sha256=self.f['entries']['read']['ref']['raw_sha256']),self.p,wire.RepairBudget(self.p))
+        next(entry for entry in self.owner_status['entries'] if entry['scope_id']==scope)['status']='revoked'
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_authority_revoked'):self.prepare(offer=offer)
+        self.assertEqual(self.local.db.execute('SELECT count(*) FROM ack_copy_prepare_assignments').fetchone()[0],0)

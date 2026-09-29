@@ -2509,8 +2509,21 @@ bytes and references); capacity exhaustion does not evict revocations or jobs.
 The root's finite concurrent-job limit further bounds retained preparations.
 
 The emitted allocation connects to `RepairCopyResources.allocate`, which makes
-a real shared-capacity reservation. Neither this preparation nor that offer is
-replica custody. Post-assignment original disclosure, application copy commit,
+a real shared-capacity reservation. `AckCopyPreparation.assign_unbound` then
+revalidates the source and current owner permissions, authenticates that exact
+destination offer, and durably signs one depth-2 `maintenance.assignment` with
+COPY/READ/RETAIN, the exact resource and the pre-existing owner bootstrap grant.
+Current owner root discovery permission and current read/bootstrap grants are
+also required for that service assignment. No destination becomes a maintainer.
+The assignment and its original offer cannot be replaced in the same job. Live
+retries return the exact signature; expired reservation/request retries refuse
+rather than invent a renewed offer. Status observations and assignment creation
+share one writer transaction. Assignment windows must fit both the offer and the
+original owner service deadlines. This helper does not mint current assignment
+status: that belongs to the maintainer's coordinated authority-status issuer.
+
+Neither preparation, offer nor assignment is replica custody.
+Post-assignment original disclosure, application copy commit,
 replica read service, HTTP orchestration, and native TypeScript preparation are
 not implemented by this step. No future empty/occupied ACK state is included in
 an unbound preparation.

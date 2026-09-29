@@ -11,6 +11,7 @@ from memory_vault import canonical_bytes
 import memory_vault_open_repair_ack as ack
 import memory_vault_open_repair_empty as empty
 import memory_vault_open_repair_index as index
+import memory_vault_open_repair_history as history
 import memory_vault_open_repair_resource as resource
 import memory_vault_open_repair_status as status
 import memory_vault_open_repair_wire as wire
@@ -47,10 +48,22 @@ class AckCopyPreparation:
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_prepare_jobs(job_id TEXT PRIMARY KEY,root_digest TEXT NOT NULL,intent_digest TEXT NOT NULL,consent_ref BLOB NOT NULL,request BLOB NOT NULL,ref BLOB NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_prepare_status(root_digest TEXT NOT NULL,raw_digest TEXT NOT NULL,raw BLOB NOT NULL,ref BLOB NOT NULL,PRIMARY KEY(root_digest,raw_digest))')
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_prepare_blocked(root_digest TEXT PRIMARY KEY,reason TEXT NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_prepare_assignments(job_id TEXT PRIMARY KEY,offer_ref BLOB NOT NULL,raw BLOB NOT NULL,ref BLOB NOT NULL)')
 
-    def prepare_unbound(self, manifest_entry, resolver, custody_entry, consent_entry, intent, *,
+    def prepare_unbound(self, *args, **kwargs):
+        return self._prepare_unbound(*args, **kwargs, offer_entry=None)
+
+    def assign_unbound(self, *args, offer_entry, **kwargs):
+        """Bind the verified real offer to one durable COPY/READ/RETAIN assignment.
+
+        The caller must still obtain original disclosure permission before upload.
+        This assignment neither commits replica bytes nor advertises a provider.
+        """
+        return self._prepare_unbound(*args, **kwargs, offer_entry=offer_entry)
+
+    def _prepare_unbound(self, manifest_entry, resolver, custody_entry, consent_entry, intent, *,
                         expected_ack_slot, expected_owner, expected_source, source_storage_epoch,
-                        current_statuses, at, limit_policy, budget):
+                        current_statuses, at, limit_policy, budget, offer_entry):
         _require(not self.db.in_transaction)
         policy = self.policy
         wire._context(policy, budget)
@@ -69,7 +82,9 @@ class AckCopyPreparation:
         source_keys = wire.build_new_wire(expected_source, policy, budget).value
         mine = wire.build_new_wire(self.keys, policy, budget).value
         caller_id = resource._dual_key(mine, budget)
-        _require(caller_id in root.payload['maintainers'] and root.payload['operation_mask'] & COPY)
+        operations = COPY if offer_entry is None else 78  # Root COPY | READ | DISCOVER | RETAIN
+        _require(caller_id in root.payload['maintainers']
+            and root.payload['operation_mask'] & operations == operations)
         value = wire.build_new_wire(intent, policy, budget).value
         resource._fields(value, INTENT_FIELDS)
         ack_copy_scope(value['scope'], root_key)
@@ -108,10 +123,14 @@ class AckCopyPreparation:
         consent_scope = index._authority(root_key, consent, policy, budget)
         allowed[owner['signing_key']['key_id']].append(dict(scope_kind='authority', scope_id=consent_scope))
         obligations = (
-            index._obligation(owner['signing_key'], 'authority', index._authority(root_key, root, policy, budget), root.payload['revision'], COPY),
-            index._obligation(owner['signing_key'], 'ack_slot', status.status_scope(root_key, 'ack_slot', root.payload['ack_slot'], policy, budget), root.payload['revision'], COPY),
+            index._obligation(owner['signing_key'], 'authority', index._authority(root_key, root, policy, budget), root.payload['revision'], operations),
+            index._obligation(owner['signing_key'], 'ack_slot', status.status_scope(root_key, 'ack_slot', root.payload['ack_slot'], policy, budget), root.payload['revision'], COPY if offer_entry is None else 70),
             index._obligation(owner['signing_key'], 'authority', consent_scope, c['revision'], COPY),
             index._obligation(source_keys['signing_key'], 'resource', status.status_scope(root_key, 'resource', active.payload['resource'], policy, budget), active.payload['reservation_generation'], COPY))
+        if offer_entry is not None:
+            for original, mask in ((source.resources.originals['read'], 2), (source.bootstrap.originals['bootstrap'], 10)):
+                obligations += (index._obligation(owner['signing_key'], 'authority',
+                    index._authority(root_key, original, policy, budget), original.payload['revision'], mask),)
         checked, denial = [], None
         if not isinstance(current_statuses, (tuple, list)) or not 1 <= len(current_statuses) <= 16:
             wire._fail('repair_status_missing')
@@ -206,6 +225,8 @@ class AckCopyPreparation:
                     result = dict(raw=raw,ref=dict(namespace='meta',key=sha,raw_sha256=sha,size=len(raw)))
                     self.db.execute('INSERT INTO ack_copy_prepare_jobs VALUES(?,?,?,?,?,?)',
                         (value['job_id'],root_digest,digest,canonical_bytes(consent.ref.as_dict()),raw,canonical_bytes(result['ref'])))
+            if result is not None and offer_entry is not None:
+                result = self._assign_locked(result, offer_entry, source, value, digest, at, budget)
             self.db.commit()
         except wire.RepairWireError:
             self.db.commit(); raise
@@ -213,4 +234,53 @@ class AckCopyPreparation:
             self.db.rollback(); raise
         if denial:
             wire._fail(denial)
+        return result
+
+    def _assign_locked(self, allocation_entry, offer_entry, source, intent, digest, at, budget):
+        """Called only after current observations were persisted in this writer."""
+        policy = self.policy
+        target = intent['target']
+        target_id = resource._dual_key(target, budget)
+        offer = index._signed(offer_entry, target['signing_key'], 'resource.offer', index.OFFER_FIELDS, policy, budget)
+        p = offer.payload
+        allocation = wire.parse_new_wire(allocation_entry['raw'], policy, budget).value['payload']
+        resource._budget(p['budget']); resource._windows(p['windows']); history._resource(p['resource'])
+        resource._opaque(p['offer_id'])
+        _require(p['intent'] == intent and p['intent_sha256'] == digest
+            and p['allocation_request_ref'] == allocation_entry['ref']
+            and p['target_encryption_key'] == target['encryption_key']
+            and p['resource']['node_key_id'] == target_id['signing_key_id']
+            and p['resource']['storage_epoch'] == intent['target_storage_epoch']
+            and p['budget'] == intent['budget'] and p['windows'] == intent['windows']
+            and wire.u53(p['reservation_generation'], 1) == 1
+            and allocation['issued_at'] <= wire.u53(p['issued_at']) <= at
+            and at < wire.u53(p['reservation_until']) <= allocation['expires_at'])
+        root = source.resources.originals['root']
+        read = source.resources.originals['read']
+        bootstrap = source.bootstrap.originals['bootstrap']
+        expires = min(root.payload['expires_at'], read.payload['expires_at'],
+            read.payload['windows']['read_until'], bootstrap.payload['expires_at'], bootstrap.payload['proof_until'],
+            bootstrap.payload['probe_until'], bootstrap.payload['upload_until'],
+            *(p['windows'][name] for name in ('read_until','copy_until','retain_until')))
+        _require(at < expires and all(value <= expires for value in p['windows'].values()))
+        old = self.db.execute('SELECT offer_ref,raw,ref FROM ack_copy_prepare_assignments WHERE job_id=?', (intent['job_id'],)).fetchone()
+        if old:
+            _require(bytes(old[0]) == canonical_bytes(offer.ref.as_dict()))
+            result = dict(raw=bytes(old[1]), ref=json.loads(bytes(old[2])))
+            held = index._signed(result, self.keys['signing_key'], 'maintenance.assignment', index.ASSIGNMENT_FIELDS, policy, budget)
+            index._timed(held.payload, at)
+            _require(held.payload['resource_offer_ref'] == offer.ref.as_dict()
+                and held.payload['resource_intent_sha256'] == digest)
+            return result
+        payload = dict(schema_version=resource.SCHEMA,kind='maintenance.assignment',signing_key=self.keys['signing_key'],
+            issued_at=at,expires_at=expires,assignment_id='assignment_'+digest,job_id=intent['job_id'],
+            root_key=intent['root_key'],parent_root_ref=root.ref.as_dict(),parent_assignment_ref=None,depth=2,
+            subject=target_id,target_node_key_id=target_id['signing_key_id'],target_storage_epoch=intent['target_storage_epoch'],
+            operation_mask=70,scope=intent['scope'],resource_intent_sha256=digest,resource_offer_ref=offer.ref.as_dict(),
+            resource=p['resource'],bootstrap_grant_refs=[bootstrap.ref.as_dict()],budget=p['budget'],windows=p['windows'])
+        raw = canonical_bytes(dict(payload=payload,proof=self.identity.sign_message(payload)))
+        sha = hashlib.sha256(raw).hexdigest()
+        result = dict(raw=raw,ref=dict(namespace='meta',key=sha,raw_sha256=sha,size=len(raw)))
+        self.db.execute('INSERT INTO ack_copy_prepare_assignments VALUES(?,?,?,?)',
+            (intent['job_id'],canonical_bytes(offer.ref.as_dict()),raw,canonical_bytes(result['ref'])))
         return result
