@@ -865,7 +865,48 @@ class MailboxRecoveryService:
                 self.db.execute("UPDATE open_repair_mailbox_recovery_usage SET signatures=signatures-? WHERE resource_id=?",(allowance-actual,rid))
                 self._mark_usage_locked(rid)
 
-    def child(self, entry):
+    def _body_original(self, core_raw, request, metadata_id, budget):
+        """Read the separately retained E under current mailbox/data authority."""
+        from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
+        s=self.source
+        signed=wire.parse_new_wire(core_raw,budget.policy,budget).value
+        core=signed['payload'];key=core['slot_key']
+        if core['kind']!='admission.core' or core['envelope_ref']!=request['envelope_ref']:
+            wire._fail('repair_mailbox_member_mismatch')
+        original._verify_control_signature(core,signed['proof'],s.identity.public_descriptor(),budget)
+        digest=budget._hash(wire._canonical(key,budget))
+        row=s._one('SELECT * FROM open_mailbox_admissions WHERE slot_digest=? AND sequence=?',(digest,core['sequence']))
+        if row is None:wire._fail('repair_original_missing')
+        artifacts=wire.parse_new_wire(bytes(row['result']),budget.policy,budget).value
+        if artifacts['core']['raw'].encode()!=core_raw:wire._fail('repair_storage_corrupt')
+        job=s._one('SELECT * FROM open_mailbox_message_staging WHERE sender=? AND message_id=?',(row['sender'],row['message_id']))
+        if (job is None or job['phase']!='committed' or job['metadata_id']!=metadata_id
+                or job['message_id']!=core['message_id']):wire._fail('repair_original_missing')
+        data_id=job['data_id'];data=s._one('SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?',(data_id,))
+        if data is None:wire._fail('repair_original_missing')
+        offer=wire.parse_new_wire(s._saved(data,'offer')['raw'],budget.policy,budget).value['payload']
+        if offer['resource']!=core['data_resource_ref']:wire._fail('repair_mailbox_member_mismatch')
+        scope=status.status_scope(key['root_key'],'resource',offer['resource'],budget.policy,budget)
+        required=[dict(issuer=s.identity.key_id,scope_kind='resource',scope_id=scope,
+            document_revision=offer['reservation_generation'],operation_mask=2)]
+        envelope=bytes(job['envelope']);reference=wire.raw_ref(core['envelope_ref'])
+        if len(envelope)!=reference.size or budget._hash(envelope)!=reference.raw_sha256:wire._fail('repair_storage_corrupt')
+        def guard():
+            if s._now()>=min(core['object_until'],job['retain_until']):return 'repair_access_expired'
+            current=s._one('SELECT status FROM open_repair_mailbox_resources WHERE resource_id=?',(data_id,))
+            if current is None or current['status']!='active':return 'repair_resource_inactive'
+            # Charge the entire shared recovery session conservatively against
+            # data's finite request/byte ceiling as well as metadata's budget.
+            usage=self._usage_locked(metadata_id)
+            transferred=self.db.execute('SELECT coalesce(sum(proof_bytes),0) FROM open_repair_mailbox_recovery_responses WHERE resource_id=?',(metadata_id,)).fetchone()[0]
+            if (usage is None or usage['requests']>min(offer['budget']['max_requests'],offer['budget']['max_replay_records'])
+                    or transferred>offer['budget']['max_job_bytes']):return 'repair_service_capacity'
+            current_job=s._one('SELECT phase,envelope FROM open_mailbox_message_staging WHERE sender=? AND message_id=?',(row['sender'],row['message_id']))
+            if current_job is None or current_job['phase']!='committed' or bytes(current_job['envelope'])!=envelope:return 'repair_storage_corrupt'
+            return MailboxStatusLedger(self.mailbox.root.resources).check_locked(data_id,required)
+        return envelope,guard
+
+    def child(self, entry, *, body=False):
         """Serve a finite signed range from the recipient's frozen proof plan."""
         from dataclasses import replace
         import base64
@@ -874,7 +915,8 @@ class MailboxRecoveryService:
         s=self.source;preview=wire.RepairBudget(s.policy)
         parsed,ref=s._entry(entry,preview)
         signed=proof._fields(parsed.value,{"payload","proof"})
-        payload=proof._fields(signed["payload"],proof.CHILD_FIELDS-{"bootstrap_grant_sha256"})
+        if body and self.consumer != 'mailbox_feed':wire._fail('repair_invalid_context')
+        payload=proof._fields(signed["payload"],(proof.CHILD_FIELDS-{"bootstrap_grant_sha256"}) | ({'envelope_ref'} if body else set()))
         parent=probe._ref(payload["handle_ref"])
         handle=s._one("SELECT * FROM open_repair_mailbox_recovery_handles WHERE handle_digest=?",(parent.raw_sha256,))
         if handle is None or json.loads(bytes(handle["handle_ref"]))!=parent.as_dict():
@@ -897,10 +939,11 @@ class MailboxRecoveryService:
         budget=wire.RepairBudget(replace(s.policy,max_signature_checks=allowance))
         original._verify_control_signature(payload,signed["proof"],owner["signing_key"],budget)
         owner_guard=self._owner_guard(rid)
+        body_guard=lambda: None
         def guard():
             if s._now()>=min(response["expires_at"],grant["proof_until"],payload["expires_at"]):
                 return "repair_access_expired"
-            return owner_guard()
+            return owner_guard() or body_guard()
         with s._transaction(guard=guard):
             usage=self._usage_locked(rid)
             if (usage["requests"]>=min(grant["limits"]["max_requests"],offer["budget"]["max_requests"],
@@ -918,7 +961,8 @@ class MailboxRecoveryService:
                 expected_source_state=self.source_state,consumer=self.consumer,policy=budget.policy,budget=budget)
             if frozen.handle.ref!=parent:
                 wire._fail("repair_proof_mismatch")
-            request=proof.verify_bootstrap_child_request(dict(raw=parsed.raw,ref=ref.as_dict()),frozen,
+            verifier=proof.verify_mailbox_body_request if body else proof.verify_bootstrap_child_request
+            request=verifier(dict(raw=parsed.raw,ref=ref.as_dict()),frozen,
                 expected_subject=owner,expected_target=s.target,at=s._now(),policy=budget.policy,budget=budget).payload
             children=wire.parse_new_wire(bytes(response["children"]),budget.policy,budget).value
             index=request["child_index"]
@@ -935,6 +979,8 @@ class MailboxRecoveryService:
                 wire._fail("repair_storage_corrupt")
             if len(raw)!=item["ref"]["size"] or budget._hash(raw)!=item["ref"]["raw_sha256"]:
                 wire._fail("repair_storage_corrupt")
+            if body:
+                raw,body_guard=self._body_original(raw,request,rid,budget)
             budget._bytes("output_bytes",request["requested_bytes"])
             result=raw[request["offset"]:request["offset"]+request["requested_bytes"]]
             with s._transaction(guard=guard):

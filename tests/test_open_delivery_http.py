@@ -401,6 +401,31 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             with patch.object(delivery,'call',side_effect=AssertionError('duplicate body fetch')):
                 again=asyncio.run(delivery._receive_mailbox_feed(client,result,client_options,4))
             self.assertEqual(again['messages'],[])
+            # The cold copy remains readable after the legacy transport's
+            # stored object is removed. No legacy body endpoint participates.
+            db.execute('DELETE FROM open_delivery_messages WHERE message_id=?',(sent['message_id'],))
+            db.execute('DELETE FROM open_contact_resource_leases');db.commit()
+            try:
+                cold=client.read_member(base,result,result.entries[0],expected_slot=slot,
+                    expected_sender=member_args['expected_sender'],expected_target=source.target)
+            except Exception as error:
+                raise AssertionError('synthetic cold body server errors: '+repr(server_errors)) from error
+            self.assertEqual(cold['envelope'],envelope)
+            core_child=next(v for v in result.proof.manifest.value['children'] if v['role']=='member.core')
+            body_request=proof.make_mailbox_body_request(self.bi,result.proof,envelope_ref=core['envelope_ref'],
+                subject=owner,target=source.target,at=int(time.time()),expires_at=result.proof.handle.payload['expires_at'],
+                child_index=core_child['index'],offset=0,requested_bytes=16,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            body_packet=dict(raw=body_request.raw,ref=body_request.ref.as_dict())
+            self.assertEqual(service.child(body_packet),envelope[:16])
+            with self.assertRaisesRegex(AssertionError,'repair_child_replay'):
+                service.child(body_packet)
+            data_id=db.execute('SELECT data_id FROM open_mailbox_message_staging').fetchone()[0]
+            db.execute("UPDATE open_repair_mailbox_resources SET status='pending' WHERE resource_id=?",(data_id,));db.commit()
+            with self.assertRaisesRegex(AssertionError,'repair_resource_inactive'):
+                service.child(body_packet)
+            db.execute("UPDATE open_repair_mailbox_resources SET status='active' WHERE resource_id=?",(data_id,))
+            db.commit()
+
             self.assertEqual(result.entries[0]['admission_link_ref'],admitted['link']['ref'])
             self.assertEqual(result.source['custody'].raw,feed_custody['raw'])
             self.assertTrue(observed);self.assertGreater(result.metrics['requests'],2)
@@ -533,14 +558,25 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             verify_mailbox_member_inputs(changed,expected_slot=slot,expected_owner=owner,expected_sender=member_args['expected_sender'],
                 expected_target=source.target,target_storage_epoch=slot['writer_storage_epoch'],accepted_at=recovered['core']['accepted_at'],
                 limit_policy=limits,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
-        with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
-            staging.stage_delivered(raw,revoked)
-        with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
-            staging.stage_delivered(raw,owner_status)
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+            from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
+            metadata_id=db.execute('SELECT metadata_id FROM open_mailbox_message_staging').fetchone()[0]
+            MailboxStatusLedger(resources).observe(metadata_id,revoked,expected_signing_key=owner['signing_key'],
+                allowed_scopes=[dict(scope_kind=v['scope_kind'],scope_id=v['scope_id']) for v in scoped])
+            with self.assertRaisesRegex(RepairWireError,'repair_message_delivery_missing'):
+                staging.stage_delivered(raw,owner_status)
+        else:
+            with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
+                staging.stage_delivered(raw,revoked)
+            with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
+                staging.stage_delivered(raw,owner_status)
         denied_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=now+45,
             child_index=child_request.payload['child_index'],offset=0,requested_bytes=feed_custody['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
         with self.assertRaisesRegex(AssertionError,'repair_authority_revoked'):
             service.child(dict(raw=denied_request.raw,ref=denied_request.ref.as_dict()))
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+            with self.assertRaisesRegex(AssertionError,'repair_authority_revoked'):
+                service.child(body_packet)
 
     def test_remote_feed_client_recovers_complete_index(self):
         self.test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources()

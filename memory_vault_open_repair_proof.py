@@ -232,7 +232,7 @@ def verify_bootstrap_proof_response(raw, *, expected_subject, expected_target, t
 
 
 def make_bootstrap_child_request(signer, proof, *, subject, target, at, expires_at, child_index, offset,
-                                  requested_bytes, policy, budget):
+                                  requested_bytes, policy, budget, _envelope_ref=None):
     """Sign a finite subject request; a server still rechecks its live handle."""
     wire._context(policy, budget)
     with budget._lock:
@@ -251,11 +251,31 @@ def make_bootstrap_child_request(signer, proof, *, subject, target, at, expires_
             service_generation=handle.payload["service_generation"], child_index=child_index, offset=offset, requested_bytes=requested_bytes)
         # The child profile intentionally has no bootstrap_grant_sha256; it
         # binds the complete frozen handle, which already names that grant.
+        if _envelope_ref is not None:
+            payload.update(kind='mailbox.body_read', purpose='mailbox.message_body', envelope_ref=_envelope_ref)
+            _body_range(payload, proof.manifest.value['children'])
+        else:
+            _child_range(payload, proof.manifest.value['children'])
         probe._window(payload, at)
-        _child_range(payload, proof.manifest.value["children"])
         if expires_at > handle.payload["expires_at"]:
             _fail("repair_proof_mismatch")
         return probe._sign(payload, signer, policy, budget)
+
+
+def make_mailbox_body_request(signer, proof, *, envelope_ref, **options):
+    """Bind a body range to one core in an authenticated recipient feed handle."""
+    return make_bootstrap_child_request(signer, proof, _envelope_ref=envelope_ref, **options)
+
+
+def _body_range(payload, children):
+    from memory_vault_open_delivery import MAX_ENVELOPE_BYTES
+    index, offset = wire.u53(payload['child_index']), wire.u53(payload['offset'])
+    size = wire.u53(payload['requested_bytes'], 1)
+    ref = wire.raw_ref(payload['envelope_ref'])
+    if (payload['consumer'] != 'mailbox_feed' or index >= len(children)
+            or children[index]['role'] != 'member.core' or ref.namespace != 'object'
+            or ref.size > MAX_ENVELOPE_BYTES or size > MAX_CHILD_BYTES or offset + size > ref.size):
+        _fail('repair_invalid_range')
 
 
 def _child_range(payload, children):
@@ -265,7 +285,7 @@ def _child_range(payload, children):
         _fail("repair_invalid_range")
 
 
-def verify_bootstrap_child_request(entry, proof, *, expected_subject, expected_target, at, policy, budget):
+def verify_bootstrap_child_request(entry, proof, *, expected_subject, expected_target, at, policy, budget, _body=False):
     wire._context(policy, budget)
     with budget._lock:
         if _PROOFS.get(id(proof)) is not proof:
@@ -282,13 +302,15 @@ def verify_bootstrap_child_request(entry, proof, *, expected_subject, expected_t
         if len(parsed.raw) != reference.size or budget._hash(parsed.raw) != reference.raw_sha256:
             _fail("repair_ref_mismatch")
         signed = _fields(parsed.value, {"payload", "proof"})
-        fields = CHILD_FIELDS - {"bootstrap_grant_sha256"}
+        fields = (CHILD_FIELDS - {"bootstrap_grant_sha256"}) | ({"envelope_ref"} if _body else set())
         payload = _fields(signed["payload"], fields)
         probe._window(payload, at)
         original._opaque(payload["request_id"])
         handle = proof.handle
-        if (payload["schema_version"] != SCHEMA or payload["kind"] != "bootstrap.proof_child_request" or
-                payload["purpose"] != "bootstrap.service_proof_child" or payload["consumer"] != handle.payload["consumer"] or
+        kind = 'mailbox.body_read' if _body else 'bootstrap.proof_child_request'
+        purpose = 'mailbox.message_body' if _body else 'bootstrap.service_proof_child'
+        if (payload["schema_version"] != SCHEMA or payload["kind"] != kind or
+                payload["purpose"] != purpose or payload["consumer"] != handle.payload["consumer"] or
                 payload["subject"] != probe._dual(expected_subject) or payload["target"] != probe._dual(expected_target) or
                 payload["target_storage_epoch"] != handle.payload["target_storage_epoch"] or
                 probe._ref(payload["handle_ref"]) != handle.ref or probe._ref(payload["manifest_ref"]) != proof.manifest_ref or
@@ -296,6 +318,10 @@ def verify_bootstrap_child_request(entry, proof, *, expected_subject, expected_t
                 payload["service_generation"] != handle.payload["service_generation"] or
                 payload["issued_at"] < handle.payload["issued_at"] or payload["expires_at"] > handle.payload["expires_at"]):
             _fail("repair_proof_mismatch")
-        _child_range(payload, proof.manifest.value["children"])
+        (_body_range if _body else _child_range)(payload, proof.manifest.value["children"])
         original._verify_control_signature(payload, signed["proof"], expected_subject["signing_key"], budget)
         return resource.AuthenticatedRepairOriginal(parsed.raw, reference, payload)
+
+
+def verify_mailbox_body_request(entry, proof, **options):
+    return verify_bootstrap_child_request(entry, proof, _body=True, **options)

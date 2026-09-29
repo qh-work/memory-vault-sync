@@ -1484,10 +1484,56 @@ class RecoveredMailboxFeedProof:
     originals: object
     entries: tuple
     metrics: object
+    base_url: str
 
 
 class MailboxFeedRecoveryClient(MailboxRootRecoveryClient):
     """Recover and decrypt a selected mailbox index without known message IDs."""
+    def read_member(self, base_url, feed, member, *, expected_slot, expected_sender,
+                    expected_target, known_statuses=(), timeout=30):
+        """Read retained mailbox ciphertext independently of the original lease.
+
+        A prior recover() result supplies metadata, never plaintext authority.
+        Recheck its selected member and current READ observations before I/O.
+        The source independently checks live authority for every body range.
+        """
+        if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=60:_fail('repair_invalid_deadline')
+        if not isinstance(feed,RecoveredMailboxFeedProof) or member not in feed.entries:_fail('repair_invalid_context')
+        if endpoint(base_url,allow_loopback=self.allow_loopback)!=endpoint(feed.base_url,allow_loopback=self.allow_loopback):_fail('repair_proof_mismatch')
+        budget=wire.RepairBudget(self.policy);deadline=time.monotonic()+timeout
+        current=[dict(raw=v.raw,ref=v.ref.as_dict()) for v in feed.current_statuses]
+        options=dict(expected_slot=expected_slot,expected_signing_key=expected_target['signing_key'],
+            expected_owner=self.subject,expected_sender=expected_sender,expected_target=expected_target,
+            encryption_identity=self.encryption_identity,current_statuses=current,known_statuses=known_statuses,
+            limit_policy=self.limits,policy=self.policy,budget=budget)
+        def metadata(reference):
+            ref=wire.raw_ref(reference)
+            if ref not in feed.originals:_fail('repair_original_missing')
+            return feed.originals[ref]
+        verified=verify_mailbox_admission(member,read_original=metadata,at=self._now(),**options)
+        core=verified['core'];ref=wire.raw_ref(core['envelope_ref'])
+        children=[v for v in feed.proof.manifest.value['children'] if v['role']=='member.core'
+            and v['ref']==verified['link']['core_ref']]
+        if len(children)!=1:_fail('repair_proof_mismatch')
+        chunks=[];offset=0
+        if ref.size+feed.metrics['proof_bytes']>self.limits['max_proof_bytes']:_fail('repair_over_budget')
+        requests=feed.metrics['requests']
+        while offset<ref.size:
+            if time.monotonic()>=deadline or requests>=self.limits['max_requests']:_fail('repair_over_budget')
+            requests+=1
+            count=min(proof.MAX_CHILD_BYTES,ref.size-offset)
+            packet=proof.make_mailbox_body_request(self.identity,feed.proof,envelope_ref=ref.as_dict(),
+                subject=self.subject,target=expected_target,at=self._now(),expires_at=feed.proof.handle.payload['expires_at'],
+                child_index=children[0]['index'],offset=offset,requested_bytes=count,policy=self.policy,budget=budget)
+            raw=self.transport.request_repair(base_url,packet.raw,child=True,deadline=deadline)
+            if not isinstance(raw,bytes) or len(raw)!=count:_fail('repair_ref_mismatch')
+            budget._bytes('input_bytes',len(raw));chunks.append(raw);offset+=count
+        budget._bytes('output_bytes',ref.size);envelope=b''.join(chunks)
+        if budget._hash(envelope)!=ref.raw_sha256:_fail('repair_ref_mismatch')
+        if self._now()>=feed.proof.handle.payload['expires_at'] or time.monotonic()>=deadline:_fail('repair_access_expired')
+        return read_mailbox_admission(member,read_original=lambda reference: envelope if wire.raw_ref(reference)==ref else metadata(reference),
+            at=self._now(),**options)
+
     def recover(self, base_url, *, target_node_entry, expected_target, expected_sender, expected_slot,
                 slot_entries, known_statuses=(), archive_statuses=(), journal=None, timeout=60):
         from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_bootstrap,verify_mailbox_feed_source_event
@@ -1583,4 +1629,4 @@ class MailboxFeedRecoveryClient(MailboxRootRecoveryClient):
         verify_mailbox_feed_bootstrap(slot_entries,expected_slot=key,expected_owner=self.subject,expected_target=target,
             target_storage_epoch=key['writer_storage_epoch'],limit_policy=self.limits,at=self._now(),policy=self.policy,budget=budget)
         return RecoveredMailboxFeedProof(MappingProxyType(source),held,tuple(current),MappingProxyType(originals),members,
-            MappingProxyType(dict(**counts,**budget.snapshot())))
+            MappingProxyType(dict(**counts,**budget.snapshot())),base_url)

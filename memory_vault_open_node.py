@@ -258,7 +258,7 @@ class OpenParticipant:
         state.initialize()
         if packet_payload is not None:
             if packet_payload.get("consumer") in ("mailbox_root","mailbox_feed"):
-                if packet_payload.get("kind") not in ("bootstrap.probe","bootstrap.answer","bootstrap.proof_child_request"):
+                if packet_payload.get("kind") not in ("bootstrap.probe","bootstrap.answer","bootstrap.proof_child_request","mailbox.body_read"):
                     raise MemoryError("open_invalid_repair_request")
                 from memory_vault_open_repair_mailbox_resources import RepairMailboxResources
                 from memory_vault_open_repair_mailbox_root import MailboxRootActivation
@@ -323,7 +323,7 @@ class OpenParticipant:
             with self.state.db() as db:
                 return self._repair_remote_setup_service(db).handle(parsed.raw), False
         from memory_vault_open_repair_index_service import KINDS as INDEX_KINDS
-        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "ack.bind_request") and kind not in INDEX_KINDS:
+        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "mailbox.body_read", "ack.bind_request") and kind not in INDEX_KINDS:
             raise MemoryError("open_invalid_repair_request")
         digest = meter._hash(parsed.raw)
         packet = dict(raw=parsed.raw, ref=dict(namespace="meta", key=digest, raw_sha256=digest, size=len(parsed.raw)))
@@ -336,7 +336,9 @@ class OpenParticipant:
                     return service.challenge(packet)["raw"], False
                 if kind == "bootstrap.answer":
                     return service.answer(packet), False
-                return service.child(packet), True
+                return service.child(packet, body=kind == 'mailbox.body_read'), True
+            if kind == 'mailbox.body_read':
+                raise MemoryError('open_invalid_repair_request')
             if kind == "bootstrap.probe":
                 result, child = service.challenge(packet).raw, False
             elif kind == "bootstrap.answer":

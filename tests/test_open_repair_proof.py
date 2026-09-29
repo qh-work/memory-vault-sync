@@ -108,6 +108,24 @@ class RepairProofTests(unittest.TestCase):
         with self.assertRaises(wire.RepairWireError):self.response(missing)
         with self.assertRaises(wire.RepairWireError):self.verify(self.response(manifest).raw)
 
+    def test_mailbox_body_request_binds_core_object_and_transport_profile(self):
+        manifest,options=self.mailbox_feed_manifest()
+        held=self.verify(self.response(manifest).raw,**options)
+        index=next(v['index'] for v in manifest['children'] if v['role']=='member.core')
+        reference=dict(namespace='object',key='a'*64,raw_sha256='b'*64,size=200000)
+        args=dict(subject=self.subject,target=self.target,at=self.now,expires_at=self.now+20,
+            child_index=index,offset=100000,requested_bytes=65536,policy=self.policy,budget=wire.RepairBudget(self.policy))
+        packet=proof.make_mailbox_body_request(self.fixture['signers']['owner'],held,envelope_ref=reference,**args)
+        verify=dict(expected_subject=self.subject,expected_target=self.target,at=self.now,
+            policy=self.policy,budget=wire.RepairBudget(self.policy))
+        entry=dict(raw=packet.raw,ref=packet.ref.as_dict())
+        self.assertEqual(proof.verify_mailbox_body_request(entry,held,**verify).payload['envelope_ref'],reference)
+        with self.assertRaises(wire.RepairWireError):proof.verify_bootstrap_child_request(entry,held,**verify)
+        for changes in (dict(child_index=0),dict(offset=200000),dict(requested_bytes=65537)):
+            with self.assertRaises(wire.RepairWireError):
+                proof.make_mailbox_body_request(self.fixture['signers']['owner'],held,envelope_ref=reference,
+                    **dict(args,**changes,budget=wire.RepairBudget(self.policy)))
+
     def assertCode(self, code, callback, *args, **kwargs):
         with self.assertRaises(wire.RepairWireError) as caught:
             callback(*args, **kwargs)

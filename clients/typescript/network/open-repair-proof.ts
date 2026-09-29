@@ -192,29 +192,53 @@ function childRange(payload:Obj,children:readonly Obj[]):void{
   const index=u53(payload.child_index),offset=u53(payload.offset),size=u53(payload.requested_bytes,1);
   if(index>=children.length||size>MAX_CHILD||offset>children[index].ref.size-size)fail('repair_invalid_range');
 }
-export function makeBootstrapChildRequest(signer:unknown,value:AuthenticatedBootstrapProof,options:{subject:unknown;target:unknown;at:number;expiresAt:number;
-  childIndex:number;offset:number;requestedBytes:number;policy:RepairPolicy;budget:RepairBudget}):AuthenticatedRepairOriginal{
+function makeChildRequest(signer:unknown,value:AuthenticatedBootstrapProof,options:{subject:unknown;target:unknown;at:number;expiresAt:number;
+  childIndex:number;offset:number;requestedBytes:number;policy:RepairPolicy;budget:RepairBudget},envelopeRef?:unknown):AuthenticatedRepairOriginal{
   const args=fields(options,['subject','target','at','expiresAt','childIndex','offset','requestedBytes','policy','budget']),policy=args.policy as RepairPolicy,budget=args.budget as RepairBudget;
   const {proof,subject,target,at}=childParents(value,args.subject,args.target,args.at,policy,budget),handle=proof.handle.payload as Obj;
   budget.output(16);const token=randomBytes(16);budget.output(38);const requestId='child_'+token.toString('hex');
-  const payload={schema_version:SCHEMA,kind:'bootstrap.proof_child_request',signing_key:subject.signing_key,issued_at:at,expires_at:u53(args.expiresAt),request_id:requestId,
+  const payload:Obj={schema_version:SCHEMA,kind:'bootstrap.proof_child_request',signing_key:subject.signing_key,issued_at:at,expires_at:u53(args.expiresAt),request_id:requestId,
     subject:ids(subject),target:ids(target),target_storage_epoch:handle.target_storage_epoch,purpose:'bootstrap.service_proof_child',consumer:handle.consumer,probe_ref:handle.probe_ref,
     handle_ref:proof.handle.ref,manifest_ref:proof.manifest_ref,service_generation:handle.service_generation,child_index:args.childIndex,offset:args.offset,requested_bytes:args.requestedBytes};
-  window(payload,at);childRange(payload,(proof.manifest.value as Obj).children);
+  if(envelopeRef!==undefined){payload.kind='mailbox.body_read';payload.purpose='mailbox.message_body';payload.envelope_ref=envelopeRef;
+    bodyRange(payload,(proof.manifest.value as Obj).children);}
+  else childRange(payload,(proof.manifest.value as Obj).children);
+  window(payload,at);
   if(payload.issued_at<handle.issued_at||payload.expires_at>handle.expires_at)mismatch();
   return signBoundedBootstrapOriginal(payload,signer,policy,budget);
 }
-export function verifyBootstrapChildRequest(entry:unknown,value:AuthenticatedBootstrapProof,options:{expectedSubject:unknown;expectedTarget:unknown;at:number;policy:RepairPolicy;budget:RepairBudget}):AuthenticatedRepairOriginal{
+function verifyChildRequest(entry:unknown,value:AuthenticatedBootstrapProof,options:{expectedSubject:unknown;expectedTarget:unknown;at:number;policy:RepairPolicy;budget:RepairBudget},body=false):AuthenticatedRepairOriginal{
   const args=fields(options,['expectedSubject','expectedTarget','at','policy','budget']),policy=args.policy as RepairPolicy,budget=args.budget as RepairBudget;
   const {proof,subject,target,at}=childParents(value,args.expectedSubject,args.expectedTarget,args.at,policy,budget),input=fields(entry,['raw','ref']),ref=meta(input.ref);
   if(!isUint8Array(input.raw)||Reflect.apply(byteLength,input.raw,[])>MAX_RESPONSE)fail();
   const document=parseNewWire(input.raw,policy,budget),raw=document.raw;
   if(raw.length!==ref.size||budget.hash(raw)!==ref.raw_sha256)fail('repair_ref_mismatch');
-  const signed=fields(document.value,['payload','proof']),payload=fields(signed.payload,CHILD),handle=proof.handle.payload as Obj;
+  const signed=fields(document.value,['payload','proof']),payload=fields(signed.payload,body?[...CHILD,'envelope_ref']:CHILD),handle=proof.handle.payload as Obj;
   window(payload,at);opaque(payload.request_id);
-  if(payload.schema_version!==SCHEMA||payload.kind!=='bootstrap.proof_child_request'||payload.purpose!=='bootstrap.service_proof_child'||payload.consumer!==handle.consumer||
+  if(payload.schema_version!==SCHEMA||payload.kind!==(body?'mailbox.body_read':'bootstrap.proof_child_request')||payload.purpose!==(body?'mailbox.message_body':'bootstrap.service_proof_child')||payload.consumer!==handle.consumer||
       !same(payload.subject,ids(subject))||!same(payload.target,ids(target))||payload.target_storage_epoch!==handle.target_storage_epoch||
       !same(meta(payload.handle_ref),proof.handle.ref)||!same(meta(payload.manifest_ref),proof.manifest_ref)||!same(meta(payload.probe_ref),meta(handle.probe_ref))||
       payload.service_generation!==handle.service_generation||payload.issued_at<handle.issued_at||payload.expires_at>handle.expires_at)mismatch();
-  childRange(payload,(proof.manifest.value as Obj).children);verifyBoundedControlSignature(payload,signed.proof,subject.signing_key,budget);return held(raw,ref,payload,budget);
+  (body?bodyRange:childRange)(payload,(proof.manifest.value as Obj).children);verifyBoundedControlSignature(payload,signed.proof,subject.signing_key,budget);return held(raw,ref,payload,budget);
+}
+
+function bodyRange(payload:Obj,children:readonly Obj[]):void{
+  const index=u53(payload.child_index),offset=u53(payload.offset),size=u53(payload.requested_bytes,1),ref=rawRef(payload.envelope_ref);
+  if(payload.consumer!=='mailbox_feed'||index>=children.length||children[index].role!=='member.core'||ref.namespace!=='object'||
+      ref.size>6*1024*1024||size>MAX_CHILD||offset>ref.size-size)fail('repair_invalid_range');
+}
+export function makeBootstrapChildRequest(signer:unknown,value:AuthenticatedBootstrapProof,options:Parameters<typeof makeChildRequest>[2]):AuthenticatedRepairOriginal{
+  return makeChildRequest(signer,value,options);
+}
+export function makeMailboxBodyRequest(signer:unknown,value:AuthenticatedBootstrapProof,envelopeRef:unknown,
+    options:Parameters<typeof makeChildRequest>[2]):AuthenticatedRepairOriginal{
+  return makeChildRequest(signer,value,options,envelopeRef);
+}
+export function verifyBootstrapChildRequest(entry:unknown,value:AuthenticatedBootstrapProof,
+    options:Parameters<typeof verifyChildRequest>[2]):AuthenticatedRepairOriginal{
+  return verifyChildRequest(entry,value,options);
+}
+export function verifyMailboxBodyRequest(entry:unknown,value:AuthenticatedBootstrapProof,
+    options:Parameters<typeof verifyChildRequest>[2]):AuthenticatedRepairOriginal{
+  return verifyChildRequest(entry,value,options,true);
 }

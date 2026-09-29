@@ -31,6 +31,11 @@ for(const c of calls){let budget;try{
    if(c.rawGetter)Object.defineProperty(inputRaw,'length',{get(){callbacks++;throw Error('raw getter');}});
    const checked=p.verifyBootstrapProofResponse(inputRaw,options);
    if(c.op==='verify')result={manifest:checked.manifest.value,manifest_ref:checked.manifest_ref,handle:encode(checked.handle),callbacks,frozen:Object.isFrozen(checked)&&Object.isFrozen(checked.manifest.value)};
+   else if(c.op==='body'){
+     const packet=p.makeMailboxBodyRequest(c.signer,checked,c.envelopeRef,{...c.childOptions,policy:c.policy,budget});
+     p.verifyMailboxBodyRequest({raw:packet.raw,ref:packet.ref},checked,{expectedSubject:c.options.expectedSubject,expectedTarget:c.options.expectedTarget,at:c.options.at,policy:c.policy,budget});
+     result=encode(packet);
+   }
    else if(c.op==='child'){
      const child=p.makeBootstrapChildRequest(c.signer,checked,{...c.childOptions,policy:c.policy,budget});
      const verified=p.verifyBootstrapChildRequest({raw:child.raw,ref:child.ref},checked,{expectedSubject:c.childOptions.subject,expectedTarget:c.childOptions.target,
@@ -88,6 +93,19 @@ class OpenRepairProofTypeScriptTests(unittest.TestCase):
         result=self.ts([call])[0]
         self.assertTrue(result['ok'],result)
         self.assertEqual(result['result']['manifest'],manifest)
+
+    def test_native_mailbox_body_request_is_python_verifiable(self):
+        manifest,options=self.py.mailbox_feed_manifest()
+        response=self.py.response(manifest).raw
+        call=self.call('body',envelopeRef=dict(namespace='object',key='a'*64,raw_sha256='b'*64,size=200000))
+        call['raw']=base64.b64encode(response).decode()
+        call['options'].update(consumer='mailbox_feed',expectedSourceState='feed',selector=options['selector'])
+        call['childOptions'].update(childIndex=next(v['index'] for v in manifest['children'] if v['role']=='member.core'),offset=100000,requestedBytes=65536)
+        result=self.ts([call])[0];self.assertTrue(result['ok'],result)
+        packet=result['result'];held=self.py.verify(response,**options)
+        checked=proof.verify_mailbox_body_request(dict(raw=base64.b64decode(packet['raw']),ref=packet['ref']),held,
+            expected_subject=self.py.subject,expected_target=self.py.target,at=self.py.now,policy=self.py.policy,budget=wire.RepairBudget(self.py.policy))
+        self.assertEqual(checked.payload['envelope_ref'],call['envelopeRef'])
 
     def test_native_verifies_python_inline_handle_and_full_twenty_one_role_manifest(self):
         actual=self.ts([self.call()])[0];self.assertTrue(actual['ok'],actual)

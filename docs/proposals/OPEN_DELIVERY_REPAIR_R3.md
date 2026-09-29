@@ -1678,6 +1678,7 @@ nonce answers are canonical Base64url, and keys/epoch match the exact target.
 | bootstrap.answer / C | issued_at,expires_at,challenge_ref,probe_ref,subject:DualID,target:DualID,target_storage_epoch,purpose=bootstrap.service_proof,consumer,bootstrap_grant_sha256,answer |
 | bootstrap.proof_handle / P | issued_at,expires_at,handle_id,probe_ref,challenge_ref,answer_ref,subject:DualID,target:DualID,target_storage_epoch,purpose=bootstrap.service_proof,consumer,bootstrap_grant_sha256,service_generation,manifest_ref,child_count |
 | bootstrap.proof_child_request / C | issued_at,expires_at,request_id,subject:DualID,target:DualID,target_storage_epoch,purpose=bootstrap.service_proof_child,consumer,probe_ref,handle_ref,manifest_ref,service_generation,child_index,offset,requested_bytes |
+| mailbox.body_read / B | issued_at,expires_at,request_id,subject:DualID,target:DualID,target_storage_epoch,purpose=mailbox.message_body,consumer=mailbox_feed,probe_ref,handle_ref,manifest_ref,service_generation,child_index,envelope_ref,offset,requested_bytes |
 
 C encrypts its nonce to P's exact X25519 key; probe AAD is all payload fields
 except target_nonce_jwe. P checks bounded parser/target/epoch/signature/time/
@@ -1732,6 +1733,22 @@ window and current generation on every read, charges the shared work ledger,
 and returns exactly that child range. The client checks child size/hash after
 assembly. This is not a head.intent or a bearer handle. Changed or missing
 bytes invalidate the generation; never switch silently to another proof.
+
+For `mailbox.body_read`, `child_index` selects a `member.core` in the frozen
+mailbox feed proof; it does not turn E into a proof-manifest child. The requested
+object RawRef must equal that signed core's envelope_ref. B first verifies the
+complete member, its encrypted core and current READ observations. P rechecks
+B's selected slot/read/maintenance controls, A's consent, the actual active data
+resource and its READ status, core.object_until and retention, in addition to
+the live dual-possession handle. It serves the separately retained committed
+mailbox ciphertext, without looking up an active original delivery lease.
+Each range is positive and at most 65,536 bytes; E remains at most 6 MiB.
+Request IDs share the persistent replay ledger with metadata reads. The current
+implementation conservatively charges the entire recovery session against both
+the metadata limits and the data resource's request/replay/job-byte ceilings.
+A revoked, expired, missing or inactive dependency refuses the body read. B
+checks the complete E hash and rechecks member authority after assembly; E still
+requires ordinary envelope verification/decryption before any inbox import.
 
 ### 9.4 Complete permission closure at the client
 
