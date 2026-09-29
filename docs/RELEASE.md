@@ -1,6 +1,10 @@
 # Distribution scope and publication gates
 
-Current source candidate: **alpha.0.25 (unpublished)**. Python maintainers can
+Published **[alpha.0.25](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.25)** is fixed at `ac3564467452c7d848dd665329851534cfd230b7`.
+
+Twenty synthetic occupied-replica, restart, command, real-HTTP and Agent checks passed using the extracted alpha.0.25 client. Its exact-source full cloud regression passed 1116 tests across 116 modules, with all 259 reported source hashes matching `ac3564467452c7d848dd665329851534cfd230b7`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
+Python maintainers can
 copy an existing saved-message receipt with all three original ACK histories.
 Recipient authorization is required before reservation, during copy and for
 subsequent owner reads, independently of owner/source/maintainer permission.
@@ -20,10 +24,9 @@ New Agent source preparation can explicitly name a distinct `copy_maintainer`
 with the finite `receipt-index` profile. Default and existing grants remain
 unchanged; changing a previously prepared selection is refused.
 
-The source contains focused synthetic durable-state, real-HTTP, native proof
-grammar, command and Agent cases. Its own complete source and extracted-package
-acceptance remain required before publication. This does not establish independent
-external adoption, global availability or thousand-agent capacity. Replacement
+The source and extracted-package acceptance above passed for this fixed release.
+Independent external adoption, global availability and thousand-agent capacity
+remain unverified. Replacement
 selection is explicit, and native Node replica commands remain unfinished.
 See [occupied replica use](OPEN_ACK_RECOVERY.md#copy-and-recover-an-existing-saved-receipt).
 
