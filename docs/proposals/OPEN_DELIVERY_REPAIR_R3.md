@@ -2523,7 +2523,51 @@ original owner service deadlines. This helper does not mint current assignment
 status: that belongs to the maintainer's coordinated authority-status issuer.
 
 Neither preparation, offer nor assignment is replica custody.
-Post-assignment original disclosure, application copy commit,
-replica read service, HTTP orchestration, and native TypeScript preparation are
-not implemented by this step. No future empty/occupied ACK state is included in
+Destination-local disclosure and copy commit are described below. Replica read
+service, HTTP orchestration, and native TypeScript preparation remain unfinished. No future empty/occupied ACK state is included in
 an unbound preparation.
+
+
+### Destination-local ACK-unbound replica commit
+
+`RepairCopyState.commit_unbound` consumes the exact locally reserved allocation,
+whole original unbound source event, depth-2 assignment, and two additional signed
+`ack.copy_disclosure` originals. Their payloads have the common repair signature
+fields plus exactly:
+
+```
+issued_at, expires_at, consent_id, revision, variant, root_key,
+assignment_ref, source_custody_ref, historical_manifest_ref,
+target:DualKey, target_storage_epoch,
+disclosure:{originals:[{role,ref}],status_scopes:[{scope_kind,scope_id}],until}
+```
+
+`variant` is `owner` or `source`, with that original signer's signature. Each
+permission names the complete exact inventory belonging to its signer; the owner
+inventory includes the reservation consent. `disclosure_permissions` derives the
+full list and whole historical status scopes, including the reservation-consent
+scope. The disclosure's own authority-status scope is also permitted implicitly
+by that signed original. No projection of another signer's status is accepted.
+Current root, owner read/bootstrap, reservation consent, source resource, both
+disclosures and the maintainer assignment must all authorize the applicable
+operations. The destination independently checks its actual local shared ledger;
+another node's signed offer cannot substitute for physical capacity.
+
+After verification the destination stores the exact originals and complete raw
+packs, a recomputed replica manifest and its own signed `replica.custody` in one
+transaction. Metadata includes duplicate bytes in both originals and packs,
+references, stored observations and row overhead. Failed final writes roll back
+all copied objects and custody. Authenticated observations are persisted before
+later checks, including malformed sibling documents, can fail. Revocation and
+revision rollback therefore cannot be erased by a rejected copy. Metadata-status
+exhaustion blocks the root instead of dropping a denial. Retries check every
+stored original and return the same custody while the admission remains live;
+missing stored objects are refused rather than silently reconstructed.
+
+This is a destination-local operator API with finite charged attempts, not an
+HTTP upload or read endpoint. Its current checks use fresh synthetic original
+source events, real SQLite/shared-capacity writes, restart, exact-byte source
+reconstruction and failed-write rollback. They do not establish remote transfer,
+independent owner retrieval from a replacement, provider discovery or automatic
+replacement. Those integrations remain required before advertising this as
+end-to-end replacement-node repair.

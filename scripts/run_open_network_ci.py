@@ -54,7 +54,7 @@ MODULES = tuple("tests.test_open_" + name for name in (
     "tests.test_open_repair_index_prepare", "tests.test_open_repair_index_prepare_admin",
     "tests.test_open_repair_provision", "tests.test_open_repair_onboarding",
     "tests.test_open_repair_bind_recovery", "tests.test_open_repair_remote_setup", "tests.test_open_repair_remote_provision",
-    "tests.test_open_repair_status_observer", "tests.test_open_repair_mailbox_resources", "tests.test_open_repair_copy_resources", "tests.test_open_repair_copy_prepare", "tests.test_open_repair_mailbox_activation", "tests.test_open_repair_mailbox_range", "tests.test_open_repair_mailbox_root", "tests.test_open_repair_mailbox_status", "tests.test_open_repair_mailbox_source",
+    "tests.test_open_repair_status_observer", "tests.test_open_repair_mailbox_resources", "tests.test_open_repair_copy_resources", "tests.test_open_repair_copy_prepare", "tests.test_open_repair_copy_state", "tests.test_open_repair_mailbox_activation", "tests.test_open_repair_mailbox_range", "tests.test_open_repair_mailbox_root", "tests.test_open_repair_mailbox_status", "tests.test_open_repair_mailbox_source",
     "tests.test_open_provider_merge",
     "tests.test_continuation_trial", "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {
@@ -251,7 +251,7 @@ def initialize(reports, mode, seed):
                     "memory_vault_open_repair_resource.py", "tests/open_repair_resource_fixtures.py",
                     "memory_vault_open_repair_bootstrap.py", "memory_vault_open_repair_status.py",
                     "memory_vault_open_repair_ack.py", "tests/open_repair_ack_fixtures.py",
-                    "memory_vault_open_repair_state.py", "memory_vault_open_repair_mailbox_resources.py", "memory_vault_open_repair_copy_resources.py", "memory_vault_open_repair_copy_prepare.py", "memory_vault_open_repair_mailbox_activation.py", "memory_vault_open_repair_mailbox_range.py", "memory_vault_open_repair_mailbox_root.py", "memory_vault_open_repair_mailbox_status.py", "memory_vault_open_repair_mailbox_source.py", "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
+                    "memory_vault_open_repair_state.py", "memory_vault_open_repair_mailbox_resources.py", "memory_vault_open_repair_copy_resources.py", "memory_vault_open_repair_copy_prepare.py", "memory_vault_open_repair_copy_authority.py", "memory_vault_open_repair_copy_state.py", "memory_vault_open_repair_mailbox_activation.py", "memory_vault_open_repair_mailbox_range.py", "memory_vault_open_repair_mailbox_root.py", "memory_vault_open_repair_mailbox_status.py", "memory_vault_open_repair_mailbox_source.py", "memory_vault_open_capacity.py", "memory_vault_open_capacity_schema.json",
                     "memory_vault_open_repair_probe.py",
                     "memory_vault_open_repair_proof.py",
                     "memory_vault_open_repair_access.py",
@@ -366,6 +366,18 @@ class SyntheticResult(unittest.TestResult):
                     frames.append({"source":source.relative_to(ROOT).as_posix(),"line":trace.tb_lineno})
                 trace=trace.tb_next
             item["source_frames"]=frames
+            # Preserve a narrow protocol reason through assertion wrappers,
+            # without ever printing exception text, operands or arbitrary codes.
+            allowed={"repair_access_expired","repair_over_budget","repair_resource_expired",
+                "repair_status_mismatch","repair_status_operation","repair_status_rollback",
+                "repair_status_conflict","repair_status_missing","repair_authority_revoked",
+                "open_network_unavailable"}
+            cause=error[1];seen=set()
+            while cause is not None and len(seen)<8 and id(cause) not in seen:
+                seen.add(id(cause));code=getattr(cause,"code",None)
+                if type(code) is str and code in allowed:
+                    item["protocol_code"]=code;break
+                cause=cause.__cause__ or cause.__context__
         self.entries.append(item);self.reports.event(item,error=state not in {"passed","subtest_passed"})
 
     def addSuccess(self,test):super().addSuccess(test);self.record(test,"passed")

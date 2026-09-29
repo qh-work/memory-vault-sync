@@ -29,6 +29,21 @@ def synthetic_report():
 
 
 class OpenNetworkCITests(unittest.TestCase):
+    def test_failure_reason_is_allowlisted_through_exception_wrappers(self):
+        from memory_vault_open_repair_wire import RepairWireError
+        for code in ('repair_access_expired','synthetic_private_value'):
+            reports=mock.Mock();result=ci.SyntheticResult(reports)
+            try:
+                try:raise RepairWireError(code)
+                except RepairWireError as error:raise AssertionError('synthetic private assertion text') from error
+            except AssertionError:
+                result.record(self,'failed',sys.exc_info())
+            item=result.entries[0]
+            self.assertEqual(item.get('protocol_code'),'repair_access_expired' if code=='repair_access_expired' else None)
+            serialized=json.dumps(item)
+            self.assertNotIn('synthetic_private_value',serialized)
+            self.assertNotIn('synthetic private assertion text',serialized)
+
     def test_maximal_failure_diagnostics_fit_child_and_report_caps(self):
         from tests import open_routing_acceptance as acceptance
         value=synthetic_report();graph=[]

@@ -15,7 +15,7 @@ MAX_STATUS_BYTES = 16384
 MAX_STATUS_SECONDS = 604800
 AUTHORITY_KINDS = frozenset(("ack.root_authority", "ack.read_grant",
                             "ack.write_grant", "bootstrap.grant", "ack.disclosure",
-                            "ack.index_consent", "ack.copy_reservation_consent", "mailbox.root_authority", "mailbox.root_read_grant",
+                            "ack.index_consent", "ack.copy_reservation_consent", "ack.copy_disclosure", "mailbox.root_authority", "mailbox.root_read_grant",
                             "mailbox.maintenance_root", "mailbox.read_grant", "delivery.destination",
                             "message.disclosure"))
 SCOPE_KINDS = frozenset(("catalog", "mailbox_slot", "ack_slot", "authority",
