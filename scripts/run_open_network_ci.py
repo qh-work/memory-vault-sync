@@ -45,7 +45,7 @@ MODULES = tuple("tests.test_open_" + name for name in (
     "repair_service",
     "repair_service_budget",
     "repair_http",
-    "repair_client", "repair_client_typescript", "repair_admin", "repair_runtime_review", "repair_bound",
+    "repair_client", "repair_client_typescript", "repair_admin", "repair_admin_typescript", "repair_runtime_review", "repair_bound",
     "repair_bound_typescript", "repair_empty", "repair_empty_typescript", "repair_empty_review", "repair_empty_access", "repair_empty_http", "repair_empty_client", "repair_empty_client_typescript",
     "repair_bind_http", "repair_offer_access", "repair_offer_http", "repair_offer_client", "repair_offer_http_typescript", "repair_occupied", "repair_occupied_typescript", "repair_occupied_access", "repair_occupied_client", "repair_put_http", "repair_put_client", "repair_put_recovery", "repair_roundtrip", "repair_receipt", "repair_occupied_client_typescript")) + (
     "tests.test_open_repair_stage", "tests.test_open_repair_index", "tests.test_open_repair_index_access",
@@ -235,7 +235,7 @@ def initialize(reports, mode, seed):
             "open-contact.ts", "open-contact-state.ts", "open-contact-client.ts",
             "open-provider.ts", "open-provider-client.ts", "open-blob.ts", "open-repair-wire.ts", "open-repair-history.ts", "open-repair-original.ts", "open-repair-resource.ts",
             "open-repair-bootstrap.ts", "open-repair-status.ts", "open-repair-mailbox-range.ts", "open-repair-ack.ts", "open-capacity.ts",
-            "open-repair-probe.ts", "open-repair-proof.ts", "open-repair-client.ts",
+            "open-repair-probe.ts", "open-repair-proof.ts", "open-repair-client.ts", "open-repair-admin.ts",
             "open-repair-bound.ts", "open-repair-empty.ts", "open-repair-occupied.ts",
             "open-delivery.ts", "open-delivery-control.ts", "open-delivery-client.ts",
             "agent.ts", "peer.ts", "io.ts", "crypto.ts", "nodes.ts")]

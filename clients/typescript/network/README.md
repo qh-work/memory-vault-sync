@@ -269,3 +269,11 @@ all three source generations; B's explicit four-role return consent and current
 READ remain separate from A's permission. See the [ACK guide](../../../docs/OPEN_ACK_RECOVERY.md).
 The package exports the client plus bounded, empty and occupied verifiers.
 No Python subprocess is used. The Python node hosts the protected HTTP service.
+
+
+The source checkout also supplies native original-source ACK recovery commands
+in `open-repair-admin.ts`: `recover-ack`, `recover-empty`, and
+`recover-occupied`. They reuse the existing protected identity and persist
+verified status observations across restarts, including failed recovery.
+See [request formats and commands](../../../docs/OPEN_ACK_RECOVERY.md#native-recovery-commands-development-after-alpha019).
+This command entry is development after the frozen alpha.0.19 archives.

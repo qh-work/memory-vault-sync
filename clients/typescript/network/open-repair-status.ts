@@ -83,7 +83,8 @@ export interface AuthenticatedStatusOriginal {
   readonly raw:Uint8Array;readonly ref:RawRef;readonly payload:Readonly<Record<string,DraftValue>>;
   readonly raw_sha256:string;readonly canonical_sha256:string;readonly at:number;
 }
-function statusOriginal(entry:unknown,options:StatusOriginalOptions,enforceRequired:boolean):AuthenticatedStatusOriginal {
+function statusOriginal(entry:unknown,options:StatusOriginalOptions,enforceRequired:boolean,onAuthenticated?:(item:AuthenticatedStatusOriginal)=>void):AuthenticatedStatusOriginal {
+  if(onAuthenticated!==undefined&&typeof onAuthenticated!=="function")fail();
   const args=fields(options,['expectedRoot','expectedSigningKey','at','allowedScopes','required','policy','budget']);
   const input=fields(entry,['raw','ref']),policy=args.policy as RepairPolicy,budget=args.budget as RepairBudget;
   // Use the native typed-array getter directly; never invoke an input getter.
@@ -112,7 +113,8 @@ function statusOriginal(entry:unknown,options:StatusOriginalOptions,enforceRequi
   if(!same(scope.root_key,expected.root)||payload.signing_key===null||typeof payload.signing_key!=='object'||
       Array.isArray(payload.signing_key)||scope.issuer_key_id!==payload.signing_key.key_id)fail('repair_status_mismatch');
   number(payload.revision,1);const issued=number(payload.issued_at),until=number(payload.valid_until);
-  if(!(until-issued>=1&&until-issued<=MAX_SECONDS&&issued<=at+30&&at<until))fail('repair_status_mismatch');
+  const expired=at>=until;
+  if(!(until-issued>=1&&until-issued<=MAX_SECONDS&&issued<=at+30&&(!expired||onAuthenticated!==undefined)))fail('repair_status_mismatch');
   if(!Array.isArray(payload.entries)||payload.entries.length<1||payload.entries.length>16)fail();
   const seen=new Map<string,Obj>();let previous='';
   for(const value of payload.entries){fields(value,ENTRY);const key=scopeKey(value);
@@ -128,14 +130,19 @@ function statusOriginal(entry:unknown,options:StatusOriginalOptions,enforceRequi
   verifyBoundedControlSignature(payload,signed.proof,expectedKey,budget);
   const canonicalHash=budget.hash(canonical);
   if([...seen.keys()].some(key=>!allowed.has(key)))fail('repair_status_disclosure');
+  const authenticated=Object.freeze({payload,ref,raw_sha256:rawHash,canonical_sha256:canonicalHash,at,
+    get raw():Uint8Array{budget.output(raw.length);return Uint8Array.from(raw);}});
+  // All exact bytes, issuer/root, scopes and signature have passed. Retain
+  // authentic denial evidence before refusing an expired or revoked operation.
+  onAuthenticated?.(authenticated);
+  if(expired)fail('repair_status_mismatch');
   if([...obligations.keys()].some(key=>!seen.has(key)))fail('repair_status_missing');
   for(const [key,obligation] of obligations){const observation=seen.get(key)!;
     if(observation.status==='revoked')fail('repair_authority_revoked');
     if(observation.minimum_document_revision>obligation.document_revision)fail('repair_status_revision');
     if((observation.operation_mask&obligation.operation_mask)!==obligation.operation_mask)fail('repair_status_operation');
   }
-  return Object.freeze({payload,ref,raw_sha256:rawHash,canonical_sha256:canonicalHash,at,
-    get raw():Uint8Array{budget.output(raw.length);return Uint8Array.from(raw);}});
+  return authenticated;
 }
 
 /** Authenticate exact denial observations for retention before access refusal.
@@ -143,12 +150,12 @@ function statusOriginal(entry:unknown,options:StatusOriginalOptions,enforceRequi
  * This return value grants no operation and does not maintain a status ledger.
  */
 export function authenticateStatusOriginal(entry:unknown,
-  options:Omit<StatusOriginalOptions,'required'>):AuthenticatedStatusOriginal {
+  options:Omit<StatusOriginalOptions,'required'>,onAuthenticated?:(item:AuthenticatedStatusOriginal)=>void):AuthenticatedStatusOriginal {
   const args=fields(options,['expectedRoot','expectedSigningKey','at','allowedScopes','policy','budget']);
   return statusOriginal(entry,{expectedRoot:args.expectedRoot,expectedSigningKey:args.expectedSigningKey,
-    at:args.at,allowedScopes:args.allowedScopes,required:[],policy:args.policy,budget:args.budget},false);
+    at:args.at,allowedScopes:args.allowedScopes,required:[],policy:args.policy,budget:args.budget},false,onAuthenticated);
 }
 
-export function verifyStatusOriginal(entry:unknown,options:StatusOriginalOptions):AuthenticatedStatusOriginal {
-  return statusOriginal(entry,options,true);
+export function verifyStatusOriginal(entry:unknown,options:StatusOriginalOptions,onAuthenticated?:(item:AuthenticatedStatusOriginal)=>void):AuthenticatedStatusOriginal {
+  return statusOriginal(entry,options,true,onAuthenticated);
 }

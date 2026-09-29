@@ -199,6 +199,40 @@ discarded. The shared journal capacity is 16 root/domain records, 32 originals a
 TypeScript callers must still retain and supply both arrays themselves. Source-side
 floors are also durable in the existing protected transport database.
 
+## Native recovery commands (development after alpha.0.19)
+
+The source checkout now includes a native Node command for original-source
+`recover-ack`, `recover-empty`, and `recover-occupied`. From
+`clients/typescript/network`, install the locked dependencies with
+`npm ci --ignore-scripts`, then use Node 22.19 or later:
+
+```sh
+node --experimental-strip-types open-repair-admin.ts recover-occupied \
+  --network-config /absolute/private/open-agent/open-config.json \
+  --request /absolute/private/occupied-request.json \
+  --output /absolute/private/new-occupied-evidence.json \
+  --repair-profile receipt --timeout 60
+```
+
+Use the same private request schemas and exact originals as the Python command
+for the selected phase. The native command uses the existing identity and
+protected transport database. It performs native signature verification and
+HTTP requests, and does not launch Python or open the content Vault. It exports
+an actual recipient receipt only for an authenticated occupied source; empty
+and unbound results report `recipient_saved:false`.
+
+Both command implementations share the original-source status journal and its
+capacity limits described above. Authenticated revocations survive a failed
+command, process restart, and switching between Python and Node. Unauthenticated
+status documents cannot enter that journal. Output must name a new file;
+existing files are preserved. The optional profiles and 60-second timeout
+ceiling match Python and cannot enlarge signed grants. Programmatic callers
+can supply a synchronous `statusObserver` to persist authenticated observations
+before access refusal; it supplies observations, never authorization.
+
+These native commands are not included in the frozen alpha.0.19 archives.
+Replica recovery and maintainer copy commands remain Python-only.
+
 ## Maintainer copy commands (alpha.0.19 candidate)
 
 `copy-reserve` and `copy-upload` use the maintainer's existing open-client identity

@@ -146,6 +146,7 @@ PACKAGE_DOCUMENTS = (
     "clients/typescript/network/open-repair-probe.ts",
     "clients/typescript/network/open-repair-proof.ts",
     "clients/typescript/network/open-repair-client.ts",
+    "clients/typescript/network/open-repair-admin.ts",
     "clients/typescript/network/open-repair-bound.ts",
     "clients/typescript/network/open-repair-empty.ts", "clients/typescript/network/open-repair-occupied.ts",
     "clients/typescript/network/open-blob.ts", "clients/typescript/network/open-delivery.ts",

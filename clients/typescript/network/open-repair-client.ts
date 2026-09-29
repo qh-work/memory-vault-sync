@@ -29,7 +29,7 @@ export const DEFAULT_REPAIR_CLIENT_POLICY:RepairPolicy=Object.freeze({max_docume
 export const DEFAULT_REPAIR_CLIENT_LIMITS=Object.freeze({max_probe_bytes:8192,max_proof_bytes:262144,max_proof_items:64,
   max_signature_checks:512,max_requests:64,max_pending:8,max_replay_records:128,max_concurrent_handles:8,max_candidate_attempts:8});
 export interface AckOwnerRecoveryOptions{readonly policy?:RepairPolicy;readonly limitPolicy?:unknown;readonly allowLoopback?:boolean;
-  readonly transport?:OpenHTTPTransport;readonly clock?:()=>number;}
+  readonly transport?:OpenHTTPTransport;readonly clock?:()=>number;readonly statusObserver?:(item:AuthenticatedStatusOriginal)=>void;}
 export interface AckOwnerRecoverOptions{readonly targetNodeEntry:unknown;readonly expectedTarget:unknown;readonly expectedAckSlot:unknown;
   readonly rootEntry:unknown;readonly readEntry:unknown;readonly bootstrapEntry:unknown;readonly knownStatuses?:readonly unknown[];readonly archiveStatuses?:readonly unknown[];readonly timeout?:number;}
 export interface AckOwnerRecoverEmptyOptions extends AckOwnerRecoverOptions{readonly expectedReceiptWriter:unknown;readonly expectedMessageId:string;readonly expectedEnvelopeRef:unknown;}
@@ -68,9 +68,10 @@ function snapshotEntry(value:unknown,policy:RepairPolicy,budget:RepairBudget,leg
 }
 export class AckOwnerRecoveryClient{
   readonly #identity:Obj;readonly #encryption:Obj;readonly #subject:Obj;readonly #policy:RepairPolicy;readonly #limits:Obj;
+  readonly #statusObserver?: (item:AuthenticatedStatusOriginal)=>void;
   readonly #transport:OpenHTTPTransport;readonly #allowLoopback:boolean;readonly #clock:()=>number;readonly #ownTransport:boolean;
   constructor(identity:unknown,encryptionIdentity:unknown,value:AckOwnerRecoveryOptions={}){
-    const args=options(value,[],['policy','limitPolicy','allowLoopback','transport','clock']);
+    const args=options(value,[],['policy','limitPolicy','allowLoopback','transport','clock','statusObserver']);
     const meter=new RepairBudget(args.policy??DEFAULT_REPAIR_CLIENT_POLICY);this.#policy=meter.policy;
     const held=buildNewWire({identity,encryption:encryptionIdentity,limits:args.limitPolicy??DEFAULT_REPAIR_CLIENT_LIMITS},this.#policy,meter).value as Obj;
     this.#identity=fields(held.identity,['schema_version','algorithm','key_id','public_key','private_key']);
@@ -81,8 +82,10 @@ export class AckOwnerRecoveryClient{
       algorithm:this.#encryption.algorithm,key_id:this.#encryption.key_id,public_key:this.#encryption.public_key}},this.#policy,meter).value as Obj;
     if(args.allowLoopback!==undefined&&typeof args.allowLoopback!=='boolean')fail('repair_invalid_policy');
     if(args.clock!==undefined&&typeof args.clock!=='function')fail('repair_invalid_policy');
+    if(args.statusObserver!==undefined&&typeof args.statusObserver!=='function')fail('repair_invalid_policy');
     this.#allowLoopback=args.allowLoopback??false;this.#clock=args.clock??(()=>Date.now()/1000);
     this.#transport=args.transport??new OpenHTTPTransport({allow_loopback:this.#allowLoopback});this.#ownTransport=args.transport===undefined;
+    this.#statusObserver=args.statusObserver;
     Object.freeze(this);
   }
   close():void{if(this.#ownTransport)this.#transport.close();}
@@ -247,7 +250,7 @@ export class AckOwnerRecoveryClient{
       else if(receiptWriter&&issuer===receiptWriter.signing_key.key_id){signer=receiptWriter.signing_key;
         if(payload.entries.some((v:Obj)=>v.scope_kind!=='authority'))fail('repair_status_disclosure');allowed=payload.entries.map((v:Obj)=>({scope_kind:v.scope_kind,scope_id:v.scope_id}));}
       else fail('repair_status_mismatch');
-      checked.push(authenticateStatusOriginal(item,{expectedRoot:root,expectedSigningKey:signer,at:issued,allowedScopes:allowed,policy:this.#policy,budget}));
+      checked.push(authenticateStatusOriginal(item,{expectedRoot:root,expectedSigningKey:signer,at:issued,allowedScopes:allowed,policy:this.#policy,budget},this.#statusObserver));
     }
     // If A and B share a signing key, an unknown authority could be consent;
     // retain its READ revocation before the actual consent hash is recovered.
@@ -301,7 +304,7 @@ export class AckOwnerRecoveryClient{
     for(const [key,group] of groups){
       const allowed=obligations.filter(v=>same(v.signer,group.signer)),entry=originals.get(key)!,payload=checkedStatus(entry.raw,policy,budget),present=new Set(payload.entries.map(scopeKey)),required=new Map(group.required.map(v=>[scopeKey(v),v]));
       for(const item of allowed)if(present.has(item.kind+':'+item.scope_id)&&(item.mask??2))required.set(item.kind+':'+item.scope_id,{scope_kind:item.kind,scope_id:item.scope_id,document_revision:item.revision,operation_mask:2});
-      checked.push(verifyStatusOriginal(entry,{expectedRoot:root,expectedSigningKey:group.signer,at:this.#now(),allowedScopes:allowed.map(v=>({scope_kind:v.kind,scope_id:v.scope_id})),required:[...required.values()],policy,budget}));
+      checked.push(verifyStatusOriginal(entry,{expectedRoot:root,expectedSigningKey:group.signer,at:this.#now(),allowedScopes:allowed.map(v=>({scope_kind:v.kind,scope_id:v.scope_id})),required:[...required.values()],policy,budget},this.#statusObserver));
     }
     this.#floors([...source.statuses,...(extraSource?.statuses??[]),...(occupiedSource?.statuses??[]),...known],checked,obligations);return checked;
   }
