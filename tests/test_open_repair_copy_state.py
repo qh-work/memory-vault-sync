@@ -147,3 +147,56 @@ class CopyStateTests(unittest.TestCase):
         self.assignment=signed_entry(body,self.f['signers']['maintainer'],'changed_assignment')
         with self.assertRaises(wire.RepairWireError):self.commit()
         self.assertEqual(self.destination.db.execute('SELECT count(*) FROM open_repair_copy_commits').fetchone()[0],0)
+
+    def restore(self,resource_id):
+        return self.store.restore_unbound(resource_id,expected_ack_slot=self.f['expected']['expected_ack_slot'],
+            expected_owner=self.f['expected']['expected_owner'],expected_source=self.f['expected']['expected_target'],
+            source_storage_epoch=self.f['expected']['target_storage_epoch'],expected_maintainer=self.base.keys,
+            limit_policy=self.f['expected']['limit_policy'])
+
+    def test_reconstructs_history_from_destination_only_after_expiry_and_restart(self):
+        custody=self.commit();rid=json.loads(custody['raw'])['payload']['resource']['resource_id']
+        original=self.f['custody']['raw']
+        self.f['manifest']=None;self.f['packs']=[];self.f['entries']={};self.f['custody']=None
+        self.destination.db.close();self.destination.connect();self.store=RepairCopyState(self.destination.state);self.store.initialize()
+        self.destination.now[0]+=1000
+        restored=self.restore(rid)
+        self.assertEqual(restored['state'],'historical_replica')
+        self.assertEqual(restored['source'].custody.raw,original)
+        self.assertEqual(restored['custody'].raw,custody['raw'])
+        self.assertEqual(len(restored['authority'].statuses),3)
+        self.assertNotIn('object_readable',restored)
+
+    def test_missing_commit_status_original_prevents_reconstruction(self):
+        custody=self.commit();rid=json.loads(custody['raw'])['payload']['resource']['resource_id']
+        manifest=json.loads(self.destination.db.execute('SELECT manifest FROM open_repair_copy_commits').fetchone()[0])
+        ref=next(item['ref'] for item in manifest['original_roles'] if item['role']=='copy.current_status')
+        digest=hashlib.sha256(canonical_bytes(ref)).hexdigest()
+        self.destination.db.execute('DELETE FROM open_repair_copy_objects WHERE ref_digest=?',(digest,))
+        self.destination.db.execute('DELETE FROM open_repair_copy_observations WHERE raw_digest=?',(ref['raw_sha256'],));self.destination.db.commit()
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_copy_objects_missing'):self.restore(rid)
+
+    def test_new_current_status_does_not_rewrite_the_original_commit_proof(self):
+        custody=self.commit();rid=json.loads(custody['raw'])['payload']['resource']['resource_id']
+        self.status_values[0]['revision']+=1
+        self.assertEqual(self.commit(),custody)
+        restored=self.restore(rid)
+        owner=next(item for item in restored['authority'].statuses if item.payload['signing_key']==self.status_signers[0].public_descriptor())
+        self.assertEqual(owner.payload['revision'],3)
+
+    def test_missing_capacity_ledger_refuses_reconstruction(self):
+        custody=self.commit();rid=json.loads(custody['raw'])['payload']['resource']['resource_id']
+        self.destination.db.execute("DELETE FROM open_capacity_reservations WHERE service='repair_copy'");self.destination.db.commit()
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_copy_ledger_missing'):self.restore(rid)
+
+    def test_replica_signature_cannot_substitute_for_recomputed_history_edges(self):
+        custody=self.commit();rid=json.loads(custody['raw'])['payload']['resource']['resource_id']
+        row=self.destination.state._one('SELECT * FROM open_repair_copy_commits WHERE resource_id=?',(rid,))
+        manifest=json.loads(bytes(row['manifest']));manifest['edges'][0]['relation']='ack-commit-receipt'
+        raw=canonical_bytes(manifest);sha=hashlib.sha256(raw).hexdigest()
+        ref=dict(namespace='meta',key=sha,raw_sha256=sha,size=len(raw))
+        payload=json.loads(custody['raw'])['payload'];payload['replica_manifest_ref']=ref
+        changed=signed_entry(payload,self.destination.state.identity,'synthetic_changed_replica')
+        self.destination.db.execute('UPDATE open_repair_copy_commits SET manifest=?,manifest_ref=?,custody=?,custody_ref=? WHERE resource_id=?',
+            (raw,canonical_bytes(ref),changed['raw'],canonical_bytes(changed['ref']),rid));self.destination.db.commit()
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_copy_commit_mismatch'):self.restore(rid)

@@ -2571,3 +2571,29 @@ reconstruction and failed-write rollback. They do not establish remote transfer,
 independent owner retrieval from a replacement, provider discovery or automatic
 replacement. Those integrations remain required before advertising this as
 end-to-end replacement-node repair.
+
+
+### Restart reconstruction of a committed replica
+
+The replica manifest now binds the exact `copy.current_status` originals used at
+its original commit. These immutable originals may share physical storage with
+the same resource's status journal when their full reference and bytes match;
+both obligations remain pinned and their metadata is charged. A later current
+status update does not change the original commit or its custody signature.
+Before retry observation, an existing commit's complete stored inventory is
+checked, so a retry cannot quietly recreate a missing committed status original.
+
+`RepairCopyState.restore_unbound` reconstructs a historical replica using only
+the destination database and independently supplied owner, original source and
+maintainer identities. It authenticates the destination custody, exact manifest,
+all stored objects, original source event, original commit-time authority and
+complete typed role/edge closure. It also requires the real capacity ledger to
+remain intact. Missing objects/status originals, invented graph edges or an
+incomplete old experimental manifest are refused; nothing is synthesized.
+
+Its explicit result state is `historical_replica`. Reconstruction can inspect a
+past valid event after its serving window ends, but does not authorize current
+READ, expose an HTTP endpoint, refresh status or advertise a provider. A live
+owner service must separately check current authority, revocation and dual-key
+possession before disclosing any reconstructed bytes. Old experimental copy
+commits lacking commit-time status references cannot be promoted to that state.
