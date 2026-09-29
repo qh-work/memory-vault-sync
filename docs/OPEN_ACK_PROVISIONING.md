@@ -28,6 +28,43 @@ The operator supplies the HTTPS forwarding described in the
 `/open/v1/repair/bootstrap`, and gives A only the public origin and key ID.
 Keep both private identity files, node configuration and storage at R.
 
+## Agent interface preparation
+
+An agent can call `connect` with this invitation before its first `send`:
+
+```json
+{
+  "schema_version": "memory-vault-open-ack-connect/v1",
+  "action": "prepare",
+  "source_url": "https://source.example",
+  "source_key_id": "ed25519_REPLACE_WITH_SOURCE_KEY_ID",
+  "request_id": "req_ack_example_001",
+  "recipient": "ed25519_REPLACE_WITH_RECIPIENT_KEY_ID",
+  "text": "Selected memory for this conversation",
+  "memory_ids": ["mem_REPLACE_WITH_SELECTED_MEMORY_ID"],
+  "repair_profile": "receipt-index",
+  "lifetime": 3600
+}
+```
+
+The result contains the message and resource IDs. Preparation never uploads the
+message. Repeat the identical invitation to resume; changing parameters under
+that request ID fails. Completed preparations survive client restarts in the
+protected local database, bounded to 128 records with no silent eviction.
+Cached replies explicitly report `from_local_history: true` and
+`source_rechecked: false`. The `preparation_delivery_uploaded` and
+`preparation_recipient_saved` fields describe preparation, not current delivery.
+
+Export each role separately using the same schema, `action: export_preparation`,
+`request_id`, and `part: owner_request` or `part: recipient_request`.
+Decode each `bundle_chunk` from base64, append in offset order, and pass
+`next_cursor` as `cursor` until it is null. Verify `total_bytes` and
+`bundle_sha256` before parsing the assembled JSON. Export reads saved originals;
+it does not refresh permission or source availability. Keep the owner request
+with A and give only the recipient request to B over an authorized channel.
+These bundles contain no private keys. Existing contact approval and R's explicit
+remote setup opt-in remain required, as in the command workflow below.
+
 ## Freeze and prepare
 
 For later directory publication, explicitly select `receipt-index` both when

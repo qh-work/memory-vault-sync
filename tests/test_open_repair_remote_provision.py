@@ -1,6 +1,7 @@
 """Independent sender/source setup over actual HTTP with synthetic identities."""
 import json
 import base64
+import hashlib
 import time
 import unittest
 from unittest.mock import patch
@@ -40,14 +41,38 @@ class RemoteProvisionTests(unittest.TestCase):
         memory = self.delivery.call(self.delivery.a, op='remember', request_id='req_remote_selected_memory',
             kind='observation', text='Synthetic selected memory prepared using an independent remote source.')
         selected = [memory['memory_id']]
-        prepared_path = self.root / 'remote-source-prepared.json'
-        # This public command receives A's config and R's public origin/key only.
-        # The already-running R retains its own independent private identities.
-        prepare_remote_source(self.delivery.a.network_config, prepared_path, memory_ids=selected, **self.options)
-        prepared = json.loads(prepared_path.read_bytes())
-        self.assertEqual(prepared['state'], 'empty')
-        self.assertFalse(prepared['delivery_uploaded'])
+        from memory_vault_open_client import ACK_CONNECT_SCHEMA
+        from memory_vault_open_repair_remote_provision import RemoteAckSourceProvisioner
+        invitation = dict(schema_version=ACK_CONNECT_SCHEMA, action='prepare',
+            source_url=self.options['source_url'], source_key_id=self.options['source_key_id'],
+            repair_profile=self.options['profile'], lifetime=3600,
+            request_id=self.options['request_id'], recipient=self.options['recipient'],
+            text=self.options['text'], memory_ids=selected)
+        prepared = self.delivery.call(self.delivery.a, op='connect', invitation=invitation)
+        self.assertEqual(prepared['state'], 'ack_source_prepared')
+        self.assertFalse(prepared['preparation_delivery_uploaded'])
         self.assertEqual(self.delivery.stored_count(), 0)
+        with patch.object(RemoteAckSourceProvisioner, 'queue_and_prepare', side_effect=AssertionError('unexpected network')):
+            restored = self.delivery.call(self.delivery.a, op='connect', invitation=invitation)
+        self.assertEqual(restored['state'], 'ack_source_configured')
+        self.assertFalse(restored['network_accessed'])
+        conflict = self.delivery.a.handle(dict(op='connect', invitation=dict(invitation, lifetime=3601)))
+        self.assertFalse(conflict['ok'])
+        self.assertIn('open_ack_preparation_conflict', str(conflict))
+        for part in ('owner_request', 'recipient_request'):
+            request = dict(schema_version=ACK_CONNECT_SCHEMA, action='export_preparation',
+                request_id=self.options['request_id'], part=part)
+            raw = b''
+            while True:
+                page = self.delivery.call(self.delivery.a, op='connect', invitation=request)
+                self.assertEqual(page['offset'], len(raw))
+                self.assertFalse(page['network_accessed'])
+                raw += base64.b64decode(page['bundle_chunk'], validate=True)
+                if page['next_cursor'] is None: break
+                request['cursor'] = page['next_cursor']
+            self.assertEqual(len(raw), page['total_bytes'])
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), page['bundle_sha256'])
+            prepared[part] = json.loads(raw)
 
         sent = self.delivery.call(self.delivery.a, op='send', request_id=self.options['request_id'],
             recipients=[self.options['recipient']], text=self.options['text'], memory_ids=selected)

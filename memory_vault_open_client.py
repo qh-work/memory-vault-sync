@@ -401,11 +401,85 @@ class OpenNetworkClient:
         discovered = DiscoveredAckRecoveryClient(OpenProviderClient(self.participant, self.encryption), reader)
         return asyncio.run(discovered.recover(**arguments))
 
+    def _ack_preparations_initialize(self):
+        delivery=self._delivery()
+        with self.participant.state.db() as db:
+            db.execute('CREATE TABLE IF NOT EXISTS open_ack_agent_preparations(request_id TEXT PRIMARY KEY,binding TEXT NOT NULL,result BLOB,result_sha256 TEXT)')
+        return delivery
+
+    def _ack_prepare(self, value):
+        from memory_vault_open_repair_remote_provision import RemoteAckSourceProvisioner
+        from memory_vault_open_repair_admin import MAX_BUNDLE_BYTES
+        from memory_vault_open_control import coordinate
+        from memory_vault_open_transport import endpoint
+        object_fields(value,{'schema_version','action','source_url','source_key_id','request_id','recipient','text','memory_ids','repair_profile','lifetime'})
+        if (value['repair_profile'] not in ('receipt','receipt-index') or type(value['lifetime']) is not int
+                or not 120<=value['lifetime']<=86400):raise MemoryError('open_invalid_ack_request')
+        endpoint(value['source_url'],allow_loopback=self.participant.transport.allow_loopback);coordinate(value['source_key_id'])
+        delivery=self._ack_preparations_initialize()
+        delivery._send_input(value['request_id'],[value['recipient']],value['text'],value['memory_ids'],None)
+        binding=hashlib.sha256(canonical_bytes(value)).hexdigest()
+        with self.participant.state.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old=db.execute('SELECT binding,result,result_sha256 FROM open_ack_agent_preparations WHERE request_id=?',(value['request_id'],)).fetchone()
+            if old is not None and old['binding']!=binding:raise MemoryError('open_ack_preparation_conflict')
+            if old is None:
+                if db.execute('SELECT count(*) FROM open_ack_agent_preparations').fetchone()[0]>=128:raise MemoryError('open_ack_preparation_capacity')
+                db.execute('INSERT INTO open_ack_agent_preparations(request_id,binding) VALUES(?,?)',(value['request_id'],binding))
+        cached=old is not None and old['result'] is not None
+        if cached:
+            raw=bytes(old['result'])
+            if len(raw)>MAX_BUNDLE_BYTES or hashlib.sha256(raw).hexdigest()!=old['result_sha256']:raise MemoryError('open_ack_preparation_corrupt')
+            result=document(raw,maximum=MAX_BUNDLE_BYTES)
+        else:
+            result=asyncio.run(RemoteAckSourceProvisioner(delivery).queue_and_prepare(value['request_id'],value['recipient'],
+                text=value['text'],memory_ids=value['memory_ids'],source_url=value['source_url'],source_key_id=value['source_key_id'],
+                profile=value['repair_profile'],lifetime=value['lifetime']))
+            raw=canonical_bytes(result)
+            if len(raw)>MAX_BUNDLE_BYTES:raise MemoryError('open_ack_preparation_capacity')
+            with self.participant.state.db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                prior=db.execute('SELECT binding,result FROM open_ack_agent_preparations WHERE request_id=?',(value['request_id'],)).fetchone()
+                if prior is None or prior['binding']!=binding:raise MemoryError('open_ack_preparation_conflict')
+                if prior['result'] is not None and bytes(prior['result'])!=raw:raise MemoryError('open_ack_preparation_conflict')
+                db.execute('UPDATE open_ack_agent_preparations SET result=?,result_sha256=? WHERE request_id=? AND result IS NULL',
+                    (raw,hashlib.sha256(raw).hexdigest(),value['request_id']))
+        return dict(state='ack_source_configured' if cached else 'ack_source_prepared',request_id=value['request_id'],
+            message_id=result['message_id'],resource_id=result['resource_id'],preparation_delivery_uploaded=False,preparation_recipient_saved=False,
+            from_local_history=cached,network_accessed=not cached,source_rechecked=not cached)
+
+    def _ack_export_preparation(self, value):
+        import base64
+        from memory_vault_network_crypto import opaque
+        from memory_vault_open_repair_admin import MAX_BUNDLE_BYTES
+        object_fields(value,{'schema_version','action','request_id','part'}|({'cursor'} if 'cursor' in value else set()))
+        opaque(value['request_id'])
+        if value['part'] not in ('owner_request','recipient_request'):raise MemoryError('open_invalid_ack_request')
+        self._ack_preparations_initialize()
+        with self.participant.state.db() as db:
+            row=db.execute('SELECT result,result_sha256 FROM open_ack_agent_preparations WHERE request_id=?',(value['request_id'],)).fetchone()
+        if row is None or row['result'] is None:raise MemoryError('open_ack_preparation_incomplete')
+        stored=bytes(row['result'])
+        if len(stored)>MAX_BUNDLE_BYTES or hashlib.sha256(stored).hexdigest()!=row['result_sha256']:raise MemoryError('open_ack_preparation_corrupt')
+        raw=canonical_bytes(document(stored,maximum=MAX_BUNDLE_BYTES)[value['part']]);digest=hashlib.sha256(raw).hexdigest();offset=0
+        cursor=value.get('cursor')
+        if cursor is not None:
+            object_fields(cursor,{'sha256','offset'});offset=cursor['offset']
+            if cursor['sha256']!=digest or type(offset) is not int or not 0<offset<len(raw) or offset%3072:raise MemoryError('open_invalid_ack_cursor')
+        end=min(offset+3072,len(raw))
+        return dict(state='ack_preparation_export',request_id=value['request_id'],part=value['part'],bundle_sha256=digest,
+            total_bytes=len(raw),offset=offset,bundle_chunk=base64.b64encode(raw[offset:end]).decode('ascii'),
+            next_cursor=None if end==len(raw) else dict(sha256=digest,offset=end),network_accessed=False,source_rechecked=False)
+
     def _ack_connect(self, invitation):
         """Explicit original-grant operations through the existing Agent facade."""
         from memory_vault_open_repair_wire import RepairWireError
         from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS,INDEX_WORKFLOW_LIMITS
         value=document(invitation,maximum=65536)
+        try:
+            if value.get('action')=='prepare':return self._ack_prepare(value)
+            if value.get('action')=='export_preparation':return self._ack_export_preparation(value)
+        except RepairWireError as error:raise MemoryError(error.code) from error
         object_fields(value,{'schema_version','action','base_url','repair_profile','request'})
         profiles={'receipt':RECEIPT_WORKFLOW_LIMITS,'receipt-index':INDEX_WORKFLOW_LIMITS}
         if not isinstance(value['repair_profile'],str) or value['repair_profile'] not in profiles:raise MemoryError('open_invalid_repair_policy')
