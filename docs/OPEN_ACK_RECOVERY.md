@@ -91,11 +91,32 @@ range reads. Challenges, responses, replay records, status floors and actual
 work charges survive restart in the same database and capacity reservation.
 Remembered revocation prevents an old handle from continuing to read.
 
-This operator API and HTTP service are development functionality. The standard
-recovery command and Python/TypeScript recovery clients do not yet consume this
-replica profile. Remote copy upload, first-receipt admission on a replacement,
-occupied replica recovery and automatic replacement selection remain unfinished.
-The existing published alpha.0.14 archives do not include this service.
+The Python `AckOwnerRecoveryClient.recover_replica` method consumes this explicit
+profile. Along with the same `base_url`, `target_node_entry`, `expected_target`,
+`expected_ack_slot`, `root_entry`, `read_entry` and `bootstrap_entry` as ordinary
+recovery, supply independently held `expected_source`, `source_storage_epoch`
+and `expected_maintainer`. The target is the replacement; the source is the
+original custody issuer. The method authenticates the endpoint, completes both
+key-possession checks, fetches exact originals, reconstructs the original and
+replica storage events and verifies all three return consents and current READ.
+Its `replica` result preserves both events; an unbound result is not a saved
+recipient receipt.
+
+Supply previous `known_statuses` and `archive_statuses` on subsequent calls.
+The returned `archive_statuses` includes authenticated historical, copy-time,
+retained and current observations, bounded to 32 distinct originals. Convert each
+entry to `{raw: item.raw, ref: item.ref.as_dict()}` for the next call and persist
+those exact bytes in the caller's existing protected state. Expiration does not
+remove a remembered revocation or revision floor. The optional `status_observer`
+is called with authenticated current observations before a later denial, so
+integrations can retain them even when recovery fails. The client creates no
+separate local database and never imports these originals into the Vault.
+
+This operator API, HTTP service and Python client are development functionality.
+The standard recovery command and native TypeScript recovery client do not yet
+consume this replica profile. Remote copy upload, first-receipt admission on a
+replacement, occupied replica recovery and automatic replacement selection
+remain unfinished. Published alpha.0.14 archives do not include this feature.
 
 ## Owner recovery command
 

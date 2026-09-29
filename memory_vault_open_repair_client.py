@@ -40,6 +40,16 @@ class RecoveredAckOwnerProof:
     metrics: object
 
 
+@dataclass(frozen=True, slots=True)
+class RecoveredAckReplicaProof:
+    replica: object
+    proof: proof.AuthenticatedBootstrapProof
+    current_statuses: tuple
+    archive_statuses: tuple
+    originals: object
+    metrics: object
+
+
 class AckOwnerRecoveryClient:
     def __init__(self, identity, encryption_identity, *, policy=DEFAULT_POLICY,
                  limit_policy=None, allow_loopback=False, transport=None, clock=None,
@@ -71,6 +81,18 @@ class AckOwnerRecoveryClient:
             bootstrap_entry=bootstrap_entry,known_statuses=known_statuses,archive_statuses=archive_statuses,
             timeout=timeout,empty_expected=None)
 
+    def recover_replica(self, base_url, *, target_node_entry, expected_target, expected_ack_slot,
+                        expected_source, source_storage_epoch, expected_maintainer,
+                        root_entry, read_entry, bootstrap_entry,
+                        known_statuses=(), archive_statuses=(), timeout=30):
+        """Recover an unbound replica using independently held A/R/M/P bindings."""
+        return self._recover(base_url,target_node_entry=target_node_entry,expected_target=expected_target,
+            expected_ack_slot=expected_ack_slot,root_entry=root_entry,read_entry=read_entry,
+            bootstrap_entry=bootstrap_entry,known_statuses=known_statuses,archive_statuses=archive_statuses,
+            timeout=timeout,empty_expected=None,_source_state="replica_unbound",
+            _replica_context=dict(expected_source=expected_source,source_storage_epoch=source_storage_epoch,
+                                  expected_maintainer=expected_maintainer))
+
     def recover_empty(self, base_url, *, target_node_entry, expected_target, expected_ack_slot,
                       root_entry, read_entry, bootstrap_entry, expected_receipt_writer,
                       expected_message_id, expected_envelope_ref,
@@ -84,7 +106,7 @@ class AckOwnerRecoveryClient:
 
     def _recover(self, base_url, *, target_node_entry, expected_target, expected_ack_slot,
                  root_entry, read_entry, bootstrap_entry, known_statuses, archive_statuses, timeout, empty_expected,
-                 _budget=None, _source_state=None):
+                 _budget=None, _source_state=None, _replica_context=None):
         if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=60:
             _fail("repair_invalid_deadline")
         budget = wire.RepairBudget(self.policy) if _budget is None else _budget
@@ -98,7 +120,9 @@ class AckOwnerRecoveryClient:
             empty.bound._expected(expected["slot"],self.subject,empty_expected["receipt_writer"],
                 empty_expected["message_id"],empty_expected["envelope_ref"],started,self.policy,budget)
         source_state=("unbound" if empty_expected is None else "empty") if _source_state is None else _source_state
-        if source_state not in ("unbound","empty","occupied") or (source_state=="unbound")!=(empty_expected is None):
+        if (source_state not in ("unbound","empty","occupied","replica_unbound")
+                or (source_state in ("unbound","replica_unbound"))!=(empty_expected is None)
+                or (source_state=="replica_unbound")!=(_replica_context is not None)):
             _fail("repair_invalid_proof")
         setup = bootstrap.verify_ack_owner_bootstrap_original(bootstrap_entry,dict(root=root_entry,read=read_entry),
             expected_ack_slot=expected["slot"],expected_owner=self.subject,at=started,limit_policy=self.limits,
@@ -113,9 +137,16 @@ class AckOwnerRecoveryClient:
             _fail("repair_proof_mismatch")
         grant = setup.originals["bootstrap"].payload
         obligations = self._obligations(setup.originals, expected["slot"], budget)
-        known = self._known(retained, obligations, expected["slot"]["root_key"],
-                            expected["target"], budget,deferred_authorities=empty_expected is not None,
-                            receipt_writer=empty_expected["receipt_writer"] if source_state=="occupied" else None)
+        if _replica_context is not None:
+            _replica_context=wire.build_new_wire(_replica_context,self.policy,budget).value
+            known=self._known_replica(retained,expected["slot"]["root_key"],
+                (self.subject,expected["target"],_replica_context["expected_source"],
+                 _replica_context["expected_maintainer"]),budget)
+            self._floors(known,(),obligations,probe_phase=True)
+        else:
+            known = self._known(retained, obligations, expected["slot"]["root_key"],
+                                expected["target"], budget,deferred_authorities=empty_expected is not None,
+                                receipt_writer=empty_expected["receipt_writer"] if source_state=="occupied" else None)
         expiry = min(started+min(60,max(1,int(timeout))),grant["probe_until"],grant["proof_until"],grant["expires_at"],
                      node.payload["expires_at"],*(setup.originals[name].payload["expires_at"] for name in ("root","read")))
         if expiry<=started:
@@ -193,6 +224,9 @@ class AckOwnerRecoveryClient:
         def entry(role):
             reference=roles[role][0]
             return dict(raw=originals[reference],ref=reference.as_dict())
+        if _replica_context is not None:
+            return self._replica_result(held,roles,originals,entry,setup,known,expected,node,
+                _replica_context,budget,expiry,deadline,requests,wire_bytes,proof_bytes)
         resolver=wire.LocalRawResolver(self.policy,budget)
         for reference in roles["history.raw_pack"]:
             if resolver.put(reference.namespace,reference.key,originals[reference]).ref!=reference:
@@ -255,6 +289,67 @@ class AckOwnerRecoveryClient:
             bootstrap_entry=bootstrap_entry,known_statuses=known_statuses,archive_statuses=archive_statuses,
             timeout=timeout,empty_expected=dict(receipt_writer=expected_receipt_writer,
                 message_id=expected_message_id,envelope_ref=expected_envelope_ref),_source_state="occupied")
+
+    def _known_replica(self, entries, root, parties, budget):
+        # Retained facts establish lower bounds only. Accept signatures only
+        # from independently supplied parties; no returned key becomes trusted.
+        signers={p["signing_key"]["key_id"]:p["signing_key"] for p in parties}
+        if len(signers)!=4:_fail("repair_replica_read_distinct_parties_required")
+        checked=[]
+        for entry in entries:
+            raw,ref=ack._entry(entry)
+            parsed=original.parse_original_control(raw,self.policy,budget)
+            payload=status._fields(status._fields(parsed.value,{"payload","proof"})["payload"],status._PAYLOAD)
+            issuer=status._fields(payload["scope_key"],{"root_key","issuer_key_id"})["issuer_key_id"]
+            if issuer not in signers:_fail("repair_status_mismatch")
+            issued=wire.u53(payload["issued_at"])
+            if issued>self._now()+30:_fail("repair_status_mismatch")
+            scopes=[dict(scope_kind=e["scope_kind"],scope_id=e["scope_id"]) for e in self._status_entries(payload)]
+            checked.append(status.authenticate_status_original(dict(raw=parsed.raw,ref=ref.as_dict()),
+                expected_root=root,expected_signing_key=signers[issuer],at=issued,allowed_scopes=scopes,
+                policy=self.policy,budget=budget))
+        return tuple(checked)
+
+    def _replica_result(self,held,roles,originals,entry,setup,known,expected,node,context,
+                        budget,expiry,deadline,requests,wire_bytes,proof_bytes):
+        import memory_vault_open_repair_copy_authority as copy_authority
+        resolver=wire.LocalRawResolver(self.policy,budget)
+        for reference,raw in originals.items():
+            if resolver.put(reference.namespace,reference.key,raw).ref!=reference:_fail("repair_ref_mismatch")
+        replica=copy_authority.verify_unbound_replica_event(entry("replica.manifest"),resolver,entry("replica.custody"),
+            expected_ack_slot=expected["slot"],expected_owner=self.subject,expected_target=expected["target"],
+            target_storage_epoch=node.payload["storage_epoch"],**context,
+            limit_policy=self.limits,policy=self.policy,budget=budget)
+        source=replica["source"]
+        for role,values in replica["entries"].items():
+            if set(roles.get(role,()))!={wire.raw_ref(e["ref"]) for e in values}:_fail("repair_proof_mismatch")
+        extras={"replica.manifest","replica.custody","return.owner","return.source","return.maintainer",
+                "current.status.replica_read"}
+        if set(roles)!=set(replica["entries"])|extras:_fail("repair_proof_mismatch")
+        for name,item in (("root",source.resources.originals["root"]),("read",source.resources.originals["read"]),
+                          ("bootstrap",source.bootstrap.originals["bootstrap"])):
+            if item.ref!=setup.originals[name].ref or item.raw!=setup.originals[name].raw:_fail("repair_proof_mismatch")
+        current=[dict(raw=originals[r],ref=r.as_dict()) for r in roles["current.status.replica_read"]]
+        permission=copy_authority._check_unbound_owner_return(replica,
+            {name:entry("return."+name) for name in ("owner","source","maintainer")},
+            expected_owner=self.subject,expected_source=context["expected_source"],
+            expected_maintainer=context["expected_maintainer"],expected_target=expected["target"],
+            target_storage_epoch=node.payload["storage_epoch"],current_statuses=current,at=self._now(),action="proof",
+            policy=self.policy,budget=budget,on_observed=self.status_observer)
+        if permission["denial_code"]:_fail(permission["denial_code"])
+        prior=(*source.statuses,*replica["authority"].statuses,*known)
+        checked=permission["statuses"]
+        empty._history_floors((*prior,*checked),previous=prior,current=checked)
+        obligations=[dict(item,kind=item["scope_kind"]) for item in permission["obligations"]]
+        self._floors(known,checked,obligations)
+        if (self._now()>=min(expiry,held.handle.payload["expires_at"],permission["expires_at"])
+                or time.monotonic()>=deadline):_fail("repair_access_expired")
+        archive={}
+        for item in (*prior,*checked):archive.setdefault((item.raw,item.ref),item)
+        if len(archive)>32:_fail("repair_status_history_capacity")
+        metrics=MappingProxyType(dict(requests=requests,wire_bytes=wire_bytes,proof_bytes=proof_bytes,**budget.snapshot()))
+        return RecoveredAckReplicaProof(MappingProxyType(replica),held,checked,tuple(archive.values()),
+                                       MappingProxyType(originals),metrics)
 
     def _empty_head(self,entry,source,target,budget):
         raw,ref=ack._entry(entry)

@@ -133,6 +133,57 @@ class ReplicaReadHTTPTests(unittest.TestCase):
             current_statuses=current,at=self.expected['at'],action='proof',policy=self.policy,budget=budget)
         self.assertIsNone(permission['denial_code']);self.assertEqual(self.errors,[])
 
+    def recovery_client(self):
+        from memory_vault_open_repair_client import AckOwnerRecoveryClient
+        client=AckOwnerRecoveryClient(self.h.f['signers']['owner'],self.h.f['encryption']['owner'],
+            policy=self.policy,limit_policy=self.h.f['expected']['limit_policy'],allow_loopback=True)
+        self.addCleanup(client.close)
+        args=dict(target_node_entry=self.entry(canonical_bytes(self.descriptor)),
+            expected_target=self.expected['expected_target'],expected_ack_slot=self.context['expected_ack_slot'],
+            expected_source=self.context['expected_source'],source_storage_epoch=self.context['source_storage_epoch'],
+            expected_maintainer=self.context['expected_maintainer'],root_entry=self.h.f['entries']['root'],
+            read_entry=self.h.f['entries']['read'],bootstrap_entry=self.bootstrap,timeout=60)
+        return client,args
+
+    def test_client_recovers_replica_over_real_http(self):
+        client,args=self.recovery_client();self.restart()
+        result=client.recover_replica(self.base,**args)
+        self.assertEqual(result.replica['source'].custody.raw,self.h.f['custody']['raw'])
+        self.assertIn('replica.custody',{e['role'] for e in result.proof.manifest.value['children']})
+        self.assertGreater(result.metrics['requests'],2)
+        self.assertEqual(len(result.current_statuses),4)
+        archive=[dict(raw=e.raw,ref=e.ref.as_dict()) for e in result.archive_statuses]
+        self.assertGreaterEqual(len(archive),4)
+        self.restart()
+        again=client.recover_replica(self.base,archive_statuses=archive,**args)
+        self.assertEqual(again.replica['custody'].raw,result.replica['custody'].raw)
+        self.assertEqual({e.ref for e in again.archive_statuses},{e.ref for e in result.archive_statuses})
+        self.assertEqual(self.errors,[])
+
+    def test_client_retained_owner_revocation_stops_before_network(self):
+        from tests.open_repair_ack_fixtures import signed_entry
+        client,args=self.recovery_client()
+        payload=json.loads(self.statuses[0]['raw'])['payload'];payload['revision']+=1
+        for entry in payload['entries']:entry['status']='revoked'
+        retained=signed_entry(payload,self.h.f['signers']['owner'],'synthetic_client_revoked_owner')
+        with patch.object(client.transport,'request_repair',side_effect=AssertionError('must not connect')):
+            with self.assertRaisesRegex(wire.RepairWireError,'repair_authority_revoked'):
+                client.recover_replica(self.base,known_statuses=[retained],**args)
+
+    def test_client_remembered_target_revision_rejects_stale_replica_status(self):
+        from tests.open_repair_ack_fixtures import signed_entry
+        client,args=self.recovery_client()
+        target=self.h.destination.state.identity
+        payload=next(json.loads(e['raw'])['payload'] for e in self.statuses
+            if json.loads(e['raw'])['payload']['signing_key']==target.public_descriptor())
+        payload['revision']+=1
+        retained=signed_entry(payload,target,'synthetic_client_newer_target')
+        observed=[];client.status_observer=observed.append
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_status_rollback'):
+            client.recover_replica(self.base,archive_statuses=[retained],**args)
+        self.assertTrue(observed)
+        self.assertEqual(self.errors,[])
+
     def child_request(self,checked):
         item=next(e for e in checked.manifest.value['children'] if e['role']=='replica.custody')
         return proof.make_bootstrap_child_request(self.h.f['signers']['owner'],checked,
