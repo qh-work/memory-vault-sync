@@ -334,6 +334,50 @@ def copy_ack(network_config, request_path, output, *, operation, timeout=30, rep
         recipient_saved=False, vault_modified=False)
 
 
+REPLICA_CONFIG_SCHEMA = "memory-vault-open-ack-replica-read-config/v1"
+
+
+def configure_replica(node_config, request_path, output):
+    """Install independently signed return permissions on an existing local node."""
+    from memory_vault_network_crypto import EncryptionIdentity
+    from memory_vault_open_node import OpenParticipant
+    from memory_vault_open_repair_index_admin import _node_config
+    from memory_vault_open_repair_copy_service import ReplicaReadService
+    from memory_vault_trust import Identity
+    request_path, output = _absolute_path(request_path), _absolute_path(output)
+    if os.path.lexists(output):
+        raise RepairWireError("repair_output_exists")
+    raw = _read_private(request_path, MAX_BUNDLE_BYTES)
+    if raw is None:
+        raise RepairWireError("repair_request_missing")
+    request = object_fields(document(raw, maximum=MAX_BUNDLE_BYTES),
+        {"schema_version", "resource_id", "context", "consents", "current_statuses"})
+    if request["schema_version"] != REPLICA_CONFIG_SCHEMA:
+        raise RepairWireError("repair_invalid_request_bundle")
+    consents = object_fields(request["consents"], {"owner", "source", "maintainer"})
+    if type(request["current_statuses"]) is not list or not 1 <= len(request["current_statuses"]) <= 16:
+        raise RepairWireError("repair_invalid_status")
+    config = _node_config(_absolute_path(node_config))
+    identity = Identity.load(_absolute_path(Path(config["identity_path"])))
+    encryption = EncryptionIdentity.load(_absolute_path(Path(config["encryption_key_path"])))
+    with OpenParticipant(identity, _absolute_path(Path(config['state_directory'])),
+            seeds=config['seeds'], descriptor=config['node'], encryption_identity=encryption,
+            allow_loopback=config['allow_loopback'], index_policy=config['index_policy'],
+            contact_policy=config.get('contact_policy'), delivery_policy=config.get('delivery_policy'),
+            provider_policy=config.get('provider_policy'), repair_policy=config['repair_policy']) as participant:
+        with participant.state.db() as db:
+            service = ReplicaReadService(participant._repair_service(db).state)
+            service.initialize()
+            result = service.configure(request["resource_id"], context=request["context"],
+                consents={name: _entry(entry) for name, entry in consents.items()},
+                current_statuses=[_entry(entry) for entry in request["current_statuses"]])
+    evidence = dict(result, schema_version="memory-vault-open-ack-replica-read-config-result/v1",
+        recipient_saved=False, vault_modified=False, network_started=False)
+    encoded = canonical_bytes(evidence) + b"\n"
+    _write_new_private(output, encoded)
+    return dict(evidence, evidence_path=str(output), evidence_sha256=hashlib.sha256(encoded).hexdigest())
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -350,9 +394,15 @@ def main(argv=None):
         recover.add_argument("--timeout", type=float, default=30)
         recover.add_argument("--repair-profile", choices=("unbound", "receipt", "receipt-index"),
             help="explicit client acceptance ceiling; never changes the source's signed limits")
+    configure = commands.add_parser("configure-replica", help="install separately signed replica return consents locally")
+    configure.add_argument("--node-config", required=True, type=Path)
+    configure.add_argument("--request", required=True, type=Path)
+    configure.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
-        if args.command in {"copy-reserve", "copy-upload"}:
+        if args.command == "configure-replica":
+            result = configure_replica(args.node_config, args.request, args.output)
+        elif args.command in {"copy-reserve", "copy-upload"}:
             result = copy_ack(args.network_config, args.request, args.output, timeout=args.timeout,
                 repair_profile=args.repair_profile, operation=args.command.split("-")[1])
         else:

@@ -229,6 +229,33 @@ Neither result is a saved-message receipt or READ permission. The owner, source
 and maintainer must still supply separate return consents to configure recovery.
 Automatic destination selection and occupied/empty replica copies remain open.
 
+### Enable separately authorized replica reads
+
+On the existing replacement node, install the independently signed return
+permissions using its private node configuration:
+
+```sh
+python -B memory_vault_open_repair_admin.py configure-replica \
+  --node-config /absolute/private/replacement/node-config.json \
+  --request /absolute/private/replica-read-config.json \
+  --output /absolute/private/new-config-result.json
+```
+
+The private request has exactly `schema_version` (value
+`memory-vault-open-ack-replica-read-config/v1`), `resource_id`, `context`,
+`consents`, and `current_statuses`. The context contains independently held
+`expected_ack_slot`, `expected_owner`, `expected_source`, `source_storage_epoch`
+and `expected_maintainer`. `consents` contains `owner`, `source`, and `maintainer`
+return-consent original entries; `current_statuses` contains up to 16 signed
+status originals. Entries use `{raw_base64url,ref}`. The resource must already
+contain the committed replica and match every binding in the original grants.
+
+This local command starts no listener and preserves the node's keys and config.
+It verifies current READ authority before persisting the service configuration;
+a later invocation can install newly signed statuses without discarding remembered
+revocations. An existing output is refused before any state change. `configured`
+is local service readiness, not proof of an owner's successful recovery.
+
 ## Unbound replica command (development after alpha.0.16)
 
 A new replacement node can explicitly accept finite remote copy reservations:
@@ -259,7 +286,7 @@ python -B memory_vault_open_repair_admin.py recover-replica \
   --network-config /absolute/private/open-agent/open-config.json \
   --request /absolute/private/replica-recovery-request.json \
   --output /absolute/private/new-replica-evidence.json \
-  --repair-profile receipt-index
+  --repair-profile receipt-index --timeout 60
 ```
 
 The explicit profile is a client acceptance ceiling; it does not enlarge the

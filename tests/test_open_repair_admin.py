@@ -61,7 +61,7 @@ class _AdminFixture:
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             args=[command, "--network-config", str(self.network), "--request", str(self.request_path),
-                  "--output", str(self.output), "--timeout", "30"]
+                  "--output", str(self.output), "--timeout", str(getattr(self,"command_timeout",30))]
             if getattr(self,'repair_profile',None):args.extend(['--repair-profile',self.repair_profile])
             code = main(args)
         return code, stdout.getvalue(), stderr.getvalue()
@@ -189,6 +189,7 @@ class RepairEmptyAdminTests(_AdminFixture, unittest.TestCase):
 
 class RepairReplicaAdminTests(_AdminFixture,unittest.TestCase):
     repair_profile='receipt-index'
+    command_timeout=60
 
     def setUp(self):
         from types import SimpleNamespace
@@ -326,6 +327,58 @@ class RepairCopyUploadAdminTests(_CopyAdminFixture, unittest.TestCase):
         self.assertEqual(json.loads(self.output.read_bytes()),first)
         self.assertEqual(stat.S_IMODE(self.output.stat().st_mode),0o600)
         self.assertEqual({path:path.read_bytes() for path in self.originals},self.originals)
+
+
+class RepairReplicaConfigureAdminTests(unittest.TestCase):
+    def setUp(self):
+        from tests.test_open_repair_copy_service import ReplicaReadHTTPTests
+        from memory_vault_open_repair_admin import REPLICA_CONFIG_SCHEMA
+        from memory_vault_open_node import NODE_CONFIG
+        self.remote=ReplicaReadHTTPTests();self.addCleanup(self.remote.doCleanups);self.remote.setUp()
+        host=self.remote;state=host.h.destination.state
+        self.directory=host.directory/'synthetic-operator';self.directory.mkdir(mode=0o700)
+        identity=self.directory/'identity.json';encryption=self.directory/'encryption.json'
+        secret=state.identity._private_key.private_bytes(serialization.Encoding.Raw,
+            serialization.PrivateFormat.Raw,serialization.NoEncryption())
+        _write_new_private(identity,canonical_bytes(dict(state.identity.public_descriptor(),
+            schema_version='universal-memory-identity/v1',private_key=base64.b64encode(secret).decode())))
+        state.encryption_identity.save(encryption)
+        self.config=self.directory/'node.json'
+        _write_new_private(self.config,canonical_bytes(dict(schema_version=NODE_CONFIG,
+            identity_path=str(identity),encryption_key_path=str(encryption),state_directory=str(host.directory),
+            node=host.descriptor,seeds=[],allow_loopback=True,index_policy=dict(enabled=False),
+            repair_policy=dict(enabled=True,limit_policy=host.h.f['expected']['limit_policy']),
+            listen_host='127.0.0.1',listen_port=host.server.server_port)))
+        encode=lambda e:dict(raw_base64url=b64url(e['raw']),ref=e['ref'])
+        self.request=dict(schema_version=REPLICA_CONFIG_SCHEMA,resource_id=host.rid,context=host.context,
+            consents={name:encode(e) for name,e in host.consents.items()},current_statuses=[encode(e) for e in host.statuses])
+        self.request_path=self.directory/'request.json';self.output=self.directory/'result.json'
+        self.originals={path:path.read_bytes() for path in (identity,encryption,self.config)}
+        with host.participant.state.db() as db:db.execute('DELETE FROM open_repair_copy_read_config')
+
+    def call(self):
+        _write_new_private(self.request_path,canonical_bytes(self.request))
+        stdout,stderr=io.StringIO(),io.StringIO()
+        with contextlib.redirect_stdout(stdout),contextlib.redirect_stderr(stderr):
+            code=main(['configure-replica','--node-config',str(self.config),'--request',str(self.request_path),
+                '--output',str(self.output)])
+        return code,stdout.getvalue(),stderr.getvalue()
+
+    def test_configured_permissions_enable_real_recovery_after_restart(self):
+        code,output,error=self.call();self.assertEqual((code,error),(0,''))
+        result=json.loads(output);self.assertEqual(result['state'],'configured');self.assertFalse(result['network_started'])
+        self.assertFalse(result['recipient_saved']);self.assertFalse(result['vault_modified'])
+        self.assertEqual({path:path.read_bytes() for path in self.originals},self.originals)
+        self.remote.restart();client,args=self.remote.recovery_client()
+        recovered=client.recover_replica(self.remote.base,**args)
+        self.assertEqual(recovered.replica['source'].custody.raw,self.remote.h.f['custody']['raw'])
+        self.assertEqual(stat.S_IMODE(self.output.stat().st_mode),0o600)
+
+    def test_missing_independent_consent_does_not_enable_read(self):
+        del self.request['consents']['source']
+        code,output,error=self.call();self.assertEqual((code,output),(1,''));self.assertFalse(self.output.exists())
+        with self.remote.participant.state.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_read_config').fetchone()[0],0)
 
 
 class RepairSetupTests(unittest.TestCase):
