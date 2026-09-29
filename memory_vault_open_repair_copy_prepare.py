@@ -17,6 +17,7 @@ import memory_vault_open_repair_history as history
 import memory_vault_open_repair_resource as resource
 import memory_vault_open_repair_status as status
 import memory_vault_open_repair_wire as wire
+import memory_vault_open_repair_copy_source as copy_source
 from memory_vault_open_repair_copy_resources import INTENT_FIELDS, ack_copy_scope
 
 COPY = 4
@@ -55,11 +56,11 @@ class AckCopyPreparation:
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_prepare_assignments(job_id TEXT PRIMARY KEY,offer_ref BLOB NOT NULL,raw BLOB NOT NULL,ref BLOB NOT NULL)')
 
     def prepare_unbound(self, *args, **kwargs):
-        return self._prepare_unbound(*args, **kwargs, offer_entry=None)
+        return self._prepare(*args, **kwargs, offer_entry=None,source_state='unbound',bound={})
 
     def prepare_reservation_unbound(self,*args,**kwargs):
         """Return the allocation and its atomically checked observation snapshot."""
-        return self._prepare_unbound(*args,**kwargs,offer_entry=None,with_status_snapshot=True)
+        return self._prepare(*args,**kwargs,offer_entry=None,with_status_snapshot=True,source_state='unbound',bound={})
 
     def assign_unbound(self, *args, offer_entry, **kwargs):
         """Bind the verified real offer to one durable COPY/READ/RETAIN assignment.
@@ -67,11 +68,27 @@ class AckCopyPreparation:
         The caller must still obtain original disclosure permission before upload.
         This assignment neither commits replica bytes nor advertises a provider.
         """
-        return self._prepare_unbound(*args, **kwargs, offer_entry=offer_entry)
+        return self._prepare(*args, **kwargs, offer_entry=offer_entry,source_state='unbound',bound={})
 
-    def _prepare_unbound(self, manifest_entry, resolver, custody_entry, consent_entry, intent, *,
+    def prepare_empty(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**kwargs):
+        return self._prepare(*args,**kwargs,offer_entry=None,source_state='empty',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
+    def prepare_reservation_empty(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**kwargs):
+        return self._prepare(*args,**kwargs,offer_entry=None,with_status_snapshot=True,source_state='empty',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
+    def assign_empty(self,*args,offer_entry,expected_receipt_writer,expected_message_id,expected_envelope_ref,**kwargs):
+        """Copy an existing binding without granting replacement receipt ADMIT."""
+        return self._prepare(*args,**kwargs,offer_entry=offer_entry,source_state='empty',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
+    def _prepare(self, manifest_entry, resolver, custody_entry, consent_entry, intent, *,
                         expected_ack_slot, expected_owner, expected_source, source_storage_epoch,
-                        current_statuses, at, limit_policy, budget, offer_entry,with_status_snapshot=False):
+                        current_statuses, at, limit_policy, budget, offer_entry,source_state,bound,with_status_snapshot=False):
         _require(not self.db.in_transaction)
         policy = self.policy
         wire._context(policy, budget)
@@ -79,7 +96,7 @@ class AckCopyPreparation:
         _require(self.keys['signing_key'] == self.identity.public_descriptor())
         binding = self.db.execute('SELECT value FROM ack_copy_prepare_binding WHERE id=1').fetchone()
         _require(binding is not None and bytes(binding[0]) == canonical_bytes(self.keys))
-        source = ack.verify_ack_unbound_source_event(manifest_entry, resolver, custody_entry,
+        source = copy_source.authenticate_source(manifest_entry, resolver, custody_entry,source_state=source_state,bound=bound,
             expected_ack_slot=expected_ack_slot, expected_owner=expected_owner,
             expected_target=expected_source, target_storage_epoch=source_storage_epoch,
             limit_policy=limit_policy, policy=policy, budget=budget)
@@ -106,7 +123,7 @@ class AckCopyPreparation:
         # Keep manifest and source-custody references distinct: H precedes custody.
         _require(value['kind'] == 'resource.copy_intent' and value['purpose'] == 'ack_replica'
             and value['root_key'] == root_key and value['caller'] == mine
-            and value['scope'] == dict(kind='ack_unbound', ack_slot=root.payload['ack_slot'], root_authority_ref=root.ref.as_dict())
+            and value['scope'] == copy_source.source_scope(source)
             and value['historical_manifest_ref'] == wire.raw_ref(manifest_entry['ref']).as_dict())
         _require(all(value['budget'][name] <= root.payload['budget'][name] for name in resource._BUDGET)
             and all(value['windows'][name] <= root.payload['windows'][name] for name in resource._WINDOWS))
@@ -115,7 +132,8 @@ class AckCopyPreparation:
         c = consent.payload
         index._timed(c, at); resource._opaque(c['consent_id']); wire.u53(c['revision'], 1)
         maximum = min(source.read_until, source.retain_until, active.payload['windows']['copy_until'],
-            root.payload['windows']['copy_until'], root.payload['expires_at'], c['expires_at'], value['windows']['copy_until'])
+            root.payload['windows']['copy_until'], root.payload['expires_at'], c['expires_at'], value['windows']['copy_until'],
+            *copy_source.additional_deadlines(source))
         disclosure = resource._fields(c['reservation_disclosure'], {'intent_sha256', 'until'})
         _require(c['root_authority_ref'] == root.ref.as_dict() and c['source_custody_ref'] == source.custody.ref.as_dict()
             and c['historical_manifest_ref'] == value['historical_manifest_ref'] and c['maintainer'] == caller_id
@@ -139,6 +157,7 @@ class AckCopyPreparation:
             for original, mask in ((source.resources.originals['read'], 2), (source.bootstrap.originals['bootstrap'], 10)):
                 obligations += (index._obligation(owner['signing_key'], 'authority',
                     index._authority(root_key, original, policy, budget), original.payload['revision'], mask),)
+        obligations += copy_source.additional_obligations(source,owner,policy,budget)
         checked, denial = [], None
         if not isinstance(current_statuses, (tuple, list)) or not 1 <= len(current_statuses) <= 16:
             wire._fail('repair_status_missing')
@@ -272,7 +291,8 @@ class AckCopyPreparation:
         expires = min(root.payload['expires_at'], read.payload['expires_at'],
             read.payload['windows']['read_until'], bootstrap.payload['expires_at'], bootstrap.payload['proof_until'],
             bootstrap.payload['probe_until'], bootstrap.payload['upload_until'],
-            *(p['windows'][name] for name in ('read_until','copy_until','retain_until')))
+            *(p['windows'][name] for name in ('read_until','copy_until','retain_until')),
+            *copy_source.additional_deadlines(source))
         _require(at < expires and all(value <= expires for value in p['windows'].values()))
         old = self.db.execute('SELECT offer_ref,raw,ref FROM ack_copy_prepare_assignments WHERE job_id=?', (intent['job_id'],)).fetchone()
         if old:
@@ -288,7 +308,7 @@ class AckCopyPreparation:
             root_key=intent['root_key'],parent_root_ref=root.ref.as_dict(),parent_assignment_ref=None,depth=2,
             subject=target_id,target_node_key_id=target_id['signing_key_id'],target_storage_epoch=intent['target_storage_epoch'],
             operation_mask=70,scope=intent['scope'],resource_intent_sha256=digest,resource_offer_ref=offer.ref.as_dict(),
-            resource=p['resource'],bootstrap_grant_refs=[bootstrap.ref.as_dict()],budget=p['budget'],windows=p['windows'])
+            resource=p['resource'],bootstrap_grant_refs=copy_source.bootstrap_refs(source),budget=p['budget'],windows=p['windows'])
         raw = canonical_bytes(dict(payload=payload,proof=self.identity.sign_message(payload)))
         sha = hashlib.sha256(raw).hexdigest()
         result = dict(raw=raw,ref=dict(namespace='meta',key=sha,raw_sha256=sha,size=len(raw)))
@@ -308,9 +328,17 @@ class AckCopyPreparation:
             self.db.rollback()
             raise
 
-    def prepare_upload_unbound(self,manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
+    def prepare_upload_unbound(self,*args,**options):
+        return self._prepare_upload(*args,**options,source_state='unbound',bound={})
+
+    def prepare_upload_empty(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
+        return self._prepare_upload(*args,**options,source_state='empty',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
+    def _prepare_upload(self,manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
             reservation_entry,owner_disclosure_entry,source_disclosure_entry,*,expected_ack_slot,expected_owner,
-            expected_source,source_storage_epoch,expected_target,target_storage_epoch,current_statuses,at,limit_policy):
+            expected_source,source_storage_epoch,expected_target,target_storage_epoch,current_statuses,at,limit_policy,source_state,bound):
         """Retain one exact outgoing stage only after original COPY/disclosure checks.
 
         No bytes are transmitted. Destination possession must precede any send.
@@ -330,8 +358,8 @@ class AckCopyPreparation:
         current_statuses=tuple(map(freeze,current_statuses))
         binding=wire.build_new_wire(dict(slot=expected_ack_slot,owner=expected_owner,source=expected_source,target=expected_target),policy,budget).value
         expected_ack_slot,expected_owner,expected_source,expected_target=(binding[k] for k in ('slot','owner','source','target'))
-        bound=self.db.execute('SELECT value FROM ack_copy_prepare_binding WHERE id=1').fetchone()
-        _require(bound is not None and bytes(bound[0])==canonical_bytes(self.keys))
+        local_binding=self.db.execute('SELECT value FROM ack_copy_prepare_binding WHERE id=1').fetchone()
+        _require(local_binding is not None and bytes(local_binding[0])==canonical_bytes(self.keys))
         allocation=wire.parse_new_wire(allocation_entry['raw'],policy,budget).value['payload']
         intent=allocation['intent'];job=intent['job_id'];root=intent['root_key']
         root_digest=budget._hash(wire._canonical(root,budget))
@@ -359,11 +387,12 @@ class AckCopyPreparation:
                     return
                 self.db.execute('INSERT INTO ack_copy_prepare_status VALUES(?,?,?,?)',(root_digest,item.ref.raw_sha256,item.raw,encoded))
         try:
-            plan=authority.verify_unbound_copy(manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
+            plan=authority._verify_copy(manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
                 reservation_entry,owner_disclosure_entry,source_disclosure_entry,expected_ack_slot=expected_ack_slot,
                 expected_owner=expected_owner,expected_source=expected_source,source_storage_epoch=source_storage_epoch,
                 expected_maintainer=self.keys,expected_target=expected_target,target_storage_epoch=target_storage_epoch,
-                current_statuses=current_statuses,at=at,limit_policy=limit_policy,policy=policy,budget=budget,on_observed=observe)
+                current_statuses=current_statuses,at=at,limit_policy=limit_policy,policy=policy,budget=budget,on_observed=observe,
+                source_state=source_state,bound=bound)
             signers={p['signing_key']['key_id']:p['signing_key'] for p in (expected_owner,expected_source,self.keys)}
             previous=[]
             # All prior facts, including expired ones, remain lower bounds.
@@ -389,12 +418,14 @@ class AckCopyPreparation:
                 if len(item['raw'])!=reference.size or budget._hash(item['raw'])!=reference.raw_sha256:wire._fail('repair_ref_mismatch')
                 rows[(role,*history._ref_tuple(reference))]=dict(role=role,entry=item)
             for item in plan.originals:add(item.role,item.original)
-            for role,item in (('history.ack_unbound',manifest_entry),('copy.allocation',plan.allocation),('copy.offer',plan.offer),
+            for role,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),
                     ('copy.assignment',plan.assignment),('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):add(role,item)
-            for member in plan.source.manifest.manifest.value['roles']:add('history.raw_pack',resolver.resolve(member['pack_ref']))
+            for role,entry,source_manifest in copy_source.source_histories(plan.source,manifest_entry):
+                add(role,entry)
+                for member in source_manifest.manifest.value['roles']:add('history.raw_pack',resolver.resolve(member['pack_ref']))
             for item in plan.statuses:add('copy.current_status',item)
             children=[rows[k] for k in sorted(rows)]
-            manifest=stage.make_stage_manifest(root_key=root,scope=intent['scope'],consumer='ack_copy_unbound',
+            manifest=stage.make_stage_manifest(root_key=root,scope=intent['scope'],consumer='ack_copy_'+source_state,
                 children=[dict(index=i,role=e['role'],ref=e['entry']['ref']) for i,e in enumerate(children)],policy=policy,budget=budget)
             semantic=dict(allocation_ref=allocation_entry['ref'],assignment_ref=assignment_entry['ref'],manifest=manifest.value,
                 children=[dict(role=e['role'],entry=encode_entry(e['entry'])) for e in children],target=expected_target,
@@ -404,7 +435,7 @@ class AckCopyPreparation:
             until=min(at+60,plan.read_until,plan.retain_until,plan.offer.payload['reservation_until'],allocation['expires_at'])
             if at>=until:wire._fail('repair_resource_expired')
             options=dict(expected_subject=self.keys,expected_target=expected_target,target_storage_epoch=target_storage_epoch,
-                at=at,expected_consumer='ack_copy_unbound',policy=policy,budget=budget)
+                at=at,expected_consumer='ack_copy_'+source_state,policy=policy,budget=budget)
             with self._upload_transaction():
                 blocked=self.db.execute("SELECT reason FROM ack_copy_prepare_blocked WHERE root_digest IN (?, '*')",(root_digest,)).fetchone()
                 if blocked:wire._fail(blocked[0])

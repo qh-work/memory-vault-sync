@@ -1,4 +1,10 @@
-# Memory Vault v0.28.0-alpha.0.23 independent review kit
+# Memory Vault v0.28.0-alpha.0.24 independent review kit
+
+This candidate adds Python commands to reserve, copy and recover a message-bound
+empty ACK replica with the exact original recipient/message binding and both
+history generations. Independent return consents and current permissions remain
+required; COPY grants no first-receipt admission. See the ACK recovery guide and
+release notes for the command schemas and current acceptance record.
 
 This alpha.0.10 candidate adds independent remote source preparation using
 only the sender's configuration and a selected public origin/key, plus durable

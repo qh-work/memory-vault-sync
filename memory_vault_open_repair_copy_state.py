@@ -7,6 +7,7 @@ import json
 
 from memory_vault import canonical_bytes
 import memory_vault_open_repair_copy_authority as authority
+import memory_vault_open_repair_copy_source as copy_source
 import memory_vault_open_repair_empty as empty
 import memory_vault_open_repair_resource as resource
 import memory_vault_open_repair_history as history
@@ -64,9 +65,17 @@ class RepairCopyState(RepairCopyResources):
                         (rid,root_digest,item.ref.raw_sha256,item.raw,ref_raw))
         if denial:wire._fail(denial)
 
-    def commit_unbound(self,manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
+    def commit_unbound(self,*args,**options):
+        return self._commit(*args,**options,source_state='unbound',bound={})
+
+    def commit_empty(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
+        return self._commit(*args,**options,source_state='empty',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
+    def _commit(self,manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
             reservation_entry,owner_disclosure_entry,source_disclosure_entry,*,expected_ack_slot,expected_owner,
-            expected_source,source_storage_epoch,expected_maintainer,current_statuses,limit_policy):
+            expected_source,source_storage_epoch,expected_maintainer,current_statuses,limit_policy,source_state,bound):
         s=self.source;policy=s.policy;budget=resolver.budget
         wire._context(policy,budget)
         # The exact local allocation is mandatory; this cannot import a remote
@@ -85,13 +94,13 @@ class RepairCopyState(RepairCopyResources):
         if held is not None:
             with s._transaction():self._load_inventory(row,held,budget)
         root_digest=budget._hash(wire._canonical(parsed['intent']['root_key'],budget))
-        plan=authority.verify_unbound_copy(manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,
+        plan=authority._verify_copy(manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,
             assignment_entry,reservation_entry,owner_disclosure_entry,source_disclosure_entry,
             expected_ack_slot=expected_ack_slot,expected_owner=expected_owner,expected_source=expected_source,
             source_storage_epoch=source_storage_epoch,expected_maintainer=expected_maintainer,
             expected_target=s.target,target_storage_epoch=s.node['payload']['storage_epoch'],
             current_statuses=current_statuses,at=s._now(),limit_policy=limit_policy,policy=policy,budget=budget,
-            on_observed=lambda item:self._observe_single(row,caps,root_digest,item))
+            on_observed=lambda item:self._observe_single(row,caps,root_digest,item),source_state=source_state,bound=bound)
         root=plan.assignment.payload['root_key']
         objects={};roles=[];edges=[]
         def add(role,entry):
@@ -102,13 +111,14 @@ class RepairCopyState(RepairCopyResources):
             if key in objects and objects[key]!=(raw,ref_bytes):wire._fail('repair_ref_conflict')
             objects[key]=(raw,ref_bytes);roles.append(dict(role=role,ref=ref.as_dict()))
         for item in plan.originals:add(item.role,item.original)
-        add('history.ack_unbound',manifest_entry)
         for name,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
                 ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):add(name,item)
-        for member in plan.source.manifest.manifest.value['roles']:
-            packed=resolver.resolve(member['pack_ref']);add('history.raw_pack',packed)
-            for ref in (member['document_ref'],member['pack_ref']):
-                edges.append(dict(parent_ref=manifest_entry['ref'],relation='manifest-member',child_ref=ref))
+        for role,entry,source_manifest in copy_source.source_histories(plan.source,manifest_entry):
+            add(role,entry)
+            for member in source_manifest.manifest.value['roles']:
+                packed=resolver.resolve(member['pack_ref']);add('history.raw_pack',packed)
+                for ref in (member['document_ref'],member['pack_ref']):
+                    edges.append(dict(parent_ref=entry['ref'],relation='manifest-member',child_ref=ref))
         roles=sorted({(value['role'],*history._ref_tuple(value['ref'])):value for value in roles}.values(),
             key=lambda value:(value['role'],*history._ref_tuple(value['ref'])))
         edges=sorted({(*history._ref_tuple(value['parent_ref']),value['relation'],*history._ref_tuple(value['child_ref'])):value for value in edges}.values(),
@@ -268,8 +278,16 @@ class RepairCopyState(RepairCopyResources):
                     return entry['raw']
             wire._fail('repair_ref_missing')
 
-    def restore_unbound(self,resource_id,*,expected_ack_slot,expected_owner,expected_source,
-            source_storage_epoch,expected_maintainer,limit_policy,_budget=None):
+    def restore_unbound(self,*args,**options):
+        return self._restore(*args,**options,source_state='unbound',bound={})
+
+    def restore_empty(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
+        return self._restore(*args,**options,source_state='empty',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
+    def _restore(self,resource_id,*,expected_ack_slot,expected_owner,expected_source,
+            source_storage_epoch,expected_maintainer,limit_policy,source_state,bound,_budget=None):
         """Operator-local historical reconstruction after restart, never READ.
 
         Only committed storage is used. Current remote serving rights and dual
@@ -285,14 +303,27 @@ class RepairCopyState(RepairCopyResources):
             for entry in values:
                 ref=wire.raw_ref(entry['ref'])
                 if resolver.put(ref.namespace,ref.key,entry['raw']).ref!=ref:wire._fail('repair_ref_mismatch')
-        return authority.verify_unbound_replica_event(s._saved(held,'manifest'),resolver,s._saved(held,'custody'),
+        return authority._verify_replica_event(s._saved(held,'manifest'),resolver,s._saved(held,'custody'),
             expected_ack_slot=expected_ack_slot,expected_owner=expected_owner,expected_source=expected_source,
             source_storage_epoch=source_storage_epoch,expected_maintainer=expected_maintainer,
             expected_target=s.target,target_storage_epoch=s.node['payload']['storage_epoch'],
-            limit_policy=limit_policy,policy=policy,budget=budget)
+            limit_policy=limit_policy,policy=policy,budget=budget,source_state=source_state,bound=bound)
 
     def prepare_unbound_read(self,resource_id,consents,*,expected_ack_slot,expected_owner,expected_source,
             source_storage_epoch,expected_maintainer,current_statuses,limit_policy,action='proof',_budget=None,_include_replica=False):
+        return self._prepare_read(resource_id,consents,expected_ack_slot=expected_ack_slot,expected_owner=expected_owner,
+            expected_source=expected_source,source_storage_epoch=source_storage_epoch,expected_maintainer=expected_maintainer,
+            current_statuses=current_statuses,limit_policy=limit_policy,action=action,_budget=_budget,
+            _include_replica=_include_replica,source_state='unbound',bound={})
+
+    def prepare_empty_read(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
+        return self._prepare_read(*args,**options,source_state='empty',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
+    def _prepare_read(self,resource_id,consents,*,expected_ack_slot,expected_owner,expected_source,
+            source_storage_epoch,expected_maintainer,current_statuses,limit_policy,source_state,bound,
+            action='proof',_budget=None,_include_replica=False):
         """Durable current permission check for a future possession/read service.
 
         This is operator-local. It never claims caller key possession or publishes
@@ -308,9 +339,9 @@ class RepairCopyState(RepairCopyResources):
             count=work['requests'] if work else 0
             if count>=min(64,caps['max_requests'],caps['max_replay_records']):wire._fail('repair_copy_work_capacity')
             self.db.execute('INSERT OR REPLACE INTO open_repair_copy_work VALUES(?,?)',(resource_id,count+1))
-        replica=self.restore_unbound(resource_id,expected_ack_slot=expected_ack_slot,expected_owner=expected_owner,
+        replica=self._restore(resource_id,expected_ack_slot=expected_ack_slot,expected_owner=expected_owner,
             expected_source=expected_source,source_storage_epoch=source_storage_epoch,expected_maintainer=expected_maintainer,
-            limit_policy=limit_policy,_budget=budget)
+            limit_policy=limit_policy,_budget=budget,source_state=source_state,bound=bound)
         root=replica['custody'].payload['root_key'];root_digest=budget._hash(wire._canonical(root,budget))
         plan=authority._check_unbound_owner_return(replica,consents,expected_owner=expected_owner,
             expected_source=expected_source,expected_maintainer=expected_maintainer,expected_target=s.target,

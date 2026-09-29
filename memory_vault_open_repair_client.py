@@ -104,6 +104,17 @@ class AckOwnerRecoveryClient:
             timeout=timeout,empty_expected=dict(receipt_writer=expected_receipt_writer,
                 message_id=expected_message_id,envelope_ref=expected_envelope_ref))
 
+    def recover_replica_empty(self,base_url,*,target_node_entry,expected_target,expected_ack_slot,
+            expected_source,source_storage_epoch,expected_maintainer,root_entry,read_entry,bootstrap_entry,
+            expected_receipt_writer,expected_message_id,expected_envelope_ref,known_statuses=(),archive_statuses=(),timeout=30):
+        """Recover the original bound slot from a separately authorized replica."""
+        return self._recover(base_url,target_node_entry=target_node_entry,expected_target=expected_target,
+            expected_ack_slot=expected_ack_slot,root_entry=root_entry,read_entry=read_entry,bootstrap_entry=bootstrap_entry,
+            known_statuses=known_statuses,archive_statuses=archive_statuses,timeout=timeout,
+            empty_expected=dict(receipt_writer=expected_receipt_writer,message_id=expected_message_id,envelope_ref=expected_envelope_ref),
+            _source_state='replica_empty',_replica_context=dict(expected_source=expected_source,
+                source_storage_epoch=source_storage_epoch,expected_maintainer=expected_maintainer))
+
     def _recover(self, base_url, *, target_node_entry, expected_target, expected_ack_slot,
                  root_entry, read_entry, bootstrap_entry, known_statuses, archive_statuses, timeout, empty_expected,
                  _budget=None, _source_state=None, _replica_context=None):
@@ -120,9 +131,9 @@ class AckOwnerRecoveryClient:
             empty.bound._expected(expected["slot"],self.subject,empty_expected["receipt_writer"],
                 empty_expected["message_id"],empty_expected["envelope_ref"],started,self.policy,budget)
         source_state=("unbound" if empty_expected is None else "empty") if _source_state is None else _source_state
-        if (source_state not in ("unbound","empty","occupied","replica_unbound")
+        if (source_state not in ("unbound","empty","occupied","replica_unbound","replica_empty")
                 or (source_state in ("unbound","replica_unbound"))!=(empty_expected is None)
-                or (source_state=="replica_unbound")!=(_replica_context is not None)):
+                or (source_state in ("replica_unbound","replica_empty"))!=(_replica_context is not None)):
             _fail("repair_invalid_proof")
         setup = bootstrap.verify_ack_owner_bootstrap_original(bootstrap_entry,dict(root=root_entry,read=read_entry),
             expected_ack_slot=expected["slot"],expected_owner=self.subject,at=started,limit_policy=self.limits,
@@ -222,22 +233,37 @@ class AckOwnerRecoveryClient:
                 _fail("repair_ref_mismatch")
             proof_bytes+=len(assembled)
             originals[reference]=assembled
-        if source_state=="replica_unbound":
+        if _replica_context is not None:
             # Fetch exact containers first; membership is structural evidence,
             # never a substitute for source/copy/return authority checks below.
+            if source_state=='replica_empty':
+                packed_child=next(item for item in children if item['role']=='replica.read_pack')
+                download(packed_child)
+                reference=wire.raw_ref(packed_child['ref'])
+                read_pack=wire.parse_raw_pack(originals[reference],reference,self.policy,budget)
+                wanted={wire.raw_ref(item['ref']) for item in children
+                    if item['role'] in proof.REPLICA_READ_PACK_ROLES}
+                members={(item.raw_sha256,item.size):index for index,item in enumerate(read_pack.entries)}
+                if set(members)!={(ref.raw_sha256,ref.size) for ref in wanted}:
+                    _fail('repair_proof_mismatch')
+                for ref in wanted:
+                    packed_original=read_pack.entry(members[(ref.raw_sha256,ref.size)],ref)
+                    if ref in available and available[ref]!=packed_original.raw:_fail('repair_ref_conflict')
+                    available[ref]=packed_original.raw
             for item in children:
-                if item["role"] in {"history.raw_pack","history.ack_unbound"}:download(item)
+                if item["role"] in {"history.raw_pack","history.ack_unbound","history.ack_empty"}:download(item)
             packed=wire.LocalRawResolver(self.policy,budget)
             for reference in roles.get("history.raw_pack",()):
                 if packed.put(reference.namespace,reference.key,originals[reference]).ref!=reference:
                     _fail("repair_ref_mismatch")
-            for reference in roles.get("history.ack_unbound",()):
-                tree=history.resolve_historical_inputs(originals[reference],packed,self.policy,budget)
-                if tree.manifest.value['variant']!='ack_unbound':_fail('repair_proof_mismatch')
-                for row in tree.roles:
-                    item=row.original
-                    if item.ref in available and available[item.ref]!=item.raw:_fail('repair_ref_conflict')
-                    available[item.ref]=item.raw
+            for role,variant in (('history.ack_unbound','ack_unbound'),('history.ack_empty','ack_empty')):
+                for reference in roles.get(role,()):
+                    tree=history.resolve_historical_inputs(originals[reference],packed,self.policy,budget)
+                    if tree.manifest.value['variant']!=variant:_fail('repair_proof_mismatch')
+                    for row in tree.roles:
+                        item=row.original
+                        if item.ref in available and available[item.ref]!=item.raw:_fail('repair_ref_conflict')
+                        available[item.ref]=item.raw
         # Retain every advertised full reference and charge its logical bytes,
         # including those whose exact bytes were recovered from a pack.
         for item in children:download(item)
@@ -248,7 +274,7 @@ class AckOwnerRecoveryClient:
             return dict(raw=originals[reference],ref=reference.as_dict())
         if _replica_context is not None:
             return self._replica_result(held,roles,originals,entry,setup,known,expected,node,
-                _replica_context,budget,expiry,deadline,requests,wire_bytes,proof_bytes)
+                _replica_context,budget,expiry,deadline,requests,wire_bytes,proof_bytes,empty_expected)
         resolver=wire.LocalRawResolver(self.policy,budget)
         for reference in roles["history.raw_pack"]:
             if resolver.put(reference.namespace,reference.key,originals[reference]).ref!=reference:
@@ -333,20 +359,24 @@ class AckOwnerRecoveryClient:
         return tuple(checked)
 
     def _replica_result(self,held,roles,originals,entry,setup,known,expected,node,context,
-                        budget,expiry,deadline,requests,wire_bytes,proof_bytes):
+                        budget,expiry,deadline,requests,wire_bytes,proof_bytes,empty_expected=None):
         import memory_vault_open_repair_copy_authority as copy_authority
         resolver=wire.LocalRawResolver(self.policy,budget)
         for reference,raw in originals.items():
             if resolver.put(reference.namespace,reference.key,raw).ref!=reference:_fail("repair_ref_mismatch")
-        replica=copy_authority.verify_unbound_replica_event(entry("replica.manifest"),resolver,entry("replica.custody"),
+        bound={} if empty_expected is None else dict(expected_receipt_writer=empty_expected['receipt_writer'],
+            expected_message_id=empty_expected['message_id'],expected_envelope_ref=empty_expected['envelope_ref'])
+        verify_replica=copy_authority.verify_empty_replica_event if empty_expected is not None else copy_authority.verify_unbound_replica_event
+        replica=verify_replica(entry("replica.manifest"),resolver,entry("replica.custody"),
             expected_ack_slot=expected["slot"],expected_owner=self.subject,expected_target=expected["target"],
             target_storage_epoch=node.payload["storage_epoch"],**context,
-            limit_policy=self.limits,policy=self.policy,budget=budget)
+            limit_policy=self.limits,policy=self.policy,budget=budget,**bound)
         source=replica["source"]
         for role,values in replica["entries"].items():
             if set(roles.get(role,()))!={wire.raw_ref(e["ref"]) for e in values}:_fail("repair_proof_mismatch")
         extras={"replica.manifest","replica.custody","return.owner","return.source","return.maintainer",
                 "current.status.replica_read"}
+        if empty_expected is not None:extras.add('replica.read_pack')
         if set(roles)!=set(replica["entries"])|extras:_fail("repair_proof_mismatch")
         for name,item in (("root",source.resources.originals["root"]),("read",source.resources.originals["read"]),
                           ("bootstrap",source.bootstrap.originals["bootstrap"])):

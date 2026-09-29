@@ -1,8 +1,8 @@
 """Persistent replica owner possession exchange and protected proof children.
 
 Operator-installed configuration contains public originals only. Remote requests
-reuse the existing bootstrap wire, with an explicit replica_unbound proof state.
-No COPY upload, recipient ADMIT, discovery or automatic replacement is provided.
+reuse the bootstrap wire with an explicit replica_unbound or replica_empty state.
+This read service grants no recipient ADMIT or automatic replacement selection.
 """
 from contextlib import contextmanager
 import secrets
@@ -13,6 +13,7 @@ from memory_vault_open_repair_copy_state import RepairCopyState
 from memory_vault_open_repair_service import RepairBootstrapService
 from memory_vault_open_repair_state import ROW_CHARGE
 import memory_vault_open_repair_probe as probe
+import memory_vault_open_repair_proof as proof
 import memory_vault_open_repair_wire as wire
 
 
@@ -40,7 +41,7 @@ class ReplicaReadAccess:
         if policy is not None:wire._context(policy,budget)
         cfg=self.service._configuration(resource_id,budget)
         if current_statuses is not None:wire._fail('repair_replica_config_update_required')
-        held=self.store.prepare_unbound_read(resource_id,{k:_decode(v) for k,v in cfg['consents'].items()},
+        held=self.service._prepare_read(resource_id,{k:_decode(v) for k,v in cfg['consents'].items()},
             **cfg['context'],current_statuses=[_decode(v) for v in cfg['statuses']],
             limit_policy=self.store.source.limits,action=action,_budget=budget,_include_replica=True)
         if _decode(cfg['bootstrap'])!=dict(raw=held['bootstrap'].raw,ref=held['bootstrap'].ref.as_dict()):
@@ -57,6 +58,13 @@ class ReplicaReadAccess:
         for name,item in zip(('owner','source','maintainer'),held['consents']):
             children.append(dict(role='return.'+name,raw=item.raw,ref=item.ref))
         children.extend(dict(role='current.status.replica_read',raw=item.raw,ref=item.ref) for item in held['statuses'])
+        if self.service.resource_state=='replica_empty':
+            # A byte container of these already authorized originals reduces
+            # round trips without changing their refs, authority or byte charge.
+            # Source history packs remain separate and retain their exact bytes.
+            packed=wire.build_raw_pack([item['raw'] for item in children
+                if item['role'] in proof.REPLICA_READ_PACK_ROLES],budget.policy,budget)
+            children.append(dict(role='replica.read_pack',raw=packed.raw,ref=packed.ref))
         children.sort(key=lambda e:(e['role'],e['ref'].namespace,e['ref'].key,e['ref'].raw_sha256,e['ref'].size))
         held['children']=tuple(children);token=_Preparation();self._prepared[token]=held
         return token
@@ -83,17 +91,21 @@ class ReplicaReadAccess:
 
 class ReplicaReadService(RepairBootstrapService):
     resource_state='replica_unbound'
+    bound_context=frozenset()
 
     def __init__(self,state):
         self.state,self.db=state,state.db;self.store=RepairCopyState(state)
         self.access=ReplicaReadAccess(self)
 
+    def _prepare_read(self,*args,**options):
+        return self.store.prepare_unbound_read(*args,**options)
+
     def configure(self,resource_id,*,context,consents,current_statuses):
         """Local operator action; denied status updates still retain revocations."""
         wire.object_fields(context,{'expected_ack_slot','expected_owner','expected_source',
-            'source_storage_epoch','expected_maintainer'})
+            'source_storage_epoch','expected_maintainer'}|self.bound_context)
         budget=wire.RepairBudget(self.state.policy)
-        decision=self.store.prepare_unbound_read(resource_id,consents,**context,current_statuses=current_statuses,
+        decision=self._prepare_read(resource_id,consents,**context,current_statuses=current_statuses,
             limit_policy=self.state.limits,action='challenge',_budget=budget)
         value=dict(context=context,consents={key:_encode(entry) for key,entry in consents.items()},
             statuses=[_encode(entry) for entry in current_statuses],bootstrap=_encode(dict(
@@ -181,3 +193,12 @@ class ReplicaReadService(RepairBootstrapService):
         self.db.execute('UPDATE open_repair_bootstrap_usage SET proof_bytes=proof_bytes+?,replays=replays+? WHERE resource_id=?',
             (proof_bytes,int(replay),decision.resource_id))
         return True
+
+
+class ReplicaEmptyReadService(ReplicaReadService):
+    """Owner READ of a copied original binding, with independent return consents."""
+    resource_state='replica_empty'
+    bound_context=frozenset(('expected_receipt_writer','expected_message_id','expected_envelope_ref'))
+
+    def _prepare_read(self,*args,**options):
+        return self.store.prepare_empty_read(*args,**options)

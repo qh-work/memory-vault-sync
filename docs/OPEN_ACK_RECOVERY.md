@@ -65,7 +65,7 @@ both its original parent budgets and those ceilings. The client also applies
 its independent finite parsing and verification limits. Exhaustion reports an
 error; it does not establish that a slot is empty.
 
-## Development: reading an unbound replacement replica
+## Reading an unbound replacement replica
 
 The source checkout can serve an already committed unbound ACK replica through
 the same protected HTTP route. The replacement operator initializes
@@ -129,6 +129,61 @@ complete source/copy/custody chain, independent return consents, current statuse
 and deadline checks remain required. Opaque reference keys are preserved; a
 matching digest alone is insufficient. This optimization is later than the
 immutable alpha.0.18 candidate.
+
+## Bound-empty replica copying and recovery (source after alpha.0.23)
+
+A bound-empty ACK slot already identifies the recipient, message and envelope,
+but has no saved-message receipt. The Python maintainer can copy both original
+history generations to an explicitly selected replacement. The owner can then
+recover the exact binding from that replacement while the original node is
+unavailable. The original keys, opaque references and signed bytes are preserved.
+
+The four commands use the same existing private configurations, original
+permissions and new-only result files as their unbound counterparts:
+
+| Command | Private request schema | Additional bindings |
+| --- | --- | --- |
+| `copy-reserve-empty` | `memory-vault-open-ack-copy-empty-request/v1` | `receipt_writer`, `message_id`, `envelope_ref` |
+| `copy-upload-empty` | `memory-vault-open-ack-copy-empty-request/v1` | The same three bindings |
+| `configure-replica-empty` | `memory-vault-open-ack-replica-empty-read-config/v1` | Add `expected_receipt_writer`, `expected_message_id`, `expected_envelope_ref` inside `context` |
+| `recover-replica-empty` | `memory-vault-open-ack-replica-empty-recovery-request/v1` | `receipt_writer`, `message_id`, `envelope_ref`, plus the existing replica source and maintainer fields |
+
+For both copy requests, `manifest` and `custody` are the original **empty** source
+entries. The explicit intent uses `scope.kind: ack_empty` and the exact original
+`ack_slot`, `grant_ref` and `binding_ref`. Include the original packs for both the
+unbound and empty history. Reservation disclosure binds that exact intent; upload
+still requires separate owner/source disclosures for the resulting assignment.
+The allocation, offer, assignment and transfer requests survive lost replies and
+restart in the maintainer's existing transport journal. Retry the same request
+inside its original window with a new output path.
+
+Read configuration still needs the independent owner, original-source and
+maintainer return consents. The replacement's COPY assignment remains
+COPY/READ/RETAIN only. Its committed empty copy does not authorize receiving a
+first receipt, and does not turn the replacement into the original node.
+Revoked write/bootstrap grants and remembered revision floors continue to apply.
+
+```sh
+python -B memory_vault_open_repair_admin.py recover-replica-empty \
+  --network-config /absolute/private/owner/open-config.json \
+  --request /absolute/private/empty-replica-recovery.json \
+  --output /absolute/private/new-empty-replica-evidence.json \
+  --repair-profile receipt-index --timeout 60
+```
+
+The response has an explicit `replica_empty` proof profile. The owner independently
+checks both source generations, the replacement custody, exact message/recipient
+binding, all return consents and current READ authority. An exact metadata pack
+reduces network round trips; each advertised original still counts toward the
+proof-byte ceiling. Unexpected pack members or a different proof phase are
+rejected. Upload, configuration and reads share the existing finite resource
+work limits, so the initial signed grants must fund the complete operation.
+Selecting a larger client profile never renews or enlarges an existing grant.
+
+`ack_replica_empty_source_recovered` retains `recipient_saved:false`. It exports
+originals and retained statuses into a private evidence file and does not import
+anything into the Vault. This feature does not copy occupied replicas, select
+replacement nodes automatically or implement native Node replica recovery.
 
 ## Owner recovery command
 
@@ -282,7 +337,8 @@ possession before disclosure, uploads the packed originals, commits, and verifie
 the returned manifest/custody chain. `replica_committed` exports both full entries.
 Neither result is a saved-message receipt or READ permission. The owner, source
 and maintainer must still supply separate return consents to configure recovery.
-Automatic destination selection and occupied/empty replica copies remain open.
+Bound-empty copy commands are described below. Automatic destination selection
+and occupied replica copies remain open.
 
 ### Enable separately authorized replica reads
 

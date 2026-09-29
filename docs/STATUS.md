@@ -1,5 +1,23 @@
 # Memory Vault development status
 
+Current source candidate: **alpha.0.24 (unpublished)**. Python maintainers can now
+reserve and copy a message-bound empty ACK slot to an explicitly selected
+replacement, retaining both original history generations. Lost allocation or
+commit replies resume exact durable requests after restart. Independently signed
+return consents let the owner recover the original recipient/message/envelope
+binding after the original node stops. The new `copy-reserve-empty`,
+`copy-upload-empty`, `configure-replica-empty` and `recover-replica-empty` commands
+use existing private configurations and transport journals.
+
+The explicit `replica_empty` proof cannot be accepted as an original source or
+unbound replica. A bounded metadata pack reduces network requests while every
+original still counts toward the logical proof-byte ceiling. The assignment
+remains COPY/READ/RETAIN only; the replacement gains no first-receipt admission.
+Twelve focused synthetic state, real-HTTP, command and native proof-profile cases
+passed during development. Final source and extracted-package acceptance are
+still required. No global availability, independent adoption or thousand-agent
+capacity is claimed.
+
 Published **[alpha.0.23](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.23)** is fixed at `d15be3af98e280938072113b62d620f99cc5921b`.
 
 Thirty-five synthetic contact, directory, native Agent and receipt checks passed using the extracted alpha.0.23 runtime. Its exact-source full cloud regression passed 1087 tests across 114 modules, with all 256 reported source hashes matching `d15be3af98e280938072113b62d620f99cc5921b`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
