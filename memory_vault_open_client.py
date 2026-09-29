@@ -88,6 +88,24 @@ class OpenNetworkClient:
     def receive(self, **arguments):
         return asyncio.run(self._delivery().receive(**arguments))
 
+    def receive_mailbox(self, base_url, *, limit_policy, status_observer=None, **arguments):
+        """Receive an explicitly selected mailbox using retained original grants.
+
+        The caller supplies the finite mailbox profile already used in its
+        signed grants. Body retrieval currently requires the live delivery lease.
+        """
+        from dataclasses import replace
+        from memory_vault_open_repair_client import MailboxFeedRecoveryClient
+        from memory_vault_open_repair_state import DEFAULT_POLICY
+        reader = MailboxFeedRecoveryClient(self.identity, self.encryption,
+            policy=replace(DEFAULT_POLICY, max_signature_checks=512), limit_policy=limit_policy,
+            status_observer=status_observer, transport=self.participant.transport,
+            allow_loopback=self.participant.transport.allow_loopback)
+        try:
+            return asyncio.run(self._delivery().receive_mailbox(reader, base_url, **arguments))
+        finally:
+            reader.close()
+
     def read_message(self, **arguments):
         return self._delivery().read_message(**arguments)
 

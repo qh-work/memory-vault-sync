@@ -706,13 +706,13 @@ class OpenDeliveryClient:
                 db.execute("INSERT OR REPLACE INTO open_delivery_client_state VALUES(?,?)",
                            (key, canonical_bytes({"after_sequence": sequence})))
 
-    async def _receive_entry(self, session, entry, budget):
+    async def _receive_entry(self, session, entry, budget, *, _mailbox=None):
         object_fields(entry, {"message_id", "envelope_ref", "sequence"})
         opaque(entry["message_id"])
         ref = immutable_ref(entry["envelope_ref"])
         if ref["namespace"] != "object":
             raise MemoryError("open_delivery_envelope_mismatch")
-        sequence = integer(entry["sequence"], minimum=1)
+        sequence = integer(entry["sequence"], minimum=1) if _mailbox is None else None
         prior = self._inbox(entry["message_id"])
         if prior is not None:
             if prior["envelope_sha256"] != ref["raw_sha256"]:
@@ -735,15 +735,75 @@ class OpenDeliveryClient:
             raise MemoryError("open_delivery_approval_mismatch")
         stored = verify_storage_receipt(handle["storage_receipt"], node=handle["source_node"], intent=original)
         if (stored["message_id"] != entry["message_id"] or stored["envelope_ref"] != ref
-                or stored["sequence"] != sequence or stored["stored_at"] > int(time.time()) + 30):
+                or (sequence is not None and stored["sequence"] != sequence) or stored["stored_at"] > int(time.time()) + 30):
             raise MemoryError("open_delivery_receipt_mismatch")
         frozen = await self._download(node, handle, ref, budget)
+        if _mailbox is not None:
+            from memory_vault_open_repair_client import read_mailbox_admission
+            member, options = _mailbox
+            def read_original(reference):
+                if reference == ref:
+                    return frozen
+                return options['read_original'](reference)
+            read_mailbox_admission(member, **dict(options, read_original=read_original, at=int(time.time())))
         body = decrypt_envelope(frozen, encryption_identity=self.encryption, **self._keys(session))
         self._stage_inbox(message_id=entry["message_id"],
             sender_key_id=session["request"]["payload"]["signing_key"]["key_id"],
             envelope=frozen, body=body, session={"intent": original,
                 "storage_receipt": handle["storage_receipt"], "source_node": handle["source_node"]})
         return self._finish_inbox(entry["message_id"]), True
+
+    async def receive_mailbox(self, recovery_client, base_url, *, limit=4, **recovery_options):
+        """Recover mailbox discovery and save bodies while the delivery lease lives.
+
+        This online bridge uses the original delivery possession exchange for
+        body reads. It does not extend that lease or claim cold body transport.
+        Observations use the recipient's existing protected database.
+        """
+        from memory_vault_open_repair_client import MailboxFeedRecoveryClient, MailboxSetupJournal
+        if (not isinstance(recovery_client, MailboxFeedRecoveryClient)
+                or recovery_client.identity.public_descriptor() != self.identity.public_descriptor()
+                or recovery_client.encryption_identity.public_descriptor() != self.encryption.public_descriptor()):
+            raise MemoryError('open_delivery_key_binding_mismatch')
+        if type(limit) is not int or not 1 <= limit <= 4:
+            raise MemoryError('network_invalid_receive_limit')
+        with self.participant.state.db() as db:
+            options = dict(recovery_options, journal=MailboxSetupJournal(db))
+            feed = recovery_client.recover(base_url, **options)
+        return await self._receive_mailbox_feed(recovery_client, feed, recovery_options, limit)
+
+    async def _receive_mailbox_feed(self, client, feed, options, limit):
+        from memory_vault_open_repair_client import verify_mailbox_admission
+        from memory_vault_open_repair_wire import raw_ref
+        budget = _DeliveryBudget()
+        messages, errors = [], []
+        node = document(options['target_node_entry']['raw'])
+        current = [dict(raw=value.raw, ref=value.ref.as_dict()) for value in feed.current_statuses]
+        for member in feed.entries:
+            if len(messages) >= limit:
+                break
+            args = dict(expected_slot=options['expected_slot'], expected_signing_key=options['expected_target']['signing_key'],
+                expected_owner=client.subject, expected_sender=options['expected_sender'], expected_target=options['expected_target'],
+                encryption_identity=self.encryption, read_original=lambda reference: feed.originals[raw_ref(reference)],
+                current_statuses=current, known_statuses=options.get('known_statuses', ()),
+                at=int(time.time()), policy=client.policy, limit_policy=client.limits)
+            verified = verify_mailbox_admission(member, **args)
+            roles = verified['setup']['roles']
+            session = {'node': node}
+            for name, role in (('request', 'contact.request'), ('policy', 'contact.policy'),
+                               ('lease', 'contact.knock_lease'), ('decision', 'contact.decision')):
+                session[name] = document(roles[role]['raw'])
+            core = verified['core']
+            entry = dict(message_id=core['message_id'], envelope_ref=core['envelope_ref'], sequence=None)
+            result, fresh = await self._receive_entry(session, entry, budget, _mailbox=(member, args))
+            if fresh:
+                messages.append(result)
+            if result['state'] == 'validated_saved':
+                try:
+                    await self._send_receipt(core['message_id'], budget, node)
+                except MemoryError as exc:
+                    errors.append(dict(message_id=core['message_id'], code=exc.code, retryable=exc.retryable))
+        return dict(messages=messages, errors=errors, state='observed', body_transport='original_delivery_lease')
 
     async def receive(self, limit=4):
         if type(limit) is not int or not 1 <= limit <= 4:

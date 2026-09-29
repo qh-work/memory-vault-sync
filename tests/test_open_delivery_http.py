@@ -152,7 +152,13 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         from tests.test_open_repair_status import status_entry
         limits=dict(DEFAULT_LIMITS,max_proof_bytes=524288)
         _,reference=self.request_contact();self.decide(reference,'approved')
-        sent=self.call(self.a,op='send',request_id='req_mailbox_stage',recipients=[self.bi.key_id],text='Synthetic mailbox staging message')
+        selected={}
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+            TrustStore(ClientConfig.load(self.b.client_config).trust_path).add(self.ai.public_descriptor())
+            shared_memory=self.call(self.a,op='remember',request_id='req_mailbox_memory',kind='observation',
+                text='Synthetic mailbox memory: consult current evidence before reuse.')
+            selected['memory_ids']=[shared_memory['memory_id']]
+        sent=self.call(self.a,op='send',request_id='req_mailbox_stage',recipients=[self.bi.key_id],text='Synthetic mailbox staging message',**selected)
         self.assertTrue(sent['storage_accepted'])
         with self.a._network() as network:
             sender_encryption=network.encryption
@@ -336,7 +342,8 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         from memory_vault_open_node import OpenParticipant,OpenHTTPServer
         from memory_vault_open_transport import OpenHTTPTransport
         participant=OpenParticipant(source.identity,self.root/'node_0/transport',seeds=[],descriptor=source.node,
-            encryption_identity=source.encryption_identity,allow_loopback=True,repair_policy=dict(enabled=True,limit_policy=limits))
+            encryption_identity=source.encryption_identity,allow_loopback=True,repair_policy=dict(enabled=True,limit_policy=limits),
+            contact_policy=dict(enabled=True),delivery_policy=dict(enabled=True))
         server_errors=[];handle_repair=participant.handle_repair
         def traced_repair(raw):
             try:return handle_repair(raw)
@@ -375,7 +382,25 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             client_options=dict(target_node_entry=node_entry,expected_target=source.target,expected_sender=member_args['expected_sender'],
                 expected_slot=slot,slot_entries={name:slot_entries[name] for name in ('slot','read','maintenance','bootstrap')},
                 journal=MailboxSetupJournal(recipient_db))
-            result=client.recover(base,**client_options)
+            delivery=recipient_network._delivery()
+            captured=[];recover_feed=MailboxFeedRecoveryClient.recover
+            def capture_feed(reader,*args,**kwargs):
+                value=recover_feed(reader,*args,**kwargs);captured.append(value);return value
+            with patch.object(MailboxFeedRecoveryClient,'recover',new=capture_feed):
+                received=recipient_network.receive_mailbox(base,limit_policy=limits,status_observer=observed.append,**client_options)
+            result=captured[0]
+            self.assertEqual(received['errors'],[])
+            self.assertEqual(delivery._inbox(sent['message_id'])['receipt_sent'],1)
+            self.assertEqual(received['messages'][0]['state'],'validated_saved')
+            self.assertIn('Synthetic mailbox staging message',received['messages'][0]['text'])
+            self.assertEqual(received['body_transport'],'original_delivery_lease')
+            self.assertEqual(received['messages'][0]['content_kind'],'memory_transfer')
+            self.assertEqual(received['messages'][0]['share']['records_added'],1)
+            recalled=self.call(self.b,op='recall',memory_id=shared_memory['memory_id'])
+            self.assertEqual(recalled['hits'][0]['text'],'Synthetic mailbox memory: consult current evidence before reuse.')
+            with patch.object(delivery,'call',side_effect=AssertionError('duplicate body fetch')):
+                again=asyncio.run(delivery._receive_mailbox_feed(client,result,client_options,4))
+            self.assertEqual(again['messages'],[])
             self.assertEqual(result.entries[0]['admission_link_ref'],admitted['link']['ref'])
             self.assertEqual(result.source['custody'].raw,feed_custody['raw'])
             self.assertTrue(observed);self.assertGreater(result.metrics['requests'],2)

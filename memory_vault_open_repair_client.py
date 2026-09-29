@@ -1311,16 +1311,28 @@ def read_mailbox_index(head_entry, checkpoint_entry, *, expected_slot, expected_
     return tuple(entries)
 
 
-def read_mailbox_admission(member, *, expected_slot, expected_signing_key,
+def read_mailbox_admission(member, *, read_original, policy=DEFAULT_POLICY, budget=None, **options):
+    """Verify the complete member before loading and hashing its ciphertext."""
+    from memory_vault_open_delivery import MAX_ENVELOPE_BYTES
+    budget=budget or wire.RepairBudget(policy);wire._context(policy,budget)
+    verified=verify_mailbox_admission(member,read_original=read_original,policy=policy,budget=budget,**options)
+    ref=wire.raw_ref(verified['core']['envelope_ref'])
+    if ref.namespace!='object' or ref.size>MAX_ENVELOPE_BYTES:_fail('repair_ref_mismatch')
+    raw=read_original(ref.as_dict())
+    if not isinstance(raw,bytes) or len(raw)!=ref.size or budget._hash(raw)!=ref.raw_sha256:_fail('repair_ref_mismatch')
+    originals=dict(verified['originals']);originals[(ref.namespace,ref.key)]=dict(raw=raw,ref=ref.as_dict())
+    return dict(verified,envelope=raw,originals=MappingProxyType(originals))
+
+
+def verify_mailbox_admission(member, *, expected_slot, expected_signing_key,
                            expected_owner, expected_sender, expected_target,
                            encryption_identity, read_original, at, current_statuses, known_statuses=(),
                            on_status_authenticated=None, limit_policy=DEFAULT_LIMITS,
                            policy=DEFAULT_POLICY, budget=None):
-    """Fetch original admission bytes for an entry from read_mailbox_index.
+    """Verify admission metadata and current READ authority without fetching E.
 
-    Authenticates the source event graph and encrypted core before fetching E.
-    The returned inputs still require enclosing feed custody checks;
-    this function neither imports memories nor grants trust to their contents.
+    The enclosing feed custody must be checked by the caller. Splitting this
+    phase permits an asynchronous body transport without weakening that order.
     """
     import memory_vault_open_repair_resource as resource
     import memory_vault_open_repair_history as history
@@ -1403,8 +1415,7 @@ def read_mailbox_admission(member, *, expected_slot, expected_signing_key,
     if core['enum_until']>min(deadlines):_fail('repair_mailbox_member_mismatch')
     current=verify_mailbox_member_current(setup,current_statuses,known_entries=known_statuses,at=at,
         policy=policy,budget=budget,on_authenticated=on_status_authenticated)
-    envelope=load(core['envelope_ref'],'object')
-    return dict(core=core,link=link,checkpoint=checkpoint,history=resolved,setup=setup,envelope=envelope,
+    return dict(core=core,link=link,checkpoint=checkpoint,history=resolved,setup=setup,
         current_statuses=current,originals=MappingProxyType(originals))
 
 
