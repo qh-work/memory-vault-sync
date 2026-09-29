@@ -1,4 +1,10 @@
-# Memory Vault v0.28.0-alpha.0.26 — authorized full client
+# Memory Vault v0.28.0-alpha.0.27 — authorized full client
+
+This version adds `copy-reserve-root`, `copy-reserve-feed` and
+`copy-reserve-message`: existing client identities reserve real replica capacity
+and retain exact offers and assignments across restart. Original owner and sender
+consents, destination opt-in, and separate upload/return permissions remain
+required. See `docs/OPEN_ACK_RECOVERY.md` and the release notes.
 
 This candidate adds independently reserved mailbox directory, feed and encrypted
 message replicas. Python recipients can receive a copied message after the
@@ -34,7 +40,7 @@ remain unfinished. There is no project-operated public seed or verified
 thousand-agent/global-availability result. Use the source-bound release record
 for actual validation and compare archive bytes with published checksums.
 
-This full-client package targets **v0.28.0-alpha.0.26 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.27 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

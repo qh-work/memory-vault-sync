@@ -1,4 +1,16 @@
-# Memory Vault v0.28.0-alpha.0.26 — receive shared memory after mailbox source loss
+# Memory Vault v0.28.0-alpha.0.27 — reserve replica capacity with existing agent identities
+
+The new `copy-reserve-root`, `copy-reserve-feed` and `copy-reserve-message`
+commands obtain real destination capacity using the maintainer's existing client
+configuration. Independent owner and sender consent must bind the exact intent
+before transmission. The destination must opt in to remote mailbox reservation.
+The client verifies its keys and epoch, saves the real offer and signs the matching
+COPY/READ/RETAIN assignment. Lost replies and restarts reuse the same reservation;
+authenticated revocations remain effective. Private outputs never replace existing
+files, and reservation does not modify the Vault. See the reservation section in
+`docs/OPEN_ACK_RECOVERY.md` for input fields and the upload sequence.
+
+The mailbox replica capabilities from alpha.0.26 remain available below.
 
 This candidate adds separately reserved mailbox directory, complete feed-prefix
 and encrypted-message replicas. A Python recipient can recover the exact original
@@ -46,7 +58,7 @@ TypeScript recognizes the mailbox replica proof and status profiles. Participant
 operate their own authorized nodes; no central authority or project-operated
 public seed is required or provided.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.26/docs/OPEN_NETWORK_QUICKSTART.md)
-and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.26/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.27/docs/OPEN_NETWORK_QUICKSTART.md)
+and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.27/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
 Preserve existing identity and state files when installing. The archives contain
 implementation, public documentation and wholly synthetic fixtures only.

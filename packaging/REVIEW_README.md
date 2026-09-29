@@ -1,4 +1,10 @@
-# Memory Vault v0.28.0-alpha.0.26 independent review kit
+# Memory Vault v0.28.0-alpha.0.27 independent review kit
+
+This version adds `copy-reserve-root`, `copy-reserve-feed` and
+`copy-reserve-message`: existing client identities reserve real replica capacity
+and retain exact offers and assignments across restart. Original owner and sender
+consents, destination opt-in, and separate upload/return permissions remain
+required. See `docs/OPEN_ACK_RECOVERY.md` and the release notes.
 
 This candidate adds independently reserved mailbox directory, feed and encrypted
 message replicas. Python recipients can receive a copied message after the
