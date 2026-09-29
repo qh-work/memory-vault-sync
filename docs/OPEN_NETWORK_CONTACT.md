@@ -197,6 +197,35 @@ signed destination and slot controls; the sender reuses its own frozen outbox
 ciphertext and contact originals. Preparation never invents permission or sends
 plaintext to the mailbox node.
 
+A receiver using the Agent interface can authorize from an existing registered
+mailbox and its locally approved contact, without opening a database or loading
+private key objects in the calling program:
+
+```python
+invitation = {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "authorize", "receiver_id": receiver_id,
+    "contact_request_ref": approved_request_ref,
+    "expires_at": destination_until,
+    "status_revision": next_owner_status_revision, "status_until": status_until,
+}
+```
+
+Call `receiver.handle({"op": "connect", "invitation": invitation})`. The response
+pages use `authorization_chunk` (base64), `authorization_sha256`, `total_bytes`
+and `next_cursor`. Assemble and check them as in the configuration inspection
+example below, adding each `next_cursor` to the same invitation. The resulting
+JSON contains `destination_entry`, `owner_status_entry`, the sender's three
+`slot_entries`, `target`, `target_node_entry` and `base_url`, ready for the
+sender's preparation and admission calls. Hand it only to the selected sender
+through your existing authorized channel. No message is sent by this operation.
+
+The contact must already have an approved decision in this receiver's local
+state. Each call verifies the currently usable saved controls; it cannot approve
+an unknown contact. The exact signed bundle is persisted before the first page
+is returned, and retries reuse it. Status revision coordination remains explicit.
+Every page reports `network_accessed: false` and `source_rechecked: false`.
+
 The receiver's `MailboxSetupBuilder.destination_bundle` builds both originals
 from the exact configured slot and the approved contact documents. Supply an
 explicit owner/root status revision, coordinated with any other status issuer

@@ -222,6 +222,31 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         destination=destination_bundle['destination']
         if self._testMethodName=='test_sender_admits_message_over_http':
             from memory_vault_open_client import MAILBOX_CONNECT_SCHEMA
+            import base64
+            from unittest.mock import patch
+            node_raw=canonical_bytes(source.node);node_digest=hashlib.sha256(node_raw).hexdigest()
+            registered=self.call(self.b,op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='register',
+                base_url=source.node['payload']['base_url'],limit_policy=limits,expected_slot=slot,
+                expected_sender=dict(signing_key=self.ai.public_descriptor(),encryption_key=sender_encryption.public_descriptor()),
+                expected_target=source.target,target_node_entry=dict(raw=node_raw.decode(),ref=dict(namespace='meta',key=node_digest,raw_sha256=node_digest,size=len(node_raw))),
+                slot_entries={name:dict(raw=slot_entries[name]['raw'].decode(),ref=slot_entries[name]['ref']) for name in ('slot','read','maintenance','bootstrap')}))
+            authorize=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='authorize',receiver_id=registered['receiver_id'],
+                contact_request_ref=reference,expires_at=now+60,status_revision=3,status_until=now+100)
+            chunks=[]
+            with patch('memory_vault_open_transport.OpenHTTPTransport.request_repair',side_effect=AssertionError('authorization used network')):
+                while True:
+                    page=self.call(self.b,op='connect',invitation=authorize)
+                    self.assertFalse(page['network_accessed']);self.assertFalse(page['source_rechecked'])
+                    chunks.append(base64.b64decode(page['authorization_chunk'],validate=True))
+                    if page['next_cursor'] is None:break
+                    authorize['cursor']=page['next_cursor']
+            exported=b''.join(chunks)
+            self.assertEqual(hashlib.sha256(exported).hexdigest(),page['authorization_sha256'])
+            authorized=json.loads(exported)
+            destination=dict(raw=authorized['destination_entry']['raw'].encode(),ref=authorized['destination_entry']['ref'])
+            owner_original=dict(raw=authorized['owner_status_entry']['raw'].encode(),ref=authorized['owner_status_entry']['ref'])
+            self.assertEqual(json.loads(owner_original['raw'])['payload']['revision'],3)
+            destination_bundle=dict(destination=destination,owner_status=owner_original)
             prepared=self.call(self.a,op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='prepare',
                 message_id=sent['message_id'],slot_entries={name:dict(raw=slot_entries[name]['raw'].decode(),ref=slot_entries[name]['ref']) for name in ('slot','read','maintenance')},
                 destination_entry=dict(raw=destination['raw'].decode(),ref=destination['ref']),attempt_until=now+60,consent_until=now+100))
