@@ -470,6 +470,39 @@ class MailboxSourceTests(unittest.TestCase):
                     self.assertEqual(again['result']['setup_id'],result['result']['setup_id'])
                     listed=agent.handle(dict(op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='list')))
                     self.assertEqual(listed['result']['mailboxes'],[result['result']['receiver_id']])
+                    with patch('memory_vault_open_transport.OpenHTTPTransport.request_repair',side_effect=AssertionError('inspection accessed network')):
+                        inspected=agent.handle(dict(op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,
+                            action='inspect',receiver_id=result['result']['receiver_id'])))
+                        self.assertTrue(inspected['ok'],inspected)
+                        self.assertFalse(inspected['result']['source_rechecked'])
+                        import base64,hashlib
+                        parts=[];page=inspected['result']
+                        while True:
+                            parts.append(base64.b64decode(page['configuration_chunk'],validate=True))
+                            if page['next_cursor'] is None:break
+                            next_page=agent.handle(dict(op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,
+                                action='inspect',receiver_id=result['result']['receiver_id'],cursor=page['next_cursor'])))
+                            self.assertTrue(next_page['ok'],next_page)
+                            page=next_page['result']
+                            self.assertEqual(page['offset'],sum(map(len,parts)))
+                        configuration=b''.join(parts)
+                        self.assertEqual(hashlib.sha256(configuration).hexdigest(),page['configuration_sha256'])
+                        self.assertEqual(len(configuration),page['total_bytes'])
+                        config=json.loads(configuration)
+                        mismatch=agent.handle(dict(op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,
+                            action='inspect',receiver_id=result['result']['receiver_id'],cursor=dict(sha256='0'*64,offset=3072))))
+                        self.assertEqual(mismatch['error']['code'],'open_invalid_mailbox_cursor')
+                        self.assertEqual(config['expected_slot'],selected_slot)
+                        self.assertEqual(config['expected_sender'],invitation['sender'])
+                        self.assertEqual(config['target_node_entry'],invitation['target_node_entry'])
+                        agent.handle(dict(op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,
+                            action='remove',receiver_id=result['result']['receiver_id'])))
+                        missing=agent.handle(dict(op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,
+                            action='inspect',receiver_id=result['result']['receiver_id'])))
+                        self.assertEqual(missing['error']['code'],'open_mailbox_receiver_missing')
+                        restored=agent.handle(dict(op='connect',invitation=config))
+                        self.assertTrue(restored['ok'],restored)
+                        self.assertEqual(restored['result']['receiver_id'],result['result']['receiver_id'])
                     with agent._network() as network:
                         with network.participant.state.db() as local:
                             self.assertEqual(local.execute('SELECT count(*) FROM open_mailbox_setup_steps').fetchone()[0],4)

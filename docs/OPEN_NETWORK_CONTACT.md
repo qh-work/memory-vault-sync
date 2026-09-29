@@ -272,3 +272,45 @@ another remote proof budget: it returns `mailbox_configured`,
 not claim the source is still online or currently authorizes reads. Every
 receive independently checks current authority. Changed inputs for the same
 setup are rejected. Independent ACK return still needs its separate grants.
+
+
+### Inspect or restore a configured receiver
+
+After provisioning, use the returned receiver ID to retrieve the exact signed
+configuration through the Agent interface:
+
+```python
+import base64, hashlib, json
+invitation = {"schema_version": "memory-vault-open-mailbox-connect/v1",
+              "action": "inspect", "receiver_id": receiver_id}
+chunks = []
+while True:
+    response = receiver.handle({"op": "connect", "invitation": invitation})
+    if not response["ok"]:
+        raise RuntimeError(response["error"]["code"])
+    page = response["result"]
+    chunks.append(base64.b64decode(page["configuration_chunk"], validate=True))
+    if page["next_cursor"] is None:
+        break
+    invitation["cursor"] = page["next_cursor"]
+raw = b"".join(chunks)
+assert len(raw) == page["total_bytes"]
+assert hashlib.sha256(raw).hexdigest() == page["configuration_sha256"]
+registration = json.loads(raw)
+```
+
+Each page stays within the Agent result budget. Its continuation cursor binds
+the exact configuration digest; replacement configuration cannot silently mix
+with earlier pages. The assembled result includes the selected source descriptor, sender descriptor and original
+slot/read/maintenance/bootstrap documents. It contains no private keys, Vault
+records or message bodies. Keep this configuration private unless explicitly
+sharing its metadata with a participant; its grants remain bound to the named
+identities. The original receiver identity can restore a removed registration by
+passing `registration` as a `connect` invitation. This does not create a new
+mailbox or new authority.
+
+Inspection verifies the saved signatures, identity bindings and grant expiry
+locally. It performs no network request and reports `source_rechecked: false`;
+it does not establish current remote availability or revocation status. Expired
+or altered configuration is rejected. Sender preparation still requires the
+receiver's separate signed destination and current owner status described above.

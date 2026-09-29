@@ -240,6 +240,35 @@ class OpenNetworkClient:
             with self.participant.state.db() as db:
                 ids=[v[0] for v in db.execute('SELECT receiver_id FROM open_mailbox_receivers ORDER BY receiver_id')]
             return dict(state='configured',mailboxes=ids,network_accessed=False)
+        if action=='inspect':
+            import base64
+            object_fields(value,{'schema_version','action','receiver_id'}|({'cursor'} if 'cursor' in value else set()))
+            from memory_vault_network_crypto import opaque
+            opaque(value['receiver_id'])
+            with self.participant.state.db() as db:
+                row=db.execute('SELECT body FROM open_mailbox_receivers WHERE receiver_id=?',(value['receiver_id'],)).fetchone()
+            if row is None:raise MemoryError('open_mailbox_receiver_missing')
+            config=document(bytes(row['body']),maximum=65536)
+            if (config.get('schema_version')!=MAILBOX_CONNECT_SCHEMA or config.get('action')!='register'
+                    or 'mailbox_'+hashlib.sha256(canonical_bytes(config.get('expected_slot'))).hexdigest()!=value['receiver_id']):
+                raise MemoryError('open_invalid_mailbox_receiver')
+            # Recheck the original signatures, identity binding and finite
+            # grant windows before exposing reusable configuration. This is
+            # local verification, not an observation of the remote source.
+            registered=self._mailbox_connect(config)
+            if registered['receiver_id']!=value['receiver_id']:raise MemoryError('open_invalid_mailbox_receiver')
+            raw=canonical_bytes(config);digest=hashlib.sha256(raw).hexdigest();offset=0
+            cursor=value.get('cursor')
+            if cursor is not None:
+                object_fields(cursor,{'sha256','offset'})
+                offset=cursor['offset']
+                if (cursor['sha256']!=digest or type(offset) is not int or not 0<offset<len(raw) or offset%3072):
+                    raise MemoryError('open_invalid_mailbox_cursor')
+            end=min(offset+3072,len(raw))
+            return dict(state='mailbox_configuration',receiver_id=value['receiver_id'],configuration_sha256=digest,
+                total_bytes=len(raw),offset=offset,configuration_chunk=base64.b64encode(raw[offset:end]).decode('ascii'),
+                next_cursor=None if end==len(raw) else dict(sha256=digest,offset=end),
+                network_accessed=False,source_rechecked=False,receipt_return='separate_authority_required')
         if action=='remove':
             object_fields(value,{'schema_version','action','receiver_id'})
             from memory_vault_network_crypto import opaque
