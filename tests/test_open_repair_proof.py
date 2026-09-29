@@ -89,6 +89,25 @@ class RepairProofTests(unittest.TestCase):
         with self.assertRaises(wire.RepairWireError):
             self.verify(self.response(manifest).raw)
 
+    def mailbox_feed_manifest(self):
+        # Container fixture only; the HTTP test validates real feed originals.
+        manifest=copy.deepcopy(self.manifest)
+        selector=dict(root_key_sha256='a'*64,slot_key_sha256='b'*64,feed_ref=dict(namespace='feed',key='c'*64),
+            slot_sha256='d'*64,read_grant_sha256='e'*64,maintenance_root_sha256='f'*64)
+        manifest.update(consumer='mailbox_feed',selector=selector,response_profile='mailbox_feed_service_v1')
+        reference=self.fixture['entries']['root']['ref']
+        manifest['children']=[dict(index=i,role=role,ref=reference) for i,role in enumerate(sorted(proof.MAILBOX_FEED_ROLES))]
+        for ref in (self.fixture['packs'][0]['ref'],dict(namespace='meta',key='0'*64,raw_sha256='0'*64,size=1)):
+            manifest['children'].append(dict(index=len(manifest['children']),role='history.raw_pack',ref=ref))
+        return manifest,dict(consumer='mailbox_feed',expected_source_state='feed',selector=selector)
+
+    def test_mailbox_feed_manifest_requires_complete_roles_and_two_packs(self):
+        manifest,options=self.mailbox_feed_manifest()
+        self.verify(self.response(manifest).raw,**options)
+        missing=copy.deepcopy(manifest);missing['children'].pop()
+        with self.assertRaises(wire.RepairWireError):self.response(missing)
+        with self.assertRaises(wire.RepairWireError):self.verify(self.response(manifest).raw)
+
     def assertCode(self, code, callback, *args, **kwargs):
         with self.assertRaises(wire.RepairWireError) as caught:
             callback(*args, **kwargs)

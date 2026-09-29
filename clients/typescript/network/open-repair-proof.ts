@@ -30,15 +30,17 @@ const SOURCE_STATES=new Map<string,{roles:readonly string[];minimumPacks:number}
 const OFFER_FIXED_ROLES=Object.freeze(EMPTY_FIXED_ROLES.map(role=>role==='current.status.ack_read'?'current.status.ack_write':
   role==='current.status.ack_owner_bootstrap'?'current.status.ack_offer_bootstrap':role));
 const MAILBOX_ROOT_ROLES=Object.freeze(["bootstrap.mailbox_feed", "bootstrap.mailbox_root", "current.status.anchor_resource", "current.status.bootstrap", "current.status.catalog", "current.status.data_resource", "current.status.maintenance", "current.status.metadata_resource", "current.status.read", "current.status.root", "current.status.root_bootstrap", "current.status.root_read", "current.status.slot", "genesis.checkpoint", "genesis.head", "historical.status.anchor_resource", "historical.status.bootstrap", "historical.status.catalog", "historical.status.data_resource", "historical.status.maintenance", "historical.status.metadata_resource", "historical.status.read", "historical.status.root", "historical.status.root_bootstrap", "historical.status.root_read", "historical.status.slot", "history.mailbox_root", "mailbox.catalog", "mailbox.maintenance_root", "mailbox.read_grant", "mailbox.root_authority", "mailbox.root_read_grant", "mailbox.slot", "resource.anchor_activation", "resource.anchor_active", "resource.anchor_allocate", "resource.anchor_offer", "resource.data_active", "resource.data_allocate", "resource.data_offer", "resource.metadata_active", "resource.metadata_allocate", "resource.metadata_offer", "resource.slot_activation", "root.custody", "source.descriptor"]);
+const MAILBOX_FEED_ROLES=Object.freeze(["bootstrap.mailbox_feed", "contact.decision", "contact.delivery_lease", "contact.knock_lease", "contact.policy", "contact.request", "contact.store_grant", "current.status.bootstrap", "current.status.disclosure", "current.status.maintenance", "current.status.metadata_resource", "current.status.read", "current.status.slot", "delivery.attempt", "delivery.destination", "feed.checkpoint", "feed.custody", "feed.head", "historical.status.bootstrap", "historical.status.data_resource", "historical.status.destination", "historical.status.disclosure", "historical.status.maintenance", "historical.status.metadata_resource", "historical.status.read", "historical.status.slot", "history.mailbox_feed", "history.member", "mailbox.maintenance_root", "mailbox.read_grant", "mailbox.slot", "member.checkpoint", "member.core", "member.custody", "member.head", "member.link", "member.sealed_core", "message.disclosure", "range.index", "range.repair_page", "range.sealed_page", "resource.data_active", "resource.data_allocate", "resource.data_offer", "resource.metadata_active", "resource.metadata_allocate", "resource.metadata_offer", "resource.slot_activation", "source.descriptor"]);
 const CONSUMER_STATES=new Map<string,Map<string,{roles:readonly string[];minimumPacks:number}>>([
-  ['ack_owner',SOURCE_STATES],['ack_offer',new Map([['empty',{roles:OFFER_FIXED_ROLES,minimumPacks:2}]])],['mailbox_root',new Map([['root',{roles:MAILBOX_ROOT_ROLES,minimumPacks:1}]])]]);
-export type BootstrapProofSourceState='unbound'|'empty'|'occupied'|'root';
+  ['ack_owner',SOURCE_STATES],['ack_offer',new Map([['empty',{roles:OFFER_FIXED_ROLES,minimumPacks:2}]])],['mailbox_root',new Map([['root',{roles:MAILBOX_ROOT_ROLES,minimumPacks:1}]])],['mailbox_feed',new Map([['feed',{roles:MAILBOX_FEED_ROLES,minimumPacks:2}]])]]);
+export type BootstrapProofSourceState='unbound'|'empty'|'occupied'|'root'|'feed';
 const COMMON=['schema_version','kind','signing_key','issued_at','expires_at','subject','target','target_storage_epoch','purpose','consumer'];
 const HANDLE=[...COMMON,'bootstrap_grant_sha256','handle_id','probe_ref','challenge_ref','answer_ref','service_generation','manifest_ref','child_count'];
 const CHILD=[...COMMON,'request_id','probe_ref','handle_ref','manifest_ref','service_generation','child_index','offset','requested_bytes'];
 const MANIFEST=['schema_version','kind','probe_ref','subject','target','target_storage_epoch','consumer','selector','bootstrap_grant_ref','service_generation','response_profile','children'];
 const SELECTOR=['root_key_sha256','ack_slot_sha256','root_authority_sha256','read_grant_sha256'];
 const MAILBOX_ROOT_SELECTOR=['root_key_sha256','anchor_ref','root_authority_sha256','read_grant_sha256'];
+const MAILBOX_FEED_SELECTOR=['root_key_sha256','slot_key_sha256','feed_ref','slot_sha256','read_grant_sha256','maintenance_root_sha256'];
 const OFFER_SELECTOR=['root_key_sha256','ack_slot_sha256','root_authority_sha256','write_grant_sha256'];
 const EXPECTED=['expectedSubject','expectedTarget','targetStorageEpoch','selector','bootstrapGrantRef','probeRef','challengeRef','answerRef','at'];
 const proofBrand=new WeakSet<object>();
@@ -73,13 +75,13 @@ function window(payload:Obj,at:number):void{
 }
 function expected(args:Obj,policy:RepairPolicy,budget:RepairBudget):Obj{
   const consumer=Object.hasOwn(args,'consumer')?args.consumer:'ack_owner';
-  if(consumer!=='ack_owner'&&consumer!=='ack_offer'&&consumer!=='mailbox_root')fail('repair_invalid_probe');
+  if(consumer!=='ack_owner'&&consumer!=='ack_offer'&&consumer!=='mailbox_root'&&consumer!=='mailbox_feed')fail('repair_invalid_probe');
   const value=buildNewWire(Object.fromEntries(EXPECTED.map(name=>[name,args[name]])),policy,budget).value as Obj;
   for(const name of ['bootstrapGrantRef','probeRef','challengeRef','answerRef'])meta(value[name]);
   dual(value.expectedSubject,budget);dual(value.expectedTarget,budget);u53(value.at);opaque(value.targetStorageEpoch);
-  const selector=consumer==='ack_owner'?SELECTOR:consumer==='ack_offer'?OFFER_SELECTOR:MAILBOX_ROOT_SELECTOR;
+  const selector=consumer==='ack_owner'?SELECTOR:consumer==='ack_offer'?OFFER_SELECTOR:consumer==='mailbox_root'?MAILBOX_ROOT_SELECTOR:MAILBOX_FEED_SELECTOR;
   fields(value.selector,selector);for(const name of selector){
-    if(name==='anchor_ref'){const locator=fields(value.selector[name],['namespace','key']);if(locator.namespace!=='anchor')fail();pattern(locator.key,/^[0-9a-f]{64}$/);}
+    if(name==='anchor_ref'||name==='feed_ref'){const locator=fields(value.selector[name],['namespace','key']);if(locator.namespace!==(name==='anchor_ref'?'anchor':'feed'))fail();pattern(locator.key,/^[0-9a-f]{64}$/);}
     else pattern(value.selector[name],/^[0-9a-f]{64}$/);
   }return {...value,consumer};
 }
@@ -111,6 +113,9 @@ function manifestShape(value:unknown,expected:Obj,maximumItems:number,expectedSo
   if(expected.consumer==='mailbox_root'){
     const singletons=['mailbox.root_authority','mailbox.root_read_grant','mailbox.catalog','bootstrap.mailbox_root',
       'resource.anchor_allocate','resource.anchor_offer','resource.anchor_activation','resource.anchor_active','source.descriptor','history.mailbox_root','root.custody'];
+    if(singletons.some(name=>counts.get(name)!==1)||profile.roles.some(name=>(counts.get(name)??0)<1))fail();
+  }else if(expected.consumer==='mailbox_feed'){
+    const singletons=['mailbox.slot','mailbox.read_grant','mailbox.maintenance_root','bootstrap.mailbox_feed','resource.data_allocate','resource.metadata_allocate','resource.data_offer','resource.metadata_offer','resource.slot_activation','resource.data_active','resource.metadata_active','feed.head','feed.checkpoint','history.mailbox_feed','feed.custody'];
     if(singletons.some(name=>counts.get(name)!==1)||profile.roles.some(name=>(counts.get(name)??0)<1))fail();
   }else if(profile.roles.some(name=>counts.get(name)!==1))fail();
   if(packs.size<profile.minimumPacks)fail();return m;

@@ -81,6 +81,14 @@ class OpenRepairProofTypeScriptTests(unittest.TestCase):
         self.assertTrue(result["ok"],result)
         self.assertEqual(result["result"]["manifest"],manifest)
 
+    def test_mailbox_feed_manifest_native_python_parity(self):
+        manifest,options=self.py.mailbox_feed_manifest()
+        call=self.call();call['raw']=base64.b64encode(self.py.response(manifest).raw).decode()
+        call['options'].update(consumer='mailbox_feed',expectedSourceState='feed',selector=options['selector'])
+        result=self.ts([call])[0]
+        self.assertTrue(result['ok'],result)
+        self.assertEqual(result['result']['manifest'],manifest)
+
     def test_native_verifies_python_inline_handle_and_full_twenty_one_role_manifest(self):
         actual=self.ts([self.call()])[0];self.assertTrue(actual['ok'],actual)
         expected=self.py.verify(self.raw)

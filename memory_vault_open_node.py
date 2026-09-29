@@ -257,13 +257,13 @@ class OpenParticipant:
             capacity_policy=self.repair_policy.get("capacity_policy"))
         state.initialize()
         if packet_payload is not None:
-            if packet_payload.get("consumer") == "mailbox_root":
+            if packet_payload.get("consumer") in ("mailbox_root","mailbox_feed"):
                 if packet_payload.get("kind") not in ("bootstrap.probe","bootstrap.answer","bootstrap.proof_child_request"):
                     raise MemoryError("open_invalid_repair_request")
                 from memory_vault_open_repair_mailbox_resources import RepairMailboxResources
                 from memory_vault_open_repair_mailbox_root import MailboxRootActivation
                 from memory_vault_open_repair_mailbox_source import MailboxRootSource, MailboxRecoveryService
-                service = MailboxRecoveryService(MailboxRootSource(MailboxRootActivation(RepairMailboxResources(state))))
+                service = MailboxRecoveryService(MailboxRootSource(MailboxRootActivation(RepairMailboxResources(state))),consumer=packet_payload['consumer'])
                 service.initialize()
                 return service
             if packet_payload.get("kind") == "ack.put_request":
@@ -331,7 +331,7 @@ class OpenParticipant:
             if kind in INDEX_KINDS:
                 return self._repair_index_service(db).handle(kind, packet).raw, False
             service = self._repair_service(db, payload)
-            if payload.get("consumer") == "mailbox_root":
+            if payload.get("consumer") in ("mailbox_root","mailbox_feed"):
                 if kind == "bootstrap.probe":
                     return service.challenge(packet)["raw"], False
                 if kind == "bootstrap.answer":

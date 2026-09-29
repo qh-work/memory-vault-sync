@@ -30,8 +30,11 @@ OFFER_FIXED_ROLES = empty.ROLES | OFFER_CURRENT_ROLES | {"history.ack_empty", "a
 MAILBOX_CURRENT_ROLES = frozenset("current.status."+name for name in
     "root root_read root_bootstrap catalog anchor_resource slot read maintenance bootstrap data_resource metadata_resource".split())
 MAILBOX_ROOT_ROLES = history._ROLES["mailbox_root"] | MAILBOX_CURRENT_ROLES | {"history.mailbox_root","root.custody"}
+MAILBOX_FEED_CURRENT_ROLES = frozenset('current.status.'+name for name in 'slot read maintenance bootstrap disclosure metadata_resource'.split())
+MAILBOX_FEED_ROLES = (history._ROLES['mailbox_feed'] | history._ROLES['mailbox_member'] | MAILBOX_FEED_CURRENT_ROLES | {'history.mailbox_feed','feed.custody'}) - {
+    'ack.root_authority','ack.write_grant','bootstrap.ack_offer','historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'}
 CONSUMER_STATES = {"ack_owner": SOURCE_STATES, "ack_offer": {"empty": (OFFER_FIXED_ROLES, 2)},
-                   "mailbox_root": {"root": (MAILBOX_ROOT_ROLES,1)}}
+                   "mailbox_root": {"root": (MAILBOX_ROOT_ROLES,1)},"mailbox_feed":{"feed":(MAILBOX_FEED_ROLES,2)}}
 HANDLE_FIELDS = probe._COMMON | {"handle_id", "probe_ref", "challenge_ref", "answer_ref", "service_generation", "manifest_ref", "child_count"}
 CHILD_FIELDS = probe._COMMON | {"request_id", "probe_ref", "handle_ref", "manifest_ref", "service_generation", "child_index", "offset", "requested_bytes"}
 MANIFEST_FIELDS = frozenset("schema_version kind probe_ref subject target target_storage_epoch consumer selector bootstrap_grant_ref service_generation response_profile children".split())
@@ -122,6 +125,11 @@ def _manifest(value, expected, maximum_items, expected_source_state=None):
             "source.descriptor","history.mailbox_root","root.custody"}
         if any(counts.get(role)!=1 for role in singleton) or any(counts.get(role,0)<1 for role in fixed_roles):
             _fail()
+    elif consumer=='mailbox_feed':
+        singleton={'mailbox.slot','mailbox.read_grant','mailbox.maintenance_root','bootstrap.mailbox_feed',
+            'resource.data_allocate','resource.metadata_allocate','resource.data_offer','resource.metadata_offer',
+            'resource.slot_activation','resource.data_active','resource.metadata_active','feed.head','feed.checkpoint','history.mailbox_feed','feed.custody'}
+        if any(counts.get(role)!=1 for role in singleton) or any(counts.get(role,0)<1 for role in fixed_roles):_fail()
     elif any(counts.get(role) != 1 for role in fixed_roles):
         _fail()
     if len(packs) < minimum_packs:
