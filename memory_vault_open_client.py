@@ -733,7 +733,12 @@ class OpenNetworkClient:
                     status_observer=observed)
                 try:
                     recover=reader.recover_replica_occupied if replica else reader.recover_occupied
-                    recovered=recover(value['base_url'],known_statuses=supplied,archive_statuses=known,**request)
+                    # Replica recovery authenticates the source histories plus
+                    # independent copy/return authority. Give this complete
+                    # Agent workflow the same finite 60s window as mailbox
+                    # replica reception; signed expiry may still end it sooner.
+                    recovered=recover(value['base_url'],known_statuses=supplied,archive_statuses=known,
+                        timeout=60 if replica else 30,**request)
                     source=recovered.replica['source'].event if replica else recovered.source
                     result=self._delivery().accept_recovered_receipt(source.inputs['receipt'].raw)
                     extra=dict(replica_custody_ref=recovered.replica['custody'].ref.as_dict()) if replica else {}
