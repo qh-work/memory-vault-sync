@@ -2717,9 +2717,29 @@ receiver still authenticates the complete packet and full parent references.
 Directory publication keeps its separate consumer and application state.
 
 Actual HTTP upload survives restart during challenge/answer and chunk transfer,
-returns exact saved responses, and closes before a separate local authorized
-commit. This does not expose remote allocation or remote commit authorization.
-A remote-copy client still needs to verify advance disclosure and target dual
-possession, persist outbound retries, and coordinate current status. Automated
-orchestration and later occupied/empty variants remain unfinished.
+returns exact saved responses, and closes before a separate authorized commit.
+A maintainer can then send signed `ack.copy_commit` to the repair endpoint. Its
+closed fields are the common schema/kind/signing key plus `issued_at`,
+`expires_at`, `request_id`, `subject:DualID`, `target_node_key_id`,
+`target_storage_epoch`, `resource_id`, full `intent_ref` and `stage_result_ref`,
+and public `owner`, `source`, `source_storage_epoch` bindings. The maintainer is
+selected from the existing reservation, not the request. Owner IDs must match
+that reservation's root; source bindings must verify against the original
+custody/authority chain. The slot comes from the existing allocation. The
+request expires within the exact closed stage, and all current COPY checks run.
+
+`ack.copy_committed` returns encoded original entries `manifest` and `custody`,
+including their opaque full references. Neither reference is replaced by a bare
+hash. Callers must verify the signed replica event and original chain; the
+response wrapper alone is not evidence. Logical idempotency is the existing
+resource and closed original stage, not a new request-ID authority: exact retries
+revalidate current permission and return the same durable custody. Restart or a
+lost reply cannot create a second commitment. The request ID is a correlation
+value; it does not renew the stage or grant access. Custody does not imply owner
+READ, recipient admission or completed receipt recovery.
+
+Remote allocation is not exposed. A remote-copy client still needs to verify
+advance disclosure and target dual possession, persist outbound retries, and
+coordinate current status. Automated orchestration and later occupied/empty
+variants remain unfinished.
 The immutable alpha.0.15 candidate does not contain this later receiver.

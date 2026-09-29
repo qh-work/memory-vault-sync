@@ -219,9 +219,33 @@ class CopyUploadHTTPTests(unittest.TestCase):
         stage.verify_stage_result(result,close,c.intent,c.handle,**c.options())
         with self.participant.state.db() as db:
             self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_commits').fetchone()[0],0)
-            upload=RepairCopyUpload(self.participant._repair_service(db).state);upload.initialize()
-            custody=upload.commit_closed(c.rid,**c.context)
-            self.assertEqual(json.loads(custody['raw'])['payload']['original_custody_ref'],self.h.f['custody']['ref'])
+        from memory_vault_open_repair_copy_upload import make_copy_commit_request
+        from memory_vault_open_repair_index_state import decode_entry
+        request=entry(make_copy_commit_request(self.h.f['signers']['maintainer'],intent_entry=c.intent,result_entry=result,
+            resource_id=c.rid,expected_owner=c.context['expected_owner'],expected_source=c.context['expected_source'],
+            source_storage_epoch=c.context['source_storage_epoch'],expires_at=self.h.base.now+20,**c.options()))
+        for variation in ('locator','before_close'):
+            changed=json.loads(request['raw'])['payload']
+            if variation=='locator':changed['stage_result_ref']['key']='f'*64
+            else:changed['issued_at']-=1
+            wrong=signed_entry(changed,self.h.f['signers']['maintainer'],'synthetic_wrong_commit_'+variation)
+            with self.assertRaisesRegex(AssertionError,'repair_copy_upload_mismatch'):self.send(wrong)
+            with self.participant.state.db() as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_commits').fetchone()[0],0)
+            self.errors.clear()
+        response=self.send(request);self.restart();self.assertEqual(self.send(request),response)
+        budget=wire.RepairBudget(c.policy);value=wire.parse_new_wire(response['raw'],c.policy,budget).value
+        self.assertEqual(value['kind'],'ack.copy_committed')
+        custody=decode_entry(value['custody'],c.policy,budget);manifest=decode_entry(value['manifest'],c.policy,budget)
+        self.assertNotEqual(custody['ref']['key'],custody['ref']['raw_sha256'])
+        resolver=wire.LocalRawResolver(c.policy,budget)
+        for child in c.rows:resolver.put(child['ref']['namespace'],child['ref']['key'],child['raw'])
+        checked=authority.verify_unbound_replica_event(manifest,resolver,custody,**c.context,
+            expected_target=c.state.target,target_storage_epoch=c.state.node['payload']['storage_epoch'],
+            limit_policy=self.h.f['expected']['limit_policy'],policy=c.policy,budget=budget)
+        self.assertEqual(checked['source'].custody.ref.as_dict(),self.h.f['custody']['ref'])
+        with self.participant.state.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_commits').fetchone()[0],1)
         self.assertEqual(self.errors,[])
 
     def test_http_rejects_unrelated_signer_without_charging_reserved_resource(self):

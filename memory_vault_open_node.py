@@ -347,18 +347,19 @@ class OpenParticipant:
             with self.state.db() as db:
                 return self._repair_remote_setup_service(db).handle(parsed.raw), False
         from memory_vault_open_repair_index_service import KINDS as INDEX_KINDS
-        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "mailbox.body_read", "ack.bind_request") and kind not in INDEX_KINDS:
+        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "mailbox.body_read", "ack.bind_request", "ack.copy_commit") and kind not in INDEX_KINDS:
             raise MemoryError("open_invalid_repair_request")
         digest = meter._hash(parsed.raw)
         packet = dict(raw=parsed.raw, ref=dict(namespace="meta", key=digest, raw_sha256=digest, size=len(parsed.raw)))
         with self.state.db() as db:
-            if kind in INDEX_KINDS:
+            if kind in INDEX_KINDS or kind=="ack.copy_commit":
                 from memory_vault_open_repair_copy_upload import RepairCopyUpload, copy_upload_resource
                 rid=copy_upload_resource(db,payload)
                 if rid is not None:
                     service=RepairCopyUpload(self._repair_service(db).state);service.initialize()
-                    method={'proof.stage_intent':'intent','proof.stage_answer':'answer','proof.stage_close':'close'}[kind]
+                    method={'proof.stage_intent':'intent','proof.stage_answer':'answer','proof.stage_close':'close','ack.copy_commit':'commit_request'}[kind]
                     return getattr(service,method)(rid,packet)['raw'],False
+                if kind=="ack.copy_commit":raise MemoryError("open_invalid_repair_request")
                 return self._repair_index_service(db).handle(kind, packet).raw, False
             service = self._repair_service(db, payload)
             if payload.get("consumer") in ("mailbox_root","mailbox_feed"):
