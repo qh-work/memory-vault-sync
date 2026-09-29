@@ -40,6 +40,59 @@ def decode_entry(entry, policy, budget):
     return dict(raw=raw,ref=ref.as_dict())
 
 
+MAX_MAILBOX_DRAFT_BYTES = 131072
+
+
+def encode_mailbox_draft(raw, policy, budget, *, compact=False):
+    """Transport whole draft bytes; compression never changes signed originals."""
+    import zlib
+    if type(raw) is not bytes or not 0 < len(raw) <= MAX_MAILBOX_DRAFT_BYTES:
+        _fail('repair_message_capacity')
+    digest = budget._hash(raw)
+    ref = dict(namespace='meta', key=digest, raw_sha256=digest, size=len(raw))
+    if not compact:
+        return dict(raw=raw.decode('utf-8'), ref=ref)
+    compressed = zlib.compress(raw)
+    budget._bytes('output_bytes', len(compressed))
+    return dict(codec='zlib-base64url-v1', compressed_size=len(compressed),
+                raw_base64url=probe._encode(compressed, budget), ref=ref)
+
+
+def decode_mailbox_draft(value, policy, budget):
+    """Bound expansion before allocation, reject trailing/truncated streams."""
+    import zlib
+    if type(value) not in (dict, wire._DraftDict):
+        _fail('repair_message_mismatch')
+    compact = 'codec' in value
+    wire.object_fields(value, {'codec','compressed_size','raw_base64url','ref'} if compact else {'raw','ref'})
+    ref = wire.raw_ref(value['ref'])
+    if ref.namespace != 'meta' or not 0 < ref.size <= MAX_MAILBOX_DRAFT_BYTES:
+        _fail('repair_message_capacity')
+    if compact:
+        size = wire.u53(value['compressed_size'])
+        if value['codec'] != 'zlib-base64url-v1' or not 0 < size <= MAX_BYTES:
+            _fail('repair_message_mismatch')
+        compressed = original._decode64(value['raw_base64url'], size, budget, url=True)
+        # One extra byte detects expansion beyond the declared original size.
+        budget._fits('output_bytes', ref.size + 1, policy.max_total_bytes - budget._usage['input_bytes'])
+        decoder = zlib.decompressobj()
+        try:
+            raw = decoder.decompress(compressed, ref.size + 1)
+        except zlib.error:
+            _fail('repair_message_mismatch')
+        budget._bytes('output_bytes', len(raw))
+        if not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:
+            _fail('repair_message_mismatch')
+    else:
+        if type(value['raw']) is not str or len(value['raw']) > MAX_MAILBOX_DRAFT_BYTES:
+            _fail('repair_message_mismatch')
+        raw = value['raw'].encode('utf-8')
+        budget._bytes('output_bytes', len(raw))
+    if len(raw) != ref.size or budget._hash(raw) != ref.raw_sha256:
+        _fail('repair_ref_mismatch')
+    return dict(raw=raw, ref=ref.as_dict())
+
+
 class RepairOwnerBindService(RepairBootstrapService):
     """A live owner handle plus a fresh signature, never a bearer upload."""
     def initialize(self):

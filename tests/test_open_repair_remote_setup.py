@@ -10,7 +10,7 @@ import unittest
 from memory_vault import canonical_bytes
 from memory_vault_open_repair_bind import encode_entry, decode_entry
 from memory_vault_open_repair_remote_setup import RepairRemoteSetupService, SCHEMA, _ref
-from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS as DEFAULT_LIMITS
+from memory_vault_open_repair_state import DEFAULT_POLICY, RECEIPT_WORKFLOW_LIMITS as DEFAULT_LIMITS
 from memory_vault_open_repair_state import RepairAckState
 import memory_vault_open_repair_wire as wire
 from tests import test_open_repair_state as local_fixture
@@ -231,3 +231,39 @@ class RemoteSetupTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+class MailboxDraftTransportTests(unittest.TestCase):
+    def encode(self, raw, **kwargs):
+        from memory_vault_open_repair_bind import encode_mailbox_draft
+        return encode_mailbox_draft(raw, DEFAULT_POLICY, wire.RepairBudget(DEFAULT_POLICY), **kwargs)
+
+    def decode(self, value):
+        from memory_vault_open_repair_bind import decode_mailbox_draft
+        # Use the actual parsed immutable wire objects, as the HTTP service does.
+        policy=DEFAULT_POLICY;budget=wire.RepairBudget(policy)
+        return decode_mailbox_draft(wire.parse_new_wire(canonical_bytes(value),policy,budget).value,policy,budget)
+
+    def test_exact_bytes_compact_and_legacy(self):
+        raw=canonical_bytes({'synthetic': ['original signature bytes']*1000})
+        for compact in (False,True):
+            with self.subTest(compact=compact):
+                encoded=self.encode(raw,compact=compact)
+                self.assertEqual(self.decode(encoded)['raw'],raw)
+                if compact:self.assertLess(len(canonical_bytes(encoded)),65536)
+
+    def test_rejects_expansion_truncation_trailing_and_changed_hash(self):
+        import base64,zlib
+        raw=b'x'*131072
+        encoded=self.encode(raw,compact=True)
+        self.assertEqual(self.decode(encoded)['raw'],raw)
+        variants=[]
+        short=copy.deepcopy(encoded);short['ref']['size']=32;variants.append(short)
+        large=copy.deepcopy(encoded);large['ref']['size']=131073;variants.append(large)
+        altered=copy.deepcopy(encoded);altered['ref']['raw_sha256']='0'*64;variants.append(altered)
+        for data in (zlib.compress(raw)[:-1],zlib.compress(raw)+b'trailing',zlib.compress(raw)+zlib.compress(b'other'),b'not zlib'):
+            item=copy.deepcopy(encoded);item['compressed_size']=len(data)
+            item['raw_base64url']=base64.urlsafe_b64encode(data).decode().rstrip('=');variants.append(item)
+        for item in variants:
+            with self.subTest(item_size=item['ref']['size'],compressed=item['compressed_size']):
+                with self.assertRaises(wire.RepairWireError):self.decode(item)

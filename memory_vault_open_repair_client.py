@@ -1177,7 +1177,7 @@ class MailboxMessageDraftStore:
         self.db,self.identity,self.encryption_identity,self.policy=db,identity,encryption_identity,policy
 
     def prepare(self, envelope_raw, *, recipient, slot_entries, destination_entry, contact_originals,
-                at, attempt_until, consent_until):
+                at, attempt_until, consent_until, ack_configuration=None):
         import hashlib
         from memory_vault import canonical_bytes
         from memory_vault_open_delivery import verify_envelope,MAX_ENVELOPE_BYTES
@@ -1232,6 +1232,10 @@ class MailboxMessageDraftStore:
             ref=resource._ref(destination[name]);doc=held.originals[role].document
             if ref.raw_sha256!=budget._hash(doc.raw) or ref.size!=len(doc.raw):_fail('repair_ref_mismatch')
         wire.u53(at);wire.u53(attempt_until);wire.u53(consent_until)
+        from memory_vault_open_repair_mailbox_activation import ACK_CONFIGURATION_ROLES,verify_mailbox_ack_configuration
+        if ack_configuration is not None:
+            verify_mailbox_ack_configuration(ack_configuration,sender=sender,recipient=recipient,
+                message_id=context['message_id'],envelope_ref=reference,at=at,policy=self.policy,budget=budget)
         originals=dict(slot=slot_entries,destination=destination_entry,
             contact={name:dict(raw=raw,ref=dict(namespace='meta',key=hashlib.sha256(raw).hexdigest(),raw_sha256=hashlib.sha256(raw).hexdigest(),size=len(raw)))
                      for name,raw in contact_originals.items()})
@@ -1240,7 +1244,8 @@ class MailboxMessageDraftStore:
         binding=hashlib.sha256(canonical_bytes(dict(envelope=reference,recipient=recipient,
             slot_refs={name:value['ref'] for name,value in slot_entries.items()},destination_ref=destination_entry['ref'],
             contact_hashes={name:hashlib.sha256(raw).hexdigest() for name,raw in contact_originals.items()},
-            attempt_until=attempt_until,consent_until=consent_until))).hexdigest()
+            attempt_until=attempt_until,consent_until=consent_until,
+            **({'ack_configuration':{name:encode_entry(value,self.policy,budget) for name,value in ack_configuration.items()}} if ack_configuration is not None else {})))).hexdigest()
         journal=MailboxSetupJournal(self.db)
         def save():
             self.db.execute('''CREATE TABLE IF NOT EXISTS open_mailbox_message_drafts(
@@ -1273,12 +1278,12 @@ class MailboxMessageDraftStore:
                 return _entry(probe._sign(payload,self.identity,self.policy,budget))
             consent=sign('message.disclosure',dict(consent_id='consent_'+binding,root_key=root,slot_key=key,sender=sender_ids,
                 recipient=recipient_ids,envelope_ref=reference,maintenance_root_ref=slot_entries['maintenance']['ref'],
-                allowed_roles=sorted(['contact.request','delivery.attempt','message.disclosure','authority.status.disclosure']),
+                allowed_roles=sorted({'contact.request','delivery.attempt','message.disclosure','authority.status.disclosure'} | (ACK_CONFIGURATION_ROLES if ack_configuration is not None else set())),
                 operation_mask=127,consent_until=consent_until,bootstrap_return=dict(subject=recipient_ids,consumer='mailbox_feed',
                     roles=['authority.status.disclosure','message.disclosure'],until=consent_until),revision=1),consent_until)
             attempt=sign('delivery.attempt',dict(attempt_id='attempt_'+binding,message_id=context['message_id'],envelope_ref=reference,
                 sender=sender_ids,recipient=recipient_ids,destination_ref=destination_entry['ref'],slot_key=key,
-                operation='message.store',disclosure_ref=consent['ref'],ack_grant_ref=None),attempt_until)
+                operation='message.store',disclosure_ref=consent['ref'],ack_grant_ref=ack_configuration['ack.write_grant']['ref'] if ack_configuration is not None else None),attempt_until)
             from memory_vault_open_provider import issue_status
             scope=status.status_scope(root,'authority',dict(authority_kind='message.disclosure',authority_sha256=consent['ref']['raw_sha256']),self.policy,budget)
             observation=issue_status(self.identity,root=root,revision=status_revision,entries=[dict(scope_kind='authority',scope_id=scope,
@@ -1288,6 +1293,7 @@ class MailboxMessageDraftStore:
             bundle=dict(disclosure=encode_entry(consent,self.policy,budget),disclosure_status=encode_entry(observed,self.policy,budget),attempt=encode_entry(attempt,self.policy,budget),
                 destination=encode_entry(destination_entry,self.policy,budget),slot={name:encode_entry(value,self.policy,budget) for name,value in slot_entries.items()},
                 contact={name:encode_entry(value,self.policy,budget) for name,value in originals['contact'].items()})
+            if ack_configuration is not None:bundle['ack_configuration']={name:encode_entry(value,self.policy,budget) for name,value in ack_configuration.items()}
             raw=wire.build_new_wire(bundle,self.policy,budget).raw
             if len(raw)>131072:_fail('repair_message_capacity')
             self.db.execute('INSERT INTO open_mailbox_message_drafts VALUES(?,?,?,?,?,?,?)',(self.identity.key_id,context['message_id'],binding,root_digest,status_revision,envelope_raw,raw))
@@ -1300,7 +1306,7 @@ class MailboxMessageDraftStore:
 
     def admission_request(self, message_id, *, target, owner_status_entry, at, expires_at, object_until, enum_until):
         """Freeze one exact network admission request for an existing draft."""
-        from memory_vault_open_repair_bind import encode_entry,decode_entry
+        from memory_vault_open_repair_bind import encode_entry,decode_entry,encode_mailbox_draft
         budget=wire.RepairBudget(self.policy)
         row=self.db.execute('SELECT originals FROM open_mailbox_message_drafts WHERE sender=? AND message_id=?',
             (self.identity.key_id,message_id)).fetchone()
@@ -1312,12 +1318,13 @@ class MailboxMessageDraftStore:
         import memory_vault_open_repair_resource as resource
         target=wire.build_new_wire(target,self.policy,budget).value
         if resource._dual_key(target,budget)!=key['writer']:_fail('repair_probe_mismatch')
-        digest=budget._hash(raw)
         payload=dict(schema_version=proof.SCHEMA,kind='mailbox.source_message',signing_key=subject['signing_key'],
             subject=subject,target=target,target_storage_epoch=key['writer_storage_epoch'],slot_key=key,message_id=message_id,
-            draft=dict(raw=raw.decode('utf-8'),ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw))),
+            draft=encode_mailbox_draft(raw,self.policy,budget,compact='ack_configuration' in draft),
             owner_status=encode_entry(owner_status_entry,self.policy,budget),object_until=object_until,enum_until=enum_until)
-        binding=budget._hash(wire.build_new_wire(payload,self.policy,budget).raw)
+        # Bind the original bytes, not a compressor version's representation.
+        logical=dict(payload,draft=encode_mailbox_draft(raw,self.policy,budget)) if 'ack_configuration' in draft else payload
+        binding=budget._hash(wire.build_new_wire(logical,self.policy,budget).raw)
         journal=MailboxSetupJournal(self.db)
         def save():
             self.db.execute('CREATE TABLE IF NOT EXISTS open_mailbox_message_requests(sender TEXT NOT NULL,message_id TEXT NOT NULL,binding TEXT NOT NULL,raw BLOB NOT NULL,PRIMARY KEY(sender,message_id))')
@@ -1339,7 +1346,7 @@ class MailboxMessageDraftStore:
     def verify_admission_response(self, request_raw, response_raw):
         """Verify R's storage assertion, without claiming recipient delivery."""
         import memory_vault_open_repair_resource as resource
-        from memory_vault_open_repair_bind import decode_entry
+        from memory_vault_open_repair_bind import decode_entry,decode_mailbox_draft
         budget=wire.RepairBudget(self.policy)
         if type(response_raw) is not bytes or not 0<len(response_raw)<=65536:_fail('repair_remote_setup_too_large')
         request=wire.parse_new_wire(request_raw,self.policy,budget).value['payload']
@@ -1363,7 +1370,7 @@ class MailboxMessageDraftStore:
             original._verify_control_signature(item,value['proof'],request['target']['signing_key'],budget)
             entries[name]=entry;payloads[name]=item
         core=payloads['core'];custody=payloads['custody']
-        draft=wire.parse_new_wire(request['draft']['raw'].encode('utf-8'),self.policy,budget).value
+        draft=wire.parse_new_wire(decode_mailbox_draft(request['draft'],self.policy,budget)['raw'],self.policy,budget).value
         attempt=decode_entry(draft['attempt'],self.policy,budget)
         attempt_payload=wire.parse_new_wire(attempt['raw'],self.policy,budget).value['payload']
         if (core['message_id']!=request['message_id'] or custody['message_id']!=request['message_id']

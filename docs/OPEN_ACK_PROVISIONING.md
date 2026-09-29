@@ -298,10 +298,30 @@ signed setup request, checks its exact root-authority scope, and retains it in
 both the actual history and current-status ledger. Read, owner-bootstrap and slot
 status remain in a separate whole original. This prepares the authorization data
 needed for mailbox ACK configuration without disclosing A's read configuration
-or projecting entries out of a signature. Mailbox attempts do not yet carry this
-ACK configuration.
+or projecting entries out of a signature. After `prepare` and the matching
+ordinary `send`, pass that preparation request ID as `ack_request_id` to mailbox
+`prepare` or `retain`. The sender binds the exact write-grant reference into its
+mailbox attempt and explicitly permits disclosure of the six configuration
+roles. The mailbox retains their complete signed bytes in the message history.
+Mailbox source and reader verify A/B/message/ciphertext binding and the complete
+historical status originals; no ACK read grant or ACK source resource/custody
+history is added to the mailbox promise. Network proof containers accept the
+optional configuration only as a complete six-role set.
+
+An existing combined-status preparation cannot be projected into this format;
+use a separately prepared new send. Retention and feed recovery do not establish
+ACK service availability or recipient acknowledgement. Automatic publication
+from a cold mailbox receipt is still pending; existing explicit receipt return
+and recovery remain available through their independent invitations.
 
 New split-status setups require a source running this development extension;
 the published alpha.0.13 source does not accept the extra setup field. Previously
 journaled combined-status setups resume with their original signed bytes. A
 rejected or interrupted setup does not authorize message encryption.
+
+The development mailbox admission transport compresses ACK-bearing drafts with
+`zlib-base64url-v1` under the existing 65,536-byte request ceiling. The receiver
+limits expansion to the declared original size, at most 131,072 bytes, rejects
+trailing or incomplete streams, and checks the original byte hash before staging.
+The original signed documents remain unchanged. Ordinary drafts keep the legacy
+encoding; saved admission requests replay their exact original bytes.

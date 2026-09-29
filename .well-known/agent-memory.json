@@ -46,7 +46,7 @@
   "automatic_sync_default": false,
   "readme_is_installation": false,
   "runtime_tests_run_for_release": true,
-  "runtime_test_scope": "Five targeted synthetic HTTP workflows passed using the extracted alpha.0.13 Python client runtime and child nodes: mailbox provisioning/restoration; interrupted two-message admission with lost-reply retention; cold selected-memory import/resume; independent receipt return/recovery; and Agent ACK preparation/export through selected-memory delivery and original-node-offline receipt recovery. Exact-source full cloud regression is pending. No external adoption, global reliability or thousand-agent capacity claim.",
+  "runtime_test_scope": "Five targeted synthetic HTTP workflows passed using the extracted alpha.0.13 Python client runtime and child nodes: mailbox provisioning/restoration; interrupted two-message admission with lost-reply retention; cold selected-memory import/resume; independent receipt return/recovery; and Agent ACK preparation/export through selected-memory delivery and original-node-offline receipt recovery. Exact-source full cloud regression passed 934 tests with 242 source hashes matching release commit 7297b50f68d59649caf266be2e10515d19b5051e; the supported Python 3.10 ACK check passed. Scale experiments were not run. No external adoption, global reliability or thousand-agent capacity claim.",
   "runtime_test_report": "../docs/RELEASE.md",
   "full_runtime_test_suite_run": false,
   "runtime_parity_verified": false,

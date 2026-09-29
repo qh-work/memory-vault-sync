@@ -30,6 +30,7 @@ const SOURCE_STATES=new Map<string,{roles:readonly string[];minimumPacks:number}
 const OFFER_FIXED_ROLES=Object.freeze(EMPTY_FIXED_ROLES.map(role=>role==='current.status.ack_read'?'current.status.ack_write':
   role==='current.status.ack_owner_bootstrap'?'current.status.ack_offer_bootstrap':role));
 const MAILBOX_ROOT_ROLES=Object.freeze(["bootstrap.mailbox_feed", "bootstrap.mailbox_root", "current.status.anchor_resource", "current.status.bootstrap", "current.status.catalog", "current.status.data_resource", "current.status.maintenance", "current.status.metadata_resource", "current.status.read", "current.status.root", "current.status.root_bootstrap", "current.status.root_read", "current.status.slot", "genesis.checkpoint", "genesis.head", "historical.status.anchor_resource", "historical.status.bootstrap", "historical.status.catalog", "historical.status.data_resource", "historical.status.maintenance", "historical.status.metadata_resource", "historical.status.read", "historical.status.root", "historical.status.root_bootstrap", "historical.status.root_read", "historical.status.slot", "history.mailbox_root", "mailbox.catalog", "mailbox.maintenance_root", "mailbox.read_grant", "mailbox.root_authority", "mailbox.root_read_grant", "mailbox.slot", "resource.anchor_activation", "resource.anchor_active", "resource.anchor_allocate", "resource.anchor_offer", "resource.data_active", "resource.data_allocate", "resource.data_offer", "resource.metadata_active", "resource.metadata_allocate", "resource.metadata_offer", "resource.slot_activation", "root.custody", "source.descriptor"]);
+const MAILBOX_ACK_CONFIGURATION_ROLES=Object.freeze(['ack.root_authority','ack.write_grant','bootstrap.ack_offer','historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap']);
 const MAILBOX_FEED_ROLES=Object.freeze(["bootstrap.mailbox_feed", "contact.decision", "contact.delivery_lease", "contact.knock_lease", "contact.policy", "contact.request", "contact.store_grant", "current.status.bootstrap", "current.status.disclosure", "current.status.maintenance", "current.status.metadata_resource", "current.status.read", "current.status.slot", "delivery.attempt", "delivery.destination", "feed.checkpoint", "feed.custody", "feed.head", "historical.status.bootstrap", "historical.status.data_resource", "historical.status.destination", "historical.status.disclosure", "historical.status.maintenance", "historical.status.metadata_resource", "historical.status.read", "historical.status.slot", "history.mailbox_feed", "history.member", "mailbox.maintenance_root", "mailbox.read_grant", "mailbox.slot", "member.checkpoint", "member.core", "member.custody", "member.head", "member.link", "member.sealed_core", "message.disclosure", "range.index", "range.repair_page", "range.sealed_page", "resource.data_active", "resource.data_allocate", "resource.data_offer", "resource.metadata_active", "resource.metadata_allocate", "resource.metadata_offer", "resource.slot_activation", "source.descriptor"]);
 const CONSUMER_STATES=new Map<string,Map<string,{roles:readonly string[];minimumPacks:number}>>([
   ['ack_owner',SOURCE_STATES],['ack_offer',new Map([['empty',{roles:OFFER_FIXED_ROLES,minimumPacks:2}]])],['mailbox_root',new Map([['root',{roles:MAILBOX_ROOT_ROLES,minimumPacks:1}]])],['mailbox_feed',new Map([['feed',{roles:MAILBOX_FEED_ROLES,minimumPacks:2}]])]]);
@@ -90,7 +91,10 @@ function manifestShape(value:unknown,expected:Obj,maximumItems:number,expectedSo
   if(!Array.isArray(m.children)||m.children.length<1||m.children.length>maximumItems)fail();
   const roles=new Set<string>();for(const value of m.children){const item=fields(value,['index','role','ref']);
     if(typeof item.role!=='string')fail();if(item.role!=='history.raw_pack')roles.add(item.role);}
-  const states=[...CONSUMER_STATES.get(expected.consumer)!].filter(([,phase])=>phase.roles.length===roles.size&&phase.roles.every(role=>roles.has(role)));
+  const optional=expected.consumer==='mailbox_feed'?MAILBOX_ACK_CONFIGURATION_ROLES:[];
+  if(optional.some(role=>roles.has(role))&&!optional.every(role=>roles.has(role)))fail();
+  const requiredRoles=new Set([...roles].filter(role=>!optional.includes(role)));
+  const states=[...CONSUMER_STATES.get(expected.consumer)!].filter(([,phase])=>phase.roles.length===requiredRoles.size&&phase.roles.every(role=>requiredRoles.has(role)));
   if(states.length!==1)fail();const [state,profile]=states[0];if(expectedSourceState!==undefined&&state!==expectedSourceState)mismatch();
   if(m.schema_version!==SCHEMA||m.kind!=='bootstrap.proof_manifest'||m.consumer!==expected.consumer||
       !same(m.subject,ids(expected.expectedSubject))||!same(m.target,ids(expected.expectedTarget))||m.target_storage_epoch!==expected.targetStorageEpoch||
@@ -100,7 +104,7 @@ function manifestShape(value:unknown,expected:Obj,maximumItems:number,expectedSo
   const counts=new Map<string,number>(),packs=new Set<string>(),identities=new Set<string>();
   for(const [index,value] of m.children.entries()){
     const item=fields(value,['index','role','ref']);
-    if(u53(item.index)!==index||typeof item.role!=='string'||(item.role!=='history.raw_pack'&&!profile.roles.includes(item.role)))fail();
+    if(u53(item.index)!==index||typeof item.role!=='string'||(item.role!=='history.raw_pack'&&!profile.roles.includes(item.role)&&!optional.includes(item.role)))fail();
     // The existing delivery receipt alone may retain its original object ref.
     const ref=item.role==='recipient.receipt'?rawRef(item.ref):meta(item.ref);counts.set(item.role,(counts.get(item.role)??0)+1);
     const identity=`${item.role}:${ref.namespace}:${ref.key}:${ref.raw_sha256}:${ref.size}`;

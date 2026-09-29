@@ -226,19 +226,20 @@ class OpenNetworkClient:
             except RepairWireError as error:raise MemoryError(error.code) from error
             return ready
         if action=='retain':
-            object_fields(value,{'schema_version','action','message_id','authorization','attempt_until','consent_until','expires_at','object_until','enum_until'})
+            object_fields(value,{'schema_version','action','message_id','authorization','attempt_until','consent_until','expires_at','object_until','enum_until'}|({'ack_request_id'} if 'ack_request_id' in value else set()))
             authorization=object_fields(value['authorization'],{'destination_entry','owner_status_entry','slot_entries','target','target_node_entry','base_url'})
             # The same durable stages back both the individual operations and
             # this combined call. A failed remote admission leaves the exact
             # local preparation available to the next identical retry.
             self._mailbox_connect(dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='prepare',message_id=value['message_id'],
                 slot_entries=authorization['slot_entries'],destination_entry=authorization['destination_entry'],
-                attempt_until=value['attempt_until'],consent_until=value['consent_until']))
+                attempt_until=value['attempt_until'],consent_until=value['consent_until'],
+                **({'ack_request_id':value['ack_request_id']} if 'ack_request_id' in value else {})))
             return self._mailbox_connect(dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='admit',message_id=value['message_id'],
                 **{name:authorization[name] for name in ('base_url','target','target_node_entry','owner_status_entry')},
                 **{name:value[name] for name in ('expires_at','object_until','enum_until')}))
         if action=='prepare':
-            object_fields(value,{'schema_version','action','message_id','slot_entries','destination_entry','attempt_until','consent_until'})
+            object_fields(value,{'schema_version','action','message_id','slot_entries','destination_entry','attempt_until','consent_until'}|({'ack_request_id'} if 'ack_request_id' in value else set()))
             from memory_vault_open_repair_client import MailboxMessageDraftStore
             def entry(item):
                 object_fields(item,{'raw','ref'})
@@ -246,6 +247,7 @@ class OpenNetworkClient:
                 return dict(raw=item['raw'].encode('utf-8'),ref=item['ref'])
             delivery=self._delivery()
             object_fields(value['slot_entries'],{'slot','read','maintenance'})
+            configuration=self._mailbox_ack_configuration(value['ack_request_id'],value['message_id']) if 'ack_request_id' in value else None
             try:
                 with self.participant.state.db() as db:
                     row=db.execute('SELECT envelope,session FROM open_delivery_outbox WHERE message_id=?',(value['message_id'],)).fetchone()
@@ -258,7 +260,7 @@ class OpenNetworkClient:
                     result=MailboxMessageDraftStore(db,self.identity,self.encryption).prepare(bytes(row['envelope']),recipient=recipient,
                         slot_entries={name:entry(item) for name,item in value['slot_entries'].items()},destination_entry=entry(value['destination_entry']),
                         contact_originals={name:canonical_bytes(item) for name,item in docs.items()},at=int(time.time()),
-                        attempt_until=value['attempt_until'],consent_until=value['consent_until'])
+                        attempt_until=value['attempt_until'],consent_until=value['consent_until'],ack_configuration=configuration)
             except RepairWireError as error:raise MemoryError(error.code) from error
             return dict(state='mailbox_draft_saved',message_id=value['message_id'],attempt_ref=result['attempt']['ref'],
                 disclosure_ref=result['disclosure']['ref'],network_accessed=False)
@@ -400,6 +402,37 @@ class OpenNetworkClient:
             allow_loopback=self.participant.transport.allow_loopback)
         discovered = DiscoveredAckRecoveryClient(OpenProviderClient(self.participant, self.encryption), reader)
         return asyncio.run(discovered.recover(**arguments))
+
+    def _mailbox_ack_configuration(self, request_id, message_id):
+        """Select whole A-owned originals from an explicitly prepared send."""
+        from memory_vault_network_crypto import opaque
+        from memory_vault_open_repair_admin import MAX_BUNDLE_BYTES
+        from memory_vault_open_repair_provision import decode_saved_request
+        from memory_vault_open_repair_wire import RepairWireError
+        opaque(request_id);opaque(message_id)
+        self._ack_preparations_initialize()
+        with self.participant.state.db() as db:
+            row=db.execute('SELECT result,result_sha256 FROM open_ack_agent_preparations WHERE request_id=?',(request_id,)).fetchone()
+        if row is None or row['result'] is None:raise MemoryError('open_ack_preparation_incomplete')
+        raw=bytes(row['result'])
+        if len(raw)>MAX_BUNDLE_BYTES or hashlib.sha256(raw).hexdigest()!=row['result_sha256']:raise MemoryError('open_ack_preparation_corrupt')
+        prepared=document(raw,maximum=MAX_BUNDLE_BYTES)
+        if prepared['message_id']!=message_id:raise MemoryError('open_ack_preparation_conflict')
+        try:bundle=decode_saved_request(prepared['recipient_request'])
+        except RepairWireError as error:raise MemoryError(error.code) from error
+        roles={name:bundle[field] for name,field in (('ack.root_authority','root_entry'),
+            ('ack.write_grant','write_entry'),('bootstrap.ack_offer','bootstrap_entry'))}
+        root=bundle['ack_slot']['root_key']
+        for name,role in (('ack.root_authority','ack_root'),('ack.write_grant','ack_write'),('bootstrap.ack_offer','ack_offer_bootstrap')):
+            entry=roles[name];kind=document(entry['raw'],maximum=65536)['payload']['kind']
+            scope=hashlib.sha256(canonical_bytes(dict(kind='authority',root_key=root,authority_kind=kind,
+                authority_sha256=entry['ref']['raw_sha256']))).hexdigest()
+            matching=[value for value in bundle['current_statuses'] if any(row['scope_kind']=='authority' and row['scope_id']==scope
+                for row in document(value['raw'],maximum=65536)['payload']['entries'])]
+            if len(matching)!=1:raise MemoryError('open_ack_configuration_status_missing')
+            roles['historical.status.'+role]=matching[0]
+        # Draft preparation verifies every signature, binding and whole scope.
+        return roles
 
     def _ack_preparations_initialize(self):
         delivery=self._delivery()

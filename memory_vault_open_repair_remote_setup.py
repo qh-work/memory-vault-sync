@@ -673,12 +673,8 @@ class MailboxRemoteMessageService:
         controls=wire.parse_new_wire(bytes(slot['inputs']),s.policy,budget).value
         configured=wire.parse_new_wire(controls['slot']['raw'].encode(),s.policy,budget).value['payload']
         if configured['sender']!=sender:wire._fail('repair_remote_setup_mismatch')
-        draft_input=resource._fields(p['draft'],{'raw','ref'})
-        if type(draft_input['raw']) is not str:wire._fail('repair_message_mismatch')
-        draft=dict(raw=draft_input['raw'].encode('utf-8'),ref=draft_input['ref'])
-        reference=wire.raw_ref(draft['ref'])
-        if reference.namespace!='meta' or len(draft['raw'])!=reference.size or budget._hash(draft['raw'])!=reference.raw_sha256:
-            wire._fail('repair_ref_mismatch')
+        from memory_vault_open_repair_bind import decode_mailbox_draft
+        draft=decode_mailbox_draft(p['draft'],s.policy,budget)
         owner_status=decode_entry(p['owner_status'],s.policy,budget)
         draft_doc=wire.parse_new_wire(draft['raw'],s.policy,budget)
         attempt=decode_entry(draft_doc.value['attempt'],s.policy,budget)

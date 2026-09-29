@@ -108,6 +108,18 @@ class RepairProofTests(unittest.TestCase):
         with self.assertRaises(wire.RepairWireError):self.response(missing)
         with self.assertRaises(wire.RepairWireError):self.verify(self.response(manifest).raw)
 
+    def mailbox_feed_with_ack_manifest(self):
+        manifest,options=self.mailbox_feed_manifest()
+        for role in sorted(proof.MAILBOX_ACK_CONFIGURATION_ROLES):
+            manifest['children'].append(dict(index=len(manifest['children']),role=role,ref=self.fixture['entries']['root']['ref']))
+        return manifest,options
+
+    def test_mailbox_ack_configuration_roles_are_all_or_none(self):
+        manifest,options=self.mailbox_feed_with_ack_manifest()
+        self.verify(self.response(manifest).raw,**options)
+        manifest['children'].pop()
+        with self.assertRaises(wire.RepairWireError):self.response(manifest)
+
     def test_mailbox_body_request_binds_core_object_and_transport_profile(self):
         manifest,options=self.mailbox_feed_manifest()
         held=self.verify(self.response(manifest).raw,**options)

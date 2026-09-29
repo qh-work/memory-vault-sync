@@ -31,6 +31,8 @@ MAILBOX_CURRENT_ROLES = frozenset("current.status."+name for name in
     "root root_read root_bootstrap catalog anchor_resource slot read maintenance bootstrap data_resource metadata_resource".split())
 MAILBOX_ROOT_ROLES = history._ROLES["mailbox_root"] | MAILBOX_CURRENT_ROLES | {"history.mailbox_root","root.custody"}
 MAILBOX_FEED_CURRENT_ROLES = frozenset('current.status.'+name for name in 'slot read maintenance bootstrap disclosure metadata_resource'.split())
+MAILBOX_ACK_CONFIGURATION_ROLES = frozenset(('ack.root_authority','ack.write_grant','bootstrap.ack_offer',
+    'historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'))
 MAILBOX_FEED_ROLES = (history._ROLES['mailbox_feed'] | history._ROLES['mailbox_member'] | MAILBOX_FEED_CURRENT_ROLES | {'history.mailbox_feed','feed.custody'}) - {
     'ack.root_authority','ack.write_grant','bootstrap.ack_offer','historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'}
 CONSUMER_STATES = {"ack_owner": SOURCE_STATES, "ack_offer": {"empty": (OFFER_FIXED_ROLES, 2)},
@@ -84,14 +86,16 @@ def _manifest(value, expected, maximum_items, expected_source_state=None):
         if item["role"] != "history.raw_pack":
             roles.add(item["role"])
     states = CONSUMER_STATES[consumer]
-    matches = [state for state, (fixed, _) in states.items() if roles == fixed]
+    optional=MAILBOX_ACK_CONFIGURATION_ROLES if consumer=='mailbox_feed' else frozenset()
+    if roles&optional and not optional<=roles:_fail()
+    matches = [state for state, (fixed, _) in states.items() if roles-optional == fixed]
     if len(matches) != 1:
         _fail()
     source_state = matches[0]
     if expected_source_state is not None and source_state != expected_source_state:
         _fail("repair_proof_mismatch")
     fixed_roles, minimum_packs = states[source_state]
-    service_roles = fixed_roles | {"history.raw_pack"}
+    service_roles = fixed_roles | optional | {"history.raw_pack"}
     if (payload["schema_version"] != SCHEMA or payload["kind"] != "bootstrap.proof_manifest" or
             payload["consumer"] != consumer or
             payload["subject"] != probe._dual(expected["subject"]) or payload["target"] != probe._dual(expected["target"]) or
