@@ -1,7 +1,7 @@
 """Persistent replica owner possession exchange and protected proof children.
 
 Operator-installed configuration contains public originals only. Remote requests
-reuse the bootstrap wire with an explicit replica_unbound or replica_empty state.
+reuse the bootstrap wire with an explicit unbound, empty or occupied replica state.
 This read service grants no recipient ADMIT or automatic replacement selection.
 """
 from contextlib import contextmanager
@@ -55,15 +55,16 @@ class ReplicaReadAccess:
             for role,name in (('replica.manifest','manifest'),('replica.custody','custody')):
                 entry=self.store.source._saved(commit,name)
                 children.append(dict(role=role,raw=entry['raw'],ref=wire.raw_ref(entry['ref'])))
-        for name,item in zip(('owner','source','maintainer'),held['consents']):
+        names=('owner','source','maintainer')+(('recipient',) if self.service.resource_state=='replica_occupied' else ())
+        for name,item in zip(names,held['consents']):
             children.append(dict(role='return.'+name,raw=item.raw,ref=item.ref))
         children.extend(dict(role='current.status.replica_read',raw=item.raw,ref=item.ref) for item in held['statuses'])
-        if self.service.resource_state=='replica_empty':
+        if self.service.resource_state in ('replica_empty','replica_occupied'):
             # A byte container of these already authorized originals reduces
             # round trips without changing their refs, authority or byte charge.
             # Source history packs remain separate and retain their exact bytes.
             packed=wire.build_raw_pack([item['raw'] for item in children
-                if item['role'] in proof.REPLICA_READ_PACK_ROLES],budget.policy,budget)
+                if item['role'] in proof.replica_read_pack_roles(self.service.resource_state)],budget.policy,budget)
             children.append(dict(role='replica.read_pack',raw=packed.raw,ref=packed.ref))
         children.sort(key=lambda e:(e['role'],e['ref'].namespace,e['ref'].key,e['ref'].raw_sha256,e['ref'].size))
         held['children']=tuple(children);token=_Preparation();self._prepared[token]=held
@@ -110,6 +111,7 @@ class ReplicaReadService(RepairBootstrapService):
         value=dict(context=context,consents={key:_encode(entry) for key,entry in consents.items()},
             statuses=[_encode(entry) for entry in current_statuses],bootstrap=_encode(dict(
                 raw=decision['bootstrap'].raw,ref=decision['bootstrap'].ref.as_dict())))
+        if self.resource_state=='replica_occupied':value['source_state']=self.resource_state
         raw=wire.build_new_wire(value,budget.policy,budget).raw;digest=budget._hash(raw)
         with self.state._transaction() as now:
             row,held=self.store._committed(resource_id)
@@ -130,7 +132,8 @@ class ReplicaReadService(RepairBootstrapService):
         raw=bytes(saved['raw'])
         if budget._hash(raw)!=saved['digest']:wire._fail('repair_storage_corrupt')
         value=wire.parse_new_wire(raw,budget.policy,budget).value
-        wire.object_fields(value,{'context','consents','statuses','bootstrap'})
+        wire.object_fields(value,{'context','consents','statuses','bootstrap'}|({'source_state'} if self.resource_state=='replica_occupied' else set()))
+        if self.resource_state=='replica_occupied' and value['source_state']!=self.resource_state:wire._fail('repair_storage_corrupt')
         if (value['context']['expected_owner']['signing_key']['key_id']!=saved['owner']
                 or value['bootstrap']['ref']['raw_sha256']!=saved['grant_sha256']):wire._fail('repair_storage_corrupt')
         return value
@@ -202,3 +205,11 @@ class ReplicaEmptyReadService(ReplicaReadService):
 
     def _prepare_read(self,*args,**options):
         return self.store.prepare_empty_read(*args,**options)
+
+
+class ReplicaOccupiedReadService(ReplicaEmptyReadService):
+    """Return an existing receipt only under A/B/R/M permissions and P capacity."""
+    resource_state='replica_occupied'
+
+    def _prepare_read(self,*args,**options):
+        return self.store.prepare_occupied_read(*args,**options)

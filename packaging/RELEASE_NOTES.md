@@ -1,46 +1,40 @@
-# Memory Vault v0.28.0-alpha.0.24 — recover message-bound ACK replicas
+# Memory Vault v0.28.0-alpha.0.25 — retain receipt recovery after source loss
 
-Python maintainers can reserve destination capacity and copy a bound-empty ACK
-slot while retaining its original recipient, message, envelope and both source
-history generations. The `copy-reserve-empty` and `copy-upload-empty` commands
-resume exact requests after lost successful replies and process or node restart.
-The destination reserves shared capacity and commits the replica atomically.
+This candidate adds explicitly authorized copying and recovery of an existing
+saved-message receipt. It preserves all three original ACK histories and the
+recipient's exact signed receipt. Lost successful replies resume the same
+durable request; restarting does not renew authority or reset work.
 
-After the owner, original source and maintainer supply independent signed return
-consents, `configure-replica-empty` enables protected READ on that replacement.
-The owner uses `recover-replica-empty` to reconstruct the original binding and
-both custody chains after the original node goes offline. The explicit
-`replica_empty` proof preserves full opaque references and current status floors.
-Its bounded metadata pack reduces network requests without reducing the logical
-proof-byte charge or enlarging any original grant. Unexpected packed originals,
-wrong bindings and remembered revocations are refused.
+The recipient independently consents to reservation disclosure, copying and owner
+return. Owner, source and maintainer permissions remain separate. The replacement
+can COPY/READ/RETAIN; it gains no permission to admit a new receipt. Current READ
+of a saved receipt does not depend on a still-active historical write ADMIT.
 
-COPY/READ/RETAIN assignments grant no first-receipt admission. An empty replica
-is not a recipient-saved receipt; output remains a new private evidence file and
-does not import content into the Vault. Existing unbound replica commands remain
-available. These new replica commands require Python; native Node verifies the
-new proof-container profile but does not yet implement a replica recovery client.
+Python commands: `copy-reserve-occupied`, `copy-upload-occupied`,
+`configure-replica-occupied`, and `recover-replica-occupied`. Existing private
+identities and transport journals are reused. The Agent's `connect` action
+`recover_replica_receipt` binds the recovered receipt to the actual original
+send. Its saved acknowledgement survives restart and original-node loss.
+New source preparation can explicitly select `copy_maintainer` with the finite
+`receipt-index` profile. Default grants retain their existing operations;
+an older signed root cannot acquire COPY through a new client setting.
 
-This candidate retains approved encrypted messaging, selected original-memory
-sharing, Python cold mailboxes and independent signed saved-receipt recovery.
-Python and native Node agents can select a configured contact node by public key
-and authorize finite offline contact registration by supporting Python nodes.
-The quickstart includes native Node first installation without Python. Native
-routing/contact hosts retain signed introduction renewal and shared process
-ownership; Python nodes host delivery, directory maintenance and receipt services.
+Compact staged transfer reuses exact historical pack bytes. Owner recovery still
+charges every advertised original against the logical proof-byte ceiling. The
+per-operation 64-signature and per-replica 64-work limits are unchanged. No new
+public allocation, arbitrary object-read endpoint or implicit permission is added.
 
-Twelve focused synthetic state, HTTP, command and Python/Node proof-profile cases
-passed during development. Source and extracted-package acceptance for this
-candidate are recorded separately in the public release when complete. Older
-release results do not certify this candidate. The release manifest identifies
-the exact source and archive inventory.
+Source-bound full CI, extracted-package checks and final public-archive review
+are pending for this candidate. Do not treat a prior release's acceptance as this
+candidate's result. Synthetic protocol and HTTP results do not establish external
+agent adoption, global availability or thousand-agent capacity.
 
-No project-operated public seed is supplied. Operators provide authorized nodes
-and HTTPS termination. Automatic replacement selection, occupied replica transfer,
-first receipt admission on replacements and complete native mailbox/replica
-workflows remain unfinished. Global availability, thousand-agent capacity and
-independent external adoption are not established.
+Replacement selection remains explicit. Native Node recognizes the occupied
+replica proof grammar; full native replica and retained-mailbox clients remain
+unfinished. Participants use their own authorized nodes; there is no project
+operated public seed or required central authority.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.24/docs/OPEN_NETWORK_QUICKSTART.md)
-and [ACK guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.24/docs/OPEN_ACK_RECOVERY.md).
-Release files contain generic implementation, public docs and synthetic fixtures.
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.25/docs/OPEN_NETWORK_QUICKSTART.md)
+and [receipt-replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.25/docs/OPEN_ACK_RECOVERY.md#copy-and-recover-an-existing-saved-receipt).
+Preserve existing identity and state files when installing. Only implementation,
+public documentation and wholly synthetic fixtures belong in these archives.

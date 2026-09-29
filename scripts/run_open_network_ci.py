@@ -54,7 +54,7 @@ MODULES = tuple("tests.test_open_" + name for name in (
     "tests.test_open_repair_index_prepare", "tests.test_open_repair_index_prepare_admin",
     "tests.test_open_repair_provision", "tests.test_open_repair_onboarding",
     "tests.test_open_repair_bind_recovery", "tests.test_open_repair_remote_setup", "tests.test_open_repair_remote_provision",
-    "tests.test_open_repair_status_observer", "tests.test_open_repair_mailbox_resources", "tests.test_open_repair_copy_resources", "tests.test_open_repair_copy_prepare", "tests.test_open_repair_copy_state", "tests.test_open_repair_copy_service", "tests.test_open_repair_copy_upload", "tests.test_open_repair_copy_empty", "tests.test_open_repair_mailbox_activation", "tests.test_open_repair_mailbox_range", "tests.test_open_repair_mailbox_root", "tests.test_open_repair_mailbox_status", "tests.test_open_repair_mailbox_source",
+    "tests.test_open_repair_status_observer", "tests.test_open_repair_mailbox_resources", "tests.test_open_repair_copy_resources", "tests.test_open_repair_copy_prepare", "tests.test_open_repair_copy_state", "tests.test_open_repair_copy_service", "tests.test_open_repair_copy_upload", "tests.test_open_repair_copy_empty", "tests.test_open_repair_copy_occupied", "tests.test_open_repair_mailbox_activation", "tests.test_open_repair_mailbox_range", "tests.test_open_repair_mailbox_root", "tests.test_open_repair_mailbox_status", "tests.test_open_repair_mailbox_source",
     "tests.test_open_provider_merge",
     "tests.test_continuation_trial", "tests.test_network_typescript_agent_network", "tests.test_network_packaging")
 EXPECTED = {

@@ -61,7 +61,7 @@ def service_for_packet(state, payload):
     else:
         _fail("repair_invalid_probe")
     if state.db.execute("SELECT 1 FROM sqlite_master WHERE name='open_repair_copy_read_config'").fetchone():
-        phase="CASE WHEN json_type(CAST(r.raw AS TEXT),'$.context.expected_receipt_writer') IS NULL THEN 'replica_unbound' ELSE 'replica_empty' END"
+        phase="CASE WHEN json_extract(CAST(r.raw AS TEXT),'$.source_state')='replica_occupied' THEN 'replica_occupied' WHEN json_type(CAST(r.raw AS TEXT),'$.context.expected_receipt_writer') IS NULL THEN 'replica_unbound' ELSE 'replica_empty' END"
         if kind=='bootstrap.probe':
             copies=state.db.execute("SELECT "+phase+" FROM open_repair_copy_read_config r WHERE r.owner=? AND r.grant_sha256=? LIMIT 2",
                 (subject['signing_key']['key_id'],digest)).fetchall()
@@ -72,9 +72,9 @@ def service_for_packet(state, payload):
         rows=list(rows)+list(copies)
     if len(rows) != 1:
         _fail("repair_service_unavailable")
-    if rows[0][0] in ("replica_unbound","replica_empty"):
-        from memory_vault_open_repair_copy_service import ReplicaReadService,ReplicaEmptyReadService
-        service=(ReplicaEmptyReadService if rows[0][0]=='replica_empty' else ReplicaReadService)(state)
+    if rows[0][0] in ("replica_unbound","replica_empty","replica_occupied"):
+        from memory_vault_open_repair_copy_service import ReplicaReadService,ReplicaEmptyReadService,ReplicaOccupiedReadService
+        service={'replica_unbound':ReplicaReadService,'replica_empty':ReplicaEmptyReadService,'replica_occupied':ReplicaOccupiedReadService}[rows[0][0]](state)
         service.initialize();return service
     if rows[0][0] == "unbound":
         return RepairBootstrapService(state)

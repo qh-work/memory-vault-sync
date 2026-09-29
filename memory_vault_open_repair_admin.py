@@ -27,6 +27,7 @@ EMPTY_REQUEST_SCHEMA = "memory-vault-open-ack-empty-recovery-request/v1"
 OCCUPIED_REQUEST_SCHEMA = "memory-vault-open-ack-occupied-recovery-request/v1"
 REPLICA_REQUEST_SCHEMA = "memory-vault-open-ack-replica-unbound-recovery-request/v1"
 EMPTY_REPLICA_REQUEST_SCHEMA = "memory-vault-open-ack-replica-empty-recovery-request/v1"
+OCCUPIED_REPLICA_REQUEST_SCHEMA = "memory-vault-open-ack-replica-occupied-recovery-request/v1"
 EVIDENCE_SCHEMA = "memory-vault-open-ack-recovery-evidence/v1"
 MAX_BUNDLE_BYTES = 1024 * 1024
 # Full occupied history has three generations. These are client acceptance
@@ -86,7 +87,7 @@ def _recover_replica(network,client,request,arguments,archived,phase):
     import memory_vault_open_repair_resource as resource
     import memory_vault_open_repair_history as history
     parties=(dict(signing_key=network.identity.public_descriptor(),encryption_key=network.encryption.public_descriptor()),
-        request['source'],request['maintainer'],request['target'])
+        request['source'],request['maintainer'],request['target'])+((request['receipt_writer'],) if phase=='replica_occupied' else ())
     budget=wire.RepairBudget(DEFAULT_POLICY)
     for party in parties:resource._dual_key(party,budget)
     resource._opaque(request['source_storage_epoch'])
@@ -99,7 +100,7 @@ def _recover_replica(network,client,request,arguments,archived,phase):
         merged={canonical_bytes(item['ref']):item for item in [*retained,*[_entry(e) for e in archived]]}
         if len(merged)>32:raise RepairWireError('repair_status_history_capacity')
         client.status_observer=journal.observe
-        recover=client.recover_replica_empty if phase=='replica_empty' else client.recover_replica
+        recover={'replica_empty':client.recover_replica_empty,'replica_occupied':client.recover_replica_occupied,'replica_unbound':client.recover_replica}[phase]
         result=recover(**dict(arguments,archive_statuses=list(merged.values())),
             expected_source=request['source'],source_storage_epoch=request['source_storage_epoch'],expected_maintainer=request['maintainer'])
         for item in result.archive_statuses:journal.observe(item)
@@ -188,7 +189,7 @@ def _retained_statuses(authenticated_entries):
 
 def recover_ack(network_config: Path, request_path: Path, output: Path, *, timeout=30, phase="unbound", repair_profile=None):
     """New-only evidence export; never open or modify the configured Vault."""
-    if phase not in {"unbound", "empty", "occupied", "replica_unbound", "replica_empty"}:
+    if phase not in {"unbound", "empty", "occupied", "replica_unbound", "replica_empty", "replica_occupied"}:
         raise RepairWireError("repair_invalid_request_bundle")
     profiles = {"unbound": DEFAULT_LIMITS, "receipt": RECEIPT_WORKFLOW_LIMITS, "receipt-index": INDEX_WORKFLOW_LIMITS}
     if repair_profile is None:
@@ -203,13 +204,13 @@ def recover_ack(network_config: Path, request_path: Path, output: Path, *, timeo
         raise RepairWireError("repair_request_missing")
     request = document(raw, maximum=MAX_BUNDLE_BYTES)
     fields = {"schema_version", "target", "ack_slot", "node", "root", "read", "bootstrap", "known_statuses"}
-    if phase in {"empty","occupied","replica_empty"}:
+    if phase in {"empty","occupied","replica_empty","replica_occupied"}:
         fields.update({"receipt_writer", "message_id", "envelope_ref"})
-    if phase in {'replica_unbound','replica_empty'}:fields.update({'source','source_storage_epoch','maintainer'})
+    if phase in {'replica_unbound','replica_empty','replica_occupied'}:fields.update({'source','source_storage_epoch','maintainer'})
     if type(request) is dict and "archive_statuses" in request:
         fields.add("archive_statuses")
     request = object_fields(request, fields)
-    schemas = dict(unbound=REQUEST_SCHEMA, empty=EMPTY_REQUEST_SCHEMA, occupied=OCCUPIED_REQUEST_SCHEMA,replica_unbound=REPLICA_REQUEST_SCHEMA,replica_empty=EMPTY_REPLICA_REQUEST_SCHEMA)
+    schemas = dict(unbound=REQUEST_SCHEMA, empty=EMPTY_REQUEST_SCHEMA, occupied=OCCUPIED_REQUEST_SCHEMA,replica_unbound=REPLICA_REQUEST_SCHEMA,replica_empty=EMPTY_REPLICA_REQUEST_SCHEMA,replica_occupied=OCCUPIED_REPLICA_REQUEST_SCHEMA)
     if request["schema_version"] != schemas[phase]:
         raise RepairWireError("repair_invalid_request_bundle")
     known = request["known_statuses"]
@@ -232,17 +233,17 @@ def recover_ack(network_config: Path, request_path: Path, output: Path, *, timeo
             allow_loopback=network.participant.transport.allow_loopback,
             transport=network.participant.transport)
         expected = dict(expected_receipt_writer=request["receipt_writer"],
-            expected_message_id=request["message_id"], expected_envelope_ref=request["envelope_ref"]) if phase in {'empty','occupied','replica_empty'} else {}
+            expected_message_id=request["message_id"], expected_envelope_ref=request["envelope_ref"]) if phase in {'empty','occupied','replica_empty','replica_occupied'} else {}
         arguments=dict(base_url=base_url, target_node_entry=entries["node"], expected_target=request["target"],
             expected_ack_slot=request["ack_slot"], root_entry=entries["root"], read_entry=entries["read"],
             bootstrap_entry=entries["bootstrap"], known_statuses=[_entry(item) for item in known],
             archive_statuses=[_entry(item) for item in archived], timeout=timeout, **expected)
-        if phase in {'replica_unbound','replica_empty'}:result=_recover_replica(network,client,request,arguments,archived,phase)
+        if phase in {'replica_unbound','replica_empty','replica_occupied'}:result=_recover_replica(network,client,request,arguments,archived,phase)
         else:
             result,retained_archive=_recover_original(network,client,request,arguments,phase)
             archived=[dict(raw_base64url=b64url(item['raw']),ref=item['ref']) for item in retained_archive]
-    source=result.replica['source'] if phase in {'replica_unbound','replica_empty'} else result.source
-    historical = list(result.archive_statuses) if phase in {'replica_unbound','replica_empty'} else list(source.statuses)
+    source=result.replica['source'] if phase in {'replica_unbound','replica_empty','replica_occupied'} else result.source
+    historical = list(result.archive_statuses) if phase in {'replica_unbound','replica_empty','replica_occupied'} else list(source.statuses)
     predecessor = getattr(source, "predecessor", None)
     while predecessor is not None:
         historical.extend(predecessor.statuses)
@@ -259,13 +260,13 @@ def recover_ack(network_config: Path, request_path: Path, output: Path, *, timeo
         current_statuses=[_encoded(item.raw, item.ref) for item in result.current_statuses],
         known_statuses=retained, archive_statuses=archive,
         metrics=dict(result.metrics))
-    if phase in {'empty','occupied','replica_empty'}:
+    if phase in {'empty','occupied','replica_empty','replica_occupied'}:
         evidence.update(receipt_writer=request["receipt_writer"], message_id=request["message_id"],
             envelope_ref=request["envelope_ref"])
-    if phase == "occupied":
-        receipt = result.source.inputs["receipt"]
+    if phase in {"occupied","replica_occupied"}:
+        receipt = source.event.inputs["receipt"] if phase=="replica_occupied" else source.inputs["receipt"]
         evidence["recipient_receipt"] = _encoded(receipt.raw, receipt.ref)
-    if phase in {'replica_unbound','replica_empty'}:
+    if phase in {'replica_unbound','replica_empty','replica_occupied'}:
         custody=result.replica['custody']
         evidence.update(source=request['source'],source_storage_epoch=request['source_storage_epoch'],maintainer=request['maintainer'],
             replica_custody=_encoded(custody.raw,custody.ref))
@@ -276,13 +277,15 @@ def recover_ack(network_config: Path, request_path: Path, output: Path, *, timeo
     return dict(state=evidence["state"], evidence_path=str(output),
         evidence_sha256=hashlib.sha256(encoded).hexdigest(),
         original_count=len(result.originals), requests=result.metrics["requests"],
-        vault_modified=False, recipient_saved=phase == "occupied")
+        vault_modified=False, recipient_saved=phase in {"occupied","replica_occupied"})
 
 
 COPY_REQUEST_SCHEMA = "memory-vault-open-ack-copy-request/v1"
 COPY_RESULT_SCHEMA = "memory-vault-open-ack-copy-result/v1"
 EMPTY_COPY_REQUEST_SCHEMA = "memory-vault-open-ack-copy-empty-request/v1"
+OCCUPIED_COPY_REQUEST_SCHEMA = "memory-vault-open-ack-copy-occupied-request/v1"
 EMPTY_COPY_RESULT_SCHEMA = "memory-vault-open-ack-copy-empty-result/v1"
+OCCUPIED_COPY_RESULT_SCHEMA = "memory-vault-open-ack-copy-occupied-result/v1"
 MAX_COPY_BUNDLE_BYTES = 8 * 1024 * 1024
 
 
@@ -294,7 +297,7 @@ def copy_ack(network_config, request_path, output, *, operation, timeout=30, rep
     from memory_vault_open_repair_copy_prepare import AckCopyPreparation
     from memory_vault_open_repair_index_state import encode_entry
     profiles = {"unbound": DEFAULT_LIMITS, "receipt": RECEIPT_WORKFLOW_LIMITS, "receipt-index": INDEX_WORKFLOW_LIMITS}
-    if (operation not in {"reserve", "upload"} or source_state not in {'unbound','empty'}
+    if (operation not in {"reserve", "upload"} or source_state not in {'unbound','empty','occupied'}
             or (repair_profile is not None and repair_profile not in profiles)):
         raise RepairWireError("repair_invalid_request_bundle")
     request_path, output = _absolute_path(request_path), _absolute_path(output)
@@ -307,9 +310,12 @@ def copy_ack(network_config, request_path, output, *, operation, timeout=30, rep
               "manifest", "custody", "reservation", "intent", "originals", "current_statuses"}
     if operation == "upload":
         fields.update({"allocation", "offer", "assignment", "owner_disclosure", "source_disclosure"})
-    if source_state=='empty':fields.update({'receipt_writer','message_id','envelope_ref'})
+    if source_state in ('empty','occupied'):fields.update({'receipt_writer','message_id','envelope_ref'})
+    if source_state=='occupied':
+        fields.add('recipient_reservation')
+        if operation=='upload':fields.add('recipient_disclosure')
     request = object_fields(document(raw, maximum=MAX_COPY_BUNDLE_BYTES), fields)
-    schema=EMPTY_COPY_REQUEST_SCHEMA if source_state=='empty' else COPY_REQUEST_SCHEMA
+    schema={'unbound':COPY_REQUEST_SCHEMA,'empty':EMPTY_COPY_REQUEST_SCHEMA,'occupied':OCCUPIED_COPY_REQUEST_SCHEMA}[source_state]
     if request["schema_version"] != schema or request["operation"] != operation:
         raise RepairWireError("repair_invalid_request_bundle")
     if type(request["originals"]) is not list or not 1 <= len(request["originals"]) <= 64:
@@ -319,6 +325,9 @@ def copy_ack(network_config, request_path, output, *, operation, timeout=30, rep
     names = ["node", "manifest", "custody", "reservation"]
     if operation == "upload":
         names += ["allocation", "offer", "assignment", "owner_disclosure", "source_disclosure"]
+    if source_state=='occupied':
+        names.append('recipient_reservation')
+        if operation=='upload':names.append('recipient_disclosure')
     entries = {name: _entry(request[name]) for name in names}
     originals = [_entry(item) for item in request["originals"]]
     statuses = [_entry(item) for item in request["current_statuses"]]
@@ -341,16 +350,19 @@ def copy_ack(network_config, request_path, output, *, operation, timeout=30, rep
     context = dict(expected_ack_slot=request["ack_slot"], expected_owner=request["owner"],
         expected_source=request["source"], source_storage_epoch=request["source_storage_epoch"],
         current_statuses=statuses, limit_policy=profiles[repair_profile or "unbound"])
-    if source_state=='empty':context.update(expected_receipt_writer=request['receipt_writer'],
+    if source_state in ('empty','occupied'):context.update(expected_receipt_writer=request['receipt_writer'],
         expected_message_id=request['message_id'],expected_envelope_ref=request['envelope_ref'])
+    if source_state=='occupied':
+        context['recipient_reservation_entry']=entries['recipient_reservation']
+        if operation=='upload':context['recipient_disclosure_entry']=entries['recipient_disclosure']
     with OpenNetworkClient(_absolute_path(network_config)) as network, network.participant.state.db() as db:
         journal = AckCopyPreparation(db, network.identity, network.encryption, policy=DEFAULT_POLICY)
         client = AckCopyUploadClient(journal, encryption_identity=network.encryption,
             transport=network.participant.transport, allow_loopback=network.participant.transport.allow_loopback)
         try:
             if operation == "reserve":
-                reserve=client.reserve_empty if source_state=='empty' else client.reserve
-                assign=journal.assign_empty if source_state=='empty' else journal.assign_unbound
+                reserve={'unbound':client.reserve,'empty':client.reserve_empty,'occupied':client.reserve_occupied}[source_state]
+                assign={'unbound':journal.assign_unbound,'empty':journal.assign_empty,'occupied':journal.assign_occupied}[source_state]
                 result = reserve(base_url, entries["manifest"], resolver(), entries["custody"],
                     entries["reservation"], request["intent"], target_node_entry=entries["node"], timeout=timeout, **context)
                 source = resolver()
@@ -364,7 +376,7 @@ def copy_ack(network_config, request_path, output, *, operation, timeout=30, rep
                 if (type(allocation) is not dict or type(allocation.get("payload")) is not dict
                         or allocation["payload"].get("intent") != request["intent"]):
                     raise RepairWireError("repair_copy_upload_conflict")
-                upload=client.upload_empty if source_state=='empty' else client.upload
+                upload={'unbound':client.upload,'empty':client.upload_empty,'occupied':client.upload_occupied}[source_state]
                 result = upload(base_url, entries["manifest"], resolver(), entries["custody"],
                     entries["allocation"], entries["offer"], entries["assignment"], entries["reservation"],
                     entries["owner_disclosure"], entries["source_disclosure"], target_node_entry=entries["node"],
@@ -372,10 +384,10 @@ def copy_ack(network_config, request_path, output, *, operation, timeout=30, rep
                 evidence = dict(state=result["state"], **{name: encode_entry(result[name]) for name in ("manifest", "custody")})
         finally:
             client.close()
-    evidence.update(schema_version=EMPTY_COPY_RESULT_SCHEMA if source_state=='empty' else COPY_RESULT_SCHEMA,
+    evidence.update(schema_version={'unbound':COPY_RESULT_SCHEMA,'empty':EMPTY_COPY_RESULT_SCHEMA,'occupied':OCCUPIED_COPY_RESULT_SCHEMA}[source_state],
         ack_slot=request["ack_slot"], target=target,
         target_storage_epoch=epoch, recipient_saved=False, vault_modified=False)
-    if source_state=='empty':evidence.update(source_state='empty',receipt_admission_authorized=False,
+    if source_state in ('empty','occupied'):evidence.update(source_state=source_state,receipt_admission_authorized=False,
         receipt_writer=request['receipt_writer'],message_id=request['message_id'],envelope_ref=request['envelope_ref'])
     encoded = canonical_bytes(evidence) + b"\n"
     if len(encoded) > MAX_COPY_BUNDLE_BYTES:
@@ -387,6 +399,7 @@ def copy_ack(network_config, request_path, output, *, operation, timeout=30, rep
 
 REPLICA_CONFIG_SCHEMA = "memory-vault-open-ack-replica-read-config/v1"
 EMPTY_REPLICA_CONFIG_SCHEMA = "memory-vault-open-ack-replica-empty-read-config/v1"
+OCCUPIED_REPLICA_CONFIG_SCHEMA = "memory-vault-open-ack-replica-occupied-read-config/v1"
 
 
 def configure_replica(node_config, request_path, output, *, source_state='unbound'):
@@ -394,8 +407,8 @@ def configure_replica(node_config, request_path, output, *, source_state='unboun
     from memory_vault_network_crypto import EncryptionIdentity
     from memory_vault_open_node import OpenParticipant
     from memory_vault_open_repair_index_admin import _node_config
-    from memory_vault_open_repair_copy_service import ReplicaReadService,ReplicaEmptyReadService
-    if source_state not in {"unbound","empty"}:raise RepairWireError("repair_invalid_request_bundle")
+    from memory_vault_open_repair_copy_service import ReplicaReadService,ReplicaEmptyReadService,ReplicaOccupiedReadService
+    if source_state not in {"unbound","empty","occupied"}:raise RepairWireError("repair_invalid_request_bundle")
     from memory_vault_trust import Identity
     request_path, output = _absolute_path(request_path), _absolute_path(output)
     if os.path.lexists(output):
@@ -405,9 +418,9 @@ def configure_replica(node_config, request_path, output, *, source_state='unboun
         raise RepairWireError("repair_request_missing")
     request = object_fields(document(raw, maximum=MAX_BUNDLE_BYTES),
         {"schema_version", "resource_id", "context", "consents", "current_statuses"})
-    if request["schema_version"] != (EMPTY_REPLICA_CONFIG_SCHEMA if source_state=="empty" else REPLICA_CONFIG_SCHEMA):
+    if request["schema_version"] != {"unbound":REPLICA_CONFIG_SCHEMA,"empty":EMPTY_REPLICA_CONFIG_SCHEMA,"occupied":OCCUPIED_REPLICA_CONFIG_SCHEMA}[source_state]:
         raise RepairWireError("repair_invalid_request_bundle")
-    consents = object_fields(request["consents"], {"owner", "source", "maintainer"})
+    consents = object_fields(request["consents"], {"owner", "source", "maintainer"}|({"recipient"} if source_state=="occupied" else set()))
     if type(request["current_statuses"]) is not list or not 1 <= len(request["current_statuses"]) <= 16:
         raise RepairWireError("repair_invalid_status")
     config = _node_config(_absolute_path(node_config))
@@ -419,7 +432,7 @@ def configure_replica(node_config, request_path, output, *, source_state='unboun
             contact_policy=config.get('contact_policy'), delivery_policy=config.get('delivery_policy'),
             provider_policy=config.get('provider_policy'), repair_policy=config['repair_policy']) as participant:
         with participant.state.db() as db:
-            service = (ReplicaEmptyReadService if source_state=="empty" else ReplicaReadService)(participant._repair_service(db).state)
+            service = {"unbound":ReplicaReadService,"empty":ReplicaEmptyReadService,"occupied":ReplicaOccupiedReadService}[source_state](participant._repair_service(db).state)
             service.initialize()
             result = service.configure(request["resource_id"], context=request["context"],
                 consents={name: _entry(entry) for name, entry in consents.items()},
@@ -442,7 +455,10 @@ def main(argv=None):
                             ("copy-reserve", "reserve capacity and assign an explicitly authorized unbound replica"),
                             ("copy-upload", "upload and commit the separately authorized unbound replica"),
                             ("copy-reserve-empty", "reserve an explicitly authorized bound empty ACK copy"),
-                            ("copy-upload-empty", "retain the exact bound slot and its complete original history")):
+                            ("copy-upload-empty", "retain the exact bound slot and its complete original history"),
+                            ("copy-reserve-occupied", "reserve an existing receipt replica with explicit recipient consent"),
+                            ("copy-upload-occupied", "copy an existing receipt with all three original history generations"),
+                            ("recover-replica-occupied", "recover the original signed receipt from an authorized replica")):
         recover = commands.add_parser(name, help=help_text)
         recover.add_argument("--network-config", required=True, type=Path)
         recover.add_argument("--request", required=True, type=Path, help="private original request bundle")
@@ -450,23 +466,23 @@ def main(argv=None):
         recover.add_argument("--timeout", type=float, default=30)
         recover.add_argument("--repair-profile", choices=("unbound", "receipt", "receipt-index"),
             help="explicit client acceptance ceiling; never changes the source's signed limits")
-    for name in ("configure-replica","configure-replica-empty"):
+    for name in ("configure-replica","configure-replica-empty","configure-replica-occupied"):
         configure = commands.add_parser(name, help="install separately signed replica return consents locally")
         configure.add_argument("--node-config", required=True, type=Path)
         configure.add_argument("--request", required=True, type=Path)
         configure.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
-        if args.command in {"configure-replica","configure-replica-empty"}:
+        if args.command in {"configure-replica","configure-replica-empty","configure-replica-occupied"}:
             result = configure_replica(args.node_config, args.request, args.output,
-                source_state="empty" if args.command.endswith("-empty") else "unbound")
-        elif args.command in {"copy-reserve", "copy-upload", "copy-reserve-empty", "copy-upload-empty"}:
+                source_state="occupied" if args.command.endswith("-occupied") else "empty" if args.command.endswith("-empty") else "unbound")
+        elif args.command in {"copy-reserve", "copy-upload", "copy-reserve-empty", "copy-upload-empty", "copy-reserve-occupied", "copy-upload-occupied"}:
             result = copy_ack(args.network_config, args.request, args.output, timeout=args.timeout,
                 repair_profile=args.repair_profile, operation=args.command.split("-")[1],
-                source_state='empty' if args.command.endswith('-empty') else 'unbound')
+                source_state='occupied' if args.command.endswith('-occupied') else 'empty' if args.command.endswith('-empty') else 'unbound')
         else:
             result = recover_ack(args.network_config, args.request, args.output, timeout=args.timeout, repair_profile=args.repair_profile,
-                phase={"recover-ack":"unbound", "recover-empty":"empty", "recover-occupied":"occupied","recover-replica":"replica_unbound","recover-replica-empty":"replica_empty"}[args.command])
+                phase={"recover-ack":"unbound", "recover-empty":"empty", "recover-occupied":"occupied","recover-replica":"replica_unbound","recover-replica-empty":"replica_empty","recover-replica-occupied":"replica_occupied"}[args.command])
     except (MemoryError, TrustError, RepairWireError, OSError) as exc:
         print(json.dumps({"error": getattr(exc, "code", "repair_storage_unavailable")}), file=sys.stderr)
         return 1

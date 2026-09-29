@@ -29,6 +29,25 @@ def _require(value):
         wire._fail('repair_copy_preparation_mismatch')
 
 
+
+def _recipient_reservation(source,owner_consent,entry,at,policy,budget):
+    """B authorizes exact opaque receipt associations before target allocation."""
+    if not copy_source.occupied_source(source):
+        if entry is not None:wire._fail('repair_copy_scope')
+        return None
+    item=index._signed(entry,source.receipt_writer['signing_key'],
+        'ack.copy_recipient_reservation_consent',CONSENT_FIELDS,policy,budget)
+    value=item.payload;owner=owner_consent.payload
+    index._timed(value,at);resource._opaque(value['consent_id']);wire.u53(value['revision'],1)
+    for name in ('root_authority_ref','source_custody_ref','historical_manifest_ref','maintainer','target','target_storage_epoch'):
+        _require(value[name]==owner[name])
+    permission=resource._fields(value['reservation_disclosure'],{'intent_sha256','until'})
+    _require(permission['intent_sha256']==owner['reservation_disclosure']['intent_sha256']
+        and source.stored_at<=value['issued_at']<=at
+        and at<wire.u53(permission['until'])<=min(value['expires_at'],source.read_until,source.retain_until,
+            *copy_source.additional_deadlines(source)))
+    return item
+
 class AckCopyPreparation:
     """Bounded, caller-owned local journal; never a remotely callable service."""
     def __init__(self, db, identity, encryption_identity, *, policy):
@@ -75,8 +94,18 @@ class AckCopyPreparation:
             expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
             expected_envelope_ref=expected_envelope_ref))
 
+    def prepare_occupied(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**kwargs):
+        return self._prepare(*args,**kwargs,offer_entry=None,source_state='occupied',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
     def prepare_reservation_empty(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**kwargs):
         return self._prepare(*args,**kwargs,offer_entry=None,with_status_snapshot=True,source_state='empty',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
+    def prepare_reservation_occupied(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**kwargs):
+        return self._prepare(*args,**kwargs,offer_entry=None,with_status_snapshot=True,source_state='occupied',bound=dict(
             expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
             expected_envelope_ref=expected_envelope_ref))
 
@@ -86,9 +115,15 @@ class AckCopyPreparation:
             expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
             expected_envelope_ref=expected_envelope_ref))
 
+    def assign_occupied(self,*args,offer_entry,expected_receipt_writer,expected_message_id,expected_envelope_ref,**kwargs):
+        """Copy an existing binding without granting replacement receipt ADMIT."""
+        return self._prepare(*args,**kwargs,offer_entry=offer_entry,source_state='occupied',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
     def _prepare(self, manifest_entry, resolver, custody_entry, consent_entry, intent, *,
                         expected_ack_slot, expected_owner, expected_source, source_storage_epoch,
-                        current_statuses, at, limit_policy, budget, offer_entry,source_state,bound,with_status_snapshot=False):
+                        current_statuses, at, limit_policy, budget, offer_entry,source_state,bound,with_status_snapshot=False,recipient_reservation_entry=None):
         _require(not self.db.in_transaction)
         policy = self.policy
         wire._context(policy, budget)
@@ -140,7 +175,11 @@ class AckCopyPreparation:
             and c['target'] == value['target'] and c['target_storage_epoch'] == value['target_storage_epoch']
             and c['issued_at'] >= source.stored_at and disclosure['intent_sha256'] == digest
             and at < wire.u53(disclosure['until']) <= maximum)
-        signers = {key['signing_key']['key_id']:key['signing_key'] for key in (owner, source_keys, mine)}
+        recipient_consent=_recipient_reservation(source,consent,recipient_reservation_entry,at,policy,budget)
+        if recipient_consent is not None:
+            maximum=min(maximum,recipient_consent.payload['expires_at'],recipient_consent.payload['reservation_disclosure']['until'])
+        parties=(owner,source_keys,mine)+((source.receipt_writer,) if recipient_consent is not None else ())
+        signers = {key['signing_key']['key_id']:key['signing_key'] for key in parties}
         allowed = {key:[] for key in signers}
         for item in source.statuses:
             allowed[item.payload['signing_key']['key_id']].extend(
@@ -158,6 +197,11 @@ class AckCopyPreparation:
                 obligations += (index._obligation(owner['signing_key'], 'authority',
                     index._authority(root_key, original, policy, budget), original.payload['revision'], mask),)
         obligations += copy_source.additional_obligations(source,owner,policy,budget)
+        if recipient_consent is not None:
+            signer=source.receipt_writer['signing_key']
+            scope=index._authority(root_key,recipient_consent,policy,budget)
+            allowed[signer['key_id']].append(dict(scope_kind='authority',scope_id=scope))
+            obligations += (index._obligation(signer,'authority',scope,recipient_consent.payload['revision'],COPY),)
         checked, denial = [], None
         if not isinstance(current_statuses, (tuple, list)) or not 1 <= len(current_statuses) <= 16:
             wire._fail('repair_status_missing')
@@ -194,6 +238,7 @@ class AckCopyPreparation:
                     denial = denial or 'repair_status_revision'
                 elif e['operation_mask'] & need['mask'] != need['mask']:
                     denial = denial or 'repair_status_operation'
+        consent_binding=consent.ref.as_dict() if recipient_consent is None else dict(owner=consent.ref.as_dict(),recipient=recipient_consent.ref.as_dict())
         root_digest = budget._hash(wire._canonical(root_key, budget))
         # Serialize the durable floor observation with request creation. A denied
         # observation commits even though no allocation request is emitted.
@@ -232,7 +277,7 @@ class AckCopyPreparation:
             if denial is None:
                 old = self.db.execute('SELECT intent_digest,consent_ref,request,ref FROM ack_copy_prepare_jobs WHERE job_id=?', (value['job_id'],)).fetchone()
                 if old:
-                    _require(old[0] == digest and bytes(old[1]) == canonical_bytes(consent.ref.as_dict()))
+                    _require(old[0] == digest and bytes(old[1]) == canonical_bytes(consent_binding))
                     result = dict(raw=bytes(old[2]),ref=json.loads(bytes(old[3])))
                     held = index._signed(result, mine['signing_key'], 'resource.allocate', index.ALLOCATE_FIELDS, policy, budget).payload
                     index._timed(held, at)
@@ -251,7 +296,7 @@ class AckCopyPreparation:
                     sha = hashlib.sha256(raw).hexdigest()
                     result = dict(raw=raw,ref=dict(namespace='meta',key=sha,raw_sha256=sha,size=len(raw)))
                     self.db.execute('INSERT INTO ack_copy_prepare_jobs VALUES(?,?,?,?,?,?)',
-                        (value['job_id'],root_digest,digest,canonical_bytes(consent.ref.as_dict()),raw,canonical_bytes(result['ref'])))
+                        (value['job_id'],root_digest,digest,canonical_bytes(consent_binding),raw,canonical_bytes(result['ref'])))
             if result is not None and offer_entry is not None:
                 result = self._assign_locked(result, offer_entry, source, value, digest, at, budget)
             if result is not None and with_status_snapshot:
@@ -336,9 +381,14 @@ class AckCopyPreparation:
             expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
             expected_envelope_ref=expected_envelope_ref))
 
+    def prepare_upload_occupied(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
+        return self._prepare_upload(*args,**options,source_state='occupied',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
     def _prepare_upload(self,manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
             reservation_entry,owner_disclosure_entry,source_disclosure_entry,*,expected_ack_slot,expected_owner,
-            expected_source,source_storage_epoch,expected_target,target_storage_epoch,current_statuses,at,limit_policy,source_state,bound):
+            expected_source,source_storage_epoch,expected_target,target_storage_epoch,current_statuses,at,limit_policy,source_state,bound,recipient_reservation_entry=None,recipient_disclosure_entry=None):
         """Retain one exact outgoing stage only after original COPY/disclosure checks.
 
         No bytes are transmitted. Destination possession must precede any send.
@@ -355,6 +405,8 @@ class AckCopyPreparation:
         manifest_entry,custody_entry,allocation_entry,offer_entry,assignment_entry,reservation_entry,owner_disclosure_entry,source_disclosure_entry=map(freeze,
             (manifest_entry,custody_entry,allocation_entry,offer_entry,assignment_entry,reservation_entry,owner_disclosure_entry,source_disclosure_entry))
         if type(current_statuses) not in (list,tuple) or not 1<=len(current_statuses)<=16:wire._fail('repair_status_missing')
+        if recipient_reservation_entry is not None:recipient_reservation_entry=freeze(recipient_reservation_entry)
+        if recipient_disclosure_entry is not None:recipient_disclosure_entry=freeze(recipient_disclosure_entry)
         current_statuses=tuple(map(freeze,current_statuses))
         binding=wire.build_new_wire(dict(slot=expected_ack_slot,owner=expected_owner,source=expected_source,target=expected_target),policy,budget).value
         expected_ack_slot,expected_owner,expected_source,expected_target=(binding[k] for k in ('slot','owner','source','target'))
@@ -368,6 +420,11 @@ class AckCopyPreparation:
         _require(saved is not None and assigned is not None
             and dict(raw=bytes(saved[0]),ref=json.loads(bytes(saved[1])))==allocation_entry
             and dict(raw=bytes(assigned[0]),ref=json.loads(bytes(assigned[1])))==assignment_entry)
+        if source_state=='occupied':
+            if recipient_reservation_entry is None:wire._fail('repair_copy_recipient_consent_missing')
+            consent_binding=dict(owner=reservation_entry['ref'],recipient=recipient_reservation_entry['ref'])
+            held_binding=self.db.execute('SELECT consent_ref FROM ack_copy_prepare_jobs WHERE job_id=?',(job,)).fetchone()
+            _require(held_binding is not None and bytes(held_binding[0])==canonical_bytes(consent_binding))
         ticket=secrets.token_hex(16);allowance=policy.max_signature_checks
         with self._upload_transaction():
             blocked=self.db.execute("SELECT reason FROM ack_copy_prepare_blocked WHERE root_digest IN (?, '*')",(root_digest,)).fetchone()
@@ -392,8 +449,10 @@ class AckCopyPreparation:
                 expected_owner=expected_owner,expected_source=expected_source,source_storage_epoch=source_storage_epoch,
                 expected_maintainer=self.keys,expected_target=expected_target,target_storage_epoch=target_storage_epoch,
                 current_statuses=current_statuses,at=at,limit_policy=limit_policy,policy=policy,budget=budget,on_observed=observe,
-                source_state=source_state,bound=bound)
+                source_state=source_state,bound=bound,recipient_reservation_entry=recipient_reservation_entry,recipient_disclosure_entry=recipient_disclosure_entry)
             signers={p['signing_key']['key_id']:p['signing_key'] for p in (expected_owner,expected_source,self.keys)}
+            if copy_source.occupied_source(plan.source):
+                signer=plan.source.receipt_writer['signing_key'];signers[signer['key_id']]=signer
             previous=[]
             # All prior facts, including expired ones, remain lower bounds.
             status_rows=list(self.db.execute('SELECT raw,ref FROM ack_copy_prepare_status WHERE root_digest=? ORDER BY raw_digest',(root_digest,)))
@@ -420,10 +479,13 @@ class AckCopyPreparation:
             for item in plan.originals:add(item.role,item.original)
             for role,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),
                     ('copy.assignment',plan.assignment),('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):add(role,item)
+            if copy_source.occupied_source(plan.source):add('copy.recipient_disclosure',plan.disclosures[2])
             for role,entry,source_manifest in copy_source.source_histories(plan.source,manifest_entry):
                 add(role,entry)
                 for member in source_manifest.manifest.value['roles']:add('history.raw_pack',resolver.resolve(member['pack_ref']))
             for item in plan.statuses:add('copy.current_status',item)
+            if copy_source.occupied_source(plan.source):
+                rows={key:value for key,value in rows.items() if value['role'] in stage.OCCUPIED_COPY_ROLES}
             children=[rows[k] for k in sorted(rows)]
             manifest=stage.make_stage_manifest(root_key=root,scope=intent['scope'],consumer='ack_copy_'+source_state,
                 children=[dict(index=i,role=e['role'],ref=e['entry']['ref']) for i,e in enumerate(children)],policy=policy,budget=budget)

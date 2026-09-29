@@ -1,5 +1,32 @@
 # Memory Vault development status
 
+Current source candidate: **alpha.0.25 (unpublished)**. Python maintainers can
+copy an existing saved-message receipt with all three original ACK histories.
+Recipient authorization is required before reservation, during copy and for
+subsequent owner reads, independently of owner/source/maintainer permission.
+Original requests, used work, exact bytes and remembered revocations survive
+restart. Compact transfer reuses the existing history packs within the unchanged
+per-operation signature and per-replica work ceilings.
+
+The `copy-reserve-occupied`, `copy-upload-occupied`, `configure-replica-occupied`
+and `recover-replica-occupied` commands retain existing private configurations.
+The Python Agent also accepts `recover_replica_receipt` through `connect`:
+after validating the original recipient receipt against the actual local send,
+it persists that send's saved acknowledgement. Later sends report the saved
+state after restart while both original delivery and ACK sources are offline.
+Selected memory remains in the recipient's Vault.
+
+New Agent source preparation can explicitly name a distinct `copy_maintainer`
+with the finite `receipt-index` profile. Default and existing grants remain
+unchanged; changing a previously prepared selection is refused.
+
+The source contains focused synthetic durable-state, real-HTTP, native proof
+grammar, command and Agent cases. Its own complete source and extracted-package
+acceptance remain required before publication. This does not establish independent
+external adoption, global availability or thousand-agent capacity. Replacement
+selection is explicit, and native Node replica commands remain unfinished.
+See [occupied replica use](OPEN_ACK_RECOVERY.md#copy-and-recover-an-existing-saved-receipt).
+
 Published **[alpha.0.24](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.24)** is fixed at `b1a4e78bc8b7e8ac971d997a997bc6d5ced5904a`.
 
 Fourteen synthetic bound-replica, restart, command and real-HTTP checks passed using the extracted alpha.0.24 runtime. Its exact-source full cloud regression passed 1099 tests across 115 modules, with all 258 reported source hashes matching `b1a4e78bc8b7e8ac971d997a997bc6d5ced5904a`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.

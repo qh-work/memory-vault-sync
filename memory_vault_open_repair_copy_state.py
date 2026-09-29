@@ -1,4 +1,4 @@
-"""Destination-local ACK-unbound copy commit; no network/read/GC endpoint.
+"""Durable independently authorized ACK replica storage and read preparation.
 
 Transport callers must independently authenticate the maintainer and disclosure
 before upload. A reservation, staged bytes or a verifier result is not custody.
@@ -73,9 +73,15 @@ class RepairCopyState(RepairCopyResources):
             expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
             expected_envelope_ref=expected_envelope_ref))
 
+    def commit_occupied(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
+        return self._commit(*args,**options,source_state='occupied',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
     def _commit(self,manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
             reservation_entry,owner_disclosure_entry,source_disclosure_entry,*,expected_ack_slot,expected_owner,
-            expected_source,source_storage_epoch,expected_maintainer,current_statuses,limit_policy,source_state,bound):
+            expected_source,source_storage_epoch,expected_maintainer,current_statuses,limit_policy,source_state,bound,
+            recipient_reservation_entry=None,recipient_disclosure_entry=None):
         s=self.source;policy=s.policy;budget=resolver.budget
         wire._context(policy,budget)
         # The exact local allocation is mandatory; this cannot import a remote
@@ -100,7 +106,8 @@ class RepairCopyState(RepairCopyResources):
             source_storage_epoch=source_storage_epoch,expected_maintainer=expected_maintainer,
             expected_target=s.target,target_storage_epoch=s.node['payload']['storage_epoch'],
             current_statuses=current_statuses,at=s._now(),limit_policy=limit_policy,policy=policy,budget=budget,
-            on_observed=lambda item:self._observe_single(row,caps,root_digest,item),source_state=source_state,bound=bound)
+            on_observed=lambda item:self._observe_single(row,caps,root_digest,item),source_state=source_state,bound=bound,
+            recipient_reservation_entry=recipient_reservation_entry,recipient_disclosure_entry=recipient_disclosure_entry)
         root=plan.assignment.payload['root_key']
         objects={};roles=[];edges=[]
         def add(role,entry):
@@ -113,6 +120,7 @@ class RepairCopyState(RepairCopyResources):
         for item in plan.originals:add(item.role,item.original)
         for name,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
                 ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):add(name,item)
+        if copy_source.occupied_source(plan.source):add('copy.recipient_disclosure',plan.disclosures[2])
         for role,entry,source_manifest in copy_source.source_histories(plan.source,manifest_entry):
             add(role,entry)
             for member in source_manifest.manifest.value['roles']:
@@ -286,6 +294,11 @@ class RepairCopyState(RepairCopyResources):
             expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
             expected_envelope_ref=expected_envelope_ref))
 
+    def restore_occupied(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
+        return self._restore(*args,**options,source_state='occupied',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
     def _restore(self,resource_id,*,expected_ack_slot,expected_owner,expected_source,
             source_storage_epoch,expected_maintainer,limit_policy,source_state,bound,_budget=None):
         """Operator-local historical reconstruction after restart, never READ.
@@ -321,6 +334,11 @@ class RepairCopyState(RepairCopyResources):
             expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
             expected_envelope_ref=expected_envelope_ref))
 
+    def prepare_occupied_read(self,*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
+        return self._prepare_read(*args,**options,source_state='occupied',bound=dict(
+            expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+            expected_envelope_ref=expected_envelope_ref))
+
     def _prepare_read(self,resource_id,consents,*,expected_ack_slot,expected_owner,expected_source,
             source_storage_epoch,expected_maintainer,current_statuses,limit_policy,source_state,bound,
             action='proof',_budget=None,_include_replica=False):
@@ -348,6 +366,12 @@ class RepairCopyState(RepairCopyResources):
             target_storage_epoch=s.node['payload']['storage_epoch'],current_statuses=current_statuses,at=s._now(),
             action=action,policy=policy,budget=budget,on_observed=lambda item:self._observe_single(row,caps,root_digest,item))
         denial=plan['denial_code']
+        # These originals were fully authenticated in this same reconstruction.
+        # Match the exact stored raw bytes AND complete reference before reuse.
+        # Unknown historical observations still undergo signature verification;
+        # no cache or pre-authenticated object crosses a request boundary.
+        authenticated={(item.raw,canonical_bytes(item.ref.as_dict())):item for item in
+            (*replica['source'].statuses,*replica['authority'].statuses,*plan['statuses'])}
         with s._transaction() as now:
             row,current=self._committed(resource_id)
             if s._saved(current,'custody')['raw']!=replica['custody'].raw:wire._fail('repair_copy_commit_mismatch')
@@ -356,6 +380,9 @@ class RepairCopyState(RepairCopyResources):
             if blocked:denial=denial or blocked['reason']
             previous=[]
             for raw,ref in self.db.execute('SELECT raw,ref FROM open_repair_copy_observations WHERE root_digest=?',(root_digest,)):
+                verified=authenticated.get((bytes(raw),bytes(ref)))
+                if verified is not None:
+                    previous.append(verified);continue
                 payload=wire.parse_new_wire(bytes(raw),policy,budget).value['payload']
                 previous.append(status.authenticate_status_original(dict(raw=bytes(raw),ref=json.loads(bytes(ref))),
                     expected_root=root,expected_signing_key=payload['signing_key'],at=payload['issued_at'],

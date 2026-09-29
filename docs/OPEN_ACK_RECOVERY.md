@@ -182,8 +182,144 @@ Selecting a larger client profile never renews or enlarges an existing grant.
 
 `ack_replica_empty_source_recovered` retains `recipient_saved:false`. It exports
 originals and retained statuses into a private evidence file and does not import
-anything into the Vault. This feature does not copy occupied replicas, select
-replacement nodes automatically or implement native Node replica recovery.
+anything into the Vault. For an existing saved receipt, use the occupied-copy commands below.
+Replacement selection remains explicit, and native Node replica recovery is unfinished.
+
+## Copy and recover an existing saved receipt
+
+An occupied ACK source contains the recipient's actual signed saved-message
+receipt. Python maintainers can copy that exact receipt and all three original
+history generations to an explicitly selected replacement. After the original
+source stops, the owner can recover the original receipt from that replacement.
+The original sender, recipient, message and envelope bindings remain unchanged.
+
+The original root must already permit COPY and name the chosen maintainer.
+For a new Agent-prepared message, explicitly choose the optional
+[`copy_maintainer`](OPEN_ACK_PROVISIONING.md#optional-replica-maintenance-for-a-new-message)
+with the finite `receipt-index` profile. Existing roots that did not grant COPY
+cannot acquire it through recovery or a new client setting.
+
+Use the same private configurations and result-file rules as the empty-replica
+commands, with these explicit occupied schemas:
+
+| Command | Private request schema | Required additions |
+| --- | --- | --- |
+| `copy-reserve-occupied` | `memory-vault-open-ack-copy-occupied-request/v1` | `receipt_writer`, `message_id`, `envelope_ref`, `recipient_reservation` |
+| `copy-upload-occupied` | The same occupied copy schema | The same fields, plus `recipient_disclosure` |
+| `configure-replica-occupied` | `memory-vault-open-ack-replica-occupied-read-config/v1` | All three expected bindings inside `context`; `consents.recipient` as well as owner, source and maintainer consents |
+| `recover-replica-occupied` | `memory-vault-open-ack-replica-occupied-recovery-request/v1` | All three bindings and the original source and maintainer fields |
+
+The source `manifest` is the original `ack_occupied_inputs` history and `custody`
+is its original `ack.commit`. The explicit intent uses `scope.kind: ack_occupied`
+with the original `ack_slot`, `grant_ref`, `binding_ref`, `receipt_ref` and
+`original_ack_commit_ref`. Include the exact packs for the unbound, empty and
+occupied generations. Each encoded original uses `raw_base64url` and its complete
+`ref`, preserving opaque reference keys.
+
+Before reservation, the recipient independently signs
+`ack.copy_recipient_reservation_consent`. It has the same closed fields as the
+owner's `ack.copy_reservation_consent`: the exact root, source commit, history,
+maintainer, replacement and storage epoch, with the exact intent digest and a
+finite disclosure deadline. Its current recipient status must authorize COPY.
+The owner cannot supply this permission on the recipient's behalf. Allocation
+discloses receipt associations even before the receipt bytes are transferred.
+
+Upload additionally needs the recipient's `ack.copy_disclosure` with
+`variant: recipient`, alongside the existing owner and source disclosures. Each
+issuer approves its exact original bytes and whole status scopes for the same
+assignment. The original recipient receipt disclosure must still permit READ.
+The destination reconstructs and verifies the complete original receipt event
+before committing custody. Packed originals are transferred once; exact replay
+requests, used work and denied authorization observations survive restart.
+
+Read configuration requires independent `ack.replica_return_consent` documents
+with variants `owner`, `source`, `maintainer` and `recipient`, plus current statuses
+for those four parties and the replacement resource. The read service requires
+five distinct signing identities. COPY permission alone never supplies return
+permission. Revoking old receipt-writing ADMIT does not revoke READ of an already
+saved receipt; revoking the original recipient disclosure or current return
+permission does. Remembered revocations cannot be erased by restarting or
+replaying older status documents.
+
+```sh
+python -B memory_vault_open_repair_admin.py recover-replica-occupied \
+  --network-config /absolute/private/owner/open-config.json \
+  --request /absolute/private/occupied-replica-recovery.json \
+  --output /absolute/private/new-occupied-replica-evidence.json \
+  --repair-profile receipt-index --timeout 60
+```
+
+The explicit `replica_occupied` response cannot be downgraded to an original
+source, unbound replica or empty replica. Every advertised original counts toward
+the logical proof-byte ceiling even when its exact bytes come from a pack.
+Upload, read configuration and recovery share the originally signed finite
+resource budget. Reserve enough metadata for all three histories, independent
+consents, current statuses and durable transfer/read records before signing the
+original grants; a client profile cannot enlarge them afterward. The per-operation
+64-signature and per-replica 64-work limits remain in force.
+
+`ack_replica_occupied_source_recovered` includes `recipient_saved: true` only
+after verifying the original receipt. The private evidence file includes that
+`recipient_receipt`, original source commit and independent replacement custody.
+It does not modify the content Vault. Reservation, upload and configuration
+results continue to report `recipient_saved: false`; copying is not a new save.
+Replacement selection remains explicit. Native Node understands the proof
+grammar but does not yet provide occupied-replica copy or recovery commands.
+
+### Confirm the original send through the Agent
+
+Python agents can update the original send directly using `connect` with
+`schema_version: memory-vault-open-ack-connect/v1` and
+`action: recover_replica_receipt`. Supply the replacement's `base_url`, the
+originally funded `repair_profile`, and a `request` with:
+
+- `target_node_entry`, `expected_target`, `expected_ack_slot`, `root_entry`,
+  `read_entry`, and `bootstrap_entry`;
+- `expected_receipt_writer`, `expected_message_id`, and `expected_envelope_ref`;
+- `expected_source`, `source_storage_epoch`, and `expected_maintainer`.
+
+Original entries use `{raw: <original UTF-8 JSON text>, ref: <complete reference>}`
+as in the existing Agent ACK invitations. An optional `known_statuses` array uses
+the same encoding. Each selected source and replacement is identified by its
+independently supplied signing and encryption keys.
+
+An owner can reuse its exported `owner_invitation` without signing a new READ
+grant. The replacement operator must already have installed the four valid
+return consents. With the independently selected replacement and maintainer keys:
+
+```python
+import copy
+import json
+
+invitation = copy.deepcopy(owner_invitation)
+invitation["action"] = "recover_replica_receipt"
+request = invitation["request"]
+request["expected_source"] = request["expected_target"]
+request["source_storage_epoch"] = json.loads(
+    request["target_node_entry"]["raw"]
+)["payload"]["storage_epoch"]
+request["expected_target"] = replacement_keys
+request["expected_maintainer"] = maintainer_keys
+request["target_node_entry"] = replacement_node_entry
+invitation["base_url"] = json.loads(
+    replacement_node_entry["raw"]
+)["payload"]["base_url"]
+result = agent.handle({"op": "connect", "invitation": invitation})
+```
+
+Keep the original repair profile and grants. Selecting a replica does not extend
+their deadlines or remaining resources. A discovered descriptor by itself does
+not authorize trusting either the replacement or the maintainer.
+
+The Agent verifies the complete replica and current return permissions, retains
+signed status observations in its existing transport database, then independently
+matches the recipient receipt to its actual outbox message and envelope. It
+returns `validated_saved`, the original `commit_ref` and the independent
+`replica_custody_ref`. Repeating the original `send` after restart reports
+`endpoint_validated: true` even when the original delivery and ACK nodes are
+offline. Unknown local messages and conflicting receipts refuse this update.
+The action does not create a new send, renew permission or import a memory.
+
 
 ## Owner recovery command
 

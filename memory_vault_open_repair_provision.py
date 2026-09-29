@@ -30,6 +30,7 @@ MAX_RECORDS = 16
 MAX_RECORD_BYTES = 1048576
 SAVED_REQUEST_SCHEMA = 'memory-vault-open-saved-ack-request/v1'
 PLAN_VERSION = 2
+COPY_PLAN_VERSION = 3
 
 
 def _fail(code):
@@ -38,6 +39,16 @@ def _fail(code):
 
 def _digest(value):
     return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def _copy_maintainer(value,profile,policy):
+    """Explicit optional owner opt-in, never inferred from source selection."""
+    if value is None:return None
+    if profile!='receipt-index':_fail('repair_copy_profile_required')
+    budget=wire.RepairBudget(policy)
+    frozen=wire.build_new_wire(value,policy,budget)
+    resource._dual_key(frozen.value,budget)
+    return json.loads(frozen.raw)
 
 
 def _entry(raw):
@@ -152,7 +163,7 @@ class AckSourceProvisioner:
         return _entry(canonical_bytes(dict(payload=payload,proof=self.delivery.identity.sign_message(payload))))
 
     async def queue_and_prepare(self, request_id, recipient, *, text='', memory_ids=None,
-            profile='receipt', lifetime=3600):
+            profile='receipt', lifetime=3600,copy_maintainer=None):
         """Retain a selection, establish unbound custody, then freeze and bind E.
 
         Subsequent ordinary send must use exactly this request ID and selection.
@@ -160,15 +171,18 @@ class AckSourceProvisioner:
         """
         digest, selected=self.delivery._send_input(request_id,[recipient],text,memory_ids,None)
         self.delivery._prepare_outbox(request_id,recipient,digest,text,selected)
-        return await self.prepare_existing(request_id,profile=profile,lifetime=lifetime)
+        return await self.prepare_existing(request_id,profile=profile,lifetime=lifetime,copy_maintainer=copy_maintainer)
 
-    async def prepare_existing(self, request_id, *, profile='receipt', lifetime=3600):
+    async def prepare_existing(self, request_id, *, profile='receipt', lifetime=3600,copy_maintainer=None):
         if type(profile) is not str or profile not in PROFILES or type(lifetime) is not int or not 120<=lifetime<=86400:
             _fail('repair_invalid_request_bundle')
         resource._opaque(request_id)
+        copy_maintainer=_copy_maintainer(copy_maintainer,profile,self.policy)
+        plan_version=COPY_PLAN_VERSION if copy_maintainer is not None else PLAN_VERSION
         row=self.delivery._outbox(request_id);self._unsent(row)
         held=self._load(request_id)
-        if held is not None and held[0].get('plan_version')!=PLAN_VERSION:
+        if held is not None and held[0].get('copy_maintainer')!=copy_maintainer:_fail('repair_provision_conflict')
+        if held is not None and held[0].get('plan_version')!=plan_version:
             _fail('repair_provision_legacy_order')
         if held is None:
             if row['envelope'] is not None or row['session'] is not None:
@@ -189,9 +203,14 @@ class AckSourceProvisioner:
                 or keys['recipient_signing_key']['key_id']!=row['recipient']):
             _fail('repair_provision_outbox_mismatch')
         writer=dict(signing_key=keys['recipient_signing_key'],encryption_key=keys['recipient_encryption_key'])
+        if copy_maintainer is not None and any(
+                copy_maintainer[k]['key_id']==party[k]['key_id']
+                for party in (self.owner,writer,self.source.target) for k in ('signing_key','encryption_key')):
+            _fail('repair_copy_maintainer_distinct_parties_required')
         stable=dict(request_id=request_id,input_sha256=row['input_sha256'],message_id=row['message_id'],
             body_sha256=hashlib.sha256(bytes(row['body'])).hexdigest(),session=session_raw,
             owner=self.owner,writer=writer,target=self.source.target,epoch=self.source.node['payload']['storage_epoch'],profile=profile,lifetime=lifetime)
+        if copy_maintainer is not None:stable['copy_maintainer']=copy_maintainer
         if held is None:
             now=self.source._now();until=min(now+lifetime,self.source.node['payload']['expires_at'])
             if until-now<120:_fail('repair_provision_expiring_source')
@@ -205,7 +224,7 @@ class AckSourceProvisioner:
             caps=dict(max_live_bytes=16384,max_meta_bytes=limits['max_proof_bytes'],max_items=128,
                 max_requests=limits['max_signature_checks'],max_pending=limits['max_pending'],max_replay_records=limits['max_replay_records'],
                 max_jobs=16,max_job_bytes=limits['max_proof_bytes'])
-            plan=dict(stable,plan_version=PLAN_VERSION,slot=dict(root_key=root,slot_id='slot_'+token,receipt_writer=writer_id,grant_id='write_'+token),
+            plan=dict(stable,plan_version=plan_version,slot=dict(root_key=root,slot_id='slot_'+token,receipt_writer=writer_id,grant_id='write_'+token),
                 created_at=now,until=until,token=token,limits=limits,caps=caps,node=_entry(canonical_bytes(self.source.node)))
             encoded=canonical_bytes(_encoded(plan))
             with self.delivery.participant.state.db() as db:
@@ -218,7 +237,7 @@ class AckSourceProvisioner:
                 db.execute('INSERT OR IGNORE INTO open_repair_source_provision VALUES(?,?,?)',(request_id,encoded,b'{}'))
             held=self._load(request_id)
         self.plan=held[0]
-        if self.plan.get('plan_version')!=PLAN_VERSION:_fail('repair_provision_legacy_order')
+        if self.plan.get('plan_version')!=plan_version:_fail('repair_provision_legacy_order')
         if any(self.plan.get(name)!=value for name,value in stable.items()):_fail('repair_provision_conflict')
         if self.source._now()>=self.plan['until']:_fail('repair_provision_expired')
         unbound=self._provision_unbound()
@@ -287,10 +306,15 @@ class AckSourceProvisioner:
         windows={name:until for name in resource._WINDOWS}
         op=json.loads(offer['raw'])['payload']
         now=self.source._now()
+        maintainers=[{name+'_id':value['key_id'] for name,value in p['target'].items()}] if p['profile']=='receipt-index' else []
+        operation_mask=91 if p['profile']=='receipt-index' else 75
+        if p.get('copy_maintainer') is not None:
+            maintainers.append({name+'_id':value['key_id'] for name,value in p['copy_maintainer'].items()})
+            maintainers.sort(key=lambda item:(item['signing_key_id'],item['encryption_key_id']))
+            operation_mask|=4
         root=self._sign('ack.root_authority',issued_at=now,expires_at=until,ack_slot=slot,authority_id='authority_'+token,
             owner=rootkey['owner'],receipt_writer=slot['receipt_writer'],original_resource_ref=op['resource'],
-            original_resource_offer_ref=offer['ref'],maintainers=[{name+'_id':value['key_id'] for name,value in p['target'].items()}] if p['profile']=='receipt-index' else [],
-            operation_mask=91 if p['profile']=='receipt-index' else 75,
+            original_resource_offer_ref=offer['ref'],maintainers=maintainers,operation_mask=operation_mask,
             allowed_roles=sorted(ack.ROLES|empty.ROLES|occupied.ROLES|{'bootstrap.grant','ack_owner_service_v1','ack_offer_service_v1'}),
             max_bindings=1,max_receipts=1,budget=p['caps'],windows=windows,max_delegate_depth=2,
             max_destinations_per_job=1,max_concurrent_jobs=1,revision=1)

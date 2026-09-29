@@ -13,6 +13,7 @@ from memory_vault_open_repair_copy_state import RepairCopyState
 from memory_vault_open_repair_index_state import encode_entry, decode_entry
 from memory_vault_open_repair_state import ROW_CHARGE
 import memory_vault_open_repair_original as original
+import memory_vault_open_repair_copy_source as copy_source
 import memory_vault_open_repair_probe as probe
 import memory_vault_open_repair_resource as resource
 import memory_vault_open_repair_stage as stage
@@ -27,8 +28,8 @@ def make_copy_commit_request(signer,*,intent_entry,result_entry,resource_id,expe
                              source_storage_epoch,expires_at,bound=None,**options):
     """Sign a request for one closed stage; caller independently verifies its chain."""
     with stage._using(options) as (expected,policy,budget):
-        if expected['consumer'] not in ('ack_copy_unbound','ack_copy_empty'):wire._fail('repair_invalid_stage')
-        is_empty=expected['consumer']=='ack_copy_empty'
+        if expected['consumer'] not in ('ack_copy_unbound','ack_copy_empty','ack_copy_occupied'):wire._fail('repair_invalid_stage')
+        is_empty=expected['consumer']!='ack_copy_unbound'
         if is_empty:
             wire.object_fields(bound,{'receipt_writer','message_id','envelope_ref'})
             resource._dual_key(bound['receipt_writer'],budget)
@@ -45,7 +46,7 @@ def make_copy_commit_request(signer,*,intent_entry,result_entry,resource_id,expe
             target_storage_epoch=expected['epoch'],resource_id=resource_id,intent_ref=intent.ref.as_dict(),
             stage_result_ref=result.ref.as_dict(),owner=expected_owner,source=expected_source,source_storage_epoch=source_storage_epoch)
         stage._window(payload,expected['at'])
-        if is_empty:payload.update(kind='ack.copy_empty_commit',**bound)
+        if is_empty:payload.update(kind='ack.copy_'+('occupied' if expected['consumer']=='ack_copy_occupied' else 'empty')+'_commit',**bound)
         if expires_at>result.payload['expires_at']:wire._fail('repair_stage_mismatch')
         return probe._sign(wire.build_new_wire(payload,policy,budget).value,signer,policy,budget)
 
@@ -94,7 +95,7 @@ class RepairCopyUpload:
     def _options(self,intent,budget):
         return dict(expected_subject=intent['caller'],expected_target=self.state.target,
             target_storage_epoch=self.state.node['payload']['storage_epoch'],at=self.state._now(),
-            expected_consumer={'ack_unbound':'ack_copy_unbound','ack_empty':'ack_copy_empty'}.get(intent['scope']['kind']),
+            expected_consumer={'ack_unbound':'ack_copy_unbound','ack_empty':'ack_copy_empty','ack_occupied':'ack_copy_occupied'}.get(intent['scope']['kind']),
             policy=budget.policy,budget=budget)
 
     @contextmanager
@@ -300,7 +301,7 @@ class RepairCopyUpload:
         if len(entry['raw'])>stage.MAX_CONTROL_BYTES:wire._fail('repair_control_too_large')
         with self._work(rid,entry,len(entry['raw']),budget) as (row,allocation,caps,_,attempt):
             parsed=wire.parse_new_wire(entry['raw'],budget.policy,budget).value
-            is_empty=allocation['scope']['kind']=='ack_empty'
+            is_empty=allocation['scope']['kind']!='ack_unbound'
             payload=wire.object_fields(parsed['payload'],EMPTY_COMMIT_FIELDS if is_empty else COMMIT_FIELDS)
             stage._window(payload,self.state._now());original._opaque(payload['request_id'])
             original._opaque(payload['source_storage_epoch'])
@@ -308,7 +309,7 @@ class RepairCopyUpload:
             saved=self._session(rid);parents=self._parents(saved,budget)
             if 'closed' not in parents or 'result' not in parents:wire._fail('repair_stage_incomplete')
             result_payload=wire.parse_new_wire(parents['result']['raw'],budget.policy,budget).value['payload']
-            if (payload['schema_version']!=stage.SCHEMA or payload['kind']!=('ack.copy_empty_commit' if is_empty else 'ack.copy_commit')
+            if (payload['schema_version']!=stage.SCHEMA or payload['kind']!=({'ack_unbound':'ack.copy_commit','ack_empty':'ack.copy_empty_commit','ack_occupied':'ack.copy_occupied_commit'}[allocation['scope']['kind']])
                     or payload['subject']!=probe._dual(allocation['caller'])
                     or payload['signing_key']!=allocation['caller']['signing_key']
                     or payload['target_node_key_id']!=self.state.identity.key_id
@@ -341,26 +342,31 @@ class RepairCopyUpload:
         one=lambda role:roles[role][0]
         # The displayed direct originals must agree with the exact packed
         # source closure; the full verifier below authenticates that closure.
-        is_empty=allocation['scope']['kind']=='ack_empty'
+        is_empty=allocation['scope']['kind']!='ack_unbound'
         if is_empty:wire.object_fields(bound,{'expected_receipt_writer','expected_message_id','expected_envelope_ref'})
         elif bound is not None:wire._fail('repair_copy_upload_mismatch')
-        declared={}
-        for name in (('history.ack_unbound','history.ack_empty') if is_empty else ('history.ack_unbound',)):
-            manifest=wire.parse_new_wire(one(name)['raw'],budget.policy,budget).value
-            for member in manifest['roles']:
-                declared.setdefault(member['role'],set()).add(wire.raw_ref(member['document_ref']))
-        for role,refs in declared.items():
-            if {wire.raw_ref(e['ref']) for e in roles.get(role,())}!=refs:wire._fail('repair_copy_upload_mismatch')
+        is_occupied=allocation['scope']['kind']=='ack_occupied'
+        names=('history.ack_unbound','history.ack_empty','history.ack_occupied_inputs') if is_occupied else ('history.ack_unbound','history.ack_empty') if is_empty else ('history.ack_unbound',)
+        if not is_occupied:
+            declared={}
+            for name in names:
+                manifest=wire.parse_new_wire(one(name)['raw'],budget.policy,budget).value
+                for member in manifest['roles']:
+                    declared.setdefault(member['role'],set()).add(wire.raw_ref(member['document_ref']))
+            for role,refs in declared.items():
+                if {wire.raw_ref(e['ref']) for e in roles.get(role,())}!=refs:wire._fail('repair_copy_upload_mismatch')
         if (one('copy.allocation')!=self.state._saved(row,'request')
                 or one('copy.offer')!=self.state._saved(row,'offer')):wire._fail('repair_copy_upload_mismatch')
         resolver=wire.LocalRawResolver(self.state.policy,budget)
         for entry in roles['history.raw_pack']:resolver.put(entry['ref']['namespace'],entry['ref']['key'],entry['raw'])
-        method=self.store.commit_empty if is_empty else self.store.commit_unbound
-        return method(one('history.ack_empty' if is_empty else 'history.ack_unbound'),resolver,one('ack.empty_custody' if is_empty else 'ack.slot_custody'),
+        if is_occupied:copy_source.resolve_occupied_stage_originals(children,resolver,self.state.policy,budget)
+        method=self.store.commit_occupied if is_occupied else self.store.commit_empty if is_empty else self.store.commit_unbound
+        additional=dict(recipient_reservation_entry=one('copy.recipient_reservation_consent'),recipient_disclosure_entry=one('copy.recipient_disclosure')) if is_occupied else {}
+        return method(one(names[-1]),resolver,one('ack.commit' if is_occupied else 'ack.empty_custody' if is_empty else 'ack.slot_custody'),
             one('copy.allocation'),one('copy.offer'),one('copy.assignment'),one('copy.reservation_consent'),
             one('copy.owner_disclosure'),one('copy.source_disclosure'),expected_ack_slot=expected_ack_slot,
             expected_owner=expected_owner,expected_source=expected_source,source_storage_epoch=source_storage_epoch,
-            expected_maintainer=expected_maintainer,current_statuses=roles['copy.current_status'],limit_policy=self.state.limits,**(bound or {}))
+            expected_maintainer=expected_maintainer,current_statuses=roles['copy.current_status'],limit_policy=self.state.limits,**(bound or {}),**additional)
 
 
 def copy_upload_resource(db,payload):
@@ -369,14 +375,14 @@ def copy_upload_resource(db,payload):
     kind=payload.get('kind')
     if kind=='proof.stage_intent':
         manifest=payload.get('manifest')
-        if not isinstance(manifest,dict) or manifest.get('consumer') not in ('ack_copy_unbound','ack_copy_empty'):return None
+        if not isinstance(manifest,dict) or manifest.get('consumer') not in ('ack_copy_unbound','ack_copy_empty','ack_copy_occupied'):return None
         try:caller=payload['subject']['signing_key']['key_id'];allocation=payload['allocation_id']
         except (KeyError,TypeError):wire._fail('repair_invalid_stage')
         if type(caller) is not str or type(allocation) is not str:wire._fail('repair_invalid_stage')
         rows=db.execute('SELECT resource_id FROM open_repair_copy_resources WHERE caller=? AND allocation_id=? LIMIT 2',(caller,allocation)).fetchall()
         if len(rows)!=1:wire._fail('repair_copy_upload_missing')
         return rows[0][0]
-    if kind not in ('proof.stage_answer','proof.stage_close','proof.stage_child','ack.copy_commit','ack.copy_empty_commit'):return None
+    if kind not in ('proof.stage_answer','proof.stage_close','proof.stage_child','ack.copy_commit','ack.copy_empty_commit','ack.copy_occupied_commit'):return None
     if not db.execute("SELECT 1 FROM sqlite_master WHERE name='open_repair_copy_upload_routes'").fetchone():return None
     reference=wire.raw_ref(payload.get('intent_ref'))
     row=db.execute('SELECT resource_id FROM open_repair_copy_upload_routes WHERE intent_digest=?',(reference.raw_sha256,)).fetchone()

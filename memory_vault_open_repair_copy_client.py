@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import memory_vault_open_blob as blob
 import memory_vault_open_repair_copy_authority as authority
+import memory_vault_open_repair_copy_source as copy_source
 import memory_vault_open_repair_probe as probe
 import memory_vault_open_repair_stage as stage
 import memory_vault_open_repair_wire as wire
@@ -133,6 +134,9 @@ class AckCopyUploadClient:
     def upload_empty(self,base,*args,target_node_entry,timeout=60,**context):
         return self._upload(base,*args,target_node_entry=target_node_entry,timeout=timeout,source_state='empty',**context)
 
+    def upload_occupied(self,base,*args,target_node_entry,timeout=60,**context):
+        return self._upload(base,*args,target_node_entry=target_node_entry,timeout=timeout,source_state='occupied',**context)
+
     def _upload(self,base,*args,target_node_entry,timeout,source_state,**context):
         """Use the originals for the selected source generation, except at.
 
@@ -145,9 +149,9 @@ class AckCopyUploadClient:
             self.deadline=time.monotonic()+timeout
             budget=self._budget()
             names=('expected_ack_slot','expected_owner','expected_source','source_storage_epoch','expected_target','target_storage_epoch','limit_policy')
-            if source_state=='empty':names+=('expected_receipt_writer','expected_message_id','expected_envelope_ref')
+            if source_state in ('empty','occupied'):names+=('expected_receipt_writer','expected_message_id','expected_envelope_ref')
             self.context=wire.build_new_wire({k:context[k] for k in names},self.policy,budget).value
-            prepare=self.journal.prepare_upload_empty if source_state=='empty' else self.journal.prepare_upload_unbound
+            prepare={'unbound':self.journal.prepare_upload_unbound,'empty':self.journal.prepare_upload_empty,'occupied':self.journal.prepare_upload_occupied}[source_state]
             prepared=prepare(*args,at=self._now(),**dict(context,**self.context))
             allocation_entry=next(e['entry'] for e in prepared['children'] if e['role']=='copy.allocation')
             allocation=wire.parse_new_wire(allocation_entry['raw'],self.policy,budget).value['payload']
@@ -185,6 +189,10 @@ class AckCopyUploadClient:
         return self._reserve(base,manifest_entry,resolver,custody_entry,consent_entry,intent,
             target_node_entry=target_node_entry,timeout=timeout,source_state='empty',**context)
 
+    def reserve_occupied(self,base,manifest_entry,resolver,custody_entry,consent_entry,intent,*,target_node_entry,timeout=60,**context):
+        return self._reserve(base,manifest_entry,resolver,custody_entry,consent_entry,intent,
+            target_node_entry=target_node_entry,timeout=timeout,source_state='occupied',**context)
+
     def _reserve(self,base,manifest_entry,resolver,custody_entry,consent_entry,intent,*,target_node_entry,timeout,source_state,**context):
         """Obtain a remote offer after original reservation-disclosure checks.
 
@@ -199,7 +207,7 @@ class AckCopyUploadClient:
         with self.lock:
             self.source_state=source_state
             self.deadline=time.monotonic()+timeout
-            prepare=self.journal.prepare_reservation_empty if source_state=='empty' else self.journal.prepare_reservation_unbound
+            prepare={'unbound':self.journal.prepare_reservation_unbound,'empty':self.journal.prepare_reservation_empty,'occupied':self.journal.prepare_reservation_occupied}[source_state]
             prepared=prepare(manifest_entry,resolver,custody_entry,consent_entry,intent,
                 at=self._now(),budget=resolver.budget,**context)
             self.intent=allocation=prepared['allocation'];self.status_stamp=prepared['status_stamp']
@@ -260,7 +268,7 @@ class AckCopyUploadClient:
 
     def _commit(self,result,step):
         context=self.context
-        is_empty=self.source_state=='empty'
+        is_empty=self.source_state!='unbound'
         bound=dict(receipt_writer=context['expected_receipt_writer'],message_id=context['expected_message_id'],
             envelope_ref=context['expected_envelope_ref']) if is_empty else None
         offer=next(e['entry'] for e in self.children if e['role']=='copy.offer')
@@ -271,7 +279,7 @@ class AckCopyUploadClient:
         def check(raw,b):
             from memory_vault_open_repair_copy_upload import COMMIT_FIELDS,EMPTY_COMMIT_FIELDS
             import memory_vault_open_repair_index as index
-            item=index._signed(_raw_entry(raw,b),self.journal.keys['signing_key'],'ack.copy_empty_commit' if is_empty else 'ack.copy_commit',
+            item=index._signed(_raw_entry(raw,b),self.journal.keys['signing_key'],{'unbound':'ack.copy_commit','empty':'ack.copy_empty_commit','occupied':'ack.copy_occupied_commit'}[self.source_state],
                 EMPTY_COMMIT_FIELDS if is_empty else COMMIT_FIELDS,self.policy,b)
             stage._window(item.payload,self._now())
             p=item.payload
@@ -285,7 +293,10 @@ class AckCopyUploadClient:
             resolver=wire.LocalRawResolver(self.policy,b)
             for row in self.children:
                 e=row['entry'];resolver.put(e['ref']['namespace'],e['ref']['key'],e['raw'])
-            verify_replica=authority.verify_empty_replica_event if is_empty else authority.verify_unbound_replica_event
+            if self.source_state=='occupied':
+                copy_source.resolve_occupied_stage_originals(
+                    [dict(role=row['role'],**row['entry']) for row in self.children],resolver,self.policy,b)
+            verify_replica={'unbound':authority.verify_unbound_replica_event,'empty':authority.verify_empty_replica_event,'occupied':authority.verify_occupied_replica_event}[self.source_state]
             checked=verify_replica(manifest,resolver,custody,expected_maintainer=self.journal.keys,
                 **context,policy=self.policy,budget=b)
             if checked['custody'].payload['resource']['resource_id']!=rid:wire._fail('repair_ref_mismatch')
