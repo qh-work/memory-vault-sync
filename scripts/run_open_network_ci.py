@@ -350,7 +350,7 @@ class DiscardOutput(io.TextIOBase):
 
 class SyntheticResult(unittest.TestResult):
     def __init__(self,reports):
-        super().__init__();self.reports=reports;self.entries=[]
+        super().__init__();self.reports=reports;self.entries=[];self.failfast=True
 
     def _exc_info_to_string(self,err,test):
         return err[0].__name__  # Never serialize assertion operands, keys or paths.
@@ -383,8 +383,8 @@ class SyntheticResult(unittest.TestResult):
     def addSuccess(self,test):super().addSuccess(test);self.record(test,"passed")
     def addFailure(self,test,err):super().addFailure(test,err);self.record(test,"failed",err)
     def addError(self,test,err):super().addError(test,err);self.record(test,"error",err)
-    def addSkip(self,test,reason):super().addSkip(test,"reason omitted");self.record(test,"skipped")
-    def addExpectedFailure(self,test,err):super().addExpectedFailure(test,err);self.record(test,"expected_failure",err)
+    def addSkip(self,test,reason):super().addSkip(test,"reason omitted");self.record(test,"skipped");self.stop()
+    def addExpectedFailure(self,test,err):super().addExpectedFailure(test,err);self.record(test,"expected_failure",err);self.stop()
     def addUnexpectedSuccess(self,test):super().addUnexpectedSuccess(test);self.record(test,"unexpected_success")
     def addSubTest(self,test,subtest,err):
         super().addSubTest(test,subtest,err);self.record(test,"subtest_passed" if err is None else "subtest_failed",err)
@@ -393,13 +393,18 @@ class SyntheticResult(unittest.TestResult):
 def run_light(reports):
     if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
     result=SyntheticResult(reports)
+    # A rejected candidate cannot become accepted by running more cases. Stop
+    # on the first disqualifying result, retaining cleanup and explicit coverage.
     # Test exceptions remain classified, but raw provider errors/fixture paths
     # are not copied into either uploaded reports or public console output.
     with contextlib.redirect_stdout(DiscardOutput()),contextlib.redirect_stderr(DiscardOutput()):
         suite=unittest.defaultTestLoader.loadTestsFromNames(MODULES)
+        planned=suite.countTestCases()
         suite.run(result)
-    passed=result.testsRun>0 and result.wasSuccessful() and not result.skipped and not result.expectedFailures
+    complete=planned>0 and result.testsRun==planned
+    passed=complete and result.wasSuccessful() and not result.skipped and not result.expectedFailures
     reports.write("results.json",{"schema_version":"memory-vault-open-ci-tests/v1","tests_run":result.testsRun,
+        "tests_planned":planned,"complete":complete,"stopped_early":result.testsRun<planned,
         "passed":passed,"skipped":len(result.skipped),"failures":len(result.failures),"errors":len(result.errors),
         "expected_failures":len(result.expectedFailures),"unexpected_successes":len(result.unexpectedSuccesses),"tests":result.entries})
     return passed
@@ -465,7 +470,8 @@ def main():
     try:
         record_runtime(reports,args.mode,args.seed)
         passed=run_scale(reports,args.seed) if args.mode=="scale" else run_light(reports)
-        reports.status("passed" if passed else "failed",passed=passed,complete=True)
+        complete=args.mode=="scale" or json.loads((reports.directory/"results.json").read_text())["complete"]
+        reports.status("passed" if passed else "failed",passed=passed,complete=complete)
         return 0 if passed else 1
     except KeyboardInterrupt:
         reports.status("interrupted");reports.event({"event":"interrupted_or_timed_out"},error=True);return 130

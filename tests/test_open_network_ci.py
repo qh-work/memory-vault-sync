@@ -136,6 +136,50 @@ class OpenNetworkCITests(unittest.TestCase):
                 combined="".join(p.read_text() for p in Path(temporary).iterdir())
                 self.assertNotIn("synthetic secret",combined);self.assertNotIn("/synthetic/private",combined)
 
+    def test_light_stops_after_disqualifying_result_and_keeps_cleanup(self):
+        visited=[]
+        class First(unittest.TestCase):
+            def setUp(self):self.addCleanup(visited.append,'cleaned')
+            def test_failure(self):self.fail('synthetic failure')
+            def test_error(self):raise RuntimeError('synthetic error')
+            def test_skip(self):self.skipTest('synthetic skip')
+            @unittest.expectedFailure
+            def test_expected(self):self.fail('synthetic expected failure')
+            @unittest.expectedFailure
+            def test_unexpected(self):pass
+            def test_subtest(self):
+                with self.subTest(synthetic=1):self.fail('synthetic subtest')
+        class Later(unittest.TestCase):
+            def runTest(self):visited.append('later')
+        for name in ('failure','error','skip','expected','unexpected','subtest'):
+            visited.clear();suite=unittest.TestSuite([First('test_'+name),Later()])
+            with self.subTest(name=name),tempfile.TemporaryDirectory() as temporary, \
+                    mock.patch.object(unittest.defaultTestLoader,'loadTestsFromNames',return_value=suite), \
+                    mock.patch('sys.__stdout__',io.StringIO()):
+                reports=ci.Reports(temporary);self.assertFalse(ci.run_light(reports))
+                result=json.loads((Path(temporary)/'results.json').read_text())
+                self.assertEqual(visited,['cleaned'])
+                self.assertEqual((result['tests_run'],result['tests_planned']),(1,2))
+                self.assertFalse(result['complete']);self.assertTrue(result['stopped_early'])
+                reports.status('failed',passed=False,complete=result['complete'])
+                self.assertFalse(ci.finalize(reports))
+
+    def test_light_success_requires_every_planned_case(self):
+        visited=[]
+        class Passing(unittest.TestCase):
+            def runTest(self):visited.append('passed')
+        suite=unittest.TestSuite([Passing(),Passing()])
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(unittest.defaultTestLoader,'loadTestsFromNames',return_value=suite), \
+                mock.patch('sys.__stdout__',io.StringIO()):
+            reports=ci.Reports(temporary);self.assertTrue(ci.run_light(reports))
+            result=json.loads((Path(temporary)/'results.json').read_text())
+            self.assertEqual(len(visited),2)
+            self.assertEqual((result['tests_run'],result['tests_planned']),(2,2))
+            self.assertTrue(result['complete']);self.assertFalse(result['stopped_early'])
+            reports.status('passed',passed=True,complete=result['complete'])
+            self.assertTrue(ci.finalize(reports))
+
     def test_scale_command_and_progress_capture_use_only_tiny_fake_child(self):
         original=subprocess.Popen;seen=[];value=synthetic_report()
         progress={"seed":17,"elapsed_seconds":1.0,"phase":"healthy","queries_completed":100,"failures":0,"requests":200}
