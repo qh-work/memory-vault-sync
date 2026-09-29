@@ -1,79 +1,45 @@
-# Memory Vault v0.28.0-alpha.0.14 — cold mailbox receipt return
+# Memory Vault v0.28.0-alpha.0.15 — mailbox fixes and explicit replica reads
 
-A sender can retain its separately prepared ACK authority with a mailbox message
-using `ack_request_id`. Complete signed configuration survives mailbox admission,
-restart and cold feed recovery. B can then call `return_mailbox_receipt` with the
-saved message and an independently selected source origin/key; no separately
-transferred recipient invitation is required. The actual saved receipt is returned
-to the ACK source, and A recovers it through its own original read permission.
+This is a release candidate until the release record and downloadable assets
+confirm publication and exact-source validation.
 
-The receiver keeps its exact request and put journal so a lost successful reply
-resumes after restart. Fresh preflight is reused once with the original work meter
-and deadline; exact supplied originals avoid duplicate downloads while all source,
-history and current-status verification remains active. Finite source permissions
-and network request limits are unchanged. ACK-bearing mailbox drafts use bounded
-compression under the existing request limit and retain unchanged original bytes.
+Cold-mailbox recovery now reuses exact packed originals instead of downloading
+them twice. The focused two-message ACK feed uses 10 requests instead of 60;
+original proof-byte, permission and deadline checks remain active. The strict
+installed-runtime launcher now includes the same copy modules as the builder.
+Long synthetic mailbox scenarios have realistic authority windows; production
+reservation and possession deadlines are unchanged.
 
-This extension requires updated clients and sources for separately signed root
-status and compressed mailbox admission. Older journaled combined-status setups
-retain exact retries; their signed status cannot be projected into the new mailbox
-configuration. Automatic replacement-node repair and full native TypeScript
-mailbox-client parity remain unfinished.
+The Python replacement operator can configure a committed unbound ACK replica
+for protected HTTP reads. Separate owner, original-source and maintainer return
+consents bind the exact destination, assignment, original custody and bootstrap
+grant. Both key-possession checks precede disclosure. Status floors, replay
+records, original bytes and actual work charges survive restart. The Python
+`AckOwnerRecoveryClient.recover_replica` independently reconstructs both storage
+events, verifies current READ and returns a bounded status archive for later
+calls. An unbound replica is not a saved recipient receipt.
 
+The continuation trial now requires a fresh per-read nonce in the structured
+answer. Correct facts without that live value fail; old-but-still-correct facts
+also require a current read. Cross-case/run nonces fail. Reports use version 2;
+prior reports are not silently upgraded. Returning the nonce proves possession
+of a live value, not that a model understood or used every retrieved fact.
 
-The sender can submit `connect` with mailbox action `retain` and the receiver's
-exported authorization. This prepares and admits the exact existing ciphertext
-using the persistent admission journal. A lost successful HTTP reply can be
-retried without replacing the message or duplicating its storage history.
-Retention does not imply that the receiver saved or acknowledged the message.
+The copy staging wire has a separate explicit consumer, closed original roles
+and the existing bounded chunk exchange. This is protocol support only: remote
+copy upload, automatic replacement selection, first-receipt admission on a
+replacement and occupied replica recovery remain unfinished. The standard replica
+recovery command and native TypeScript replica client are not implemented.
 
-Agents can now prepare an independent ACK source before first encryption using
-`connect`, then export separate receiver and sender invitations. B can pass its
-invitation directly to `connect` after saving the message. A can use its own
-invitation to recover the original saved receipt into its actual send record,
-even with the original delivery node offline. Original grants, known status
-records and locally retained status history remain independently verified.
+Existing approved-agent encrypted communication, selected-memory sharing,
+retained mailbox provisioning/recovery and independent saved-receipt return
+remain available. Operators supply reachable nodes and explicitly authorize
+finite resources; the project supplies no public seed. Complete native
+TypeScript mailbox parity, scalable partial feeds, external adoption and
+thousand-agent capacity remain unverified or unfinished.
 
-Preparation stores its exact result in the protected local database. Reopening
-the client and retrying identical inputs returns that history without claiming
-a fresh source check; changed inputs under the same request ID fail. Export is
-paged within the Agent output limit and binds each page to the bundle digest.
-Owner and recipient material are selected separately, and no private keys are
-exported. R still explicitly enables finite remote setup, and B must approve A.
-
-Full cloud and packaged validation must be established from this candidate's
-own source-bound release record.
-
-The Python Agent can provision a receiver mailbox, verify its original source
-proof, and register it for ordinary receive calls. A sender can prepare its
-already sent ciphertext for that mailbox and submit it over HTTP. Exact requests,
-resource charges and storage stages survive interrupted operations. Two-message
-recovery covers the case where a later message advances the index before an
-earlier admission finishes publishing its original prefix.
-
-Receivers enumerate the encrypted index, authenticate the complete original
-history and current READ permissions, and retrieve the retained ciphertext
-without the original delivery lease. Explicitly shared memories use the existing
-trust and import checks. A durably staged receive can resume locally after a
-restart without contacting the old delivery node. Messages and memories retain
-their original provenance; content is never execution authority.
-
-The existing Agent connect operation also returns saved receipts to an
-independently authorized ACK source and recovers receipts into the sender's
-actual outbox. Mailbox storage success does not claim recipient acknowledgement.
-Mailbox READ permission does not grant receipt publication or recovery.
-
-See the [mailbox and contact guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.14/docs/OPEN_NETWORK_CONTACT.md)
-and [independent receipt guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.14/docs/OPEN_ACK_PROVISIONING.md).
-Use the client archive with the published checksums and source-bound validation
-record. This candidate is not a claim of a completed public release until that
-record and downloadable assets are available.
-
-Participants operate reachable nodes and explicitly fund finite resources; no
-project-operated public seed is supplied. Full-prefix histories need budgets
-for every covered message. Replacement-node copy/repair, scalable partial feed
-recovery and mailbox attempts with a non-null ACK graph remain unfinished.
-Python hosts the new mailbox workflow. Native TypeScript includes mailbox wire,
-probe and proof support, but does not yet implement the full provisioning and
-feed client. Synthetic HTTP checks do not establish external adoption, global
-availability or thousand-agent capacity.
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.15/docs/OPEN_NETWORK_QUICKSTART.md),
+[mailbox guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.15/docs/OPEN_NETWORK_CONTACT.md)
+and [ACK recovery guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.15/docs/OPEN_ACK_RECOVERY.md).
+Published alpha.0.14 archives stay unchanged. Its full cloud failure is historical;
+follow-up success does not retroactively validate those old bytes.

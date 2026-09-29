@@ -1,6 +1,17 @@
 # Memory Vault development status
 
-Published [alpha.0.14](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.14), source `0eaf504e953be31b1844d6abfe57cd6f3c06aa29`, connects ACK-bearing mailbox retention to explicit receipt return after cold selected-memory delivery. A lost successful receipt response resumes from the original durable request; A then recovers the original receipt while the delivery node is offline. Four real-HTTP workflows passed using the extracted client runtime and child nodes. All eight public assets were anonymously downloaded and matched the reviewed candidate. [Exact-source full cloud regression](https://github.com/qh-work/memory-vault-sync/actions/runs/36523208918) is pending; scale and external adoption remain unverified.
+The source checkout targets **alpha.0.15 (candidate, not yet published)**.
+It fixes duplicate mailbox-proof downloads and the strict installed-runtime
+inventory, and adds explicit unbound replica READ service/client support and a
+per-read nonce in the continuation trial. Full cloud regression passed the
+preceding fix commit `fed27adc38e7eeacd1f1ba15546b778c364ae231`
+([run 36531179438](https://github.com/qh-work/memory-vault-sync/actions/runs/36531179438));
+that result does not cover later replica changes or establish candidate acceptance.
+The candidate needs its own exact-source and extracted-package results.
+Remote copy upload, automatic repair, full native TypeScript mailbox parity and
+global scale remain unfinished.
+
+Published [alpha.0.14](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.14), source `0eaf504e953be31b1844d6abfe57cd6f3c06aa29`, connects ACK-bearing mailbox retention to explicit receipt return after cold selected-memory delivery. A lost successful receipt response resumes from the original durable request; A then recovers the original receipt while the delivery node is offline. Four real-HTTP workflows passed using the extracted client runtime and child nodes. All eight public assets were anonymously downloaded and matched the reviewed candidate. [Exact-source full cloud regression](https://github.com/qh-work/memory-vault-sync/actions/runs/36523208918) failed two cases; scale and external adoption remain unverified.
 
 Published [alpha.0.13](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.13), source `7297b50f68d59649caf266be2e10515d19b5051e`, adds single-call mailbox retention and durable Agent ACK preparation with directly usable recipient/owner invitations. Five targeted HTTP workflows passed using the extracted client runtime; all eight public assets were anonymously downloaded and matched the reviewed candidate. [Exact-source cloud regression](https://github.com/qh-work/memory-vault-sync/actions/runs/36518360240) passed 934 tests, with all 242 reported source hashes matching alpha.0.13.
 
