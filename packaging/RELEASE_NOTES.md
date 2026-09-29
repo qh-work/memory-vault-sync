@@ -1,103 +1,38 @@
-# Memory Vault v0.28.0-alpha.0.20 — replica creation and recovery commands
+# Memory Vault v0.28.0-alpha.0.21 — durable native node renewal
 
-Alpha.0.20 is an unpublished candidate. It includes native Node commands for
-unbound, empty and occupied ACK recovery, sharing authenticated status retention
-with Python across failures and restarts. These commands export private evidence
-through an existing identity and never open the content Vault.
+This candidate includes approved encrypted communication and selected original
+memory sharing, Python cold-mailbox delivery and independently authorized saved
+receipt recovery, plus Python/native original-source ACK recovery commands.
 
-The immutable alpha.0.19 candidate remains unpublished. Its full cloud run
-completed 1,065 tests with one mailbox-staging failure, zero errors and zero
-skips. The same failure was reproduced by delaying proof-child downloads:
-the exhaustive non-ACK fixture had not funded its possession renewals and final
-revocation check. Both exhaustive fixtures now request finite matching capacity
-before signing their original grants; product limits and deadlines are unchanged.
-This candidate requires its own source-bound and extracted-package acceptance.
+Native routing/contact nodes now serve `GET /open/v1/node`, allowing clients to
+refresh expired fixed-key introductions before authenticated endpoint checks.
+Nodes renew their descriptor within five minutes of expiry, preserving the key,
+storage epoch, endpoint and roles. Expired startup state recovers, and the same
+persisted original survives restart or switching between Python and Node.
+Config, authenticated version floor and public introduction are saved in order;
+conflicting signed originals stop publication. Protected config changes outside
+the descriptor require restart. Existing directory/contact state is retained.
 
-Alpha.0.18 remains unpublished: its complete cloud run executed 1,059 tests
-with one ACK-bearing mailbox custody failure and no errors or skips. A slow
-local download reproduced a possession handle expiring between child reads.
-The exhaustive fixture now reads current-status originals first and renews
-possession before expiry for the same exact historical references. Renewals
-are bounded and charged; sufficient finite capacity is signed before setup.
-Product permission windows and budgets are unchanged. Alpha.0.20 requires
-separate package/privacy and exact-source full acceptance. It also includes
-packed-original reuse and persistent original-source recovery observations
-from subsequent development; neither change is in alpha.0.18 archives.
+Python and Node share a separate process-ownership lock beside the protected
+config. It releases on normal exit or process death and does not lock message
+storage. Python retains its existing file lock. Use the updated runtimes when
+switching; older runtimes do not all participate in this shared coordination.
 
-The alpha.0.16 full run was incomplete: one long mailbox fixture attempted to
-sign a child request after its short handle expired, and the growing suite later
-hit its 40-minute CI wall limit. Alpha.0.17 retained those same test/CI inputs and
-its full run was cancelled after that diagnosis; both remain unpublished. The
-fixture now performs a fresh, charged possession exchange before its independent
-revocation check and reports only the current request's server errors. CI allows
-55 minutes inside a 60-minute job; protocol deadlines and grants are unchanged.
-Alpha.0.17 did pass 14 extracted-runtime workflows and supported Python 3.10.
-Those results do not relabel either older candidate as a full-suite pass. This
-alpha.0.20 candidate requires separate exact-source acceptance.
+Nineteen focused synthetic node and mixed HTTP checks passed against development
+source, including real listener requests, ongoing renewal, preserved directory
+records, both directions of runtime takeover, restart recovery and conflict
+refusal. The release manifest pins this package to its source. Full cloud and
+extracted-package acceptance must be checked in the published release record;
+these local results alone do not establish that acceptance.
 
-This candidate adds explicit `copy-reserve`, `copy-upload`, `configure-replica`,
-and `recover-replica` commands. They use existing local identities and protected
-transport state, preserve exact retry requests, and keep return permissions
-separate from copy custody. Owner recovery remembers authenticated status facts
-across failed commands and restarts. New-node setup can explicitly enable finite
-remote copy reservations. No command opens the private content Vault. The replica
-recovery example explicitly selects the existing 60-second client ceiling for
-slower supported Python runtimes; signed deadlines and resource budgets remain
-unchanged. These additions are later than the immutable alpha.0.16 candidate.
+No project-operated public seed is supplied. Operators provide their authorized
+nodes and HTTPS termination. Complete native mailbox/replica workflows,
+automatic replacement selection, occupied/empty replica transfer and first
+receipt admission on replacements remain unfinished. Global availability,
+thousand-agent capacity and independent external adoption are not established.
 
-This is a release candidate until the release record and downloadable assets
-confirm publication and exact-source validation.
-
-Cold-mailbox recovery now reuses exact packed originals instead of downloading
-them twice. The focused two-message ACK feed uses 10 requests instead of 60;
-original proof-byte, permission and deadline checks remain active. The strict
-installed-runtime launcher now includes the same copy modules as the builder.
-Long synthetic mailbox scenarios have realistic authority windows; production
-reservation and possession deadlines are unchanged.
-
-The Python replacement operator can configure a committed unbound ACK replica
-for protected HTTP reads. Separate owner, original-source and maintainer return
-consents bind the exact destination, assignment, original custody and bootstrap
-grant. Both key-possession checks precede disclosure. Status floors, replay
-records, original bytes and actual work charges survive restart. The Python
-`AckOwnerRecoveryClient.recover_replica` independently reconstructs both storage
-events, verifies current READ and returns a bounded status archive for later
-calls. An unbound replica is not a saved recipient receipt.
-
-The continuation trial now requires a fresh per-read nonce in the structured
-answer. Correct facts without that live value fail; old-but-still-correct facts
-also require a current read. Cross-case/run nonces fail. Reports use version 2;
-prior reports are not silently upgraded. Returning the nonce proves possession
-of a live value, not that a model understood or used every retrieved fact.
-
-A maintainer can now request actual remote copy capacity, retain the signed
-offer, prepare its original assignment and upload an explicitly authorized
-unbound replica over HTTP. The client verifies the destination's signing and
-encryption keys before disclosure, journals every outgoing request, resumes
-exact requests after lost replies and independently verifies signed custody.
-Owner/source disclosure and later READ consents remain separate requirements.
-Remote admission is operator-enabled with persistent finite caller/work limits
-and shared capacity accounting. Restart never renews permission or clears usage.
-
-The full alpha.0.15 candidate regression exposed a fixture argument mismatch and
-cleanup registered too late after failed initialization. Both are corrected; the
-21 affected workflows pass sequentially on later source. The immutable alpha.0.15
-candidate remains unpublished and failed, rather than being relabeled as passing.
-This alpha.0.20 candidate requires its own exact-source full result.
-
-Automatic replacement selection, first-receipt admission on a replacement,
-occupied/empty replica transfer and the complete native TypeScript replica client
-remain unfinished.
-
-Existing approved-agent encrypted communication, selected-memory sharing,
-retained mailbox provisioning/recovery and independent saved-receipt return
-remain available. Operators supply reachable nodes and explicitly authorize
-finite resources; the project supplies no public seed. Complete native
-TypeScript mailbox parity, scalable partial feeds, external adoption and
-thousand-agent capacity remain unverified or unfinished.
-
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.20/docs/OPEN_NETWORK_QUICKSTART.md),
-[mailbox guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.20/docs/OPEN_NETWORK_CONTACT.md)
-and [ACK recovery guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.20/docs/OPEN_ACK_RECOVERY.md).
-Published alpha.0.14 archives stay unchanged. Its full cloud failure is historical;
-follow-up success does not retroactively validate those old bytes.
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.21/docs/OPEN_NETWORK_QUICKSTART.md),
+[native guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.21/docs/NATIVE_OPEN_HTTP.md)
+and [ACK guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.21/docs/OPEN_ACK_RECOVERY.md).
+Release files contain generic implementation, public docs and synthetic fixtures.
+Existing private Vaults, identities and immutable published archives are preserved.

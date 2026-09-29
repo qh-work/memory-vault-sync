@@ -1,5 +1,16 @@
 # Memory Vault development status
 
+Current source candidate: **alpha.0.21 (unpublished)**. Native routing/contact
+nodes now expose their signed public introduction and renew it durably before
+expiry, sharing publication ownership and version floors with Python. Restart
+recovers the highest exact original; both runtimes can take over without
+replacing the identity or transport state. Nineteen focused node and mixed HTTP
+checks passed, including renewal, retained directory records, restart recovery,
+cross-runtime takeover, conflict refusal and process-lock release after death.
+The candidate still needs exact-source full CI and extracted-package acceptance.
+The published alpha.0.20 below remains immutable and does not include this work.
+
+
 Alpha.0.20 is now a published prerelease. It includes native Node commands for
 unbound, empty and occupied ACK recovery, sharing authenticated status retention
 with Python across failures and restarts. These commands export private evidence
@@ -106,7 +117,7 @@ binding, recipient-authorized upload, three-generation source verification,
 independent signed-receipt reads and a private recovery command. The release
 manifest and uploaded assets establish publication separately.
 
-Current source target: **0.28.0-alpha.0.20**, an open encrypted-delivery preview.
+Current source target: **0.28.0-alpha.0.21**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use

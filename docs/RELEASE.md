@@ -1,5 +1,16 @@
 # Distribution scope and publication gates
 
+Current source candidate: **alpha.0.21 (unpublished)**. Native routing/contact
+nodes now expose their signed public introduction and renew it durably before
+expiry, sharing publication ownership and version floors with Python. Restart
+recovers the highest exact original; both runtimes can take over without
+replacing the identity or transport state. Nineteen focused node and mixed HTTP
+checks passed, including renewal, retained directory records, restart recovery,
+cross-runtime takeover, conflict refusal and process-lock release after death.
+The candidate still needs exact-source full CI and extracted-package acceptance.
+The published alpha.0.20 below remains immutable and does not include this work.
+
+
 Alpha.0.20 is now a published prerelease. It includes native Node commands for
 unbound, empty and occupied ACK recovery, sharing authenticated status retention
 with Python across failures and restarts. These commands export private evidence
@@ -91,7 +102,7 @@ The protocol is independent of language, storage, model, session, device and
 task. The authorized full client automates the same canonical record contract;
 an independent implementation is not required to install it or import Python.
 
-The current prerelease build target is **0.28.0-alpha.0.20**, an open encrypted
+The current prerelease build target is **0.28.0-alpha.0.21**, an open encrypted
 delivery preview. Python and native TypeScript six-operation Agents connect explicit first-contact
 approval to encrypted chat or selected original memories, durable local saving,
 original-node storage receipts and separate recipient-save receipts. Setup
@@ -118,13 +129,13 @@ instructions or acceptance of this prerelease.
 
 The release builder produces:
 
-- `memory-vault-protocol-v0.28.0-alpha.0.20.zip`: specification, schemas, synthetic
+- `memory-vault-protocol-v0.28.0-alpha.0.21.zip`: specification, schemas, synthetic
   interchange examples and implementer guides, **no executable files**.
-- `memory-vault-client-v0.28.0-alpha.0.20.zip`: complete source-built runtime, plugin,
+- `memory-vault-client-v0.28.0-alpha.0.21.zip`: complete source-built runtime, plugin,
   local marketplace catalog and explicit setup instructions.
-- `memory-vault-review-v0.28.0-alpha.0.20.zip`: public synthetic tests and source/build
+- `memory-vault-review-v0.28.0-alpha.0.21.zip`: public synthetic tests and source/build
   material for reviewers to run only with their user's authorization.
-- `memory-vault-network-test-v0.28.0-alpha.0.20.zip`: synthetic endpoint template;
+- `memory-vault-network-test-v0.28.0-alpha.0.21.zip`: synthetic endpoint template;
   this release has unconfigured service trust and requires operator provisioning.
 - `memory_vault.py`: core source; Experience use also needs the companion module
   included in the client/review packages.

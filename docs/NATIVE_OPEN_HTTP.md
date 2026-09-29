@@ -20,12 +20,13 @@ The native listener serves the current signed public introduction at
 `GET /open/v1/node`, with no-store caching and a 4 KiB bound. Both clients can
 refresh expired fixed-key seed hints through this endpoint before performing
 normal authenticated endpoint checks. The endpoint exposes no private config
-or identity material and rejects body-bearing requests. Native descriptor
-automatic renewal remains unfinished; operators must still supply a valid
-renewed descriptor in its protected config. The running node picks up a valid
-same-binding successor during maintenance, preserving contact/index state.
-Other configuration changes require restart; lower revisions and binding
-changes are refused. This reload does not sign or generate a successor. Python and Node
+or identity material and rejects body-bearing requests. Native nodes renew their signed descriptor within five minutes of expiry,
+preserving the signing key, storage epoch, endpoint and roles. A saved expired
+introduction can recover on startup. Config, authenticated version floor and
+public introduction are persisted in order; restart reuses the highest exact
+original and refuses same-revision conflicts. A running node also accepts an
+owner-signed same-binding successor without reconstructing contact/index state.
+Other configuration changes require restart. Python and Node
 now share a separate SQLite process-ownership lock beside the node config.
 Only one current-version node process can hold it; normal exit or process
 death releases it without deleting lock files. It does not lock the transport
@@ -107,6 +108,6 @@ Test presence is not a passing run. CI records exact source, method outcomes
 and runtime versions; match those to the release's manifest and checksums.
 The eight participating processes share one machine and one observed /24. They are not
 eight models, eight physical fault domains, global reliability or a rerun of
-the earlier 100-node logical experiment. Descriptor renewal/address changes,
+the earlier 100-node logical experiment. Address changes,
 first-contact consent, encrypted mailboxes/receipts, finite ciphertext leases
 and sender-offline replica repair remain future work.

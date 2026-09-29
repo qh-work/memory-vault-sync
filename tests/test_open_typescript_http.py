@@ -435,6 +435,75 @@ class OpenTypeScriptHTTPTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM open_contact_floors").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT count(*) FROM open_index_replay").fetchone()[0], 0)
 
+    def test_native_renews_expired_and_running_descriptors_then_python_reuses(self):
+        host = self.host(1, native={0})
+        old = host.nodes[0]
+        identity_before = (host.configs[0].parent / "identity.json").read_bytes()
+        host.stop(0)
+        current = int(time.time())
+        expired = issue_node(host.identities[0], base_url=old["payload"]["base_url"],
+            storage_epoch=old["payload"]["storage_epoch"], roles=["directory", "router"],
+            revision=2, issued_at=current-120, expires_at=current-60)
+        config = json.loads(host.configs[0].read_bytes()); config["node"] = expired
+        atomic_write(host.configs[0], canonical_bytes(config), replace=True)
+        host.start(0)
+        renewed = json.loads(host.configs[0].read_bytes())["node"]
+        self.assertEqual(renewed["payload"]["revision"], 3)
+        self.assertGreater(renewed["payload"]["expires_at"], current+300)
+        owner = Identity.generate(self.root / "renewal-owner" / "identity.json")
+        contact = host.contact(owner, EncryptionIdentity.generate())
+        self.assertIn("lease", host.put_only_last(owner, contact))
+        current = int(time.time())
+        config["node"] = issue_node(host.identities[0], base_url=old["payload"]["base_url"],
+            storage_epoch=old["payload"]["storage_epoch"], roles=["directory", "router"],
+            revision=4, issued_at=current, expires_at=current+30)
+        atomic_write(host.configs[0], canonical_bytes(config), replace=True)
+        deadline = time.monotonic()+8
+        while True:
+            renewed = json.loads(host.configs[0].read_bytes())["node"]
+            if renewed["payload"]["revision"] == 5:
+                break
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(.1)
+        host.stop(0)
+        # Recover the highest durable original even if config replacement was lost.
+        config["node"] = old
+        atomic_write(host.configs[0], canonical_bytes(config), replace=True)
+        host.start(0)
+        self.assertEqual(json.loads(host.configs[0].read_bytes())["node"], renewed)
+        host.stop(0); host.native.remove(0); host.start(0)
+        self.assertEqual(json.loads(host.configs[0].read_bytes())["node"], renewed)
+        self.assertEqual(json.loads((host.configs[0].parent / "node-introduction.json").read_bytes()), renewed)
+        transport = OpenHTTPTransport(allow_loopback=True)
+        self.addCleanup(transport.close)
+        self.assertEqual(transport.request_node(old["payload"]["base_url"], deadline=time.monotonic()+2).response, renewed)
+        self.assertEqual((host.configs[0].parent / "identity.json").read_bytes(), identity_before)
+        request = sign_request(owner, node=renewed, action="get", body={"key": contact_key(owner.key_id)},
+            request_id="synthetic_after_renewal", issued_at=int(time.time()), expires_at=int(time.time())+60)
+        response = transport.request(old["payload"]["base_url"], request, deadline=time.monotonic()+2)
+        body = verify_response(response.response, request=request, node=renewed)["body"]
+        self.assertEqual(body["state"], "found")
+        self.assertEqual(body["contact"], contact)
+        host.stop(0); host.native.add(0); host.start(0)
+        self.assertEqual(json.loads(host.configs[0].read_bytes())["node"], renewed)
+
+    def test_native_publication_refuses_same_revision_conflict_without_rewriting(self):
+        host = self.host(1, native={0}); host.stop(0)
+        original = host.nodes[0]
+        config = json.loads(host.configs[0].read_bytes())
+        config["node"] = issue_node(host.identities[0], base_url=original["payload"]["base_url"],
+            storage_epoch=original["payload"]["storage_epoch"], roles=["directory", "router"],
+            revision=1, issued_at=original["payload"]["issued_at"],
+            expires_at=original["payload"]["expires_at"]-1)
+        atomic_write(host.configs[0], canonical_bytes(config), replace=True)
+        before = host.configs[0].read_bytes()
+        attempt = subprocess.run(host.command(0), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=8, cwd=self.fixture)
+        self.assertNotEqual(attempt.returncode, 0)
+        self.assertIn(b"open_control_conflict", attempt.stderr)
+        self.assertEqual(host.configs[0].read_bytes(), before)
+        self.assertEqual(json.loads((host.configs[0].parent / "node-introduction.json").read_bytes()), original)
+
     def test_python_and_native_share_publication_ownership(self):
         from memory_vault import MemoryError
         from memory_vault_open_node import _publication_lock
