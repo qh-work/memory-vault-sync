@@ -21,6 +21,7 @@ from tests.test_open_repair_status import status_entry
 class MailboxRootCopyAuthorityTests(unittest.TestCase):
     def setUp(self):
         self.h = source_fixture.MailboxSourceTests('test_custody_recovery_full_http_originals')
+        self.h.owner_budget_overrides = getattr(self, 'owner_budget_overrides', {})
         self.h.setUp(); self.addCleanup(self.h.doCleanups)
         self.h.owner_observation(); self.h.observe()
         self.saved = self.h.source.prepare_history(self.h.resource_id, 'synthetic_observation')
@@ -101,11 +102,13 @@ class MailboxRootCopyAuthorityTests(unittest.TestCase):
         self.statuses = []
         for signer in (self.owner_signer, self.source.identity):
             entries = [value for key, value in sorted(requirements.items()) if key[0] == signer.key_id]
-            self.statuses.append(status_entry(issue_status(signer, root=self.root_key, revision=2, entries=entries, issued_at=self.now, valid_until=self.until)))
+            current = status_entry(issue_status(signer, root=self.root_key, revision=2, entries=entries, issued_at=self.now, valid_until=self.until))
+            current['ref']['key'] = current['ref']['raw_sha256']
+            self.statuses.append(current)
 
     def sign(self, kind, signer, fields):
         return signed_entry(dict(schema_version='memory-vault-open-repair/v1', kind=kind, signing_key=signer.public_descriptor(),
-            issued_at=self.now, expires_at=self.until, **fields), signer, kind.replace('.', '_'))
+            issued_at=self.now, expires_at=self.until, **fields), signer, kind.replace('.', '_') + '_' + fields.get('variant', 'single'))
 
     def resolver(self, budget):
         result = wire.LocalRawResolver(self.source.policy, budget)
