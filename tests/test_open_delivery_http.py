@@ -711,7 +711,13 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             with network.participant.state.db() as db:
                 second_packet=MailboxMessageDraftStore(db,self.ai,sender_encryption).admission_request(second['message_id'],**options)
         request(second_packet['raw'])
-        response=request(packet['raw']);self.assertEqual(request(packet['raw']),response)
+        response=request(packet['raw'])
+        usage_before=source.db.execute('SELECT requests,signatures,bytes FROM open_mailbox_remote_message_usage').fetchone()
+        self.assertEqual(request(packet['raw']),response)
+        usage_after=source.db.execute('SELECT requests,signatures,bytes FROM open_mailbox_remote_message_usage').fetchone()
+        self.assertEqual(usage_after['requests']-usage_before['requests'],1)
+        self.assertEqual(usage_after['signatures']-usage_before['signatures'],1)
+        self.assertGreater(usage_after['bytes'],usage_before['bytes'])
         payload=json.loads(packet['raw'])['payload']
         conflicting=dict(payload,enum_until=now+81)
         conflict=canonical_bytes(dict(payload=conflicting,proof=self.ai.sign_message(conflicting)))

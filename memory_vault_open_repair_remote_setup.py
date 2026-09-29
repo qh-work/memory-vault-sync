@@ -689,7 +689,11 @@ class MailboxRemoteMessageService:
                     or (usage is not None and count>usage['requests'])):wire._fail('repair_remote_setup_ledger_missing')
             if usage is not None and marker['value']!=s._expected_binding()+'|'+str(usage['requests'])+'|'+str(usage['signatures'])+'|'+str(usage['bytes']):
                 wire._fail('repair_remote_setup_ledger_missing')
-            allowance=s.policy.max_signature_checks*(1 if old is not None and old['response'] is not None else 6)
+            # Completed replies perform only the request authentication above;
+            # no admission/history phases run again. Charge the measured work
+            # instead of consuming an entire phase ceiling on every retry.
+            allowance=(budget.snapshot()['signature_checks'] if old is not None and old['response'] is not None
+                else 6*s.policy.max_signature_checks)
             held=usage if usage is not None else dict(requests=0,signatures=0,bytes=0)
             charge=0 if old is not None else len(raw)+MAX_BYTES+2*ROW_CHARGE
             if (held['requests']>=min(self.policy['max_requests'],offer['budget']['max_requests'],offer['budget']['max_replay_records'])
