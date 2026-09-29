@@ -60,17 +60,17 @@ class AckIndexPublicationClientTests(unittest.TestCase):
 
     def setUp(self):
         fixture = source_tests.ack_unbound_fixture
-        def funded():
-            f = fixture()
+        def funded(**options):
+            f = fixture(**options)
             # Explicit new index profile, before allocation/root/read/bootstrap
             # signatures; old signed authorities are never edited in place.
             f['expected']['limit_policy'] = dict(self.workflow_limits)
             f['docs']['bootstrap']['payload']['limits'] = dict(self.workflow_limits)
             return f
         self.http = http_tests.RepairIndexHTTPTests()
+        self.addCleanup(self.http.doCleanups)
         with patch.object(source_tests, 'ack_unbound_fixture', funded):
             self.http.setUp()
-        self.addCleanup(self.http.doCleanups)
         self.c, self.f = self.http.c, self.http.c.f
         self.f.h.now[0] = self.f.at
         self.transport = RecordingHTTPTransport()
