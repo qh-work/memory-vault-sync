@@ -113,7 +113,7 @@ integrations can retain them even when recovery fails. The client creates no
 separate local database and never imports these originals into the Vault.
 
 This operator API, HTTP service and Python client are development functionality.
-The alpha.0.18 candidate recovery command is described below. Native TypeScript
+The alpha.0.19 candidate recovery command is described below. Native TypeScript
 replica recovery, first-receipt admission on a replacement, occupied replica
 recovery and automatic replacement selection remain unfinished. Explicit Python
 remote reservation and copy upload are available in the alpha.0.16 candidate;
@@ -199,7 +199,7 @@ discarded. The shared journal capacity is 16 root/domain records, 32 originals a
 TypeScript callers must still retain and supply both arrays themselves. Source-side
 floors are also durable in the existing protected transport database.
 
-## Maintainer copy commands (alpha.0.18 candidate)
+## Maintainer copy commands (alpha.0.19 candidate)
 
 `copy-reserve` and `copy-upload` use the maintainer's existing open-client identity
 and protected transport journal. They never open the content Vault. Both accept
@@ -276,7 +276,7 @@ a later invocation can install newly signed statuses without discarding remember
 revocations. An existing output is refused before any state change. `configured`
 is local service readiness, not proof of an owner's successful recovery.
 
-## Unbound replica command (alpha.0.18 candidate)
+## Unbound replica command (alpha.0.19 candidate)
 
 A new replacement node can explicitly accept finite remote copy reservations:
 

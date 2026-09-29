@@ -154,8 +154,14 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             from dataclasses import replace
             DEFAULT_POLICY=replace(DEFAULT_POLICY,max_signature_checks=128)
         limits=dict(DEFAULT_LIMITS,max_proof_bytes=524288)
-        if self._testMethodName=='test_sender_admits_message_over_http' or getattr(self,'ack_remote_admission',False):
+        # Fund the exhaustive ACK-bearing download and its bounded possession
+        # renewals before signing any original resource or authority.
+        exhaustive_ack=self._testMethodName=='test_ack_configuration_survives_mailbox_custody'
+        funded_feed=(exhaustive_ack or self._testMethodName=='test_sender_admits_message_over_http'
+            or getattr(self,'ack_remote_admission',False))
+        if funded_feed:
             limits.update(max_proof_bytes=1048576,max_proof_items=128,max_signature_checks=2048)
+        if exhaustive_ack:limits.update(max_requests=128,max_replay_records=256)
         _,reference=self.request_contact()
         if self._testMethodName=='test_sender_admits_message_over_http' or getattr(self,'ack_remote_admission',False):
             self.call(self.b,op='connect',invitation=dict(schema_version=CONNECT_SCHEMA,action='decide',request_ref=reference,decision='approved',max_items=2,max_bytes=6291456))
@@ -186,8 +192,9 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         root=dict(owner=dual(owner),root_kind='mailbox',anchor_ref=dict(namespace='anchor',key='b'*64),owner_epoch='synthetic_owner',root_id='synthetic_mailbox')
         slot=dict(root_key=root,slot_id='synthetic_slot',writer=dual(source.target),writer_storage_epoch=source.node['payload']['storage_epoch'])
         caps=dict(max_live_bytes=131072,max_meta_bytes=2097152,max_items=64,max_requests=512,max_pending=8,max_replay_records=128,max_jobs=16,max_job_bytes=524288)
-        if self._testMethodName=='test_sender_admits_message_over_http' or getattr(self,'ack_remote_admission',False):
+        if funded_feed:
             caps.update(max_items=128,max_job_bytes=1048576,max_requests=2048,max_meta_bytes=4194304)
+        if exhaustive_ack:caps.update(max_replay_records=256)
         # This workflow deliberately performs many successful and rejected
         # operations before its final revocation assertions. Give synthetic
         # authorities enough lifetime for slow runners; keep the protocol's
@@ -432,6 +439,12 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         self.addCleanup(close_feed_server)
         transport=OpenHTTPTransport(allow_loopback=True);self.addCleanup(transport.close)
         base='http://127.0.0.1:'+str(server.server_port)
+        def feed_failure(error,before):
+            current=server_errors[before:]
+            failure=AssertionError('synthetic feed server errors: '+repr(current))
+            # The CI reporter keeps only its fixed public protocol-code allowlist.
+            if len(current)==1:failure.code=current[0]
+            return failure
         class RemoteFeed:
             def challenge(self,packet):
                 raw=transport.request_repair(base,packet['raw'],deadline=time.monotonic()+15)
@@ -440,11 +453,11 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             def answer(self,packet):
                 before=len(server_errors)
                 try:return transport.request_repair(base,packet['raw'],deadline=time.monotonic()+15)
-                except Exception as error:raise AssertionError('synthetic feed server errors: '+repr(server_errors[before:])) from error
+                except Exception as error:raise feed_failure(error,before) from error
             def child(self,packet):
                 before=len(server_errors)
                 try:return transport.request_repair(base,packet['raw'],child=True,deadline=time.monotonic()+15)
-                except Exception as error:raise AssertionError('synthetic feed server errors: '+repr(server_errors[before:])) from error
+                except Exception as error:raise feed_failure(error,before) from error
         service=RemoteFeed()
         grant=json.loads(slot_entries['bootstrap']['raw'])['payload']
         def fresh_feed_proof():
@@ -579,12 +592,25 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             self.assertEqual(service.child(dict(raw=child_request.raw,ref=child_request.ref.as_dict())),feed_custody['raw'])
             transfer_bytes=len(response)+len(checked.handle.raw)+len(checked.manifest.raw)+len(feed_custody['raw'])+sum(v['ref']['size'] for v in checked.manifest.value['children'])
             self.assertLessEqual(transfer_bytes,grant['limits']['max_proof_bytes'])
-            received={}
-            for child in checked.manifest.value['children']:
+            received={};renewals=0
+            # This exhaustive endpoint check fetches even originals already
+            # present in packs. Read the changing current-status entries first;
+            # stable historical originals may require another possession proof
+            # on a slower runner. Each renewal is charged by the real service.
+            children=sorted(checked.manifest.value['children'],key=lambda item:not item['role'].startswith('current.status.'))
+            for child in children:
                 chunks=[]
                 for offset in range(0,child['ref']['size'],65536):
+                    if checked.handle.payload['expires_at']-int(time.time())<=20:
+                        self.assertLess(renewals,4,'bounded exhaustive proof download')
+                        checked,response=fresh_feed_proof();renewals+=1
+                        transfer_bytes+=len(response)+len(checked.handle.raw)+len(checked.manifest.raw)
+                        self.assertLessEqual(transfer_bytes,grant['limits']['max_proof_bytes'])
+                    matches=[entry for entry in checked.manifest.value['children']
+                        if entry['role']==child['role'] and entry['ref']==child['ref']]
+                    self.assertEqual(len(matches),1,'renewal must retain the exact full original reference')
                     request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=checked.handle.payload['expires_at'],
-                        child_index=child['index'],offset=offset,requested_bytes=min(65536,child['ref']['size']-offset),policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+                        child_index=matches[0]['index'],offset=offset,requested_bytes=min(65536,child['ref']['size']-offset),policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
                     chunks.append(service.child(dict(raw=request.raw,ref=request.ref.as_dict())))
                 child_raw=b''.join(chunks);self.assertEqual(hashlib.sha256(child_raw).hexdigest(),child['ref']['raw_sha256'])
                 received[(child['role'],child['ref']['key'])]=dict(raw=child_raw,ref=child['ref'])
