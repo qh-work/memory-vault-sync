@@ -157,6 +157,32 @@ class OpenTypeScriptHTTPTests(unittest.TestCase):
         return self.ts(mode="participant", identity=json.loads(identity.read_bytes()), state=str(state),
                        options={"seeds": seeds, "allow_loopback": True}, operations=operations)
 
+    def test_native_public_introduction_is_exact_and_bodyless(self):
+        import http.client
+        host = self.host(1, native={0})
+        node = host.nodes[0]
+        port = int(node["payload"]["base_url"].rsplit(":", 1)[1])
+        for headers, expected in [({}, 200), ({"Content-Length": "0"}, 200),
+                                  ({"Content-Length": "1"}, 400),
+                                  ({"Transfer-Encoding": "chunked"}, 400),
+                                  ({"Content-Encoding": "gzip"}, 400)]:
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+            try:
+                connection.request("GET", "/open/v1/node", headers=headers)
+                response = connection.getresponse()
+                raw = response.read()
+                self.assertEqual(response.status, expected)
+                if expected == 200:
+                    self.assertEqual(raw, canonical_bytes(node))
+                    self.assertEqual(response.getheader("Cache-Control"), "no-store")
+                    self.assertLessEqual(len(raw), 4096)
+            finally:
+                connection.close()
+        transport = OpenHTTPTransport(allow_loopback=True)
+        self.addCleanup(transport.close)
+        reply = transport.request_node(node["payload"]["base_url"], deadline=time.monotonic()+2)
+        self.assertEqual(reply.response, node)
+
     def assert_trace(self, result, contact, seeds):
         value = result["results"][0]["value"]
         self.assertEqual(value["state"], "found", value)
@@ -412,6 +438,28 @@ class OpenTypeScriptHTTPTests(unittest.TestCase):
     def test_native_old_seed_uses_new_cached_revision_after_restart(self):
         host = self.host(1, native={0})
         old = host.nodes[0]; current = int(time.time())
+        higher = issue_node(host.identities[0], base_url=old["payload"]["base_url"], storage_epoch=old["payload"]["storage_epoch"],
+            roles=["directory", "router"], revision=2, issued_at=current, expires_at=current+3600)
+        host.stop(0)
+        config = json.loads(host.configs[0].read_bytes()); config["node"] = higher
+        atomic_write(host.configs[0], canonical_bytes(config), replace=True); host.start(0)
+        identity_path = self.root / "new-reader" / "identity.json"
+        Identity.generate(identity_path)
+        state = self.root / "new-reader-state"
+        for _ in range(2):
+            joined = self.participant(identity_path, state, [old], [{"op": "join"}])
+            self.assertTrue(joined["results"][0]["ok"], joined)
+            self.assertEqual(joined["results"][0]["value"]["errors"], [], joined)
+            with sqlite3.connect(state / "network.sqlite3") as db:
+                cached = bytes(db.execute("SELECT node FROM open_peer_cache").fetchone()[0])
+            self.assertEqual(cached, canonical_bytes(higher))
+
+    def test_expired_seed_refreshes_from_native_endpoint_before_join(self):
+        host = self.host(1, native={0})
+        old = host.nodes[0]; current = int(time.time())
+        old = issue_node(host.identities[0], base_url=old["payload"]["base_url"],
+            storage_epoch=old["payload"]["storage_epoch"], roles=["directory", "router"],
+            revision=1, issued_at=current-120, expires_at=current-60)
         higher = issue_node(host.identities[0], base_url=old["payload"]["base_url"], storage_epoch=old["payload"]["storage_epoch"],
             roles=["directory", "router"], revision=2, issued_at=current, expires_at=current+3600)
         host.stop(0)

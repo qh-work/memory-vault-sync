@@ -10,7 +10,7 @@ import type {SignedOpen,SignedNode} from './open-control.ts';
 import type {IndexOptions} from './open-state.ts';
 import type {ContactStateOptions} from './open-contact-state.ts';
 import {PROFILE as CONTACT_PROFILE} from './open-contact.ts';
-import {RPC_PATH,MAX_RPC_BYTES} from './open-transport.ts';
+import {RPC_PATH,MAX_RPC_BYTES,NODE_PATH,MAX_NODE_BYTES} from './open-transport.ts';
 
 export const OPEN_NODE_CONFIG='memory-vault-open-node-config/v1';
 export function openHTTPServer(participant:OpenParticipant):http.Server{
@@ -26,6 +26,17 @@ export function openHTTPServer(participant:OpenParticipant):http.Server{
     if(global[1]>128||count>64){reject(429);return;}
     const lengths:string[]=[];
     for(let i=0;i<request.rawHeaders.length;i+=2)if(request.rawHeaders[i].toLowerCase()==='content-length')lengths.push(request.rawHeaders[i+1]);
+    if(request.method==='GET'){
+      if(request.url!==NODE_PATH){reject(404);return;}
+      if((lengths.length>0&&(lengths.length!==1||lengths[0]!=='0'))||
+        request.headers['transfer-encoding']!==undefined||request.headers['content-encoding']!==undefined){reject(400);return;}
+      try{
+        const encoded=canonicalBytes(participant.currentIntroduction(),MAX_NODE_BYTES);
+        response.writeHead(200,{'Content-Type':'application/json','Content-Length':String(encoded.length),
+          'Cache-Control':'no-store','Connection':'close'});response.end(encoded);
+      }catch{reject(503);}
+      return;
+    }
     if(request.method!=='POST'||request.url!==RPC_PATH||lengths.length!==1||! /^[0-9]+$/.test(lengths[0])||
       Number(lengths[0])<1||Number(lengths[0])>MAX_RPC_BYTES||request.headers['transfer-encoding']!==undefined||request.headers['content-encoding']!==undefined){reject(400);return;}
     let size=0;const parts:Buffer[]=[];

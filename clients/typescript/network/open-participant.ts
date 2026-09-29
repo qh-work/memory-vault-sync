@@ -66,6 +66,13 @@ export class OpenParticipant{
     }catch(error){this.database.close();this.transport.close();throw error;}
   }
   close():void{if(this.closed)return;this.closed=true;this.transport.close();this.database.close();}
+  /** Public signed snapshot only; no configuration or private identity material. */
+  currentIntroduction():SignedNode{
+    this.ready();if(!this.descriptor)fail('open_node_not_configured');
+    const snapshot=document(canonicalBytes(this.descriptor),4096) as unknown as SignedNode;
+    const raw=verifyNode(snapshot);if(raw.status!=='active')fail('open_control_revoked');
+    return snapshot;
+  }
   private ready():void{if(this.closed)fail('open_transport_closed');}
   private serial<T>(operation:()=>Promise<T>):Promise<T>{
     const next=this.tail.then(()=>{this.ready();return operation();});this.tail=next.catch(()=>undefined);return next;

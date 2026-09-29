@@ -16,6 +16,14 @@ Use the existing Node 22.19+ runtime and locked JOSE dependency described in
 node --experimental-strip-types clients/typescript/network/open-node.ts --config /absolute/private/open-node.json
 ```
 
+The native listener serves the current signed public introduction at
+`GET /open/v1/node`, with no-store caching and a 4 KiB bound. Both clients can
+refresh expired fixed-key seed hints through this endpoint before performing
+normal authenticated endpoint checks. The endpoint exposes no private config
+or identity material and rejects body-bearing requests. Native descriptor
+automatic renewal remains unfinished; operators must still supply a valid
+renewed descriptor when restarting a native node.
+
 The listener remains restricted to loopback and nonprivileged ports. An owner
 must separately provide HTTPS termination for public use. Directory service
 is closed unless the private `index_policy` explicitly enables a finite quota.
