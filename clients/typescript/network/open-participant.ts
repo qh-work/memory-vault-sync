@@ -96,6 +96,9 @@ export class OpenParticipant{
   contactStorage<T>(operation:(database:DatabaseSync)=>T):T{this.ready();return operation(this.database);}
   acceptContactControl(value:SignedNode|SignedContact):void{this.accept(value);}
   lookupContactResource(target:string,budget:LookupBudget){this.ready();return this.lookup(target,'general',budget);}
+  async challengeContactNode(node:SignedNode,budget:LookupBudget):Promise<SignedNode>{
+    return (await this.call(node,'hello',{node:null},budget)).node;
+  }
   /** Provider controls share protected transport state, never canonical Vault records. */
   providerStorage<T>(operation:(database:DatabaseSync)=>T):T{this.ready();return operation(this.database);}
   acceptProviderControl(node:SignedNode):void{this.accept(node);}

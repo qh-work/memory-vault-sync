@@ -190,7 +190,8 @@ an actual returned value; do not send placeholder strings.
 
 ## B enables contact; A requests; B explicitly decides
 
-B chooses one of its configured resource nodes R. In the Python Agent, replace
+B chooses one of its configured resource nodes R. In the Python Agent or native
+TypeScript development source after alpha.0.22, replace
 `R_SIGNING_KEY_ID` with that operator's public key ID and send this request through
 the same six-operation interface:
 
@@ -207,13 +208,13 @@ the same six-operation interface:
 }
 ```
 
-The Python client fetches a current introduction from the configured origin and
+The client fetches a current introduction from the configured origin and
 challenges that endpoint before acquiring the contact lease. It retains the
 selected public key, origin and storage epoch; an unknown key or changed epoch
 is refused. No introduction file or node private configuration is needed.
 Existing callers may still provide the complete signed `node` object instead of
-`node_key_id`; choose exactly one. Native TypeScript callers use that original
-`node` form and their existing explicit directory publication path.
+`node_key_id`; choose exactly one. Older native TypeScript packages through
+alpha.0.22 require the original `node` form and manual directory publication.
 
 Keep B's returned `lease_id` and `expires_at`. `directory_state` and
 `confirmed_index_leases` describe actual publication; a degraded count is not
@@ -222,7 +223,7 @@ the actual confirmed signed directory leases, in Unix seconds; it is `null` when
 none was confirmed. This deadline is separate from `expires_at`, which remains
 the original knock lease's expiry.
 
-The Python example explicitly asks R to maintain that same public contact while
+This example explicitly asks R to maintain that same public contact while
 B is offline. B signs a separate finite directory authorization; R persists its
 work and periodically renews registration within the original contact, policy
 and knock-lease deadlines. It never renews those parent permissions or approves
@@ -239,13 +240,18 @@ Repeating the same `enable` request returns the existing job and preserves its
 used budget. A node restart resumes that job, rather than creating fresh authority.
 Nodes enforce revocations and conflicts they have actually observed.
 
-Omit `maintain_directory` or set it to `false` for manual registration. Native
-TypeScript currently uses that manual path. Directory leases last at most 300
+Omit `maintain_directory` or set it to `false` for manual registration. Directory leases last at most 300
 seconds and can be shorter, so B must repeat the same valid `enable` request
 before `directory_expires_at`. With no confirmed registration, new senders may
 receive `contact_unavailable`. Neither mode extends an expired contact or knock
 lease; obtain new permission explicitly when the original window ends. An
 expired approval is not renewed by repeating `send`.
+
+Native TypeScript and Python retain the same exact directory enrollment in the
+existing transport database. A lost enrollment response, restart or language
+switch reuses the original authorization and preserves the node's used budget.
+Directory workers still require supporting Python nodes; a native Node host
+explicitly returns `contact_directory_unsupported` for this operation.
 
 A sends a metadata-only first-contact request. Its `request_id` is outside
 `invitation`:

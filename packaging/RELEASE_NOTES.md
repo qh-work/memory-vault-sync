@@ -1,4 +1,13 @@
-# Memory Vault v0.28.0-alpha.0.22 — fair receipt retries and durable node renewal
+# Memory Vault v0.28.0-alpha.0.23 — native offline contact registration
+
+Native TypeScript agents now accept `node_key_id` and `maintain_directory:true`
+through the same six-operation Agent interface as Python. The selected node is
+refreshed at its configured origin and challenged before allocation. A separate
+bounded signed grant lets a supporting Python node keep the unchanged public
+contact registered while the recipient is offline. Exact enrollment bytes and
+used work survive a lost reply, restart and Python/Node switching. Parent
+permissions and expiry remain unchanged; native Node hosts explicitly refuse
+this directory worker until hosting support is implemented.
 
 This candidate includes approved encrypted communication and selected original
 memory sharing, Python cold-mailbox delivery and independently authorized saved
@@ -31,8 +40,10 @@ config. It releases on normal exit or process death and does not lock message
 storage. Python retains its existing file lock. Use the updated runtimes when
 switching; older runtimes do not all participate in this shared coordination.
 
-Twenty-nine focused direct-delivery, native HTTP and contact cases passed against
-development source. The release manifest pins this package to its source. Full
+Thirty-three focused native contact, real-HTTP and offline directory cases
+passed against development source, including lost enrollment replies, a node
+restart, Python takeover, later first contact and expiry of the original grant.
+The release manifest pins this package to its source. Full
 cloud and extracted-package acceptance must be checked in the published release
 record; local results alone do not establish that acceptance.
 
@@ -42,8 +53,8 @@ automatic replacement selection, occupied/empty replica transfer and first
 receipt admission on replacements remain unfinished. Global availability,
 thousand-agent capacity and independent external adoption are not established.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.22/docs/OPEN_NETWORK_QUICKSTART.md),
-[native guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.22/docs/NATIVE_OPEN_HTTP.md)
-and [ACK guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.22/docs/OPEN_ACK_RECOVERY.md).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.23/docs/OPEN_NETWORK_QUICKSTART.md),
+[native guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.23/docs/NATIVE_OPEN_HTTP.md)
+and [ACK guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.23/docs/OPEN_ACK_RECOVERY.md).
 Release files contain generic implementation, public docs and synthetic fixtures.
 Existing private Vaults, identities and immutable published archives are preserved.

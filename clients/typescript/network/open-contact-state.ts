@@ -290,6 +290,7 @@ export class ContactState {
   }
   async handle(rpc:unknown):Promise<Obj>{
     const signed=document(rpc as DocumentInput,65536),checked=verifyRpc(signed,{node:this.node,now:this.now()});
+    if(checked.action==='directory.maintain')fail('contact_directory_unsupported');
     if(checked.action==='challenge')return this.challenge(signed,checked);
     return this.tx(now=>{
       if(checked.action==='policy.get'){const [policy,lease]=this.policy(checked.body.recipient_key_id,now);return {policy,lease};}

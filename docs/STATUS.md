@@ -1,6 +1,20 @@
 # Memory Vault development status
 
-Current source candidate: **alpha.0.22 (unpublished)**. Pending local delivery
+Current source candidate: **alpha.0.23 (unpublished)**. Native TypeScript agents
+can now choose a configured contact node by its public key and explicitly
+request finite offline directory maintenance. They refresh and challenge that
+node, sign the same bounded authority as Python and retain the exact enrollment
+in the existing transport database. Lost replies, restarts and language changes
+preserve the node's existing job and used work. This adds no delivery approval,
+trust, Vault access or permission extension. Directory workers still run on
+supporting Python nodes; native Node hosts explicitly refuse the unimplemented
+worker. This candidate requires its own source-bound and packaged acceptance.
+Thirty-three targeted protocol, native Agent, real-HTTP and directory-maintenance
+checks passed on development source. They include a lost successful enrollment
+reply, recipient exit, original directory expiry, node restart, Python takeover,
+new-sender contact and final grant expiry. This is synthetic local traffic.
+
+Frozen alpha.0.22 candidate (publication tracked separately). Pending local delivery
 and receipt work now rotates through a durable cursor shared by Python and
 Node. Four older unavailable or independently authorized receipts no longer
 prevent a later saved receipt from being retried. Each poll still attempts at
@@ -124,7 +138,7 @@ binding, recipient-authorized upload, three-generation source verification,
 independent signed-receipt reads and a private recovery command. The release
 manifest and uploaded assets establish publication separately.
 
-Current source target: **0.28.0-alpha.0.22**, an open encrypted-delivery preview.
+Current source target: **0.28.0-alpha.0.23**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use
