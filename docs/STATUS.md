@@ -1,6 +1,10 @@
 # Memory Vault development status
 
-Current source candidate: **alpha.0.23 (unpublished)**. Native TypeScript agents
+Published **[alpha.0.23](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.23)** is fixed at `d15be3af98e280938072113b62d620f99cc5921b`.
+
+Thirty-five synthetic contact, directory, native Agent and receipt checks passed using the extracted alpha.0.23 runtime. Its exact-source full cloud regression passed 1087 tests across 114 modules, with all 256 reported source hashes matching `d15be3af98e280938072113b62d620f99cc5921b`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
+Native TypeScript agents
 can now choose a configured contact node by its public key and explicitly
 request finite offline directory maintenance. They refresh and challenge that
 node, sign the same bounded authority as Python and retain the exact enrollment
@@ -8,13 +12,13 @@ in the existing transport database. Lost replies, restarts and language changes
 preserve the node's existing job and used work. This adds no delivery approval,
 trust, Vault access or permission extension. Directory workers still run on
 supporting Python nodes; native Node hosts explicitly refuse the unimplemented
-worker. This candidate requires its own source-bound and packaged acceptance.
+worker. This release passed its own source-bound and packaged acceptance as recorded above.
 Thirty-three targeted protocol, native Agent, real-HTTP and directory-maintenance
 checks passed on development source. They include a lost successful enrollment
 reply, recipient exit, original directory expiry, node restart, Python takeover,
 new-sender contact and final grant expiry. This is synthetic local traffic.
 
-Frozen alpha.0.22 candidate (publication tracked separately). Pending local delivery
+Published **[alpha.0.22](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.22)** retains its separate source and acceptance record. Pending local delivery
 and receipt work now rotates through a durable cursor shared by Python and
 Node. Four older unavailable or independently authorized receipts no longer
 prevent a later saved receipt from being retried. Each poll still attempts at
@@ -27,8 +31,8 @@ unpublished despite its earlier 32 packaged checks passing; those checks did
 not cover this failure. Its immutable archives remain available for review.
 The fix passed that scenario in Python and native Node, including the sender's
 actual saved-receipt validation while all four blocked receipts remained unsent.
-Twenty-nine direct-delivery, native HTTP and contact cases passed. Alpha.0.22
-still needs its own source-bound full CI and extracted-package acceptance.
+Twenty-nine direct-delivery, native HTTP and contact cases passed. Alpha.0.22 passed its own source-bound full CI and extracted-package acceptance.
+Its immutable archives do not contain the later native directory enrollment work.
 It retains native descriptor renewal, public introduction refresh and protected
 Python/Node publication ownership from the held alpha.0.21 candidate.
 
