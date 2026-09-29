@@ -137,3 +137,54 @@ B 离线期间 A 的普通 send、Memory 和 ack-only 均拒绝，Vault 不增�
 
 Python/native TypeScript 双向使用真实签名、成熟加密挑战及隔离本机 HTTP。
 没有实际运行以上实验前，只能称设计闭环；不能声称已通过或用预共享 grant 替代首次联系。
+
+
+## Retaining an approved mailbox for ordinary receive
+
+The current Python agent can retain a mailbox selected by its own signed slot,
+READ, maintenance and bootstrap controls. This registers local polling; it does
+not create the mailbox, issue missing grants, establish author trust, or promise
+that a source is online. Supply the original entries returned by mailbox setup,
+the expected sender/source descriptors, and the finite limits used in those
+grants. Encode each original `raw` byte string as its exact UTF-8 text, without
+parsing and reserializing the signed document:
+
+```python
+def json_entry(entry):
+    return {"raw": entry["raw"].decode("utf-8"), "ref": entry["ref"]}
+
+invitation = {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "register",
+    "base_url": source_url,
+    "limit_policy": mailbox_limits,
+    "expected_slot": slot_key,
+    "expected_sender": sender_descriptor,
+    "expected_target": source_descriptor,
+    "target_node_entry": json_entry(current_node_entry),
+    "slot_entries": {
+        name: json_entry(slot_entries[name])
+        for name in ("slot", "read", "maintenance", "bootstrap")
+    },
+}
+registered = agent.handle({"op": "connect", "invitation": invitation})
+received = agent.handle({"op": "receive", "limit": 4})
+```
+
+Configuration and current-status observations share the existing protected
+transport database. A newly opened agent resumes staged imports locally first,
+then polls configured mailboxes before the original contact queues. Each call
+attempts at most four registered mailboxes, rotating across at most sixteen
+local registrations. Errors remain visible in the receive result. Endpoint and
+identity must match authenticated controls; every network recovery rechecks
+current authority, retained revocations and finite resource limits.
+
+`connect` with the same schema and `action: "list"` lists local receiver IDs.
+`action: "remove"` additionally takes `receiver_id` and stops that local polling;
+it does not revoke remote grants or erase messages, receipts or status history.
+An identical registration is idempotent. Changed configuration requires explicit
+removal and registration again; retained status history still applies. This is
+also how to replace an expired source descriptor with a newly authenticated one.
+Memory shares continue through the normal trust/admission checks. A receipt
+saved by mailbox reception remains available for the independently authorized
+ACK return; a successful receive does not claim that the sender received it.

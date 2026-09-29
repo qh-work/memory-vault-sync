@@ -794,12 +794,13 @@ class OpenDeliveryClient:
             raise MemoryError('open_delivery_key_binding_mismatch')
         if type(limit) is not int or not 1 <= limit <= 4:
             raise MemoryError('network_invalid_receive_limit')
+        deadline=time.monotonic()+recovery_options.get('timeout',60)
         with self.participant.state.db() as db:
             options = dict(recovery_options, journal=MailboxSetupJournal(db))
             feed = recovery_client.recover(base_url, **options)
-        return await self._receive_mailbox_feed(recovery_client, feed, recovery_options, limit)
+        return await self._receive_mailbox_feed(recovery_client, feed, recovery_options, limit, _deadline=deadline)
 
-    async def _receive_mailbox_feed(self, client, feed, options, limit):
+    async def _receive_mailbox_feed(self, client, feed, options, limit, *, _deadline=None):
         from memory_vault_open_repair_client import verify_mailbox_admission, mailbox_inbox_evidence
         from memory_vault_open_repair_wire import raw_ref
         messages = []
@@ -822,9 +823,11 @@ class OpenDeliveryClient:
                 fresh = prior['phase'] == 'staged'
                 result = self._finish_inbox(message_id)
             else:
+                remaining=30 if _deadline is None else min(30,_deadline-time.monotonic())
+                if remaining<=0:raise MemoryError('open_delivery_budget_exhausted',retryable=True)
                 recovered = client.read_member(feed.base_url, feed, member, expected_slot=options['expected_slot'],
                     expected_sender=options['expected_sender'], expected_target=options['expected_target'],
-                    known_statuses=options.get('known_statuses', ()))
+                    known_statuses=options.get('known_statuses', ()),timeout=remaining)
                 roles = recovered['setup']['roles']
                 authority = {name: document(roles[role]['raw']) for name, role in
                     (('request', 'contact.request'), ('policy', 'contact.policy'))}
@@ -843,13 +846,16 @@ class OpenDeliveryClient:
         return dict(messages=messages, errors=[], state='observed', body_transport='mailbox_retained_copy',
             receipt_state='retained_for_independent_return')
 
-    async def receive(self, limit=4):
+    async def receive(self, limit=4, *, _pending_only=False, _skip_pending=False, _deadline=None):
         if type(limit) is not int or not 1 <= limit <= 4:
             raise MemoryError("network_invalid_receive_limit")
         budget = _DeliveryBudget()
+        if _deadline is not None:budget.deadline=min(budget.deadline,_deadline)
         messages, errors = [], []
         with self.participant.state.db() as db:
             pending = db.execute("SELECT message_id,phase FROM open_delivery_inbox WHERE phase='staged' OR (phase='saved' AND receipt_sent=0) ORDER BY created_at,message_id LIMIT 4").fetchall()
+        if _skip_pending:
+            pending=[]
         for pending_row in pending:
             if len(messages) >= limit:
                 break
@@ -862,6 +868,8 @@ class OpenDeliveryClient:
                     await self._send_receipt(message_id, budget)
             except MemoryError as exc:
                 errors.append({"message_id": message_id, "code": exc.code, "retryable": exc.retryable})
+        if _pending_only:
+            return dict(messages=messages,errors=errors[:4],network_accessed=budget.requests>0)
         for candidate in self._contact_sessions(outgoing=False):
             if len(messages) >= limit:
                 break

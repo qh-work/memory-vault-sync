@@ -390,11 +390,29 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             db.execute('DELETE FROM open_delivery_messages WHERE message_id=?',(sent['message_id'],))
             db.execute('DELETE FROM open_contact_resource_leases');db.commit()
             from memory_vault_open_delivery_client import OpenDeliveryClient
+            from memory_vault_open_client import MAILBOX_CONNECT_SCHEMA
+            invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='register',base_url=base,limit_policy=limits,
+                expected_slot=slot,expected_sender=member_args['expected_sender'],expected_target=source.target,
+                target_node_entry=dict(raw=node_entry['raw'].decode(),ref=node_entry['ref']),
+                slot_entries={name:dict(raw=value['raw'].decode(),ref=value['ref']) for name,value in client_options['slot_entries'].items()})
+            wrong_owner=self.a.handle(dict(op='connect',invitation=invitation))
+            self.assertFalse(wrong_owner['ok'])
+            self.assertEqual(self.call(self.a,op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='list'))['mailboxes'],[])
+            wrong_endpoint=self.b.handle(dict(op='connect',invitation=dict(invitation,base_url='http://127.0.0.1:1')))
+            self.assertFalse(wrong_endpoint['ok'])
+            configured=self.call(self.b,op='connect',invitation=invitation,request_id='req_synthetic_mailbox_receiver')
+            self.assertEqual(configured['state'],'registered');self.assertFalse(configured['network_accessed'])
+            self.assertEqual(self.call(self.b,op='connect',invitation=invitation)['receiver_id'],configured['receiver_id'])
+            listed=self.call(self.b,op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='list'))
+            self.assertEqual(listed['mailboxes'],[configured['receiver_id']])
             with patch.object(MailboxFeedRecoveryClient,'recover',new=capture_feed), \
                     patch.object(OpenDeliveryClient,'call',side_effect=AssertionError('legacy delivery endpoint used')), \
                     patch.object(OpenDeliveryClient,'_finish_inbox',side_effect=RuntimeError('synthetic stop after durable receipt')):
                 with self.assertRaisesRegex(RuntimeError,'synthetic stop after durable receipt'):
-                    recipient_network.receive_mailbox(base,limit_policy=limits,status_observer=observed.append,**client_options)
+                    # New ordinary client instance loads its selected mailbox from SQLite.
+                    with self.b._network() as reopened_network:
+                        reopened_network.receive(limit=1)
+            observed.extend(captured[0].current_statuses)
             result=captured[0]
             self.assertEqual(delivery._inbox(sent['message_id'])['phase'],'staged')
             original_session=bytes(delivery._inbox(sent['message_id'])['session'])
@@ -601,6 +619,13 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
             with self.assertRaisesRegex(AssertionError,'repair_authority_revoked'):
                 service.child(body_packet)
+            status_count=recipient_db.execute('SELECT count(*) FROM open_mailbox_setup_statuses').fetchone()[0]
+            removed=self.call(self.b,op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='remove',receiver_id=configured['receiver_id']))
+            self.assertEqual(removed['state'],'removed')
+            self.assertEqual(self.call(self.b,op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='list'))['mailboxes'],[])
+            self.assertGreater(status_count,0)
+            self.assertEqual(recipient_db.execute('SELECT count(*) FROM open_mailbox_setup_statuses').fetchone()[0],status_count)
+            self.assertEqual(delivery._inbox(sent['message_id'])['phase'],'saved')
 
     def test_remote_feed_client_recovers_complete_index(self):
         self.test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources()
