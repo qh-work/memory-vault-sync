@@ -9,8 +9,10 @@ The Python Agent now supports [retained mailbox provisioning and recovery](docs/
 receivers provision and register a mailbox, senders submit their existing ciphertext,
 and ordinary receives recover messages and selected memories under independent
 current read checks. Saved receipts use separate return/recovery authority.
+Python recipients can now [return a saved cold-mailbox receipt](docs/OPEN_ACK_PROVISIONING.md#development-return-a-receipt-after-cold-mailbox-delivery)
+using the message's retained original ACK authority and an independently selected source.
 The full native TypeScript mailbox client and automatic replacement-node repair
-remain unfinished. Five packaged HTTP workflows passed for this release; its
+remain unfinished. Four packaged HTTP workflows passed for this release; its
 source-bound full cloud regression is still pending. These checks do not establish global scale.
 
 This release adds [independent remote source preparation](docs/OPEN_ACK_PROVISIONING.md) and
@@ -27,7 +29,7 @@ READ/bootstrap grants to discover and retrieve the original signed receipt.
 The publication and recovery commands retain exact original bytes and durable
 work limits. Message movement and automatic repair remain unfinished.
 
-**v0.28.0-alpha.0.13 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+**v0.28.0-alpha.0.14 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
 to bind your existing Vault and signing identity to an independent open transport,
 join through one or two actual signed node introductions, explicitly approve a
 finite delivery, and exchange encrypted chat or selected original memories.
