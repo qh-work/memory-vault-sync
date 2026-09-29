@@ -149,7 +149,7 @@ class CapacityAuthority:
     def reserve(self, service, reservation_id, input_digest, charge_bytes, retain_until, *, owner, operation_id):
         """Reserve repair resources once; legacy inserts use the same totals."""
         self._write_lock()
-        if service not in ("ack", "repair_index", "contact_directory", "mailbox"):
+        if service not in ("ack", "repair_index", "contact_directory", "mailbox", "repair_copy"):
             _fail("invalid_service")
         for value in (reservation_id, owner, operation_id):
             if type(value) is not str or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value) is None:
