@@ -6,7 +6,7 @@ memories. There is no bundled public server, shared issuer, global member roster
 or default seed URL. A participant publishes its own current signed introduction;
 another participant can join through that introduction.
 
-The **v0.28.0-alpha.0.20** Python and native TypeScript clients connect approved
+The **v0.28.0-alpha.0.23** Python and native TypeScript clients connect approved
 delivery to the original accepting node, durable local inboxes and separate
 storage/recipient receipts. Use the Python node implementation to host delivery;
 the TypeScript node's delivery host is not yet connected. The separate
@@ -190,8 +190,8 @@ an actual returned value; do not send placeholder strings.
 
 ## B enables contact; A requests; B explicitly decides
 
-B chooses one of its configured resource nodes R. In the Python Agent or native
-TypeScript development source after alpha.0.22, replace
+B chooses one of its configured resource nodes R. In the Python or native
+TypeScript Agent, replace
 `R_SIGNING_KEY_ID` with that operator's public key ID and send this request through
 the same six-operation interface:
 
@@ -333,6 +333,70 @@ continues to apply.
 
 ## Use the native TypeScript Agent
 
+### First native Node installation, without Python
+
+Use this block only when the agent has no existing ClientConfig or identity.
+Existing users keep their original paths and continue with the Agent example
+below. Use Node 22.19.0 or newer on a supported POSIX system; native protected
+storage currently rejects Windows. Run from the native package directory after
+explicitly installing its locked dependency with
+`npm ci --ignore-scripts --no-audit --no-fund`. Obtain the operator's current
+signed introduction and public key ID as described above. The parent of the new agent directory must exist.
+
+```sh
+node --experimental-strip-types --input-type=module - /absolute/private/new-agent /absolute/private/node-introduction.json OPERATOR_PUBLIC_KEY_ID <<'JS'
+const { readFileSync } = await import('node:fs');
+const path = await import('node:path');
+const { canonicalBytes } = await import('./crypto.ts');
+const { verifyNode } = await import('./open-control.ts');
+const { endpoint } = await import('./open-transport.ts');
+const { createIdentity, writeNewPrivate } = await import('./setup.ts');
+const { Agent } = await import('./agent.ts');
+
+const [directory, introductionPath, expectedKeyId, development] = process.argv.slice(2);
+if (!directory || !introductionPath || !expectedKeyId ||
+    process.argv.length > 6 || (development !== undefined && development !== '--allow-loopback')) {
+  throw new Error('Expected NEW_DIRECTORY INTRODUCTION_FILE OPERATOR_PUBLIC_KEY_ID');
+}
+const allowLoopback = development === '--allow-loopback';
+const node = JSON.parse(readFileSync(introductionPath, 'utf8'));
+const checked = verifyNode(node);
+endpoint(checked.base_url, allowLoopback);
+if (checked.status !== 'active' || checked.signing_key.key_id !== expectedKeyId) {
+  throw new Error('Selected operator does not match the current introduction');
+}
+
+const created = createIdentity(directory);
+const networkConfigPath = path.join(path.dirname(created.client_config), 'open-config.json');
+writeNewPrivate(networkConfigPath, canonicalBytes({
+  schema_version: 'memory-vault-open-client-config/v1',
+  client_config_path: created.client_config,
+  state_directory: path.join(path.dirname(created.client_config), 'open-state'),
+  encryption_key_path: created.encryption_key,
+  seeds: [node],
+  allow_loopback: allowLoopback,
+}));
+const agent = new Agent(created.client_config, networkConfigPath);
+const connection = await agent.handle({op: 'connect'});
+console.log(JSON.stringify({setup: created, network_config_path: networkConfigPath, connection}));
+JS
+```
+
+This creates a new local signing identity, independent encryption key, own-writer
+trust entry and ClientConfig, with capture disabled. It creates no content Vault
+until a memory operation needs it, enrolls no remote author and enables no incoming
+contact. The public introduction is checked before any identity is created;
+`connect` then performs the actual endpoint challenge and bounded join.
+
+Keep the returned paths and inspect `connection.ok`. If the join fails, retry
+`connect` using those same files in the next example; do not rerun first-install
+setup or delete the new identity. The command refuses an existing directory or
+configuration. Public use requires the operator's HTTPS origin. For an explicitly
+selected local development node only, add `--allow-loopback` after the public key
+ID; this does not establish public HTTPS reachability.
+
+### Use an existing native configuration
+
 After generating the same `client.json` and `open-config.json` above, a Node host
 can use them directly. Keep the existing keys, Vault and transport directory;
 do not create a second identity or import copies of your records. This native
@@ -367,8 +431,9 @@ JS
 
 Pass each of the same six-operation JSON objects above to `await agent.handle`
 for contact enable/request/poll/decide/result, send and receive. B's enable request
-must still contain the actual signed node object; read its introduction with
-`JSON.parse(readFileSync(path, 'utf8'))` from `node:fs`, not a URL string.
+can use the selected configured `node_key_id` and explicit `maintain_directory`
+option shown above. The complete signed `node` object remains supported; choose
+exactly one node selection. Python nodes still host delivery and directory maintenance.
 Inspect `ok` and use returned IDs exactly as in the Python flow. Python and Node
 can reuse one local configuration in successive runs; no protocol operation
 starts a Python process. The node service they contact is the separately running
@@ -378,5 +443,5 @@ unfinished-migration limits apply to both clients.
 For a separate check of whether a recipient consults current facts before using
 recalled memory, see the [current-fact continuation trial](CONTINUATION_TRIAL.md).
 Its blind cases and source-owned read log score continuation independently of
-transport receipts. Download the alpha.0.5 review kit or use this source checkout to run the scorer;
+transport receipts. Download the alpha.0.23 review kit or use this source checkout to run the scorer;
 the full client and protocol archives include its documentation only.

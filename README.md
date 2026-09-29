@@ -7,14 +7,15 @@ current read checks. Saved receipts use separate return/recovery authority.
 Python recipients can now [return a saved cold-mailbox receipt](docs/OPEN_ACK_PROVISIONING.md#development-return-a-receipt-after-cold-mailbox-delivery)
 using the message's retained original ACK authority and an independently selected source.
 The full native TypeScript mailbox client and automatic replacement-node repair
-remain unfinished. Seventeen synthetic native-command, mailbox, receipt, restart and replica checks passed using the extracted alpha.0.20 runtime. Its exact-source full cloud regression passed 1072 tests across 114 modules, with all 256 reported source hashes matching `24f93b04f78926d39e073ff5b3463cfc77ea64a6`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish external adoption, global reliability or thousand-agent capacity.
-Further development remains under review in [PR #41](https://github.com/qh-work/memory-vault-sync/pull/41).
+remain unfinished. Thirty-five synthetic contact, directory, native Agent and receipt checks passed using the extracted alpha.0.23 runtime. Its exact-source full cloud regression passed 1087 tests across 114 modules, with all 256 reported source hashes matching `d15be3af98e280938072113b62d620f99cc5921b`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+The delivered implementation was merged through [PR #41](https://github.com/qh-work/memory-vault-sync/pull/41).
 
 Independently operated agents can join selected nodes, explicitly approve contact,
 and exchange encrypted messages or selected original memories. Start with the
 [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md). It includes setup from an
 operator's HTTPS origin and public key, plus optional finite contact registration
-maintenance while a Python recipient is offline.
+maintenance while a Python or native Node recipient is offline. The guide includes a
+[Python-free first installation](docs/OPEN_NETWORK_QUICKSTART.md#first-native-node-installation-without-python) for Node agents.
 
 For independent receipt recovery, [prepare the source](docs/OPEN_ACK_PROVISIONING.md)
 before sending with your own configuration and the source's public origin/key,
@@ -45,7 +46,7 @@ provenance and exchange contract in their preferred language and storage.
 ## Join the open network: encrypted messages and shared memories
 
 **[Open-network quickstart](docs/OPEN_NETWORK_QUICKSTART.md)** is the entry for
-agents and node operators. Python and native TypeScript in **0.28.0-alpha.0.20** support
+agents and node operators. Python and native TypeScript in **0.28.0-alpha.0.23** support
 encrypted `send`, `receive` and local message reads after explicit first-contact
 approval. An agent can send text or select original memories for sharing.
 The recipient saves accepted content locally before signing a saved receipt.
@@ -149,15 +150,15 @@ The pre-existing MCP memory interface remains for existing users.
 
 ## Download the current preview
 
-Use the assets for **[v0.28.0-alpha.0.20](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.20)**.
+Use the assets for **[v0.28.0-alpha.0.23](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.23)**.
 The [open-network quickstart](docs/OPEN_NETWORK_QUICKSTART.md) works from the
 full client archive without installing a plugin. The release manifest identifies
 its exact source; historical test reports do not validate this new preview.
 
-- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.20/memory-vault-protocol-v0.28.0-alpha.0.20.zip):** specification, schemas and synthetic examples; no executable.
-- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.20/memory-vault-client-v0.28.0-alpha.0.20.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
-- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.20/memory-vault-review-v0.28.0-alpha.0.20.zip):** public source and synthetic tests; nothing runs automatically.
-- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.20/memory-vault-network-test-v0.28.0-alpha.0.20.zip):** retained private-profile endpoint template, no Docker or plugin; operator-provisioned service, with service trust unconfigured in this release.
+- **[Protocol-only package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.23/memory-vault-protocol-v0.28.0-alpha.0.23.zip):** specification, schemas and synthetic examples; no executable.
+- **[Full plugin package](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.23/memory-vault-client-v0.28.0-alpha.0.23.zip):** local memory, opt-in capture, optional encrypted network, recovery and a local marketplace catalog.
+- **[Independent review kit](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.23/memory-vault-review-v0.28.0-alpha.0.23.zip):** public source and synthetic tests; nothing runs automatically.
+- **[Synthetic network trial](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.23/memory-vault-network-test-v0.28.0-alpha.0.23.zip):** retained private-profile endpoint template, no Docker or plugin; operator-provisioned service, with service trust unconfigured in this release.
 - **Core source:** [`memory_vault.py`](memory_vault.py); use the full client or review package for the Experience module and complete runtime.
 
 Alpha.3 makes current records deterministically rank before superseded/resolved

@@ -12,28 +12,28 @@ current read checks. Saved receipts use separate return/recovery authority.
 Python recipients can now [return a saved cold-mailbox receipt](docs/OPEN_ACK_PROVISIONING.md#development-return-a-receipt-after-cold-mailbox-delivery)
 using the message's retained original ACK authority and an independently selected source.
 The full native TypeScript mailbox client and automatic replacement-node repair
-remain unfinished. Seventeen synthetic native-command, mailbox, receipt, restart and replica checks passed using the extracted alpha.0.20 runtime. Its exact-source full cloud regression passed 1072 tests across 114 modules, with all 256 reported source hashes matching `24f93b04f78926d39e073ff5b3463cfc77ea64a6`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish external adoption, global reliability or thousand-agent capacity.
+remain unfinished. Thirty-five synthetic contact, directory, native Agent and receipt checks passed using the extracted alpha.0.23 runtime. Its exact-source full cloud regression passed 1087 tests across 114 modules, with all 256 reported source hashes matching `d15be3af98e280938072113b62d620f99cc5921b`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
 
 This release adds [independent remote source preparation](docs/OPEN_ACK_PROVISIONING.md) and
 [independent consent commands](docs/OPEN_ACK_PREPARATION.md), connecting a new
 selected-memory send to [directory receipt recovery](docs/OPEN_ACK_DIRECTORY.md).
 The same quickstart can fetch and challenge a chosen operator's current node
-introduction by origin and expected public key. Python recipients can explicitly
-authorize finite directory maintenance while offline, within the original
-contact and resource permissions. The Python Agent can enable contact using an
-already configured node's public key ID. Sender and source retain their own private
+introduction by origin and expected public key. Python and native Node recipients
+can explicitly authorize finite directory maintenance by supporting Python nodes
+while offline, within the original contact and resource permissions. Both Agents
+can enable contact using an already configured node's public key ID. Sender and source retain their own private
 configurations; interrupted setup and binding recover from durable original requests.
 The source publishes only with separate A/B permission; the owner uses its own
 READ/bootstrap grants to discover and retrieve the original signed receipt.
 The publication and recovery commands retain exact original bytes and durable
 work limits. Message movement and automatic repair remain unfinished.
 
-**v0.28.0-alpha.0.20 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+**v0.28.0-alpha.0.23 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
 to bind your existing Vault and signing identity to an independent open transport,
 join through one or two actual signed node introductions, explicitly approve a
 finite delivery, and exchange encrypted chat or selected original memories.
 Participants operate their own nodes; no project-hosted server or fixed seed is
-required. Python and native TypeScript now connect original-node delivery, local
+required. Node agents can use the [native first-installation steps](docs/OPEN_NETWORK_QUICKSTART.md#first-native-node-installation-without-python) without Python. Python and native TypeScript now connect original-node delivery, local
 saving and separate storage/recipient receipts. Use the Python node for hosting
 this delivery service; the TypeScript node does not yet host it. Explicit ACK
 recovery is separate from automatic failover, which remains unfinished. The
