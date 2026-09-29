@@ -16,6 +16,7 @@ from types import MappingProxyType
 
 import memory_vault_open_blob as blob
 import memory_vault_open_repair_ack as ack
+import memory_vault_open_repair_empty as empty
 import memory_vault_open_repair_history as history
 import memory_vault_open_repair_original as original
 import memory_vault_open_repair_probe as probe
@@ -46,7 +47,10 @@ COPY_SINGLE_ROLES = ack.ROLES | frozenset(("history.ack_unbound", "ack.slot_cust
     "copy.reservation_consent", "copy.allocation", "copy.offer", "copy.assignment",
     "copy.owner_disclosure", "copy.source_disclosure"))
 COPY_STAGE_ROLES = COPY_SINGLE_ROLES | {"copy.current_status", "history.raw_pack"}
-CONSUMERS = frozenset(("index_admit", "ack_copy_unbound"))
+EMPTY_COPY_ROLES = COPY_STAGE_ROLES | empty.ROLES | {'history.ack_empty','ack.empty_custody'}
+EMPTY_COPY_ROLES = EMPTY_COPY_ROLES - {'ack.slot_custody'}
+EMPTY_COPY_REPEATED = frozenset(role for role in ack.ROLES & empty.ROLES if role.startswith('historical.status.'))
+CONSUMERS = frozenset(("index_admit", "ack_copy_unbound", "ack_copy_empty"))
 
 
 def _fail(code="repair_invalid_stage"):
@@ -133,11 +137,12 @@ def _manifest(value, policy, budget, expected_consumer=None):
     history._root(value["root_key"])
     # Consumer binding is checked again on every signed intent verification;
     # directory admission must never accept the replica upload profile.
-    copying=value["consumer"]=="ack_copy_unbound"
+    copying=value["consumer"] in ("ack_copy_unbound","ack_copy_empty")
+    copying_empty=value["consumer"]=="ack_copy_empty"
     if copying:
         from memory_vault_open_repair_copy_resources import ack_copy_scope
         ack_copy_scope(value["scope"],value["root_key"])
-        if value["scope"]["kind"]!="ack_unbound":_fail()
+        if value["scope"]["kind"]!=('ack_empty' if copying_empty else 'ack_unbound'):_fail()
     else:
         _scope(value["scope"], value["root_key"])
     children = value["children"]
@@ -149,7 +154,8 @@ def _manifest(value, policy, budget, expected_consumer=None):
         if wire.u53(child["index"]) != index:
             _fail()
         role = child["role"]
-        if type(role) is not str or role not in (COPY_STAGE_ROLES if copying else STAGE_ROLES):_fail()
+        allowed_roles=EMPTY_COPY_ROLES if copying_empty else COPY_STAGE_ROLES if copying else STAGE_ROLES
+        if type(role) is not str or role not in allowed_roles:_fail()
         counts[role] = counts.get(role, 0) + 1
         ref = wire.raw_ref(child["ref"])
         pair = (role, ref.namespace, ref.key, ref.raw_sha256, ref.size)
@@ -171,7 +177,13 @@ def _manifest(value, policy, budget, expected_consumer=None):
         total += ref.size
         if total > min(MAX_STAGE_BYTES, policy.max_retained_bytes, wire.U53_MAX):
             _fail("repair_stage_capacity")
-    if copying:
+    if copying_empty:
+        single=EMPTY_COPY_ROLES-EMPTY_COPY_REPEATED-{'copy.current_status','history.raw_pack'}
+        if (any(counts.get(role)!=1 for role in single)
+                or any(not 1<=counts.get(role,0)<=2 for role in EMPTY_COPY_REPEATED)
+                or not 1<=counts.get('history.raw_pack',0)<=len(ack.ROLES|empty.ROLES)
+                or not 1<=counts.get('copy.current_status',0)<=16):_fail()
+    elif copying:
         if (any(counts.get(role)!=1 for role in COPY_SINGLE_ROLES)
                 or not 1<=counts.get("history.raw_pack",0)<=len(ack.ROLES)
                 or not 1<=counts.get("copy.current_status",0)<=16):_fail()

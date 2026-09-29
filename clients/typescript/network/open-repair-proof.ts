@@ -29,7 +29,12 @@ const REPLICA_FIXED_ROLES=Object.freeze([...FIXED_ROLES.filter(role=>!role.start
   'ack.slot_custody','copy.reservation_consent','copy.allocation','copy.offer','copy.assignment','copy.owner_disclosure',
   'copy.source_disclosure','copy.current_status','replica.manifest','replica.custody','return.owner','return.source',
   'return.maintainer','current.status.replica_read']);
+const REPLICA_EMPTY_FIXED_ROLES=Object.freeze([...new Set([...REPLICA_FIXED_ROLES.filter(role=>role!=='ack.slot_custody'),
+  ...EMPTY_FIXED_ROLES.filter(role=>!role.startsWith('current.')&&role!=='ack.head'),'replica.read_pack'])]);
+const REPLICA_EMPTY_REPEATED=Object.freeze(['historical.status.ack_root','historical.status.ack_read',
+  'historical.status.ack_owner_bootstrap','historical.status.ack_slot','historical.status.ack_resource']);
 const SOURCE_STATES=new Map<string,{roles:readonly string[];minimumPacks:number}>([
+  ['replica_empty',{roles:REPLICA_EMPTY_FIXED_ROLES,minimumPacks:2}],
   ['unbound',{roles:FIXED_ROLES,minimumPacks:1}],['replica_unbound',{roles:REPLICA_FIXED_ROLES,minimumPacks:1}],['empty',{roles:EMPTY_FIXED_ROLES,minimumPacks:2}],['occupied',{roles:OCCUPIED_FIXED_ROLES,minimumPacks:3}]]);
 const OFFER_FIXED_ROLES=Object.freeze(EMPTY_FIXED_ROLES.map(role=>role==='current.status.ack_read'?'current.status.ack_write':
   role==='current.status.ack_owner_bootstrap'?'current.status.ack_offer_bootstrap':role));
@@ -38,7 +43,7 @@ const MAILBOX_ACK_CONFIGURATION_ROLES=Object.freeze(['ack.root_authority','ack.w
 const MAILBOX_FEED_ROLES=Object.freeze(["bootstrap.mailbox_feed", "contact.decision", "contact.delivery_lease", "contact.knock_lease", "contact.policy", "contact.request", "contact.store_grant", "current.status.bootstrap", "current.status.disclosure", "current.status.maintenance", "current.status.metadata_resource", "current.status.read", "current.status.slot", "delivery.attempt", "delivery.destination", "feed.checkpoint", "feed.custody", "feed.head", "historical.status.bootstrap", "historical.status.data_resource", "historical.status.destination", "historical.status.disclosure", "historical.status.maintenance", "historical.status.metadata_resource", "historical.status.read", "historical.status.slot", "history.mailbox_feed", "history.member", "mailbox.maintenance_root", "mailbox.read_grant", "mailbox.slot", "member.checkpoint", "member.core", "member.custody", "member.head", "member.link", "member.sealed_core", "message.disclosure", "range.index", "range.repair_page", "range.sealed_page", "resource.data_active", "resource.data_allocate", "resource.data_offer", "resource.metadata_active", "resource.metadata_allocate", "resource.metadata_offer", "resource.slot_activation", "source.descriptor"]);
 const CONSUMER_STATES=new Map<string,Map<string,{roles:readonly string[];minimumPacks:number}>>([
   ['ack_owner',SOURCE_STATES],['ack_offer',new Map([['empty',{roles:OFFER_FIXED_ROLES,minimumPacks:2}]])],['mailbox_root',new Map([['root',{roles:MAILBOX_ROOT_ROLES,minimumPacks:1}]])],['mailbox_feed',new Map([['feed',{roles:MAILBOX_FEED_ROLES,minimumPacks:2}]])]]);
-export type BootstrapProofSourceState='replica_unbound'|'unbound'|'empty'|'occupied'|'root'|'feed';
+export type BootstrapProofSourceState='replica_unbound'|'replica_empty'|'unbound'|'empty'|'occupied'|'root'|'feed';
 const COMMON=['schema_version','kind','signing_key','issued_at','expires_at','subject','target','target_storage_epoch','purpose','consumer'];
 const HANDLE=[...COMMON,'bootstrap_grant_sha256','handle_id','probe_ref','challenge_ref','answer_ref','service_generation','manifest_ref','child_count'];
 const CHILD=[...COMMON,'request_id','probe_ref','handle_ref','manifest_ref','service_generation','child_index','offset','requested_bytes'];
@@ -116,7 +121,7 @@ function manifestShape(value:unknown,expected:Obj,maximumItems:number,expectedSo
     if(item.role==='history.raw_pack'){
       const identity=`${ref.namespace}:${ref.key}:${ref.raw_sha256}:${ref.size}`;
       if(packs.has(identity)||ref.key!==ref.raw_sha256)fail();packs.add(identity);
-    }
+    }else if(item.role==='replica.read_pack'&&ref.key!==ref.raw_sha256)fail();
   }
   if(expected.consumer==='mailbox_root'){
     const singletons=['mailbox.root_authority','mailbox.root_read_grant','mailbox.catalog','bootstrap.mailbox_root',
@@ -125,9 +130,12 @@ function manifestShape(value:unknown,expected:Obj,maximumItems:number,expectedSo
   }else if(expected.consumer==='mailbox_feed'){
     const singletons=['mailbox.slot','mailbox.read_grant','mailbox.maintenance_root','bootstrap.mailbox_feed','resource.data_allocate','resource.metadata_allocate','resource.data_offer','resource.metadata_offer','resource.slot_activation','resource.data_active','resource.metadata_active','feed.head','feed.checkpoint','history.mailbox_feed','feed.custody'];
     if(singletons.some(name=>counts.get(name)!==1)||profile.roles.some(name=>(counts.get(name)??0)<1))fail();
-  }else if(state==='replica_unbound'){
+  }else if(state==='replica_unbound'||state==='replica_empty'){
     const repeated=['copy.current_status','current.status.replica_read'];
-    if(profile.roles.filter(name=>!repeated.includes(name)).some(name=>counts.get(name)!==1)||repeated.some(name=>(counts.get(name)??0)<1||(counts.get(name)??0)>16))fail();
+    const historical=state==='replica_empty'?REPLICA_EMPTY_REPEATED:[];
+    if(profile.roles.filter(name=>!repeated.includes(name)&&!historical.includes(name)).some(name=>counts.get(name)!==1)||
+      repeated.some(name=>(counts.get(name)??0)<1||(counts.get(name)??0)>16)||
+      historical.some(name=>(counts.get(name)??0)<1||(counts.get(name)??0)>2))fail();
   }else if(profile.roles.some(name=>counts.get(name)!==1))fail();
   if(packs.size<profile.minimumPacks)fail();return m;
 }

@@ -1,4 +1,4 @@
-"""Whole-original authority for an unbound ACK replica application commit.
+"""Whole-original authority for unbound and bound-empty ACK replica commits.
 
 The returned observations must be retained before a caller acts on denial_code.
 This module does not reserve storage, persist bytes, advertise or serve a replica.
@@ -13,6 +13,7 @@ import memory_vault_open_repair_index as index
 import memory_vault_open_repair_resource as resource
 import memory_vault_open_repair_status as status
 import memory_vault_open_repair_wire as wire
+import memory_vault_open_repair_copy_source as copy_source
 from memory_vault_open_repair_copy_prepare import CONSENT_FIELDS
 from memory_vault_open_repair_copy_resources import INTENT_FIELDS
 
@@ -24,9 +25,19 @@ def _same(value):
     if not value:wire._fail('repair_copy_authority_mismatch')
 
 
-def verify_unbound_replica_event(manifest_entry,resolver,custody_entry,*,expected_ack_slot,
+def verify_unbound_replica_event(*args,**options):
+    return _verify_replica_event(*args,**options,source_state='unbound',bound={})
+
+
+def verify_empty_replica_event(*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
+    return _verify_replica_event(*args,**options,source_state='empty',bound=dict(
+        expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+        expected_envelope_ref=expected_envelope_ref))
+
+
+def _verify_replica_event(manifest_entry,resolver,custody_entry,*,expected_ack_slot,
         expected_owner,expected_source,source_storage_epoch,expected_maintainer,expected_target,
-        target_storage_epoch,limit_policy,policy,budget):
+        target_storage_epoch,limit_policy,policy,budget,source_state,bound):
     """Reconstruct P's historical copy event from exact originals on any client.
 
     No database, local identity, network or current serving authority is assumed.
@@ -71,13 +82,15 @@ def verify_unbound_replica_event(manifest_entry,resolver,custody_entry,*,expecte
         values=entries.get(role,())
         if len(values)!=1:wire._fail('repair_copy_commit_mismatch')
         return values[0]
-    plan=verify_unbound_copy(one('history.ack_unbound'),resolver,one('ack.slot_custody'),
+    source_history='history.ack_'+source_state
+    source_custody='ack.empty_custody' if source_state=='empty' else 'ack.slot_custody'
+    plan=_verify_copy(one(source_history),resolver,one(source_custody),
         one('copy.allocation'),one('copy.offer'),one('copy.assignment'),one('copy.reservation_consent'),
         one('copy.owner_disclosure'),one('copy.source_disclosure'),expected_ack_slot=expected_ack_slot,
         expected_owner=expected_owner,expected_source=expected_source,source_storage_epoch=source_storage_epoch,
         expected_maintainer=expected_maintainer,expected_target=target,target_storage_epoch=target_storage_epoch,
         current_statuses=entries.get('copy.current_status',()),at=stored_at,
-        limit_policy=limit_policy,policy=policy,budget=budget)
+        limit_policy=limit_policy,policy=policy,budget=budget,source_state=source_state,bound=bound)
     if plan.denial_code:wire._fail(plan.denial_code)
     if (p['assignment_ref']!=plan.assignment.ref.as_dict()
             or p['original_custody_ref']!=plan.source.custody.ref.as_dict()
@@ -89,13 +102,14 @@ def verify_unbound_replica_event(manifest_entry,resolver,custody_entry,*,expecte
     for role,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
             ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):
         roles.add((role,*history._ref_tuple(item.ref)))
-    roles.add(('history.ack_unbound',*history._ref_tuple(one('history.ack_unbound')['ref'])))
     roles.update(('copy.current_status',*history._ref_tuple(item.ref)) for item in plan.statuses)
-    roles.update(('history.raw_pack',*history._ref_tuple(item['pack_ref'])) for item in plan.source.manifest.manifest.value['roles'])
     edges=[]
-    for item in plan.source.manifest.manifest.value['roles']:
-        for child in (item['document_ref'],item['pack_ref']):
-            edges.append(dict(parent_ref=one('history.ack_unbound')['ref'],relation='manifest-member',child_ref=child))
+    for role,entry,source_manifest in copy_source.source_histories(plan.source,one(source_history)):
+        roles.add((role,*history._ref_tuple(entry['ref'])))
+        for item in source_manifest.manifest.value['roles']:
+            roles.add(('history.raw_pack',*history._ref_tuple(item['pack_ref'])))
+            for child in (item['document_ref'],item['pack_ref']):
+                edges.append(dict(parent_ref=entry['ref'],relation='manifest-member',child_ref=child))
     edge_key=lambda e:(*history._ref_tuple(e['parent_ref']),e['relation'],*history._ref_tuple(e['child_ref']))
     edges=sorted({edge_key(e):e for e in edges}.values(),key=edge_key)
     if (roles!={(item['role'],*history._ref_tuple(item['ref'])) for item in value['original_roles']}
@@ -108,9 +122,11 @@ def verify_unbound_replica_event(manifest_entry,resolver,custody_entry,*,expecte
 
 def source_inventory(source, reservation, policy, budget):
     rows = {}
-    for role, item in [(r.role,r.original) for r in source.manifest.roles] + [
-            ('ack.slot_custody',source.custody),('copy.reservation_consent',reservation)]:
+    inputs=[(r.role,r.original) for manifest in copy_source.source_manifests(source) for r in manifest.roles]
+    for role, item in inputs + [
+            (copy_source.source_custody_role(source),source.custody),('copy.reservation_consent',reservation)]:
         value = wire.parse_new_wire(item.raw,policy,budget).value
+        if 'payload' not in value:continue
         issuer = value['payload']['signing_key']['key_id']
         rows[index._pair(role,item.ref)] = index.IndexOriginal(role,item,issuer)
     return tuple(rows[key] for key in sorted(rows))
@@ -141,15 +157,25 @@ class UnboundCopyAuthority:
     denial_code: object
 
 
-def verify_unbound_copy(manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
+def verify_unbound_copy(*args,**options):
+    return _verify_copy(*args,**options,source_state='unbound',bound={})
+
+
+def verify_empty_copy(*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
+    return _verify_copy(*args,**options,source_state='empty',bound=dict(
+        expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+        expected_envelope_ref=expected_envelope_ref))
+
+
+def _verify_copy(manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
         reservation_entry,owner_disclosure_entry,source_disclosure_entry,*,expected_ack_slot,expected_owner,
         expected_source,source_storage_epoch,expected_maintainer,expected_target,target_storage_epoch,
-        current_statuses,at,limit_policy,policy,budget,on_observed=None):
+        current_statuses,at,limit_policy,policy,budget,source_state,bound,on_observed=None):
     wire._context(policy,budget);at=wire.u53(at)
     context=wire.build_new_wire(dict(owner=expected_owner,source=expected_source,maintainer=expected_maintainer,
         target=expected_target),policy,budget).value
     ids={name:resource._dual_key(value,budget) for name,value in context.items()}
-    source=ack.verify_ack_unbound_source_event(manifest_entry,resolver,custody_entry,
+    source=copy_source.authenticate_source(manifest_entry,resolver,custody_entry,source_state=source_state,bound=bound,
         expected_ack_slot=expected_ack_slot,expected_owner=context['owner'],expected_target=context['source'],
         target_storage_epoch=source_storage_epoch,limit_policy=limit_policy,policy=policy,budget=budget)
     root=source.resources.originals['root'];read=source.resources.originals['read'];active=source.resources.originals['active']
@@ -170,7 +196,7 @@ def verify_unbound_copy(manifest_entry,resolver,custody_entry,allocation_entry,o
     _same(intent['kind']=='resource.copy_intent' and intent['purpose']=='ack_replica'
         and intent['caller']==context['maintainer'] and intent['target']==context['target']
         and intent['target_storage_epoch']==target_storage_epoch and intent['root_key']==root_key
-        and intent['scope']==dict(kind='ack_unbound',ack_slot=slot,root_authority_ref=root.ref.as_dict())
+        and intent['scope']==copy_source.source_scope(source)
         and intent['historical_manifest_ref']==wire.raw_ref(manifest_entry['ref']).as_dict()
         and o['intent']==intent and a['intent_sha256']==o['intent_sha256']==digest
         and o['allocation_request_ref']==allocation.ref.as_dict()
@@ -185,18 +211,20 @@ def verify_unbound_copy(manifest_entry,resolver,custody_entry,allocation_entry,o
         and m['parent_assignment_ref'] is None and wire.u53(m['depth'])==2 and m['subject']==ids['target']
         and wire.u53(m['operation_mask'])==70 and m['scope']==intent['scope']
         and m['resource_intent_sha256']==digest and m['resource_offer_ref']==offer.ref.as_dict()
-        and m['resource']==o['resource'] and m['bootstrap_grant_refs']==[bootstrap.ref.as_dict()]
+        and m['resource']==o['resource'] and m['bootstrap_grant_refs']==copy_source.bootstrap_refs(source)
         and m['budget']==o['budget'] and m['windows']==o['windows']
         and all(value<=m['expires_at'] for value in m['windows'].values())
         and m['expires_at']<=min(root.payload['expires_at'],read.payload['expires_at'],read.payload['windows']['read_until'],
-            bootstrap.payload['expires_at'],bootstrap.payload['probe_until'],bootstrap.payload['proof_until'],bootstrap.payload['upload_until']))
+            bootstrap.payload['expires_at'],bootstrap.payload['probe_until'],bootstrap.payload['proof_until'],bootstrap.payload['upload_until'],
+            *copy_source.additional_deadlines(source)))
     for p in (a,m):
         _same(p['target_node_key_id']==ids['target']['signing_key_id'] and p['target_storage_epoch']==target_storage_epoch)
     reservation=index._signed(reservation_entry,context['owner']['signing_key'],'ack.copy_reservation_consent',CONSENT_FIELDS,policy,budget)
     c=reservation.payload;index._timed(c,at);resource._opaque(c['consent_id']);wire.u53(c['revision'],1)
     disclosure=resource._fields(c['reservation_disclosure'],{'intent_sha256','until'})
     maximum=min(source.read_until,source.retain_until,active.payload['windows']['copy_until'],
-        root.payload['expires_at'],root.payload['windows']['copy_until'],c['expires_at'],intent['windows']['copy_until'])
+        root.payload['expires_at'],root.payload['windows']['copy_until'],c['expires_at'],intent['windows']['copy_until'],
+        *copy_source.additional_deadlines(source))
     _same(c['root_authority_ref']==root.ref.as_dict() and c['source_custody_ref']==source.custody.ref.as_dict()
         and c['historical_manifest_ref']==intent['historical_manifest_ref'] and c['maintainer']==ids['maintainer']
         and c['target']==context['target'] and c['target_storage_epoch']==target_storage_epoch
@@ -229,6 +257,7 @@ def verify_unbound_copy(manifest_entry,resolver,custody_entry,allocation_entry,o
     allowed={key:[dict(scope_kind=k,scope_id=v) for k,v in sorted({(e['scope_kind'],e['scope_id']) for e in values})] for key,values in allowed.items()}
     obligations=[index._obligation(context['owner']['signing_key'],'authority',index._authority(root_key,item,policy,budget),item.payload['revision'],mask)
         for item,mask in ((root,78),(read,2),(bootstrap,10),(reservation,4))]
+    obligations.extend(copy_source.additional_obligations(source,context['owner'],policy,budget))
     obligations.extend((index._obligation(context['owner']['signing_key'],'ack_slot',status.status_scope(root_key,'ack_slot',slot,policy,budget),root.payload['revision'],70),
         index._obligation(context['source']['signing_key'],'resource',status.status_scope(root_key,'resource',active.payload['resource'],policy,budget),active.payload['reservation_generation'],4),
         index._obligation(context['maintainer']['signing_key'],'assignment',assignment_scope,0,70)))
@@ -353,6 +382,8 @@ def _check_unbound_owner_return(replica,consent_entries,*,expected_owner,expecte
         obligations.append(index._obligation(parties['owner']['signing_key'],'authority',
             index._authority(root,item,policy,budget),item.payload['revision'],mask))
         expires=min(expires,item.payload['expires_at'])
+    obligations.extend(copy_source.additional_obligations(source,parties['owner'],policy,budget))
+    expires=min(expires,*copy_source.additional_deadlines(source)) if copy_source.bound_source(source) else expires
     obligations.append(index._obligation(parties['owner']['signing_key'],'ack_slot',
         status.status_scope(root,'ack_slot',root_original.payload['ack_slot'],policy,budget),root_original.payload['revision'],2))
     obligations.append(index._obligation(parties['maintainer']['signing_key'],'assignment',
