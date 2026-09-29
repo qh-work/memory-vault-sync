@@ -16,6 +16,31 @@ import memory_vault_open_repair_history as history
 from tests.open_repair_ack_fixtures import ack_unbound_fixture, signed_entry, LIMITS
 
 
+class MailboxStatusReuseTests(unittest.TestCase):
+    def test_reuse_is_bound_to_original_bytes_reference_checks_and_work_budget(self):
+        from tests.test_open_repair_status import historical_status_fixture
+        from memory_vault_open_repair_mailbox_activation import _status_once
+        from memory_vault_open_repair_state import DEFAULT_POLICY
+        from memory_vault_open_repair_wire import RepairBudget
+        signed,entry,options,signers,_,_,_=historical_status_fixture()
+        budget=RepairBudget(DEFAULT_POLICY);checked={}
+        def verify(value=entry,**changes):
+            return _status_once(checked,value,**dict(options,policy=DEFAULT_POLICY,budget=budget,**changes))
+        first=verify();self.assertIs(verify(),first)
+        self.assertEqual(budget.snapshot()['signature_checks'],1)
+        self.assertGreater(budget.snapshot()['retained_bytes'],len(entry['raw']))
+        wrong=dict(entry,ref=dict(entry['ref'],size=entry['ref']['size']+1))
+        with self.assertRaises(RepairWireError):verify(wrong)
+        with self.assertRaises(RepairWireError):verify(at=signed['payload']['valid_until'])
+        with self.assertRaises(RepairWireError):verify(expected_signing_key=signers['target'].public_descriptor())
+        with self.assertRaises(RepairWireError):verify(allowed_scopes=[])
+        changed=copy.deepcopy(options['required']);changed[0]['operation_mask']=1
+        with self.assertRaises(RepairWireError):verify(required=changed)
+        fresh=RepairBudget(DEFAULT_POLICY)
+        _status_once(checked,entry,**options,policy=DEFAULT_POLICY,budget=fresh)
+        self.assertEqual(fresh.snapshot()['signature_checks'],1)
+
+
 class MailboxActivationTests(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory(prefix="synthetic-mailbox-activation-")

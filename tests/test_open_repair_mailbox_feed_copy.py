@@ -424,7 +424,9 @@ class MailboxFeedCopyTests(unittest.TestCase):
                             expected_envelope_ref=h.envelope_ref,target_node_entry=encode(h.wrap(canonical_bytes(descriptor))),
                             slot_entries={name:encode(index._entry(setup[name])) for name in ('slot','read','maintenance','bootstrap')},
                             known_statuses=[],archive_statuses=[]))
-                    try:received=h.call_agent(h.recipient_agent,op='connect',invitation=invitation)
+                    from tests.test_open_delivery_http import repair_failure_diagnostics
+                    try:
+                        with repair_failure_diagnostics():received=h.call_agent(h.recipient_agent,op='connect',invitation=invitation)
                     except AssertionError as error:raise AssertionError((str(error),errors)) from None
                     self.assertEqual(received['body_transport'],'mailbox_message_replica')
                     self.assertEqual(received['messages'][0]['share']['records_added'],1)

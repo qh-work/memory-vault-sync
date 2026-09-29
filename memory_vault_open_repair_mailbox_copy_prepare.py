@@ -105,8 +105,17 @@ class MailboxRootCopyPreparation(AckCopyPreparation):
             signers[self.keys['signing_key']['key_id']] = self.keys['signing_key']
             stamp = tuple((bytes(row[0]), bytes(row[1])) for row in self.db.execute(
                 'SELECT raw,ref FROM ack_copy_prepare_status WHERE root_digest=? ORDER BY raw_digest', (digest,)))
+            # Observing this plan already persisted its authenticated statuses.
+            # Reuse only those exact bytes and full references in this call;
+            # older or changed journal entries still require authentication.
+            checked_now = {(item.ref, item.raw): item for item in plan.statuses}
             previous = []
             for raw, reference in stamp:
+                retained_ref = wire.raw_ref(json.loads(reference))
+                checked = checked_now.get((retained_ref, raw))
+                if checked is not None:
+                    previous.append(checked)
+                    continue
                 payload = wire.parse_new_wire(raw, p, b).value['payload']; issuer = payload['signing_key']['key_id']
                 # Other slots of this same mailbox may have authenticated
                 # observations from different senders. Keep their durable

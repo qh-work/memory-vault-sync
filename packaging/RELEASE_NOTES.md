@@ -7,6 +7,12 @@ using its existing keys and import policy. The ordinary durable inbox imports
 selected memory once, resumes after interruption and retains a recipient-signed
 receipt for the independent return workflow.
 
+Messages carrying their original independent ACK configuration can complete
+`return_mailbox_receipt` and sender `recover_receipt` after replica reception.
+Repeated historical status roles reuse exact authenticated results only within
+the same invocation and identical checks. Changed bytes, references, scopes,
+issuers or deadlines are verified again; work and authority limits are retained.
+
 `copy-upload-root`, `copy-upload-feed` and `copy-upload-message` verify real
 reserved capacity, exact original graphs and independent copy permissions before
 transfer. Upload journals replay exact requests and completion after lost replies

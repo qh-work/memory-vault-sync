@@ -26,6 +26,11 @@ class MailboxMessageCopyTests(unittest.TestCase):
         from tests.test_open_repair_mailbox_feed_copy import MailboxFeedCopyTests
         MailboxFeedCopyTests.http_roundtrip(self,message=True,commands=True,agent=True)
 
+    def test_replica_memory_returns_independent_receipt_to_original_sender(self):
+        from tests.test_open_repair_mailbox_feed_copy import MailboxFeedCopyTests
+        self.with_independent_return=True
+        MailboxFeedCopyTests.http_roundtrip(self,message=True,commands=True,agent=True)
+
     def run_fixture(self, inspect):
         fixture=fixtures.MailboxStagingHTTPTests('test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources')
         fixture.setUp();self.addCleanup(fixture.doCleanups)
@@ -34,7 +39,10 @@ class MailboxMessageCopyTests(unittest.TestCase):
             h=FeedCopyFixture(self,fixture,staging,slot,head,message=True)
             with patch('time.time',return_value=h.now):inspect(h)
         fixture.inspect_committed_mailbox=receive
-        fixture.test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources()
+        if getattr(self,'with_independent_return',False):
+            fixture.test_ack_configuration_survives_mailbox_custody()
+        else:
+            fixture.test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources()
 
     def verify_replica_delivery(self,h,reader,recovered,message,descriptor):
         from memory_vault import canonical_bytes

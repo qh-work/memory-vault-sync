@@ -844,3 +844,9 @@ original UTF-8 string; `slot_entries` contains `slot`, `read`, `maintenance` and
 without a private output file. The Agent returns the ordinary inbox result and
 retains authenticated status observations in its existing protected database.
 Repeated recovery preserves the saved receipt and does not import memory twice.
+
+When the original message carries independently prepared ACK authority, the
+recipient can then call the existing ACK `return_mailbox_receipt` action. The
+sender uses `recover_receipt` to update its original send record after the
+message source has stopped. Both actions use the retained original grants;
+receiving from a replica does not create or renew ACK permission.
