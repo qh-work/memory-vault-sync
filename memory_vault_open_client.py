@@ -454,14 +454,36 @@ class OpenNetworkClient:
         from memory_vault_open_repair_admin import MAX_BUNDLE_BYTES
         object_fields(value,{'schema_version','action','request_id','part'}|({'cursor'} if 'cursor' in value else set()))
         opaque(value['request_id'])
-        if value['part'] not in ('owner_request','recipient_request'):raise MemoryError('open_invalid_ack_request')
+        if value['part'] not in ('owner_request','recipient_request','owner_invitation','recipient_invitation'):raise MemoryError('open_invalid_ack_request')
         self._ack_preparations_initialize()
         with self.participant.state.db() as db:
             row=db.execute('SELECT result,result_sha256 FROM open_ack_agent_preparations WHERE request_id=?',(value['request_id'],)).fetchone()
         if row is None or row['result'] is None:raise MemoryError('open_ack_preparation_incomplete')
         stored=bytes(row['result'])
         if len(stored)>MAX_BUNDLE_BYTES or hashlib.sha256(stored).hexdigest()!=row['result_sha256']:raise MemoryError('open_ack_preparation_corrupt')
-        raw=canonical_bytes(document(stored,maximum=MAX_BUNDLE_BYTES)[value['part']]);digest=hashlib.sha256(raw).hexdigest();offset=0
+        prepared=document(stored,maximum=MAX_BUNDLE_BYTES)
+        if value['part'] in ('owner_invitation','recipient_invitation'):
+            from memory_vault_open_repair_admin import _entry as decode_original
+            def encoded(entry):
+                decoded=decode_original(entry)
+                return dict(raw=decoded['raw'].decode('utf-8'),ref=decoded['ref'])
+            recipient=prepared['recipient_request']
+            if value['part']=='recipient_invitation':
+                request={name:([encoded(entry) for entry in item] if name=='current_statuses' else
+                    encoded(item) if name.endswith('_entry') else item) for name,item in recipient['request'].items()}
+                exported=dict(schema_version=ACK_CONNECT_SCHEMA,action='return_receipt',
+                    base_url=recipient['base_url'],repair_profile=recipient['repair_profile'],request=request)
+            else:
+                owner=prepared['owner_request']
+                request=dict(target_node_entry=encoded(owner['node']),expected_target=owner['target'],
+                    expected_ack_slot=owner['ack_slot'],root_entry=encoded(owner['root']),read_entry=encoded(owner['read']),
+                    bootstrap_entry=encoded(owner['bootstrap']),expected_receipt_writer=owner['receipt_writer'],
+                    expected_message_id=owner['message_id'],expected_envelope_ref=owner['envelope_ref'],
+                    known_statuses=[encoded(entry) for entry in owner['known_statuses']])
+                exported=dict(schema_version=ACK_CONNECT_SCHEMA,action='recover_receipt',
+                    base_url=recipient['base_url'],repair_profile=recipient['repair_profile'],request=request)
+        else:exported=prepared[value['part']]
+        raw=canonical_bytes(exported);digest=hashlib.sha256(raw).hexdigest();offset=0
         cursor=value.get('cursor')
         if cursor is not None:
             object_fields(cursor,{'sha256','offset'});offset=cursor['offset']
@@ -503,7 +525,10 @@ class OpenNetworkClient:
             if value['action']!='recover_receipt':raise MemoryError('open_invalid_ack_request')
             from memory_vault_open_repair_client import AckOwnerRecoveryClient,MailboxSetupJournal
             object_fields(request,{'target_node_entry','expected_target','expected_ack_slot','root_entry','read_entry','bootstrap_entry',
-                'expected_receipt_writer','expected_message_id','expected_envelope_ref'})
+                'expected_receipt_writer','expected_message_id','expected_envelope_ref'}|({'known_statuses'} if 'known_statuses' in request else set()))
+            supplied=request.pop('known_statuses',[])
+            if type(supplied) is not list or len(supplied)>16:raise MemoryError('open_invalid_ack_request')
+            supplied=[decode(entry) for entry in supplied]
             for name in ('target_node_entry','root_entry','read_entry','bootstrap_entry'):request[name]=decode(request[name])
             plan=canonical_bytes(dict(kind='ack.owner_recovery',owner=self.identity.public_descriptor(),
                 **{name:request[name] for name in ('expected_target','expected_ack_slot','expected_receipt_writer','expected_message_id','expected_envelope_ref')},
@@ -523,7 +548,7 @@ class OpenNetworkClient:
                     transport=self.participant.transport,allow_loopback=self.participant.transport.allow_loopback,
                     status_observer=observed)
                 try:
-                    recovered=reader.recover_occupied(value['base_url'],known_statuses=known,**request)
+                    recovered=reader.recover_occupied(value['base_url'],known_statuses=supplied,archive_statuses=known,**request)
                     result=self._delivery().accept_recovered_receipt(recovered.source.inputs['receipt'].raw)
                     return dict(result,commit_ref=recovered.source.commit.ref.as_dict(),network_accessed=True)
                 finally:

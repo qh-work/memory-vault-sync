@@ -9,15 +9,13 @@ from unittest.mock import patch
 from memory_vault import MemoryError, canonical_bytes
 from memory_vault_client import ClientConfig
 from memory_vault_open_delivery_client import OpenDeliveryClient
-from memory_vault_open_repair_admin import recover_ack
 from memory_vault_open_repair_bind_client import OwnerAckBindClient
 from memory_vault_open_repair_client import AckOwnerRecoveryClient
-from memory_vault_open_repair_provision import decode_saved_request
 from memory_vault_open_repair_remote_provision_admin import prepare_remote_source
 import memory_vault_open_repair_wire as wire
 from memory_vault_open_transport import OpenHTTPTransport
 from memory_vault_storage import atomic_write
-from memory_vault_trust import TrustStore, _write_new_private
+from memory_vault_trust import TrustStore
 from tests import test_open_repair_provision as local_fixture
 
 
@@ -59,7 +57,7 @@ class RemoteProvisionTests(unittest.TestCase):
         conflict = self.delivery.a.handle(dict(op='connect', invitation=dict(invitation, lifetime=3601)))
         self.assertFalse(conflict['ok'])
         self.assertIn('open_ack_preparation_conflict', str(conflict))
-        for part in ('owner_request', 'recipient_request'):
+        for part in ('owner_invitation', 'recipient_invitation'):
             request = dict(schema_version=ACK_CONNECT_SCHEMA, action='export_preparation',
                 request_id=self.options['request_id'], part=part)
             raw = b''
@@ -88,14 +86,16 @@ class RemoteProvisionTests(unittest.TestCase):
         self.delivery.host.stop(0)
         with self.delivery.b._network() as network:
             original = bytes(network._delivery()._inbox(prepared['message_id'])['receipt'])
-            bundle = prepared['recipient_request']
-            published = network.publish_saved_ack(bundle['base_url'], decode_saved_request(bundle), repair_profile=bundle['repair_profile'])
-        self.assertEqual(published.source.inputs['receipt'].raw, original)
-        owner_path = self.root / 'remote-owner-request.json'
-        _write_new_private(owner_path, canonical_bytes(prepared['owner_request']))
-        recovered = recover_ack(self.delivery.a.network_config, owner_path, self.root / 'remote-owner-result.json',
-                                phase='occupied', repair_profile='receipt-index')
-        self.assertEqual(recovered['state'], 'ack_occupied_source_recovered')
+        returned = self.delivery.call(self.delivery.b, op='connect', invitation=prepared['recipient_invitation'])
+        self.assertEqual(returned['state'], 'retained_at_ack_source')
+        self.assertEqual(returned['receipt_ref']['raw_sha256'], hashlib.sha256(original).hexdigest())
+        recovered = self.delivery.call(self.delivery.a, op='connect', invitation=prepared['owner_invitation'])
+        self.assertTrue(recovered['endpoint_validated'])
+        self.assertFalse(recovered['acknowledgement_pending'])
+        self.assertEqual(recovered['commit_ref'], returned['commit_ref'])
+        with self.delivery.a._network() as network:
+            row = network._delivery()._outbox(self.options['request_id'])
+            self.assertEqual(bytes(row['acknowledgement']), original)
         self.assertEqual(self.delivery.host.processes, {})
 
     def test_completed_bind_with_expired_carrier_reconciles_without_new_envelope(self):

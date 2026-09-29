@@ -62,6 +62,16 @@ Decode each `bundle_chunk` from base64, append in offset order, and pass
 `bundle_sha256` before parsing the assembled JSON. Export reads saved originals;
 it does not refresh permission or source availability. Keep the owner request
 with A and give only the recipient request to B over an authorized channel.
+For direct Agent calls, select `part: recipient_invitation` or
+`part: owner_invitation` instead. After assembling and checking the pages, pass
+the resulting object unchanged as the `invitation` of `connect`. B uses the
+recipient invitation only after saving the delivery. A uses the owner invitation
+to recover B's original receipt and update its actual send record. The owner
+invitation retains the original known status documents; recovery authenticates
+these along with locally retained status history before accepting a receipt.
+This also works while the original delivery node is offline, provided the
+independent source remains reachable and the original grants are still valid.
+
 These bundles contain no private keys. Existing contact approval and R's explicit
 remote setup opt-in remain required, as in the command workflow below.
 
