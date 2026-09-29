@@ -48,10 +48,11 @@ def _role(value):
         _mismatch()
 
 
-def _check_slot_authority(held, p, slot_key, owner, offers, budget, now, *, target, epoch, policy, limits):
+def _check_slot_authority(held, p, slot_key, owner, offers, budget, now, *, target, epoch, policy, limits, _bootstrap_only=False):
     root = slot_key["root_key"]
     owner_id = resource._dual_key(owner, budget)
-    maintenance, read, slot, grant, activation = (p[k] for k in FIELDS)
+    maintenance, read, slot, grant = (p[k] for k in ('maintenance','read','slot','bootstrap'))
+    activation=p.get('activation')
     if (root["owner"] != owner_id or slot_key["writer"] != resource._dual_key(target, budget)
             or slot_key["writer_storage_epoch"] != epoch):
         _mismatch()
@@ -99,6 +100,7 @@ def _check_slot_authority(held, p, slot_key, owner, offers, budget, now, *, targ
             or read["expires_at"] > maintenance["expires_at"]):
         _mismatch()
     for name, purpose in (("data", "mailbox_data"), ("metadata", "feed_metadata")):
+        if _bootstrap_only:continue
         offer = offers[name]
         value = wire.parse_new_wire(offer["raw"], policy, budget).value["payload"]
         intent = value["intent"]
@@ -134,7 +136,7 @@ def _check_slot_authority(held, p, slot_key, owner, offers, budget, now, *, targ
                 for parent in (maintenance, read) for field in parent_fields):
             _mismatch()
     if not (maintenance["issued_at"] <= read["issued_at"] <= slot["issued_at"]
-            <= grant["issued_at"] <= activation["issued_at"] <= now
+            <= grant["issued_at"] <= (now if _bootstrap_only else activation["issued_at"]) <= now
             and grant["expires_at"] <= min(maintenance["expires_at"], read["expires_at"])):
         _mismatch()
     for key in ("probe_until", "proof_until", "upload_until"):
@@ -143,6 +145,7 @@ def _check_slot_authority(held, p, slot_key, owner, offers, budget, now, *, targ
     if any(grant[key] > parent["windows"][window] for key in ("proof_until", "upload_until")
            for parent in (maintenance, read) for window in ("read_until", "retain_until")):
         _mismatch()
+    if _bootstrap_only:return
     original._opaque(activation["activation_id"])
     expected_offers = sorted((offer["ref"] for offer in offers.values()), key=history._ref_tuple)
     expected_authorities = [{"role": KINDS[name], "ref": held[name]["ref"]}
@@ -737,3 +740,32 @@ def verify_mailbox_feed_source_event(manifest_entry, resolver, custody_entry, *,
             or p['retain_until']>graph['retain_until']):_mismatch()
     return dict(manifest=resolved,graph=graph,custody=resource.AuthenticatedRepairOriginal(parsed.raw,ref,p),
         read_until=p['read_until'],retain_until=p['retain_until'])
+
+
+def verify_mailbox_feed_bootstrap(entries, *, expected_slot, expected_owner, expected_target,
+        target_storage_epoch, limit_policy, at, policy, budget):
+    """Authenticate retained recipient controls before any remote feed request.
+
+    Resource admission windows are not current read windows. Resource events
+    and feed custody are authenticated after the bounded possession exchange.
+    """
+    wire._context(policy,budget)
+    expected=wire.build_new_wire(dict(slot=expected_slot,owner=expected_owner,target=expected_target,
+        epoch=target_storage_epoch,limits=limit_policy,at=at),policy,budget).value
+    history._slot(expected['slot'],expected['slot']['root_key']);wire.u53(expected['at']);bootstrap._limits(expected['limits'])
+    resource._fields(entries,{'slot','read','maintenance','bootstrap'});held={};payloads={};checked={}
+    for name,value in entries.items():
+        resource._fields(value,{'raw','ref'});ref=resource._ref(wire.build_new_wire(value['ref'],policy,budget).value)
+        parsed=wire.parse_new_wire(value['raw'],policy,budget)
+        if len(parsed.raw)!=ref.size or budget._hash(parsed.raw)!=ref.raw_sha256:wire._fail('repair_ref_mismatch')
+        signed=resource._fields(parsed.value,{'payload','proof'})
+        p=resource._fields(signed['payload'],resource.COMMON|set(FIELDS[name].split()))
+        if p['kind']!=KINDS[name] or p['schema_version']!=resource.SCHEMA:_mismatch()
+        resource._lifetime(p)
+        if not p['issued_at']<=expected['at']<p['expires_at']:wire._fail('repair_resource_expired')
+        original._verify_control_signature(p,signed['proof'],expected['owner']['signing_key'],budget)
+        held[name]=dict(raw=parsed.raw,ref=ref.as_dict());payloads[name]=p
+        checked[name]=resource.AuthenticatedRepairOriginal(parsed.raw,ref,p)
+    _check_slot_authority(held,payloads,expected['slot'],expected['owner'],{},budget,expected['at'],target=expected['target'],
+        epoch=expected['epoch'],policy=policy,limits=expected['limits'],_bootstrap_only=True)
+    return checked

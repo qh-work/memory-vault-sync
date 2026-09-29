@@ -473,6 +473,57 @@ class RecoveredMailboxRootProof:
 
 class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
     """Recover B's original mailbox directory from independently retained S1."""
+    def _download_mailbox(self, base_url, *, target, node_payload, bootstrap_original, expiry, started, deadline, budget, consumer, source_state):
+        grant=bootstrap_original.payload
+        binding=dict(expected_subject=self.subject,expected_target=target,target_storage_epoch=node_payload["storage_epoch"],
+            bootstrap_grant_sha256=bootstrap_original.ref.raw_sha256,selector=grant["selector"],consumer=consumer,policy=self.policy,budget=budget)
+        requests,wire_bytes,proof_bytes=0,0,0
+        def request(raw,child=False):
+            nonlocal requests,wire_bytes
+            if requests>=grant["limits"]["max_requests"] or time.monotonic()>=deadline:
+                _fail("repair_over_budget")
+            requests+=1
+            value=self.transport.request_repair(base_url,raw,child=child,deadline=deadline)
+            if type(value) is not bytes or not 0<len(value)<=proof.MAX_RESPONSE_BYTES:
+                _fail("repair_invalid_response")
+            wire_bytes+=len(raw)+len(value)
+            return value
+        outgoing=probe.make_bootstrap_probe(self.identity,**binding,at=started,expires_at=expiry)
+        if len(outgoing.original.raw)>grant["limits"]["max_probe_bytes"]:
+            _fail("repair_over_budget")
+        challenge_raw=request(outgoing.original.raw);digest=budget._hash(challenge_raw)
+        challenge=dict(raw=challenge_raw,ref=wire.RawRef("meta",digest,digest,len(challenge_raw)).as_dict())
+        answer=probe.solve_bootstrap_challenge(_entry(outgoing.original),challenge,signer=self.identity,encryption_identity=self.encryption_identity,
+            target_nonce=outgoing.nonce,**binding,at=self._now(),expires_at=expiry)
+        response=request(answer.raw)
+        held=proof.verify_bootstrap_proof_response(response,expected_subject=self.subject,expected_target=target,
+            target_storage_epoch=node_payload["storage_epoch"],selector=grant["selector"],bootstrap_grant_ref=bootstrap_original.ref.as_dict(),
+            probe_ref=outgoing.original.ref.as_dict(),challenge_ref=challenge["ref"],answer_ref=answer.ref.as_dict(),at=self._now(),
+            max_proof_items=grant["limits"]["max_proof_items"],max_proof_bytes=grant["limits"]["max_proof_bytes"],
+            expected_source_state=source_state,consumer=consumer,policy=self.policy,budget=budget)
+        proof_bytes=len(response)+len(held.handle.raw)+len(held.manifest.raw)
+        originals,roles={},{}
+        for item in held.manifest.value["children"]:
+            reference=wire.raw_ref(item["ref"]);roles.setdefault(item["role"],[]).append(reference)
+            if reference in originals:
+                continue
+            if reference.size>self.policy.max_document_bytes or proof_bytes+reference.size>grant["limits"]["max_proof_bytes"]:
+                _fail("repair_over_budget")
+            chunks=[];offset=0
+            while offset<reference.size:
+                count=min(proof.MAX_CHILD_BYTES,reference.size-offset)
+                child=proof.make_bootstrap_child_request(self.identity,held,subject=self.subject,target=target,at=self._now(),
+                    expires_at=held.handle.payload["expires_at"],child_index=item["index"],offset=offset,requested_bytes=count,policy=self.policy,budget=budget)
+                value=request(child.raw,True)
+                if len(value)!=count:
+                    _fail("repair_ref_mismatch")
+                budget._bytes("input_bytes",len(value));chunks.append(value);offset+=count
+            budget._bytes("output_bytes",reference.size);assembled=b"".join(chunks)
+            if budget._hash(assembled)!=reference.raw_sha256:
+                _fail("repair_ref_mismatch")
+            originals[reference]=assembled;proof_bytes+=len(assembled)
+        return held,originals,roles,dict(requests=requests,wire_bytes=wire_bytes,proof_bytes=proof_bytes)
+
     def recover(self, base_url, *, target_node_entry, expected_target, expected_root,
                 root_entry, read_entry, bootstrap_entry, known_statuses=(), archive_statuses=(), timeout=30):
         from memory_vault_open_repair_mailbox_root import verify_mailbox_root_bootstrap, verify_mailbox_root_source_event
@@ -514,53 +565,9 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
             *(v.payload["expires_at"] for v in setup.values()))
         if expiry<=started:
             _fail("repair_access_expired")
-        binding=dict(expected_subject=self.subject,expected_target=target,target_storage_epoch=node.payload["storage_epoch"],
-            bootstrap_grant_sha256=setup["bootstrap"].ref.raw_sha256,selector=grant["selector"],consumer="mailbox_root",policy=self.policy,budget=budget)
-        requests,wire_bytes,proof_bytes=0,0,0
-        def request(raw,child=False):
-            nonlocal requests,wire_bytes
-            if requests>=grant["limits"]["max_requests"] or time.monotonic()>=deadline:
-                _fail("repair_over_budget")
-            requests+=1
-            value=self.transport.request_repair(base_url,raw,child=child,deadline=deadline)
-            if type(value) is not bytes or not 0<len(value)<=proof.MAX_RESPONSE_BYTES:
-                _fail("repair_invalid_response")
-            wire_bytes+=len(raw)+len(value)
-            return value
-        outgoing=probe.make_bootstrap_probe(self.identity,**binding,at=started,expires_at=expiry)
-        if len(outgoing.original.raw)>grant["limits"]["max_probe_bytes"]:
-            _fail("repair_over_budget")
-        challenge_raw=request(outgoing.original.raw);digest=budget._hash(challenge_raw)
-        challenge=dict(raw=challenge_raw,ref=wire.RawRef("meta",digest,digest,len(challenge_raw)).as_dict())
-        answer=probe.solve_bootstrap_challenge(_entry(outgoing.original),challenge,signer=self.identity,encryption_identity=self.encryption_identity,
-            target_nonce=outgoing.nonce,**binding,at=self._now(),expires_at=expiry)
-        response=request(answer.raw)
-        held=proof.verify_bootstrap_proof_response(response,expected_subject=self.subject,expected_target=target,
-            target_storage_epoch=node.payload["storage_epoch"],selector=grant["selector"],bootstrap_grant_ref=setup["bootstrap"].ref.as_dict(),
-            probe_ref=outgoing.original.ref.as_dict(),challenge_ref=challenge["ref"],answer_ref=answer.ref.as_dict(),at=self._now(),
-            max_proof_items=grant["limits"]["max_proof_items"],max_proof_bytes=grant["limits"]["max_proof_bytes"],
-            expected_source_state="root",consumer="mailbox_root",policy=self.policy,budget=budget)
-        proof_bytes=len(response)+len(held.handle.raw)+len(held.manifest.raw)
-        originals,roles={},{}
-        for item in held.manifest.value["children"]:
-            reference=wire.raw_ref(item["ref"]);roles.setdefault(item["role"],[]).append(reference)
-            if reference in originals:
-                continue
-            if reference.size>self.policy.max_document_bytes or proof_bytes+reference.size>grant["limits"]["max_proof_bytes"]:
-                _fail("repair_over_budget")
-            chunks=[];offset=0
-            while offset<reference.size:
-                count=min(proof.MAX_CHILD_BYTES,reference.size-offset)
-                child=proof.make_bootstrap_child_request(self.identity,held,subject=self.subject,target=target,at=self._now(),
-                    expires_at=held.handle.payload["expires_at"],child_index=item["index"],offset=offset,requested_bytes=count,policy=self.policy,budget=budget)
-                value=request(child.raw,True)
-                if len(value)!=count:
-                    _fail("repair_ref_mismatch")
-                budget._bytes("input_bytes",len(value));chunks.append(value);offset+=count
-            budget._bytes("output_bytes",reference.size);assembled=b"".join(chunks)
-            if budget._hash(assembled)!=reference.raw_sha256:
-                _fail("repair_ref_mismatch")
-            originals[reference]=assembled;proof_bytes+=len(assembled)
+        held,originals,roles,counts=self._download_mailbox(base_url,target=target,node_payload=node.payload,
+            bootstrap_original=setup["bootstrap"],expiry=expiry,started=started,deadline=deadline,budget=budget,
+            consumer="mailbox_root",source_state="root")
         def entry(reference):
             return dict(raw=originals[reference],ref=reference.as_dict())
         resolver=wire.LocalRawResolver(self.policy,budget)
@@ -610,7 +617,7 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
         verify_mailbox_root_bootstrap(dict(root=root_entry,read=read_entry,bootstrap=bootstrap_entry),expected_root=root,
             expected_owner=self.subject,limit_policy=self.limits,at=self._now(),policy=self.policy,budget=budget)
         return RecoveredMailboxRootProof(MappingProxyType(source),held,tuple(current),MappingProxyType(originals),
-            MappingProxyType(dict(requests=requests,wire_bytes=wire_bytes,proof_bytes=proof_bytes,**budget.snapshot())))
+            MappingProxyType(dict(**counts,**budget.snapshot())))
 
 
 class MailboxSetupBuilder:
@@ -1456,3 +1463,113 @@ def verify_mailbox_member_current(setup, entries, *, known_entries=(), at,
             if mask and value['status']=='active' and value['operation_mask']&mask==mask:covered.add(key)
     if covered!={key for key,value in required.items() if value['operation_mask']}:_fail('repair_status_missing')
     return tuple(current)
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveredMailboxFeedProof:
+    source: object
+    proof: proof.AuthenticatedBootstrapProof
+    current_statuses: tuple
+    originals: object
+    entries: tuple
+    metrics: object
+
+
+class MailboxFeedRecoveryClient(MailboxRootRecoveryClient):
+    """Recover and decrypt a selected mailbox index without known message IDs."""
+    def recover(self, base_url, *, target_node_entry, expected_target, expected_sender, expected_slot,
+                slot_entries, known_statuses=(), archive_statuses=(), journal=None, timeout=60):
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_bootstrap,verify_mailbox_feed_source_event
+        if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=60:_fail('repair_invalid_deadline')
+        budget=wire.RepairBudget(self.policy);started=self._now();deadline=time.monotonic()+timeout
+        expected=wire.build_new_wire(dict(slot=expected_slot,target=expected_target,sender=expected_sender),self.policy,budget).value
+        key,target,sender=(expected[name] for name in ('slot','target','sender'));root=key['root_key']
+        setup=verify_mailbox_feed_bootstrap(slot_entries,expected_slot=key,expected_owner=self.subject,expected_target=target,
+            target_storage_epoch=key['writer_storage_epoch'],limit_policy=self.limits,at=started,policy=self.policy,budget=budget)
+        import memory_vault_open_repair_resource as resource
+        if setup['slot'].payload['sender']!=resource._dual_key(sender,budget):_fail('repair_proof_mismatch')
+        raw,ref=ack._entry(target_node_entry)
+        node=original.verify_original_control(raw,expected_signing_key=target['signing_key'],expected_schema='memory-vault-open-control/v1',
+            expected_kind='node',at=started,policy=self.policy,budget=budget)
+        original._node_shape(node,started,budget)
+        if len(node.document.raw)!=ref.size or node.raw_sha256!=ref.raw_sha256:_fail('repair_ref_mismatch')
+        if (node.payload['storage_epoch']!=key['writer_storage_epoch']
+                or endpoint(base_url,allow_loopback=self.allow_loopback)!=endpoint(node.payload['base_url'],allow_loopback=self.allow_loopback)):_fail('repair_proof_mismatch')
+        retained=self._retained_inputs(known_statuses,archive_statuses,budget);known=[]
+        journal_key=None
+        if journal is not None:
+            if not isinstance(journal,MailboxSetupJournal):_fail('repair_invalid_context')
+            plan=wire.build_new_wire(dict(kind='mailbox.feed_recovery',slot_key=key,owner=self.subject,sender=sender,target=target,
+                entries={name:value.ref.as_dict() for name,value in setup.items()}),self.policy,budget).raw
+            journal_key=budget._hash(plan);journal.initialize();journal.start(journal_key,plan)
+            merged={value['raw']:value for value in retained}
+            for value in journal.statuses(journal_key):merged.setdefault(value['raw'],value)
+            if len(merged)>32:_fail('repair_status_history_capacity')
+            retained=tuple(merged.values())
+        def observe(authenticated):
+            if journal is not None:journal.observe(journal_key,authenticated)
+            if self.status_observer is not None:self.status_observer(authenticated)
+        for entry in retained:
+            p=status._fields(status._fields(original.parse_original_control(entry['raw'],self.policy,budget).value,{'payload','proof'})['payload'],status._PAYLOAD)
+            signer=p['signing_key'];permitted=set()
+            if signer==self.subject['signing_key']:permitted|={'mailbox_slot','authority'}
+            if signer==sender['signing_key']:permitted.add('authority')
+            if signer==target['signing_key']:permitted.add('resource')
+            values=self._status_entries(p)
+            if not permitted or any(v['scope_kind'] not in permitted for v in values) or p['issued_at']>started:_fail('repair_status_disclosure')
+            observed=status.authenticate_status_original(entry,expected_root=root,expected_signing_key=signer,at=p['issued_at'],
+                allowed_scopes=[dict(scope_kind=v['scope_kind'],scope_id=v['scope_id']) for v in values],
+                policy=self.policy,budget=budget,on_authenticated=observe)
+            known.append(observed)
+            if any(v['status']=='revoked' and v['operation_mask']&10 for v in values):_fail('repair_authority_revoked')
+        grant=setup['bootstrap'].payload
+        expiry=min(started+min(60,max(1,int(timeout))),node.payload['expires_at'],grant['probe_until'],grant['proof_until'],
+            *(v.payload['expires_at'] for v in setup.values()))
+        if expiry<=started:_fail('repair_access_expired')
+        held,originals,roles,counts=self._download_mailbox(base_url,target=target,node_payload=node.payload,bootstrap_original=setup['bootstrap'],
+            expiry=expiry,started=started,deadline=deadline,budget=budget,consumer='mailbox_feed',source_state='feed')
+        def entry(reference):return dict(raw=originals[reference],ref=reference.as_dict())
+        resolver=wire.LocalRawResolver(self.policy,budget)
+        for reference in roles['history.raw_pack']:
+            if resolver.put(reference.namespace,reference.key,originals[reference]).ref!=reference:_fail('repair_ref_mismatch')
+        source=verify_mailbox_feed_source_event(entry(roles['history.mailbox_feed'][0]),resolver,entry(roles['feed.custody'][0]),
+            expected_slot=key,expected_owner=self.subject,expected_sender=sender,expected_target=target,limit_policy=self.limits,policy=self.policy,budget=budget)
+        for member in source['graph']['members']:
+            for name in setup:
+                if member['originals'][name].raw!=setup[name].raw or member['originals'][name].ref!=setup[name].ref:_fail('repair_proof_mismatch')
+        actual={(role,ref) for role,refs in roles.items() for ref in refs if not role.startswith('current.status.')};wanted=set()
+        for tree in (source['manifest'],*source['manifest'].predecessors):
+            wanted.update((v.role,v.original.ref) for v in tree.roles)
+            wanted.update(('history.raw_pack',wire.raw_ref(v['pack_ref'])) for v in tree.manifest.value['roles'])
+        wanted.update((role,ref) for role in ('history.mailbox_feed','feed.custody') for ref in roles[role])
+        if actual!=wanted:_fail('repair_proof_mismatch')
+        obligations=[dict(role='current.status.'+v['role'],kind=v['scope_kind'],scope_id=v['scope_id'],revision=v['document_revision'],
+            signer=v['signer'],mask=10 if v['role'] in ('slot','maintenance','bootstrap') else 2) for v in source['graph']['obligations']]
+        allowed={}
+        for member in source['graph']['members']:
+            for v in member['obligations']:allowed[(v['signer']['key_id'],v['scope_kind'],v['scope_id'])]=v
+        current=[];covered=set()
+        for role,refs in roles.items():
+            if not role.startswith('current.status.'):continue
+            for reference in refs:
+                p=original.parse_original_control(originals[reference],self.policy,budget).value['payload']
+                present={(v['scope_kind'],v['scope_id']) for v in self._status_entries(p)}
+                permitted=[v for v in obligations if v['signer']==p['signing_key']]
+                matched=[v for v in permitted if v['role']==role and (v['kind'],v['scope_id']) in present]
+                if not matched:_fail('repair_status_disclosure')
+                observed=status.verify_status_original(entry(reference),expected_root=root,expected_signing_key=matched[0]['signer'],at=self._now(),
+                    allowed_scopes=[dict(scope_kind=v['scope_kind'],scope_id=v['scope_id']) for identity,v in allowed.items() if identity[0]==p['signing_key']['key_id']],
+                    required=[dict(scope_kind=v['kind'],scope_id=v['scope_id'],document_revision=v['revision'],operation_mask=v['mask'])
+                        for v in permitted if (v['kind'],v['scope_id']) in present],policy=self.policy,budget=budget,on_authenticated=observe)
+                current.append(observed);covered.update((v['role'],v['kind'],v['scope_id']) for v in matched)
+        if covered!={(v['role'],v['kind'],v['scope_id']) for v in obligations}:_fail('repair_status_missing')
+        historic=tuple(source['graph']['statuses'])+tuple(v for member in source['graph']['members'] for v in member['statuses'])
+        self._floors((*known,*historic),current,obligations)
+        members=read_mailbox_index(entry(roles['feed.head'][0]),entry(roles['feed.checkpoint'][0]),expected_slot=key,
+            expected_signing_key=target['signing_key'],encryption_identity=self.encryption_identity,
+            read_original=lambda reference:originals[wire.raw_ref(reference)],at=self._now(),max_messages=setup['slot'].payload['max_appends'],policy=self.policy,budget=budget)
+        if self._now()>=min(held.handle.payload['expires_at'],source['read_until'],source['retain_until']) or time.monotonic()>=deadline:_fail('repair_access_expired')
+        verify_mailbox_feed_bootstrap(slot_entries,expected_slot=key,expected_owner=self.subject,expected_target=target,
+            target_storage_epoch=key['writer_storage_epoch'],limit_policy=self.limits,at=self._now(),policy=self.policy,budget=budget)
+        return RecoveredMailboxFeedProof(MappingProxyType(source),held,tuple(current),MappingProxyType(originals),members,
+            MappingProxyType(dict(**counts,**budget.snapshot())))

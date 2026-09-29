@@ -361,41 +361,64 @@ class MailboxStagingHTTPTests(unittest.TestCase):
                 except Exception as error:raise AssertionError('synthetic feed server errors: '+repr(server_errors)) from error
         service=RemoteFeed()
         grant=json.loads(slot_entries['bootstrap']['raw'])['payload']
-        expected=dict(expected_subject=owner,expected_target=source.target,target_storage_epoch=slot['writer_storage_epoch'],
-            bootstrap_grant_sha256=slot_entries['bootstrap']['ref']['raw_sha256'],selector=grant['selector'],at=int(time.time()),consumer='mailbox_feed')
-        pending=probe.make_bootstrap_probe(self.bi,expires_at=now+55,**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
-        packet=dict(raw=pending.original.raw,ref=pending.original.ref.as_dict())
-        challenge=service.challenge(packet)
-        expected['at']=int(time.time())
-        answer=probe.solve_bootstrap_challenge(packet,challenge,signer=self.bi,encryption_identity=owner_encryption,
-            target_nonce=pending.nonce,expires_at=now+50,**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
-        response=service.answer(dict(raw=answer.raw,ref=answer.ref.as_dict()))
-        checked=proof.verify_bootstrap_proof_response(response,expected_subject=owner,expected_target=source.target,
-            target_storage_epoch=slot['writer_storage_epoch'],selector=grant['selector'],bootstrap_grant_ref=slot_entries['bootstrap']['ref'],
-            probe_ref=packet['ref'],challenge_ref=challenge['ref'],answer_ref=answer.ref.as_dict(),at=int(time.time()),
-            max_proof_items=64,max_proof_bytes=524288,consumer='mailbox_feed',expected_source_state='feed',policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
-        child=next(v for v in checked.manifest.value['children'] if v['role']=='feed.custody')
-        child_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=now+45,
-            child_index=child['index'],offset=0,requested_bytes=child['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
-        self.assertEqual(service.child(dict(raw=child_request.raw,ref=child_request.ref.as_dict())),feed_custody['raw'])
-        transfer_bytes=len(response)+len(checked.handle.raw)+len(checked.manifest.raw)+len(feed_custody['raw'])+sum(v['ref']['size'] for v in checked.manifest.value['children'])
-        self.assertLessEqual(transfer_bytes,grant['limits']['max_proof_bytes'])
-        received={}
-        for child in checked.manifest.value['children']:
-            chunks=[]
-            for offset in range(0,child['ref']['size'],65536):
-                request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=now+45,
-                    child_index=child['index'],offset=offset,requested_bytes=min(65536,child['ref']['size']-offset),policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
-                chunks.append(service.child(dict(raw=request.raw,ref=request.ref.as_dict())))
-            child_raw=b''.join(chunks);self.assertEqual(hashlib.sha256(child_raw).hexdigest(),child['ref']['raw_sha256'])
-            received[(child['role'],child['ref']['key'])]=dict(raw=child_raw,ref=child['ref'])
-        budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
-        for (role,_),value in received.items():
-            if role=='history.raw_pack':resolver.put('meta',value['ref']['key'],value['raw'])
-        remote_verified=verify_mailbox_feed_source_event(received[('history.mailbox_feed',feed_history['manifest']['ref']['key'])],resolver,
-            received[('feed.custody',feed_custody['ref']['key'])],expected_slot=slot,expected_owner=owner,
-            expected_sender=member_args['expected_sender'],expected_target=source.target,limit_policy=limits,policy=DEFAULT_POLICY,budget=budget)
-        self.assertEqual(remote_verified['graph']['head']['count'],1)
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+            from dataclasses import replace
+            from memory_vault_open_repair_client import MailboxFeedRecoveryClient,MailboxSetupJournal
+            from tests.open_repair_ack_fixtures import signed_entry
+            node_entry=signed_entry(dict(source.node['payload'],base_url=base,revision=source.node['payload']['revision']+1),source.identity,'synthetic_feed_http_node')
+            observed=[]
+            client=MailboxFeedRecoveryClient(self.bi,owner_encryption,policy=replace(DEFAULT_POLICY,max_signature_checks=512),
+                limit_policy=limits,allow_loopback=True,status_observer=observed.append)
+            self.addCleanup(client.close)
+            recipient_network=self.enterContext(self.b._network())
+            recipient_db=self.enterContext(recipient_network.participant.state.db())
+            client_options=dict(target_node_entry=node_entry,expected_target=source.target,expected_sender=member_args['expected_sender'],
+                expected_slot=slot,slot_entries={name:slot_entries[name] for name in ('slot','read','maintenance','bootstrap')},
+                journal=MailboxSetupJournal(recipient_db))
+            result=client.recover(base,**client_options)
+            self.assertEqual(result.entries[0]['admission_link_ref'],admitted['link']['ref'])
+            self.assertEqual(result.source['custody'].raw,feed_custody['raw'])
+            self.assertTrue(observed);self.assertGreater(result.metrics['requests'],2)
+            checked=result.proof
+            child=next(v for v in checked.manifest.value['children'] if v['role']=='feed.custody')
+            child_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=now+45,
+                child_index=child['index'],offset=0,requested_bytes=child['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+        else:
+            expected=dict(expected_subject=owner,expected_target=source.target,target_storage_epoch=slot['writer_storage_epoch'],
+                bootstrap_grant_sha256=slot_entries['bootstrap']['ref']['raw_sha256'],selector=grant['selector'],at=int(time.time()),consumer='mailbox_feed')
+            pending=probe.make_bootstrap_probe(self.bi,expires_at=now+55,**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            packet=dict(raw=pending.original.raw,ref=pending.original.ref.as_dict())
+            challenge=service.challenge(packet)
+            expected['at']=int(time.time())
+            answer=probe.solve_bootstrap_challenge(packet,challenge,signer=self.bi,encryption_identity=owner_encryption,
+                target_nonce=pending.nonce,expires_at=now+50,**expected,policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            response=service.answer(dict(raw=answer.raw,ref=answer.ref.as_dict()))
+            checked=proof.verify_bootstrap_proof_response(response,expected_subject=owner,expected_target=source.target,
+                target_storage_epoch=slot['writer_storage_epoch'],selector=grant['selector'],bootstrap_grant_ref=slot_entries['bootstrap']['ref'],
+                probe_ref=packet['ref'],challenge_ref=challenge['ref'],answer_ref=answer.ref.as_dict(),at=int(time.time()),
+                max_proof_items=64,max_proof_bytes=524288,consumer='mailbox_feed',expected_source_state='feed',policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            child=next(v for v in checked.manifest.value['children'] if v['role']=='feed.custody')
+            child_request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=now+45,
+                child_index=child['index'],offset=0,requested_bytes=child['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+            self.assertEqual(service.child(dict(raw=child_request.raw,ref=child_request.ref.as_dict())),feed_custody['raw'])
+            transfer_bytes=len(response)+len(checked.handle.raw)+len(checked.manifest.raw)+len(feed_custody['raw'])+sum(v['ref']['size'] for v in checked.manifest.value['children'])
+            self.assertLessEqual(transfer_bytes,grant['limits']['max_proof_bytes'])
+            received={}
+            for child in checked.manifest.value['children']:
+                chunks=[]
+                for offset in range(0,child['ref']['size'],65536):
+                    request=proof.make_bootstrap_child_request(self.bi,checked,subject=owner,target=source.target,at=int(time.time()),expires_at=now+45,
+                        child_index=child['index'],offset=offset,requested_bytes=min(65536,child['ref']['size']-offset),policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
+                    chunks.append(service.child(dict(raw=request.raw,ref=request.ref.as_dict())))
+                child_raw=b''.join(chunks);self.assertEqual(hashlib.sha256(child_raw).hexdigest(),child['ref']['raw_sha256'])
+                received[(child['role'],child['ref']['key'])]=dict(raw=child_raw,ref=child['ref'])
+            budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
+            for (role,_),value in received.items():
+                if role=='history.raw_pack':resolver.put('meta',value['ref']['key'],value['raw'])
+            remote_verified=verify_mailbox_feed_source_event(received[('history.mailbox_feed',feed_history['manifest']['ref']['key'])],resolver,
+                received[('feed.custody',feed_custody['ref']['key'])],expected_slot=slot,expected_owner=owner,
+                expected_sender=member_args['expected_sender'],expected_target=source.target,limit_policy=limits,policy=DEFAULT_POLICY,budget=budget)
+            self.assertEqual(remote_verified['graph']['head']['count'],1)
         extended=source._sign(dict(payload,retain_until=now+91),'synthetic_overpromise',RepairBudget(DEFAULT_POLICY))
         budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
         for value in (saved['pack'],feed_history['pack']):resolver.put('meta',value['ref']['key'],value['raw'])
@@ -436,6 +459,19 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         db.execute('INSERT INTO open_mailbox_admission_objects VALUES(?,?,?,?)',(missing,ref['raw_sha256'],ref['size'],value['raw']))
         db.commit()
         revoked=status_entry(issue_status(self.bi,root=root,revision=3,entries=[dict(value,status='revoked') for value in scoped],issued_at=now,valid_until=now+100))
+        if self._testMethodName=='test_remote_feed_client_recovers_complete_index':
+            observed.clear()
+            with patch.object(client.transport,'request_repair',side_effect=AssertionError('unexpected network after retained revocation')):
+                with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
+                    client.recover(base,**client_options,known_statuses=[revoked])
+            self.assertTrue(any(value.payload['revision']==3 for value in observed))
+            restarted=MailboxFeedRecoveryClient(self.bi,owner_encryption,policy=replace(DEFAULT_POLICY,max_signature_checks=512),
+                limit_policy=limits,allow_loopback=True)
+            self.addCleanup(restarted.close)
+            with recipient_network.participant.state.db() as reopened:
+                with patch.object(restarted.transport,'request_repair',side_effect=AssertionError('unexpected network after journal reopen')):
+                    with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
+                        restarted.recover(base,**dict(client_options,journal=MailboxSetupJournal(reopened)))
         denied=[];authority_reads.clear()
         with self.assertRaisesRegex(RepairWireError,'repair_authority_revoked'):
             read_mailbox_admission(members[0],**dict(member_args,known_statuses=[revoked],
@@ -480,3 +516,6 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             child_index=child_request.payload['child_index'],offset=0,requested_bytes=feed_custody['ref']['size'],policy=DEFAULT_POLICY,budget=RepairBudget(DEFAULT_POLICY))
         with self.assertRaisesRegex(AssertionError,'repair_authority_revoked'):
             service.child(dict(raw=denied_request.raw,ref=denied_request.ref.as_dict()))
+
+    def test_remote_feed_client_recovers_complete_index(self):
+        self.test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources()
