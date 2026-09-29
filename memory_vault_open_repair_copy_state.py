@@ -112,7 +112,7 @@ class RepairCopyState(RepairCopyResources):
             source_histories=copy_source.source_histories(plan.source,manifest_entry),source_custody=plan.source.custody,
             recipient_disclosure=plan.disclosures[2] if copy_source.occupied_source(plan.source) else None)
 
-    def _store_copy_plan(self,row,plan,resolver,*,source_histories,source_custody,recipient_disclosure=None,extra_edges=()):
+    def _store_copy_plan(self,row,plan,resolver,*,source_histories,source_custody,recipient_disclosure=None,extra_edges=(),additional=()):
         """Commit an internally authenticated exact closure under local capacity.
 
         Public operation methods authenticate their own typed source graph and
@@ -135,6 +135,7 @@ class RepairCopyState(RepairCopyResources):
         for name,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
                 ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):add(name,item)
         if recipient_disclosure is not None:add('copy.recipient_disclosure',recipient_disclosure)
+        for role,item in additional:add(role,item)
         for role,entry,source_manifest in source_histories:
             add(role,entry)
             for member in source_manifest.manifest.value['roles']:
@@ -160,7 +161,15 @@ class RepairCopyState(RepairCopyResources):
             blocked=s._one('SELECT reason FROM open_repair_copy_blocks WHERE root_digest=?',(root_digest,))
             if blocked:denial=denial or blocked['reason']
             previous=[]
+            authenticated={(item.raw,item.ref):item for item in plan.statuses}
             for raw,ref in self.db.execute('SELECT raw,ref FROM open_repair_copy_observations WHERE root_digest=?',(root_digest,)):
+                # These exact bytes and full locator were authenticated by
+                # this operation's typed COPY verifier. Reuse that result
+                # within this call only; a replay still verifies afresh and
+                # every older/different observation follows the usual path.
+                cached=authenticated.get((bytes(raw),wire.raw_ref(json.loads(bytes(ref)))))
+                if cached is not None:
+                    previous.append(cached);continue
                 p=wire.parse_new_wire(bytes(raw),policy,budget).value['payload']
                 previous.append(status.authenticate_status_original(dict(raw=bytes(raw),ref=json.loads(bytes(ref))),
                     expected_root=root,expected_signing_key=p['signing_key'],at=p['issued_at'],

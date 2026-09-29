@@ -22,18 +22,22 @@ import memory_vault_open_repair_wire as wire
 
 COMMIT_FIELDS=frozenset('schema_version kind signing_key issued_at expires_at request_id subject target_node_key_id target_storage_epoch resource_id intent_ref stage_result_ref owner source source_storage_epoch'.split())
 EMPTY_COMMIT_FIELDS=COMMIT_FIELDS|{'receipt_writer','message_id','envelope_ref'}
+FEED_COMMIT_FIELDS=COMMIT_FIELDS|{'sender'}
 
 
 def make_copy_commit_request(signer,*,intent_entry,result_entry,resource_id,expected_owner,expected_source,
                              source_storage_epoch,expires_at,bound=None,**options):
     """Sign a request for one closed stage; caller independently verifies its chain."""
     with stage._using(options) as (expected,policy,budget):
-        if expected['consumer'] not in ('ack_copy_unbound','ack_copy_empty','ack_copy_occupied','mailbox_copy_root'):wire._fail('repair_invalid_stage')
+        if expected['consumer'] not in ('ack_copy_unbound','ack_copy_empty','ack_copy_occupied','mailbox_copy_root','mailbox_copy_feed'):wire._fail('repair_invalid_stage')
         is_empty=expected['consumer'] in ('ack_copy_empty','ack_copy_occupied')
+        is_feed=expected['consumer']=='mailbox_copy_feed'
         if is_empty:
             wire.object_fields(bound,{'receipt_writer','message_id','envelope_ref'})
             resource._dual_key(bound['receipt_writer'],budget)
             wire.raw_ref(bound['envelope_ref'])
+        elif is_feed:
+            wire.object_fields(bound,{'sender'});resource._dual_key(bound['sender'],budget)
         elif bound is not None:wire._fail('repair_invalid_stage')
         intent=stage._verify(intent_entry,'intent',expected,policy,budget)
         result=stage._verify(result_entry,'result',expected,policy,budget)
@@ -48,6 +52,7 @@ def make_copy_commit_request(signer,*,intent_entry,result_entry,resource_id,expe
         stage._window(payload,expected['at'])
         if is_empty:payload.update(kind='ack.copy_'+('occupied' if expected['consumer']=='ack_copy_occupied' else 'empty')+'_commit',**bound)
         if expected['consumer']=='mailbox_copy_root':payload['kind']='mailbox.root_copy_commit'
+        if is_feed:payload.update(kind='mailbox.feed_copy_commit',**bound)
         if expires_at>result.payload['expires_at']:wire._fail('repair_stage_mismatch')
         return probe._sign(wire.build_new_wire(payload,policy,budget).value,signer,policy,budget)
 
@@ -308,10 +313,12 @@ class RepairCopyUpload:
         with self._work(rid,entry,len(entry['raw']),budget) as (row,allocation,caps,_,attempt):
             parsed=wire.parse_new_wire(entry['raw'],budget.policy,budget).value
             is_empty=allocation['scope']['kind'] in ('ack_empty','ack_occupied')
-            payload=wire.object_fields(parsed['payload'],EMPTY_COMMIT_FIELDS if is_empty else COMMIT_FIELDS)
+            is_feed=allocation['scope']['kind']=='mailbox_feed'
+            payload=wire.object_fields(parsed['payload'],FEED_COMMIT_FIELDS if is_feed else EMPTY_COMMIT_FIELDS if is_empty else COMMIT_FIELDS)
             stage._window(payload,self.state._now());original._opaque(payload['request_id'])
             original._opaque(payload['source_storage_epoch'])
             for party in (payload['owner'],payload['source']):resource._dual_key(party,budget)
+            if is_feed:resource._dual_key(payload['sender'],budget)
             saved=self._session(rid);parents=self._parents(saved,budget)
             if 'closed' not in parents or 'result' not in parents:wire._fail('repair_stage_incomplete')
             result_payload=wire.parse_new_wire(parents['result']['raw'],budget.policy,budget).value['payload']
@@ -329,15 +336,18 @@ class RepairCopyUpload:
                 **self._commit_scope(allocation),expected_owner=payload['owner'],
                 expected_source=payload['source'],source_storage_epoch=payload['source_storage_epoch'],
                 expected_maintainer=allocation['caller'],bound=dict(expected_receipt_writer=payload['receipt_writer'],
-                    expected_message_id=payload['message_id'],expected_envelope_ref=payload['envelope_ref']) if is_empty else None)
+                    expected_message_id=payload['message_id'],expected_envelope_ref=payload['envelope_ref']) if is_empty else dict(expected_sender=payload['sender']) if is_feed else None)
             with self.state._transaction():
                 _,committed=self.store._committed(rid)
                 manifest=self.state._saved(committed,'manifest')
-                response=wire.build_new_wire(dict(schema_version=stage.SCHEMA,kind=self.committed_kind,
-                    manifest=encode_entry(manifest),custody=encode_entry(result)),budget.policy,budget)
+                response=wire.build_new_wire(self._commit_response(manifest,result),budget.policy,budget)
                 if len(response.raw)>stage.MAX_CONTROL_BYTES:wire._fail('repair_control_too_large')
                 self._output(rid,caps,response.raw,attempt)
             return dict(raw=response.raw)
+
+    def _commit_response(self, manifest, custody):
+        return dict(schema_version=stage.SCHEMA,kind=self.committed_kind,
+            manifest=encode_entry(manifest),custody=encode_entry(custody))
 
     def _commit_scope(self, allocation):
         return dict(expected_ack_slot=allocation['scope']['ack_slot'])
@@ -388,6 +398,9 @@ def copy_upload_service(state, resource_id):
     if kind=='mailbox_root':
         from memory_vault_open_repair_mailbox_copy_upload import MailboxRootCopyUpload
         service=MailboxRootCopyUpload(state)
+    elif kind=='mailbox_feed':
+        from memory_vault_open_repair_mailbox_copy_upload import MailboxFeedCopyUpload
+        service=MailboxFeedCopyUpload(state)
     elif kind in RepairCopyUpload.consumers:service=RepairCopyUpload(state)
     else:wire._fail('repair_copy_upload_mismatch')
     service.initialize()
@@ -400,14 +413,14 @@ def copy_upload_resource(db,payload):
     kind=payload.get('kind')
     if kind=='proof.stage_intent':
         manifest=payload.get('manifest')
-        if not isinstance(manifest,dict) or manifest.get('consumer') not in ('ack_copy_unbound','ack_copy_empty','ack_copy_occupied','mailbox_copy_root'):return None
+        if not isinstance(manifest,dict) or manifest.get('consumer') not in ('ack_copy_unbound','ack_copy_empty','ack_copy_occupied','mailbox_copy_root','mailbox_copy_feed'):return None
         try:caller=payload['subject']['signing_key']['key_id'];allocation=payload['allocation_id']
         except (KeyError,TypeError):wire._fail('repair_invalid_stage')
         if type(caller) is not str or type(allocation) is not str:wire._fail('repair_invalid_stage')
         rows=db.execute('SELECT resource_id FROM open_repair_copy_resources WHERE caller=? AND allocation_id=? LIMIT 2',(caller,allocation)).fetchall()
         if len(rows)!=1:wire._fail('repair_copy_upload_missing')
         return rows[0][0]
-    if kind not in ('proof.stage_answer','proof.stage_close','proof.stage_child','ack.copy_commit','ack.copy_empty_commit','ack.copy_occupied_commit','mailbox.root_copy_commit'):return None
+    if kind not in ('proof.stage_answer','proof.stage_close','proof.stage_child','ack.copy_commit','ack.copy_empty_commit','ack.copy_occupied_commit','mailbox.root_copy_commit','mailbox.feed_copy_commit'):return None
     if not db.execute("SELECT 1 FROM sqlite_master WHERE name='open_repair_copy_upload_routes'").fetchone():return None
     reference=wire.raw_ref(payload.get('intent_ref'))
     row=db.execute('SELECT resource_id FROM open_repair_copy_upload_routes WHERE intent_digest=?',(reference.raw_sha256,)).fetchone()

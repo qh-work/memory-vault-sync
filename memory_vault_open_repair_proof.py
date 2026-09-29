@@ -45,7 +45,8 @@ SOURCE_STATES['replica_occupied']=(REPLICA_OCCUPIED_FIXED_ROLES,3)
 
 def replica_read_pack_roles(state):
     return REPLICA_READ_PACK_ROLES|({'copy.recipient_reservation_consent','copy.recipient_disclosure','return.recipient'}
-        if state=='replica_occupied' else set())
+        if state=='replica_occupied' else {'copy.sender_reservation_consent','copy.sender_disclosure','return.sender'}
+        if state=='replica_feed' else set())
 
 OFFER_CURRENT_ROLES = (CURRENT_ROLES - {"current.status.ack_read", "current.status.ack_owner_bootstrap"}) | {"current.status.ack_write", "current.status.ack_offer_bootstrap"}
 OFFER_FIXED_ROLES = empty.ROLES | OFFER_CURRENT_ROLES | {"history.ack_empty", "ack.empty_custody", "ack.head"}
@@ -60,8 +61,10 @@ MAILBOX_ACK_CONFIGURATION_ROLES = frozenset(('ack.root_authority','ack.write_gra
     'historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'))
 MAILBOX_FEED_ROLES = (history._ROLES['mailbox_feed'] | history._ROLES['mailbox_member'] | MAILBOX_FEED_CURRENT_ROLES | {'history.mailbox_feed','feed.custody'}) - {
     'ack.root_authority','ack.write_grant','bootstrap.ack_offer','historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'}
+MAILBOX_FEED_REPLICA_EXTRA = MAILBOX_ROOT_REPLICA_EXTRA | {'copy.sender_reservation_consent', 'copy.sender_disclosure', 'return.sender'}
+MAILBOX_FEED_REPLICA_ROLES = (MAILBOX_FEED_ROLES - MAILBOX_FEED_CURRENT_ROLES) | MAILBOX_FEED_REPLICA_EXTRA
 CONSUMER_STATES = {"ack_owner": SOURCE_STATES, "ack_offer": {"empty": (OFFER_FIXED_ROLES, 2)},
-                   "mailbox_root": {"root": (MAILBOX_ROOT_ROLES,1), "replica_root": (MAILBOX_ROOT_REPLICA_ROLES,1)},"mailbox_feed":{"feed":(MAILBOX_FEED_ROLES,2)}}
+                   "mailbox_root": {"root": (MAILBOX_ROOT_ROLES,1), "replica_root": (MAILBOX_ROOT_REPLICA_ROLES,1)},"mailbox_feed":{"feed":(MAILBOX_FEED_ROLES,2),"replica_feed":(MAILBOX_FEED_REPLICA_ROLES,2)}}
 HANDLE_FIELDS = probe._COMMON | {"handle_id", "probe_ref", "challenge_ref", "answer_ref", "service_generation", "manifest_ref", "child_count"}
 CHILD_FIELDS = probe._COMMON | {"request_id", "probe_ref", "handle_ref", "manifest_ref", "service_generation", "child_index", "offset", "requested_bytes"}
 MANIFEST_FIELDS = frozenset("schema_version kind probe_ref subject target target_storage_epoch consumer selector bootstrap_grant_ref service_generation response_profile children".split())
@@ -163,6 +166,9 @@ def _manifest(value, expected, maximum_items, expected_source_state=None):
         singleton={'mailbox.slot','mailbox.read_grant','mailbox.maintenance_root','bootstrap.mailbox_feed',
             'resource.data_allocate','resource.metadata_allocate','resource.data_offer','resource.metadata_offer',
             'resource.slot_activation','resource.data_active','resource.metadata_active','feed.head','feed.checkpoint','history.mailbox_feed','feed.custody'}
+        if source_state == 'replica_feed':
+            singleton |= MAILBOX_FEED_REPLICA_EXTRA - {'copy.current_status', 'current.status.replica_read'}
+            if any(not 1 <= counts.get(role, 0) <= 16 for role in ('copy.current_status', 'current.status.replica_read')): _fail()
         if any(counts.get(role)!=1 for role in singleton) or any(counts.get(role,0)<1 for role in fixed_roles):_fail()
     elif source_state in ("replica_unbound","replica_empty","replica_occupied"):
         repeated={"copy.current_status","current.status.replica_read"}

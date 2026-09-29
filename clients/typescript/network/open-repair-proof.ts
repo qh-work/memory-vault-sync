@@ -51,9 +51,11 @@ const MAILBOX_ACK_CONFIGURATION_ROLES=Object.freeze(['ack.root_authority','ack.w
 const MAILBOX_FEED_ROLES=Object.freeze(["bootstrap.mailbox_feed", "contact.decision", "contact.delivery_lease", "contact.knock_lease", "contact.policy", "contact.request", "contact.store_grant", "current.status.bootstrap", "current.status.disclosure", "current.status.maintenance", "current.status.metadata_resource", "current.status.read", "current.status.slot", "delivery.attempt", "delivery.destination", "feed.checkpoint", "feed.custody", "feed.head", "historical.status.bootstrap", "historical.status.data_resource", "historical.status.destination", "historical.status.disclosure", "historical.status.maintenance", "historical.status.metadata_resource", "historical.status.read", "historical.status.slot", "history.mailbox_feed", "history.member", "mailbox.maintenance_root", "mailbox.read_grant", "mailbox.slot", "member.checkpoint", "member.core", "member.custody", "member.head", "member.link", "member.sealed_core", "message.disclosure", "range.index", "range.repair_page", "range.sealed_page", "resource.data_active", "resource.data_allocate", "resource.data_offer", "resource.metadata_active", "resource.metadata_allocate", "resource.metadata_offer", "resource.slot_activation", "source.descriptor"]);
 const MAILBOX_ROOT_REPLICA_EXTRA=Object.freeze([...REPLICA_FIXED_ROLES.filter(role=>role.startsWith('copy.')||role.startsWith('replica.')||role.startsWith('return.')||role==='current.status.replica_read'),'replica.read_pack']);
 const MAILBOX_ROOT_REPLICA_ROLES=Object.freeze([...MAILBOX_ROOT_ROLES.filter(role=>!role.startsWith('current.')),...MAILBOX_ROOT_REPLICA_EXTRA]);
+const MAILBOX_FEED_REPLICA_EXTRA=Object.freeze([...MAILBOX_ROOT_REPLICA_EXTRA,'copy.sender_reservation_consent','copy.sender_disclosure','return.sender']);
+const MAILBOX_FEED_REPLICA_ROLES=Object.freeze([...MAILBOX_FEED_ROLES.filter(role=>!role.startsWith('current.')),...MAILBOX_FEED_REPLICA_EXTRA]);
 const CONSUMER_STATES=new Map<string,Map<string,{roles:readonly string[];minimumPacks:number}>>([
-  ['ack_owner',SOURCE_STATES],['ack_offer',new Map([['empty',{roles:OFFER_FIXED_ROLES,minimumPacks:2}]])],['mailbox_root',new Map([['root',{roles:MAILBOX_ROOT_ROLES,minimumPacks:1}],['replica_root',{roles:MAILBOX_ROOT_REPLICA_ROLES,minimumPacks:1}]])],['mailbox_feed',new Map([['feed',{roles:MAILBOX_FEED_ROLES,minimumPacks:2}]])]]);
-export type BootstrapProofSourceState='replica_unbound'|'replica_empty'|'replica_occupied'|'unbound'|'empty'|'occupied'|'root'|'feed'|'replica_root';
+  ['ack_owner',SOURCE_STATES],['ack_offer',new Map([['empty',{roles:OFFER_FIXED_ROLES,minimumPacks:2}]])],['mailbox_root',new Map([['root',{roles:MAILBOX_ROOT_ROLES,minimumPacks:1}],['replica_root',{roles:MAILBOX_ROOT_REPLICA_ROLES,minimumPacks:1}]])],['mailbox_feed',new Map([['feed',{roles:MAILBOX_FEED_ROLES,minimumPacks:2}],['replica_feed',{roles:MAILBOX_FEED_REPLICA_ROLES,minimumPacks:2}]])]]);
+export type BootstrapProofSourceState='replica_unbound'|'replica_empty'|'replica_occupied'|'unbound'|'empty'|'occupied'|'root'|'feed'|'replica_root'|'replica_feed';
 const COMMON=['schema_version','kind','signing_key','issued_at','expires_at','subject','target','target_storage_epoch','purpose','consumer'];
 const HANDLE=[...COMMON,'bootstrap_grant_sha256','handle_id','probe_ref','challenge_ref','answer_ref','service_generation','manifest_ref','child_count'];
 const CHILD=[...COMMON,'request_id','probe_ref','handle_ref','manifest_ref','service_generation','child_index','offset','requested_bytes'];
@@ -144,6 +146,11 @@ function manifestShape(value:unknown,expected:Obj,maximumItems:number,expectedSo
     if(singletons.some(name=>counts.get(name)!==1)||profile.roles.some(name=>(counts.get(name)??0)<1))fail();
   }else if(expected.consumer==='mailbox_feed'){
     const singletons=['mailbox.slot','mailbox.read_grant','mailbox.maintenance_root','bootstrap.mailbox_feed','resource.data_allocate','resource.metadata_allocate','resource.data_offer','resource.metadata_offer','resource.slot_activation','resource.data_active','resource.metadata_active','feed.head','feed.checkpoint','history.mailbox_feed','feed.custody'];
+    if(state==='replica_feed'){
+      const repeated=['copy.current_status','current.status.replica_read'];
+      singletons.push(...MAILBOX_FEED_REPLICA_EXTRA.filter(role=>!repeated.includes(role)));
+      if(repeated.some(role=>(counts.get(role)??0)<1||(counts.get(role)??0)>16))fail();
+    }
     if(singletons.some(name=>counts.get(name)!==1)||profile.roles.some(name=>(counts.get(name)??0)<1))fail();
   }else if(state==='replica_unbound'||state==='replica_empty'||state==='replica_occupied'){
     const repeated=['copy.current_status','current.status.replica_read'];

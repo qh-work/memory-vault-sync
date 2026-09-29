@@ -706,7 +706,7 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
         # history resolver validates full pack membership and all opaque refs;
         # it grants no authority. Signatures, source events, current status and
         # exact role closure are still verified by recover() below.
-        if source_state == 'replica_root':
+        if source_state in ('replica_root', 'replica_feed'):
             packed_child=next(item for item in children if item['role']=='replica.read_pack')
             download(packed_child);reference=wire.raw_ref(packed_child['ref'])
             read_pack=wire.parse_raw_pack(originals[reference],reference,self.policy,budget)

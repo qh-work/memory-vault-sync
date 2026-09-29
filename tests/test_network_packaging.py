@@ -72,7 +72,7 @@ class NetworkPackagingTests(unittest.TestCase):
         allowed = literal(LAUNCHER, "ALLOWED_MODULES")
         self.assertEqual(len(required), len(set(required)))
         self.assertEqual(set(required) | set(optional), allowed)
-        self.assertEqual(len(allowed), 142)
+        self.assertEqual(len(allowed), 144)
         self.assertTrue(NEW_MODULES | {"memory_vault_open_capacity.py"} | RUNTIME_DATA <= allowed)
         self.assertEqual({name for name in allowed if not name.endswith(".py")}, RUNTIME_DATA)
         for name in allowed:
@@ -122,7 +122,7 @@ class NetworkPackagingTests(unittest.TestCase):
                          "tests/test_open_repair_status.py", "tests/test_open_repair_status_typescript.py",
                          "tests/open_repair_ack_fixtures.py", "tests/test_open_repair_ack.py",
                          "tests/test_open_repair_ack_typescript.py", "tests/test_open_repair_state.py", "tests/test_open_repair_mailbox_resources.py", "tests/test_open_repair_copy_resources.py",
-                         "tests/test_open_repair_copy_prepare.py", "tests/test_open_repair_copy_state.py", "tests/test_open_repair_copy_service.py", "tests/test_open_repair_copy_upload.py", "tests/test_open_repair_copy_empty.py", "tests/test_open_repair_mailbox_activation.py", "tests/test_open_repair_mailbox_range.py", "tests/test_open_repair_mailbox_root.py", "tests/test_open_repair_mailbox_status.py", "tests/test_open_repair_mailbox_source.py", "tests/test_open_repair_mailbox_snapshot.py", "tests/test_open_repair_mailbox_copy.py", "tests/test_open_repair_mailbox_copy_authority.py", "tests/test_open_repair_mailbox_copy_upload.py", "tests/test_open_repair_mailbox_copy_admin.py",
+                         "tests/test_open_repair_copy_prepare.py", "tests/test_open_repair_copy_state.py", "tests/test_open_repair_copy_service.py", "tests/test_open_repair_copy_upload.py", "tests/test_open_repair_copy_empty.py", "tests/test_open_repair_mailbox_activation.py", "tests/test_open_repair_mailbox_range.py", "tests/test_open_repair_mailbox_root.py", "tests/test_open_repair_mailbox_status.py", "tests/test_open_repair_mailbox_source.py", "tests/test_open_repair_mailbox_snapshot.py", "tests/test_open_repair_mailbox_copy.py", "tests/test_open_repair_mailbox_copy_authority.py", "tests/test_open_repair_mailbox_copy_upload.py", "tests/test_open_repair_mailbox_copy_admin.py", "tests/test_open_repair_mailbox_feed_copy.py",
                          "tests/test_open_repair_probe.py",
                          "tests/test_open_repair_probe_typescript.py",
                          "tests/test_open_repair_proof.py",
@@ -142,7 +142,7 @@ class NetworkPackagingTests(unittest.TestCase):
             "memory_vault_open_repair_ack.py", "memory_vault_open_repair_state.py",
             "memory_vault_open_repair_mailbox_resources.py", "memory_vault_open_repair_copy_resources.py",
             "memory_vault_open_repair_copy_prepare.py", "memory_vault_open_repair_copy_authority.py", "memory_vault_open_repair_copy_source.py",
-            "memory_vault_open_repair_copy_state.py", "memory_vault_open_repair_copy_service.py", "memory_vault_open_repair_copy_upload.py", "memory_vault_open_repair_copy_client.py", "memory_vault_open_repair_mailbox_activation.py", "memory_vault_open_repair_mailbox_range.py", "memory_vault_open_repair_mailbox_root.py", "memory_vault_open_repair_mailbox_status.py", "memory_vault_open_repair_mailbox_source.py", "memory_vault_open_repair_mailbox_snapshot.py", "memory_vault_open_repair_mailbox_copy.py", "memory_vault_open_repair_mailbox_copy_authority.py", "memory_vault_open_repair_mailbox_copy_state.py", "memory_vault_open_repair_mailbox_copy_upload.py", "memory_vault_open_repair_mailbox_copy_prepare.py", "memory_vault_open_repair_mailbox_copy_client.py", "memory_vault_open_repair_mailbox_copy_service.py", "memory_vault_open_repair_mailbox_copy_admin.py",
+            "memory_vault_open_repair_copy_state.py", "memory_vault_open_repair_copy_service.py", "memory_vault_open_repair_copy_upload.py", "memory_vault_open_repair_copy_client.py", "memory_vault_open_repair_mailbox_activation.py", "memory_vault_open_repair_mailbox_range.py", "memory_vault_open_repair_mailbox_root.py", "memory_vault_open_repair_mailbox_status.py", "memory_vault_open_repair_mailbox_source.py", "memory_vault_open_repair_mailbox_snapshot.py", "memory_vault_open_repair_mailbox_copy.py", "memory_vault_open_repair_mailbox_copy_authority.py", "memory_vault_open_repair_mailbox_copy_state.py", "memory_vault_open_repair_mailbox_copy_upload.py", "memory_vault_open_repair_mailbox_copy_prepare.py", "memory_vault_open_repair_mailbox_copy_client.py", "memory_vault_open_repair_mailbox_copy_service.py", "memory_vault_open_repair_mailbox_copy_admin.py", "memory_vault_open_repair_mailbox_feed_copy.py", "memory_vault_open_repair_mailbox_feed_copy_state.py",
             "memory_vault_open_repair_probe.py",
             "memory_vault_open_repair_proof.py",
             "memory_vault_open_repair_access.py",

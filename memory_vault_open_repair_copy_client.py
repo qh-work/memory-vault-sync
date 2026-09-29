@@ -146,6 +146,9 @@ class AckCopyUploadClient:
     def _upload_preparer(self,source_state):
         return {'unbound':self.journal.prepare_upload_unbound,'empty':self.journal.prepare_upload_empty,'occupied':self.journal.prepare_upload_occupied}[source_state]
 
+    def _accept_prepared(self, prepared):
+        pass
+
     def _upload(self,base,*args,target_node_entry,timeout,source_state,**context):
         """Use the originals for the selected source generation, except at.
 
@@ -161,6 +164,7 @@ class AckCopyUploadClient:
             self.context=wire.build_new_wire({k:context[k] for k in names},self.policy,budget).value
             prepare=self._upload_preparer(source_state)
             prepared=prepare(*args,at=self._now(),**dict(context,**self.context))
+            self._accept_prepared(prepared)
             allocation_entry=next(e['entry'] for e in prepared['children'] if e['role']=='copy.allocation')
             allocation=wire.parse_new_wire(allocation_entry['raw'],self.policy,budget).value['payload']
             self.plan=SimpleNamespace(intent=allocation['intent']);self.job=self.plan.intent['job_id']

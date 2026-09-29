@@ -121,6 +121,23 @@ class OpenRepairProofTypeScriptTests(unittest.TestCase):
         self.assertTrue(result['ok'],result)
         self.assertEqual(result['result']['manifest'],manifest)
 
+    def test_mailbox_feed_replica_profile_preserves_explicit_state_in_both_clients(self):
+        manifest,options=self.py.mailbox_feed_manifest()
+        reference=self.py.fixture['entries']['root']['ref']
+        packs=[v['ref'] for v in manifest['children'] if v['role']=='history.raw_pack']
+        rows=[dict(role=role,ref=packs[0] if role=='replica.read_pack' else reference)
+            for role in sorted(proof.MAILBOX_FEED_REPLICA_ROLES)]
+        rows.extend(dict(role='history.raw_pack',ref=ref) for ref in packs)
+        manifest['children']=[dict(index=i,**row) for i,row in enumerate(rows)]
+        raw=self.py.response(manifest).raw
+        self.py.verify(raw,**dict(options,expected_source_state='replica_feed'))
+        call=self.call();call['raw']=base64.b64encode(raw).decode()
+        call['options'].update(consumer='mailbox_feed',expectedSourceState='replica_feed',selector=options['selector'])
+        old=copy.deepcopy(call);old['options']['expectedSourceState']='feed'
+        good,bad=self.ts([call,old])
+        self.assertTrue(good['ok'],good);self.assertEqual(good['result']['manifest'],manifest)
+        self.assertFalse(bad['ok'])
+
     def test_mailbox_ack_configuration_roles_native_python_parity(self):
         manifest,options=self.py.mailbox_feed_with_ack_manifest()
         call=self.call();call['raw']=base64.b64encode(self.py.response(manifest).raw).decode()

@@ -48,7 +48,7 @@ def initialize_node(directory: Path, *, base_url: str, listen_port: int = 8787, 
     if (type(enable_repair) is not bool or type(enable_remote_setup) is not bool or type(enable_remote_copy) is not bool
             or type(enable_remote_mailbox_copy) is not bool
             or ((enable_remote_setup or enable_remote_copy or enable_remote_mailbox_copy) and not enable_repair)
-            or repair_profile not in ("unbound", "receipt", "receipt-index")
+            or repair_profile not in ("unbound", "receipt", "receipt-index", "mailbox")
             or (repair_profile != "unbound" and not enable_repair)):
         raise MemoryError("open_invalid_repair_policy")
     if not isinstance(seeds, (list, tuple)) or len(seeds) > 2:
@@ -100,9 +100,9 @@ def initialize_node(directory: Path, *, base_url: str, listen_port: int = 8787, 
             "maximum_pending": 1024, "maximum_jobs": 4096, "maximum_job_bytes": 16 * 1024 * 1024}},
     }
     if enable_repair:
-        from memory_vault_open_repair_state import DEFAULT_LIMITS, RECEIPT_WORKFLOW_LIMITS, INDEX_WORKFLOW_LIMITS
+        from memory_vault_open_repair_state import DEFAULT_LIMITS, RECEIPT_WORKFLOW_LIMITS, INDEX_WORKFLOW_LIMITS, MAILBOX_WORKFLOW_LIMITS
         profiles = {"unbound": DEFAULT_LIMITS, "receipt": RECEIPT_WORKFLOW_LIMITS,
-                    "receipt-index": INDEX_WORKFLOW_LIMITS}
+                    "receipt-index": INDEX_WORKFLOW_LIMITS, "mailbox": MAILBOX_WORKFLOW_LIMITS}
         config["repair_policy"] = {"enabled": True, "limit_policy": dict(profiles[repair_profile])}
         if enable_remote_setup:
             from memory_vault_open_repair_remote_setup import DEFAULT_REMOTE_POLICY
@@ -143,8 +143,8 @@ def main(argv=None):
     parser.add_argument("--enable-remote-setup", action="store_true", help="explicitly admit finite new ACK source allocations; requires --enable-repair")
     parser.add_argument("--enable-remote-copy", action="store_true", help="explicitly admit finite ACK replica capacity reservations; requires --enable-repair")
     parser.add_argument("--enable-remote-mailbox-copy", action="store_true", help="explicitly admit finite mailbox replica capacity reservations; requires --enable-repair")
-    parser.add_argument("--repair-profile", choices=("unbound", "receipt", "receipt-index"), default="unbound",
-                        help="finite new-node ceiling; receipt-index also funds one directory publication")
+    parser.add_argument("--repair-profile", choices=("unbound", "receipt", "receipt-index", "mailbox"), default="unbound",
+                        help="finite new-node ceiling; mailbox admits complete feed metadata proofs")
     args = parser.parse_args(argv)
     try:
         result = initialize_node(args.directory, base_url=args.base_url, listen_port=args.listen_port,

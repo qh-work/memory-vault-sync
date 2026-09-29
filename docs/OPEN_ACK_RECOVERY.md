@@ -713,3 +713,55 @@ authority, current READ permissions and all three return consents. Revocations
 and status revision floors remain in the recipient's transport database across
 failed recovery and restart. `mailbox_root_replica_recovered` means the exact
 directory originals were recovered; it is not a saved-message receipt.
+
+## Message index replica commands (development after alpha.0.25)
+
+`copy-upload-feed`, `configure-replica-feed`, and `recover-replica-feed` provide
+the same explicit destination workflow for one complete nonempty feed prefix.
+Recovery verifies the original admission history and decrypts its sealed index
+for the existing recipient. It works after the original node goes offline and
+the replica restarts. The original message ciphertexts have separate resources
+and permissions; these commands do not copy or recover their bodies.
+
+Use `--repair-profile mailbox` for these client commands and for new nodes that
+accept complete feed proofs. This explicit ceiling allows 128 proof items,
+4 MiB of proof bytes, 4,096 signature checks and 128 requests. Existing signed
+grants still impose their own smaller limits. In particular, a previously
+signed 64-item bootstrap grant cannot serve a larger closure merely because
+the client or node selects this profile. Fund the complete original bootstrap
+and resource budgets when establishing the mailbox.
+
+The exact private bundle schemas are:
+
+| Command | Request fields |
+| --- | --- |
+| `copy-upload-feed` | `memory-vault-open-mailbox-feed-copy-request/v1`; the root-copy fields above plus `slot_key`, `sender`, `sender_reservation`, `sender_disclosure`. The manifest/custody are the original feed's, and `originals` contains its complete feed and member history packs. |
+| `configure-replica-feed` | `memory-vault-open-mailbox-feed-replica-read-config/v1`; `resource_id`, `context`, `consents`, `current_statuses`. Context uses `expected_slot` and `expected_sender` instead of `expected_root`, alongside owner/source/epoch/maintainer fields. Consents contain independently signed `owner`, `source`, `maintainer`, and `sender` entries. |
+| `recover-replica-feed` | `memory-vault-open-mailbox-feed-replica-recovery-request/v1`; `node`, `root_key`, `slot_key`, `sender`, `target`, `source`, `source_storage_epoch`, `maintainer`, `slot_entries` (original `slot`, `read`, `maintenance`, `bootstrap` entries), `known_statuses`, `archive_statuses`. |
+
+B's selected-slot maintenance root delegates the exact existing feed scope to
+P with COPY/READ/RETAIN only. Independent B and A
+`mailbox.feed_copy_reservation_consent` originals bind the exact reservation
+intent before disclosure. B, original source S and A each sign
+`mailbox.feed_copy_disclosure` over their complete exact original/ref inventory
+and permitted status scopes after the real offer and assignment exist. Every
+original message consent in the prefix must still permit COPY. Directory
+authority cannot replace any of these selected-slot or sender permissions.
+
+The upload profile is `mailbox_copy_feed`; completion returns the compact
+`mailbox.feed_copy_committed` carrier with `manifest_ref` and the signed custody
+original. The sender reconstructs the entire canonical manifest from its
+verified upload originals, including every dependency edge, and independently
+verifies the custody signature and exact manifest hash. This keeps completion
+within the unchanged control-message limit. A lost completion response replays
+the exact committed event after both sides restart.
+
+Reading is separate: the four `mailbox.feed_replica_return_consent` originals
+permit returning this exact graph to B. Current selected-slot and A READ
+authority, M's assignment, P's actual retained resource and its status must all
+remain valid. The explicit `replica_feed` proof profile preserves the original
+source identity and epoch even though the serving node is P. Authenticated
+revocations survive denial and restart. The private output contains the exact
+originals and decrypted member references; it neither imports memories nor
+claims a saved-message receipt. Automatic target selection and partial-range
+replication remain separate work.

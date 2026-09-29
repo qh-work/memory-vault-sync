@@ -33,13 +33,32 @@ class MailboxRootReplicaReadService(ReplicaReadService):
         return super().child(packet)
 
 
+class MailboxFeedReplicaReadService(MailboxRootReplicaReadService):
+    resource_state = 'replica_feed'
+    consumer = 'mailbox_feed'
+    response_profile = 'mailbox_feed_service_v1'
+    context_root = 'expected_slot'
+    bound_context = frozenset({'expected_sender'})
+
+    def __init__(self, state):
+        from memory_vault_open_repair_mailbox_feed_copy_state import MailboxFeedCopyState
+        self.state, self.db = state, state.db
+        self.store = MailboxFeedCopyState(state)
+        self.access = ReplicaReadAccess(self)
+
+    def _prepare_read(self, *args, **options):
+        return self.store.prepare_feed_read(*args, **options)
+
+
 def root_replica_service_for_packet(state, payload):
     """Select only an existing typed configuration; the service verifies access."""
     db = state.db
-    if payload.get('consumer') != 'mailbox_root': return None
+    consumer = payload.get('consumer')
+    if consumer not in ('mailbox_root', 'mailbox_feed'): return None
     if not db.execute("SELECT 1 FROM sqlite_master WHERE name='open_repair_copy_read_config'").fetchone(): return None
     kind = payload.get('kind')
-    where = "json_extract(CAST(r.raw AS TEXT),'$.source_state')='replica_root'"
+    variant = 'replica_root' if consumer == 'mailbox_root' else 'replica_feed'
+    where = "json_extract(CAST(r.raw AS TEXT),'$.source_state')='" + variant + "'"
     if kind == 'bootstrap.probe':
         closed = probe._fields(payload, probe._FIELDS['probe'])
         subject = resource._dual_key_shape(closed['subject']); digest = closed['bootstrap_grant_sha256']
@@ -58,5 +77,5 @@ def root_replica_service_for_packet(state, payload):
     else: return None
     if not rows: return None
     if len(rows) != 1: wire._fail('repair_service_unavailable')
-    service = MailboxRootReplicaReadService(state); service.initialize()
+    service = (MailboxRootReplicaReadService if consumer == 'mailbox_root' else MailboxFeedReplicaReadService)(state); service.initialize()
     return service

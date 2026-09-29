@@ -458,6 +458,18 @@ class RepairReplicaConfigureAdminTests(unittest.TestCase):
 
 
 class RepairSetupTests(unittest.TestCase):
+    def test_mailbox_profile_is_an_explicit_finite_new_node_ceiling(self):
+        from memory_vault_open_repair_state import MAILBOX_WORKFLOW_LIMITS, INDEX_WORKFLOW_LIMITS
+        with tempfile.TemporaryDirectory(prefix='synthetic-mailbox-profile-') as temporary:
+            root=Path(temporary).resolve()
+            result=initialize_node(root/'node',base_url='https://synthetic-mailbox.example',enable_repair=True,
+                enable_remote_mailbox_copy=True,repair_profile='mailbox')
+            config=json.loads(Path(result['config_path']).read_bytes())
+            self.assertEqual(config['repair_policy']['limit_policy'],MAILBOX_WORKFLOW_LIMITS)
+            self.assertEqual(config['repair_policy']['limit_policy']['max_proof_items'],128)
+            self.assertEqual(INDEX_WORKFLOW_LIMITS['max_proof_items'],64)
+            self.assertFalse(result['network_started'])
+
     def test_mailbox_copy_reservations_need_their_own_operator_opt_in(self):
         from memory_vault import MemoryError
         from memory_vault_open_repair_copy_resources import REMOTE_COPY_POLICY

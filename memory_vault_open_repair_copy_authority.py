@@ -121,6 +121,18 @@ def _check_replica_closure(p,value,plan,*,source_custody,source_histories,additi
             or p['root_key']!=plan.assignment.payload['root_key'] or p['scope']!=plan.assignment.payload['scope']
             or p['read_until']!=plan.read_until or p['retain_until']!=plan.retain_until):
         wire._fail('repair_copy_commit_mismatch')
+    expected = _replica_manifest_value(plan, source_histories=source_histories, additional=additional, extra_edges=extra_edges)
+    if (value != expected
+            or len({history._ref_tuple(item['ref']) for item in value['original_roles']})>plan.offer.payload['budget']['max_items']):
+        wire._fail('repair_copy_commit_mismatch')
+
+
+def _replica_manifest_value(plan, *, source_histories, additional=(), extra_edges=()):
+    """Canonical unsigned copy graph derived only from complete original inputs.
+
+    This grants no authority. The custody verifier still checks its full hash,
+    actual target signature, original source graph and all operation premises.
+    """
     roles={(item.role,*history._ref_tuple(item.original.ref)) for item in plan.originals}
     for role,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
             ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):
@@ -136,10 +148,10 @@ def _check_replica_closure(p,value,plan,*,source_custody,source_histories,additi
                 edges.append(dict(parent_ref=entry['ref'],relation='manifest-member',child_ref=child))
     edge_key=lambda e:(*history._ref_tuple(e['parent_ref']),e['relation'],*history._ref_tuple(e['child_ref']))
     edges=sorted({edge_key(e):e for e in edges}.values(),key=edge_key)
-    if (roles!={(item['role'],*history._ref_tuple(item['ref'])) for item in value['original_roles']}
-            or value['edges']!=edges
-            or len({history._ref_tuple(item['ref']) for item in value['original_roles']})>plan.offer.payload['budget']['max_items']):
-        wire._fail('repair_copy_commit_mismatch')
+    originals=[dict(role=role,ref=dict(namespace=namespace,key=key,raw_sha256=digest,size=size))
+        for role,namespace,key,digest,size in sorted(roles)]
+    return dict(schema_version=resource.SCHEMA,kind='replica.manifest',root_key=plan.assignment.payload['root_key'],
+        scope=plan.assignment.payload['scope'],original_roles=originals,physical_objects=originals,edges=edges)
 
 
 def source_inventory(source, reservation, policy, budget, recipient_reservation=None):

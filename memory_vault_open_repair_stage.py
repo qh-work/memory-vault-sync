@@ -62,7 +62,11 @@ OCCUPIED_COPY_ROLES=frozenset(('history.ack_unbound','history.ack_empty',
 ROOT_COPY_SINGLE_ROLES = frozenset(('history.mailbox_root', 'root.custody', 'copy.allocation',
     'copy.offer', 'copy.assignment', 'copy.reservation_consent', 'copy.owner_disclosure', 'copy.source_disclosure'))
 ROOT_COPY_ROLES = ROOT_COPY_SINGLE_ROLES | {'history.raw_pack', 'copy.current_status'}
-CONSUMERS = frozenset(("index_admit", "ack_copy_unbound", "ack_copy_empty", "ack_copy_occupied", "mailbox_copy_root"))
+FEED_COPY_SINGLE_ROLES = frozenset(('history.mailbox_feed', 'feed.custody', 'copy.allocation', 'copy.offer',
+    'copy.assignment', 'copy.reservation_consent', 'copy.sender_reservation_consent',
+    'copy.owner_disclosure', 'copy.source_disclosure', 'copy.sender_disclosure'))
+FEED_COPY_ROLES = FEED_COPY_SINGLE_ROLES | {'history.raw_pack', 'copy.current_status'}
+CONSUMERS = frozenset(("index_admit", "ack_copy_unbound", "ack_copy_empty", "ack_copy_occupied", "mailbox_copy_root", "mailbox_copy_feed"))
 
 
 def _fail(code="repair_invalid_stage"):
@@ -153,9 +157,10 @@ def _manifest(value, policy, budget, expected_consumer=None):
     copying_empty=value["consumer"]=="ack_copy_empty"
     copying_occupied=value["consumer"]=="ack_copy_occupied"
     copying_root=value["consumer"]=="mailbox_copy_root"
-    if copying_root:
+    copying_feed=value["consumer"]=="mailbox_copy_feed"
+    if copying_root or copying_feed:
         from memory_vault_open_repair_mailbox_copy import mailbox_copy_scope
-        mailbox_copy_scope(value['scope'], value['root_key'], 'root_replica')
+        mailbox_copy_scope(value['scope'], value['root_key'], 'feed_replica' if copying_feed else 'root_replica')
     elif copying:
         from memory_vault_open_repair_copy_resources import ack_copy_scope
         ack_copy_scope(value["scope"],value["root_key"])
@@ -171,7 +176,7 @@ def _manifest(value, policy, budget, expected_consumer=None):
         if wire.u53(child["index"]) != index:
             _fail()
         role = child["role"]
-        allowed_roles=ROOT_COPY_ROLES if copying_root else OCCUPIED_COPY_ROLES if copying_occupied else EMPTY_COPY_ROLES if copying_empty else COPY_STAGE_ROLES if copying else STAGE_ROLES
+        allowed_roles=FEED_COPY_ROLES if copying_feed else ROOT_COPY_ROLES if copying_root else OCCUPIED_COPY_ROLES if copying_occupied else EMPTY_COPY_ROLES if copying_empty else COPY_STAGE_ROLES if copying else STAGE_ROLES
         if type(role) is not str or role not in allowed_roles:_fail()
         counts[role] = counts.get(role, 0) + 1
         ref = wire.raw_ref(child["ref"])
@@ -191,9 +196,9 @@ def _manifest(value, policy, budget, expected_consumer=None):
         total += ref.size
         if total > min(MAX_STAGE_BYTES, policy.max_retained_bytes, wire.U53_MAX):
             _fail("repair_stage_capacity")
-    if copying_root:
-        if (any(counts.get(role)!=1 for role in ROOT_COPY_SINGLE_ROLES)
-                or not 1<=counts.get('history.raw_pack',0)<=16
+    if copying_root or copying_feed:
+        if (any(counts.get(role)!=1 for role in (FEED_COPY_SINGLE_ROLES if copying_feed else ROOT_COPY_SINGLE_ROLES))
+                or not (2 if copying_feed else 1)<=counts.get('history.raw_pack',0)<=16
                 or not 1<=counts.get('copy.current_status',0)<=16):_fail()
     elif copying_occupied:
         single=OCCUPIED_COPY_ROLES-{'copy.current_status','history.raw_pack'}
