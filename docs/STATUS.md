@@ -1,15 +1,22 @@
 # Memory Vault development status
 
-Current source candidate: **alpha.0.21 (unpublished)**. Native routing/contact
-nodes now expose their signed public introduction and renew it durably before
-expiry, sharing publication ownership and version floors with Python. Restart
-recovers the highest exact original; both runtimes can take over without
-replacing the identity or transport state. Nineteen focused node and mixed HTTP
-checks passed, including renewal, retained directory records, restart recovery,
-cross-runtime takeover, conflict refusal and process-lock release after death.
-The candidate still needs exact-source full CI and extracted-package acceptance.
-The published alpha.0.20 below remains immutable and does not include this work.
+Current source candidate: **alpha.0.22 (unpublished)**. Pending local delivery
+and receipt work now rotates through a durable cursor shared by Python and
+Node. Four older unavailable or independently authorized receipts no longer
+prevent a later saved receipt from being retried. Each poll still attempts at
+most four pending items; rotating changes neither receipt-sent state nor
+permission. Restart and language switching retain the next retry position.
 
+A real five-message HTTP regression failed on alpha.0.21: the fifth saved
+receipt remained unsent after two restarted polls. Alpha.0.21 is therefore held
+unpublished despite its earlier 32 packaged checks passing; those checks did
+not cover this failure. Its immutable archives remain available for review.
+The fix passed that scenario in Python and native Node, including the sender's
+actual saved-receipt validation while all four blocked receipts remained unsent.
+Twenty-nine direct-delivery, native HTTP and contact cases passed. Alpha.0.22
+still needs its own source-bound full CI and extracted-package acceptance.
+It retains native descriptor renewal, public introduction refresh and protected
+Python/Node publication ownership from the held alpha.0.21 candidate.
 
 Alpha.0.20 is now a published prerelease. It includes native Node commands for
 unbound, empty and occupied ACK recovery, sharing authenticated status retention
@@ -117,7 +124,7 @@ binding, recipient-authorized upload, three-generation source verification,
 independent signed-receipt reads and a private recovery command. The release
 manifest and uploaded assets establish publication separately.
 
-Current source target: **0.28.0-alpha.0.21**, an open encrypted-delivery preview.
+Current source target: **0.28.0-alpha.0.22**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use

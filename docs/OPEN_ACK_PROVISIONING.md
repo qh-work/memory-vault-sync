@@ -220,6 +220,12 @@ a replacement receipt. Ordinary `receive` does not call it automatically. The
 original delivery node may now be offline; R must remain reachable. Preserve B's
 existing protected transport state for exact publication retries.
 
+Ordinary receive rotates through at most four pending local items per poll.
+Messages waiting for independent-return permission remain unsent, while later
+receipts can still be retried. The retry position survives restart and switching
+between updated Python and Node clients; it does not authorize independent ACK
+publication or make a pending receipt count as delivered.
+
 ## A recovers the original receipt
 
 Use A's retained request, the same source profile, and a fresh output path:

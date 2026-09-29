@@ -95,6 +95,55 @@ class DeliveryHTTPTests(unittest.TestCase):
         self.assertEqual(changed["error"]["code"], "network_request_id_conflict")
         self.assertEqual(self.stored_count(), 1)
 
+    def test_older_pending_receipts_do_not_starve_later_receipt_after_restart(self):
+        self._exercise_pending_receipt_rotation()
+
+    def _exercise_pending_receipt_rotation(self, retry_receive=None):
+        from unittest.mock import patch
+        from memory_vault import MemoryError
+        from memory_vault_open_delivery_client import OpenDeliveryClient
+        _, reference = self.request_contact()
+        self.contact(self.b, "decide", request_ref=reference, decision="approved",
+                     max_items=5, max_bytes=6291456)
+        self.assertTrue(self.contact(self.a, "result", request_id="req_delivery_contact")["recipient_approved"])
+        requests = [{"op": "send", "request_id": "req_receipt_fairness_"+str(i),
+                     "recipients": [self.bi.key_id], "text": "Synthetic receipt retry "+str(i)} for i in range(5)]
+        sent = {self.call(self.a, **request)["message_id"]: request for request in requests}
+        async def unavailable(*args, **kwargs):
+            raise MemoryError("open_delivery_unavailable", retryable=True)
+        with patch.object(OpenDeliveryClient, "_send_receipt", unavailable):
+            self.call(self.b, op="receive", limit=4)
+            self.call(self.b, op="receive", limit=4)
+        with self.b._network() as network:
+            directory = network.participant.state.directory
+        with sqlite3.connect(directory / "network.sqlite3") as db:
+            rows = db.execute("SELECT message_id,receipt_sent,phase FROM open_delivery_inbox ORDER BY created_at,message_id").fetchall()
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(all(row[1:] == (0, "saved") for row in rows))
+        blocked = {row[0] for row in rows[:4]}
+        later = rows[4][0]
+        original = OpenDeliveryClient._send_receipt
+        async def selective(client, message_id, *args, **kwargs):
+            if message_id in blocked:
+                # An independent-return message may remain saved without a
+                # direct receipt; an unavailable peer can remain pending too.
+                if message_id == rows[0][0]:
+                    return
+                return await unavailable()
+            return await original(client, message_id, *args, **kwargs)
+        with patch.object(OpenDeliveryClient, "_send_receipt", selective):
+            for _ in range(2):
+                self.b = Agent(self.b.client_config, self.b.network_config)
+                if retry_receive is None:
+                    self.call(self.b, op="receive", limit=4)
+                else:
+                    retry_receive(self.b, sorted(blocked))
+        with sqlite3.connect(directory / "network.sqlite3") as db:
+            states = dict(db.execute("SELECT message_id,receipt_sent FROM open_delivery_inbox"))
+        self.assertEqual(states[later], 1)
+        self.assertTrue(all(states[key] == 0 for key in blocked))
+        self.assertTrue(self.call(self.a, **sent[later])["endpoint_validated"])
+
     def test_pending_and_rejected_contact_cannot_store(self):
         _, reference = self.request_contact()
         request = {"op": "send", "request_id": "req_delivery_denied", "recipients": [self.bi.key_id],

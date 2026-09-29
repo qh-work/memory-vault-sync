@@ -54,6 +54,14 @@ OpenHTTPTransport.prototype.requestBlob=async function(...args){
   blobAttempts++;return originalBlob.apply(this,args);
 };
 let participant;
+if(input.hold_receipts){
+  const {OpenDeliveryClient}=await import('./open-delivery-client.ts');
+  const held=new Set(input.hold_receipts),sendReceipt=OpenDeliveryClient.prototype.sendReceipt;
+  OpenDeliveryClient.prototype.sendReceipt=async function(id,...args){
+    if(held.has(id))return;
+    return sendReceipt.call(this,id,...args);
+  };
+}
 try{
   if(input.mode==='dns'){
     const dns=(await import('node:dns')).default,originalDNS=dns.lookup;let lookups=0;
@@ -156,6 +164,17 @@ class OpenTypeScriptHTTPTests(unittest.TestCase):
     def participant(self, identity, state, seeds, operations):
         return self.ts(mode="participant", identity=json.loads(identity.read_bytes()), state=str(state),
                        options={"seeds": seeds, "allow_loopback": True}, operations=operations)
+
+    def test_native_receipt_rotation_continues_python_state_after_restart(self):
+        from tests.test_open_delivery_http import DeliveryHTTPTests
+        fixture = DeliveryHTTPTests("test_older_pending_receipts_do_not_starve_later_receipt_after_restart")
+        fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        def native_receive(agent, blocked):
+            result = self.ts(mode="agent", client_config=str(agent.client_config),
+                network_config=str(agent.network_config), hold_receipts=blocked,
+                requests=[{"op": "receive", "limit": 4}])
+            self.assertTrue(result["results"][0]["ok"], result)
+        fixture._exercise_pending_receipt_rotation(native_receive)
 
     def test_native_public_introduction_is_exact_and_bodyless(self):
         import http.client

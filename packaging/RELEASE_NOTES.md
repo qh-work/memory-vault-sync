@@ -1,8 +1,21 @@
-# Memory Vault v0.28.0-alpha.0.21 — durable native node renewal
+# Memory Vault v0.28.0-alpha.0.22 — fair receipt retries and durable node renewal
 
 This candidate includes approved encrypted communication and selected original
 memory sharing, Python cold-mailbox delivery and independently authorized saved
 receipt recovery, plus Python/native original-source ACK recovery commands.
+
+Pending receipt work now rotates through a durable position shared by Python
+and Node, with at most four pending attempts per poll. Older unavailable or
+independently authorized receipts remain pending without blocking later saved
+receipts. No independent-return permission is inferred and no receipt is marked
+sent without its existing authenticated result. Restart and language switching
+preserve progress.
+
+A five-message real-HTTP regression failed before this fix: the fifth receipt
+stayed unsent after two restarted polls. Python and native Node now complete its
+actual return, and the sender validates the original saved receipt; the four
+blocked receipts remain unsent. Alpha.0.21 is held unpublished because its
+previous packaged checks did not cover this scheduling failure.
 
 Native routing/contact nodes now serve `GET /open/v1/node`, allowing clients to
 refresh expired fixed-key introductions before authenticated endpoint checks.
@@ -18,12 +31,10 @@ config. It releases on normal exit or process death and does not lock message
 storage. Python retains its existing file lock. Use the updated runtimes when
 switching; older runtimes do not all participate in this shared coordination.
 
-Nineteen focused synthetic node and mixed HTTP checks passed against development
-source, including real listener requests, ongoing renewal, preserved directory
-records, both directions of runtime takeover, restart recovery and conflict
-refusal. The release manifest pins this package to its source. Full cloud and
-extracted-package acceptance must be checked in the published release record;
-these local results alone do not establish that acceptance.
+Twenty-nine focused direct-delivery, native HTTP and contact cases passed against
+development source. The release manifest pins this package to its source. Full
+cloud and extracted-package acceptance must be checked in the published release
+record; local results alone do not establish that acceptance.
 
 No project-operated public seed is supplied. Operators provide their authorized
 nodes and HTTPS termination. Complete native mailbox/replica workflows,
@@ -31,8 +42,8 @@ automatic replacement selection, occupied/empty replica transfer and first
 receipt admission on replacements remain unfinished. Global availability,
 thousand-agent capacity and independent external adoption are not established.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.21/docs/OPEN_NETWORK_QUICKSTART.md),
-[native guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.21/docs/NATIVE_OPEN_HTTP.md)
-and [ACK guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.21/docs/OPEN_ACK_RECOVERY.md).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.22/docs/OPEN_NETWORK_QUICKSTART.md),
+[native guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.22/docs/NATIVE_OPEN_HTTP.md)
+and [ACK guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.22/docs/OPEN_ACK_RECOVERY.md).
 Release files contain generic implementation, public docs and synthetic fixtures.
 Existing private Vaults, identities and immutable published archives are preserved.

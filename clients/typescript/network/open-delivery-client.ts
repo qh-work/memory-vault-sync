@@ -68,6 +68,8 @@ export class OpenDeliveryClient{
         CREATE TABLE IF NOT EXISTS open_delivery_inbox(message_id TEXT PRIMARY KEY,envelope_sha256 TEXT NOT NULL,
           sender TEXT NOT NULL,envelope BLOB NOT NULL,body BLOB NOT NULL,session BLOB NOT NULL,phase TEXT NOT NULL,
           result BLOB,receipt BLOB,receipt_sent INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS open_delivery_retry_cursor(singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+          created_at INTEGER NOT NULL,message_id TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS open_delivery_inbox_phase ON open_delivery_inbox(phase,created_at,message_id);`);
       const columns=new Set((db.prepare('PRAGMA table_info(open_delivery_outbox)').all() as Obj[]).map(row=>row.name));
       for(const name of ['intent','acknowledgement'])if(!columns.has(name))db.exec('ALTER TABLE open_delivery_outbox ADD COLUMN '+name+' BLOB');
@@ -388,12 +390,27 @@ export class OpenDeliveryClient{
     this.stageInbox(entry.message_id,session.request.payload.signing_key.key_id,envelope,body,
       {intent:original,storage_receipt:handle.storage_receipt,source_node:handle.source_node});return [await this.finishInbox(entry.message_id),true];
   }
+  private pendingReceiptBatch():Obj[]{return this.db(db=>{
+    const select="SELECT message_id,phase,created_at FROM open_delivery_inbox WHERE (phase='staged' OR (phase='saved' AND receipt_sent=0))",
+      order=' ORDER BY created_at,message_id LIMIT ?',
+      cursor=db.prepare('SELECT created_at,message_id FROM open_delivery_retry_cursor WHERE singleton=1').get() as Obj|undefined;
+    if(!cursor)return db.prepare(select+order).all(4) as Obj[];
+    const stamp=[safeInteger(cursor.created_at),opaqueId(cursor.message_id)] as const,
+      rows=db.prepare(select+' AND (created_at,message_id)>(?,?)'+order).all(...stamp,4) as Obj[];
+    if(rows.length<4)rows.push(...db.prepare(select+' AND (created_at,message_id)<=(?,?)'+order).all(...stamp,4-rows.length) as Obj[]);
+    return rows;
+  });}
+  private advancePendingReceipt(row:Obj):void{
+    const created=safeInteger(row.created_at),id=opaqueId(row.message_id);
+    this.db(db=>db.prepare('INSERT OR REPLACE INTO open_delivery_retry_cursor VALUES(1,?,?)').run(created,id));
+  }
   async receive(limit=4):Promise<Obj>{if(!Number.isSafeInteger(limit)||limit<1||limit>4)fail('network_invalid_receive_limit');return this.serial(()=>this.receiveInternal(limit));}
   private async receiveInternal(limit:number):Promise<Obj>{
     const budget=new DeliveryBudget(),messages:Obj[]=[],errors:Obj[]=[];
-    const pending=this.db(db=>db.prepare("SELECT message_id,phase FROM open_delivery_inbox WHERE phase='staged' OR (phase='saved' AND receipt_sent=0) ORDER BY created_at,message_id LIMIT 4").all()) as Obj[];
+    const pending=this.pendingReceiptBatch();
     for(const row of pending){if(messages.length>=limit)break;try{const result=await this.finishInbox(row.message_id);if(row.phase==='staged')messages.push(result);
-      if(result.state==='validated_saved')await this.sendReceipt(row.message_id,budget);}catch(error){errors.push({message_id:row.message_id,...errorData(error)});}}
+      if(result.state==='validated_saved')await this.sendReceipt(row.message_id,budget);}catch(error){errors.push({message_id:row.message_id,...errorData(error)});}
+      finally{this.advancePendingReceipt(row);}}
     for(const candidate of this.contactSessions(false)){if(messages.length>=limit)break;
       try{const session=await this.checkedSession(candidate,budget),node=session.node,leaseId=session.decision.payload.grant.payload.resource_lease.payload.lease_id;
         let [key,after]=this.cursor(session);const intent=readerIntent('list',{lease_id:leaseId,caller_key_id:this.participant.keyId});
