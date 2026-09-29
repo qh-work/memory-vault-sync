@@ -1,7 +1,7 @@
 {
   "schema_version": "memory-vault-discovery/v1",
   "name": "Memory Vault",
-  "implementation_version": "0.28.0-alpha.0.22",
+  "implementation_version": "0.28.0-alpha.0.23",
   "implementation_status": "alpha_preview",
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
