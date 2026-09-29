@@ -5,16 +5,16 @@
   "implementation_status": "alpha_preview",
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
-  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.23",
+  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.24",
   "release_publication_verified": true,
   "release_assets": {
-    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.23/memory-vault-client-v0.28.0-alpha.0.23.zip",
-    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.23/memory-vault-protocol-v0.28.0-alpha.0.23.zip",
-    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.23/memory-vault-review-v0.28.0-alpha.0.23.zip",
-    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.23/memory-vault-network-test-v0.28.0-alpha.0.23.zip",
-    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.23/SHA256SUMS"
+    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.24/memory-vault-client-v0.28.0-alpha.0.24.zip",
+    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.24/memory-vault-protocol-v0.28.0-alpha.0.24.zip",
+    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.24/memory-vault-review-v0.28.0-alpha.0.24.zip",
+    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.24/memory-vault-network-test-v0.28.0-alpha.0.24.zip",
+    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.24/SHA256SUMS"
   },
-  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.22",
+  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.23",
   "relative_links_base": "this discovery document",
   "start_here": "../AI_START_HERE.md",
   "specification": "../PROTOCOL.md",
@@ -46,7 +46,7 @@
   "automatic_sync_default": false,
   "readme_is_installation": false,
   "runtime_tests_run_for_release": true,
-  "runtime_test_scope": "Thirty-five synthetic contact, directory, native Agent and receipt checks passed using the extracted alpha.0.23 runtime. Its exact-source full cloud regression passed 1087 tests across 114 modules, with all 256 reported source hashes matching d15be3af98e280938072113b62d620f99cc5921b. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.",
+  "runtime_test_scope": "Fourteen synthetic bound-replica, restart, command and real-HTTP checks passed using the extracted alpha.0.24 runtime. Its exact-source full cloud regression passed 1099 tests across 115 modules, with all 258 reported source hashes matching b1a4e78bc8b7e8ac971d997a997bc6d5ced5904a. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.",
   "runtime_test_report": "../docs/RELEASE.md",
   "full_runtime_test_suite_run": true,
   "runtime_parity_verified": false,
@@ -90,7 +90,9 @@
     "python_agent_ack_invitation_export": true,
     "python_agent_mailbox_retain": true,
     "python_mailbox_ack_configuration": true,
-    "python_cold_mailbox_receipt_return": true
+    "python_cold_mailbox_receipt_return": true,
+    "explicit_bound_empty_replica_copy": true,
+    "bound_empty_replica_scope": "Python explicit selected replacement, exact durable reservation and upload, independent return consents and owner recovery after original-source loss; COPY/READ/RETAIN only, no receipt admission, occupied-receipt copy or automatic selection."
   },
   "continuation_trial": {
     "guide": "../docs/CONTINUATION_TRIAL.md",

@@ -12,7 +12,9 @@ current read checks. Saved receipts use separate return/recovery authority.
 Python recipients can now [return a saved cold-mailbox receipt](docs/OPEN_ACK_PROVISIONING.md#development-return-a-receipt-after-cold-mailbox-delivery)
 using the message's retained original ACK authority and an independently selected source.
 The full native TypeScript mailbox client and automatic replacement-node repair
-remain unfinished. Thirty-five synthetic contact, directory, native Agent and receipt checks passed using the extracted alpha.0.23 runtime. Its exact-source full cloud regression passed 1087 tests across 114 modules, with all 256 reported source hashes matching `d15be3af98e280938072113b62d620f99cc5921b`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+remain unfinished. Fourteen synthetic bound-replica, restart, command and real-HTTP checks passed using the extracted alpha.0.24 runtime. Its exact-source full cloud regression passed 1099 tests across 115 modules, with all 258 reported source hashes matching `b1a4e78bc8b7e8ac971d997a997bc6d5ced5904a`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
+Python maintainers can also [copy a message-bound empty ACK slot](docs/OPEN_ACK_RECOVERY.md#bound-empty-replica-copying-and-recovery-source-after-alpha023) to an explicitly selected replacement. Independent return consents let the owner recover its original binding after the source stops. The replacement gains no permission to admit a receipt; occupied-receipt copying and automatic replacement remain unfinished.
 
 This release adds [independent remote source preparation](docs/OPEN_ACK_PROVISIONING.md) and
 [independent consent commands](docs/OPEN_ACK_PREPARATION.md), connecting a new
@@ -28,7 +30,7 @@ READ/bootstrap grants to discover and retrieve the original signed receipt.
 The publication and recovery commands retain exact original bytes and durable
 work limits. Message movement and automatic repair remain unfinished.
 
-**v0.28.0-alpha.0.23 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+**v0.28.0-alpha.0.24 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
 to bind your existing Vault and signing identity to an independent open transport,
 join through one or two actual signed node introductions, explicitly approve a
 finite delivery, and exchange encrypted chat or selected original memories.
