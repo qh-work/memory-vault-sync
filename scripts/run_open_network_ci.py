@@ -368,7 +368,7 @@ class SyntheticResult(unittest.TestResult):
             item["source_frames"]=frames
             # Preserve a narrow protocol reason through assertion wrappers,
             # without ever printing exception text, operands or arbitrary codes.
-            allowed={"repair_access_expired","repair_over_budget","repair_resource_expired",
+            allowed={"repair_access_expired","repair_over_budget","repair_resource_expired","repair_service_capacity",
                 "repair_status_mismatch","repair_status_operation","repair_status_rollback",
                 "repair_status_conflict","repair_status_missing","repair_authority_revoked",
                 "open_network_unavailable"}

@@ -1,17 +1,30 @@
 # Memory Vault development status
 
+Alpha.0.20 is an unpublished candidate. It includes native Node commands for
+unbound, empty and occupied ACK recovery, sharing authenticated status retention
+with Python across failures and restarts. These commands export private evidence
+through an existing identity and never open the content Vault.
+
+The immutable alpha.0.19 candidate remains unpublished. Its full cloud run
+completed 1,065 tests with one mailbox-staging failure, zero errors and zero
+skips. The same failure was reproduced by delaying proof-child downloads:
+the exhaustive non-ACK fixture had not funded its possession renewals and final
+revocation check. Both exhaustive fixtures now request finite matching capacity
+before signing their original grants; product limits and deadlines are unchanged.
+This candidate requires its own source-bound and extracted-package acceptance.
+
 Alpha.0.18 remains unpublished: its complete cloud run executed 1,059 tests
 with one ACK-bearing mailbox custody failure and no errors or skips. A slow
 local download reproduced a possession handle expiring between child reads.
 The exhaustive fixture now reads current-status originals first and renews
 possession before expiry for the same exact historical references. Renewals
 are bounded and charged; sufficient finite capacity is signed before setup.
-Product permission windows and budgets are unchanged. Alpha.0.19 requires
+Product permission windows and budgets are unchanged. Alpha.0.20 requires
 separate package/privacy and exact-source full acceptance. It also includes
 packed-original reuse and persistent original-source recovery observations
 from subsequent development; neither change is in alpha.0.18 archives.
 
-The current build target is **alpha.0.19 (candidate, not yet published)**.
+The current build target is **alpha.0.20 (candidate, not yet published)**.
 
 This candidate adds explicit `copy-reserve`, `copy-upload`, `configure-replica`,
 and `recover-replica` commands. They use existing local identities and protected
@@ -32,7 +45,7 @@ revocation check and reports only the current request's server errors. CI allows
 55 minutes inside a 60-minute job; protocol deadlines and grants are unchanged.
 Alpha.0.17 did pass 14 extracted-runtime workflows and supported Python 3.10.
 Those results do not relabel either older candidate as a full-suite pass. This
-alpha.0.19 candidate requires separate exact-source acceptance.
+alpha.0.20 candidate requires separate exact-source acceptance.
 
 The immutable **alpha.0.15 candidate remains unpublished**. Its full cloud run
 [36536522221](https://github.com/qh-work/memory-vault-sync/actions/runs/36536522221)
@@ -85,7 +98,7 @@ binding, recipient-authorized upload, three-generation source verification,
 independent signed-receipt reads and a private recovery command. The release
 manifest and uploaded assets establish publication separately.
 
-Current source target: **0.28.0-alpha.0.19**, an open encrypted-delivery preview.
+Current source target: **0.28.0-alpha.0.20**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use

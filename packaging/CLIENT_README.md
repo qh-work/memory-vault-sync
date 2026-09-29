@@ -1,4 +1,4 @@
-# Memory Vault v0.28.0-alpha.0.19 — authorized full client
+# Memory Vault v0.28.0-alpha.0.20 — authorized full client
 
 This candidate connects ACK-bearing mailbox retention to explicit cold-recipient
 receipt return. See the [receipt guide](plugins/memory-vault-client/docs/OPEN_ACK_PROVISIONING.md)
@@ -26,7 +26,7 @@ remain unfinished. There is no project-operated public seed or verified
 thousand-agent/global-availability result. Use the source-bound release record
 for actual validation and compare archive bytes with published checksums.
 
-This full-client package targets **v0.28.0-alpha.0.19 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.20 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

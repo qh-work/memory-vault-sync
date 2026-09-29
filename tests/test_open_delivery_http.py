@@ -154,14 +154,15 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             from dataclasses import replace
             DEFAULT_POLICY=replace(DEFAULT_POLICY,max_signature_checks=128)
         limits=dict(DEFAULT_LIMITS,max_proof_bytes=524288)
-        # Fund the exhaustive ACK-bearing download and its bounded possession
+        # Fund both exhaustive downloads and their bounded possession
         # renewals before signing any original resource or authority.
-        exhaustive_ack=self._testMethodName=='test_ack_configuration_survives_mailbox_custody'
-        funded_feed=(exhaustive_ack or self._testMethodName=='test_sender_admits_message_over_http'
+        exhaustive_feed=self._testMethodName in ('test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources',
+            'test_ack_configuration_survives_mailbox_custody')
+        funded_feed=(exhaustive_feed or self._testMethodName=='test_sender_admits_message_over_http'
             or getattr(self,'ack_remote_admission',False))
         if funded_feed:
             limits.update(max_proof_bytes=1048576,max_proof_items=128,max_signature_checks=2048)
-        if exhaustive_ack:limits.update(max_requests=128,max_replay_records=256)
+        if exhaustive_feed:limits.update(max_requests=128,max_replay_records=256)
         _,reference=self.request_contact()
         if self._testMethodName=='test_sender_admits_message_over_http' or getattr(self,'ack_remote_admission',False):
             self.call(self.b,op='connect',invitation=dict(schema_version=CONNECT_SCHEMA,action='decide',request_ref=reference,decision='approved',max_items=2,max_bytes=6291456))
@@ -194,7 +195,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         caps=dict(max_live_bytes=131072,max_meta_bytes=2097152,max_items=64,max_requests=512,max_pending=8,max_replay_records=128,max_jobs=16,max_job_bytes=524288)
         if funded_feed:
             caps.update(max_items=128,max_job_bytes=1048576,max_requests=2048,max_meta_bytes=4194304)
-        if exhaustive_ack:caps.update(max_replay_records=256)
+        if exhaustive_feed:caps.update(max_replay_records=256)
         # This workflow deliberately performs many successful and rejected
         # operations before its final revocation assertions. Give synthetic
         # authorities enough lifetime for slow runners; keep the protocol's

@@ -230,10 +230,11 @@ ceiling match Python and cannot enlarge signed grants. Programmatic callers
 can supply a synchronous `statusObserver` to persist authenticated observations
 before access refusal; it supplies observations, never authorization.
 
-These native commands are not included in the frozen alpha.0.19 archives.
+These native commands are included in the alpha.0.20 candidate source, but not
+in the frozen alpha.0.19 archives.
 Replica recovery and maintainer copy commands remain Python-only.
 
-## Maintainer copy commands (alpha.0.19 candidate)
+## Maintainer copy commands (alpha.0.20 candidate)
 
 `copy-reserve` and `copy-upload` use the maintainer's existing open-client identity
 and protected transport journal. They never open the content Vault. Both accept
