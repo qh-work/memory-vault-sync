@@ -191,3 +191,135 @@ def verify_mailbox_root_copy(manifest_entry, resolver, custody_entry, allocation
         denial = denial or 'repair_resource_expired'
     return MailboxRootCopyAuthority(MappingProxyType(source), allocation, offer, assignment, reservation, tuple(consents),
         rows, tuple(checked), tuple(obligations), read_until, retain_until, denial)
+
+
+def verify_mailbox_root_replica(manifest_entry, resolver, custody_entry, *, expected_root,
+        expected_owner, expected_source, source_storage_epoch, expected_maintainer, expected_target,
+        target_storage_epoch, limit_policy, policy, budget):
+    """Independently authenticate stored discovery-root custody on any client.
+
+    The original source and all copy permissions are checked at the actual copy
+    time. Live READ and return disclosure remain separate, current decisions.
+    """
+    from memory_vault_open_repair_copy_authority import _replica_container, _check_replica_closure
+    target, custody, value, entries = _replica_container(manifest_entry, resolver, custody_entry,
+        expected_target=expected_target, target_storage_epoch=target_storage_epoch, policy=policy, budget=budget)
+    def one(role):
+        values = entries.get(role, ())
+        if len(values) != 1: wire._fail('repair_copy_commit_mismatch')
+        return values[0]
+    source_manifest = one('history.mailbox_root')
+    plan = verify_mailbox_root_copy(source_manifest, resolver, one('root.custody'),
+        one('copy.allocation'), one('copy.offer'), one('copy.assignment'), one('copy.reservation_consent'),
+        one('copy.owner_disclosure'), one('copy.source_disclosure'), expected_root=expected_root,
+        expected_owner=expected_owner, expected_source=expected_source, source_storage_epoch=source_storage_epoch,
+        expected_maintainer=expected_maintainer, expected_target=target, target_storage_epoch=target_storage_epoch,
+        current_statuses=entries.get('copy.current_status', ()), at=custody.payload['stored_at'],
+        limit_policy=limit_policy, policy=policy, budget=budget)
+    if plan.denial_code: wire._fail(plan.denial_code)
+    _check_replica_closure(custody.payload, value, plan, source_custody=plan.source['custody'],
+        source_histories=(('history.mailbox_root', source_manifest, plan.source['manifest']),),
+        extra_edges=root_copy_edges(plan.source))
+    return dict(state='historical_replica', custody=custody, source=plan.source, authority=plan,
+        entries=MappingProxyType({role: tuple(values) for role, values in entries.items()}))
+
+
+def root_copy_edges(source):
+    """Recompute typed discovery edges from the authenticated original graph."""
+    setup = source['setup']; catalog = setup['originals']['catalog']; edges = []
+    for slot in setup['slots']:
+        original = slot['originals']['slot']; head = slot['genesis']['head']; checkpoint = slot['genesis']['checkpoint']
+        for parent, relation, child in ((catalog, 'catalog-slot', original),
+                (original, 'slot-feed', head), (head, 'head-checkpoint', checkpoint)):
+            edges.append(dict(parent_ref=parent.ref.as_dict(), relation=relation, child_ref=child.ref.as_dict()))
+    return tuple(edges)
+
+
+def _check_mailbox_root_return(replica, consent_entries, *, expected_owner, expected_source, expected_maintainer,
+        expected_target, target_storage_epoch, current_statuses, at, action, policy, budget, on_observed=None):
+    """Current permission for B to read a fully reconstructed original root copy.
+
+    Internal callers reconstruct the replica in this operation, retain authentic
+    observations, and check actual storage plus recipient possession separately.
+    Source and maintainer may share keys; each role still signs its exact consent.
+    """
+    from memory_vault_open_repair_copy_authority import RETURN_FIELDS, copy_return_permissions
+    wire._context(policy, budget); wire.u53(at)
+    if action not in ('challenge', 'proof', 'child'): wire._fail('repair_access_action')
+    source = replica['source']; plan = replica['authority']; custody = replica['custody']
+    root = plan.assignment.payload['root_key']; bootstrap = source['setup']['originals']['bootstrap']
+    parties = wire.build_new_wire(dict(owner=expected_owner, source=expected_source, maintainer=expected_maintainer,
+        target=expected_target), policy, budget).value
+    owner_id = resource._dual_key(parties['owner'], budget)
+    signers = {keys['signing_key']['key_id']: keys['signing_key'] for keys in parties.values()}
+    variants = ('owner', 'source', 'maintainer'); wire.object_fields(consent_entries, set(variants))
+    allowed = {key: [] for key in signers}; obligations = []; consents = []; denial = None
+    expires = min(custody.payload['read_until'], custody.payload['retain_until'], bootstrap.payload['expires_at'],
+        bootstrap.payload['probe_until'] if action == 'challenge' else bootstrap.payload['proof_until'])
+    for variant in variants:
+        signer = parties[variant]['signing_key']
+        consent = index._signed(consent_entries[variant], signer, 'mailbox.replica_return_consent', RETURN_FIELDS, policy, budget)
+        p = consent.payload; resource._opaque(p['consent_id']); wire.u53(p['revision'], 1); resource._lifetime(p)
+        if not p['issued_at'] <= at < p['expires_at']: denial = denial or 'repair_access_expired'
+        _same(p['variant'] == variant and p['root_key'] == root and p['source_custody_ref'] == source['custody'].ref.as_dict()
+            and p['historical_manifest_ref'] == plan.allocation.payload['intent']['historical_manifest_ref']
+            and p['assignment_ref'] == plan.assignment.ref.as_dict() and p['subject'] == owner_id
+            and p['target'] == parties['target'] and p['target_storage_epoch'] == target_storage_epoch
+            and p['bootstrap_grant_ref'] == bootstrap.ref.as_dict() and p['issued_at'] >= plan.assignment.payload['issued_at'])
+        permission = wire.object_fields(p['return_permission'], {'originals', 'status_scopes', 'until'})
+        originals, scopes = copy_return_permissions(plan, signer['key_id'], policy, budget)
+        _same(permission['originals'] == originals and permission['status_scopes'] == scopes
+            and p['issued_at'] < wire.u53(permission['until']) <= min(p['expires_at'],
+                plan.assignment.payload['windows']['read_until'], source['read_until'], bootstrap.payload['proof_until']))
+        expires = min(expires, permission['until'], p['expires_at'])
+        scope = index._authority(root, consent, policy, budget)
+        allowed[signer['key_id']].extend((*scopes, dict(scope_kind='authority', scope_id=scope)))
+        obligations.append(index._obligation(signer, 'authority', scope, p['revision'], 2))
+        consents.append(consent)
+    # All B-authored discovery and selected-slot metadata remain under the
+    # original live READ/DISCOVER conditions. The old source's storage capacity
+    # is historical; P's actual resource below supplies present storage rights.
+    obligations.extend(index._obligation(item['signer'], item['kind'], item['scope_id'], item['revision'], item['bits'])
+        for item in source['obligations'] if item['signer'] == parties['owner']['signing_key'])
+    obligations.append(index._obligation(parties['maintainer']['signing_key'], 'assignment',
+        status.status_scope(root, 'assignment', dict(assignment_kind='maintenance.assignment',
+            assignment_sha256=plan.assignment.ref.raw_sha256), policy, budget), 0, 2))
+    target_scope = status.status_scope(root, 'resource', custody.payload['resource'], policy, budget)
+    allowed[parties['target']['signing_key']['key_id']].append(dict(scope_kind='resource', scope_id=target_scope))
+    obligations.append(index._obligation(parties['target']['signing_key'], 'resource', target_scope,
+        custody.payload['reservation_generation'], 2))
+    allowed = {key: [dict(scope_kind=kind, scope_id=scope) for kind, scope in sorted(
+        {(e['scope_kind'], e['scope_id']) for e in values})] for key, values in allowed.items()}
+    for item in plan.statuses:
+        permitted = {(e['scope_kind'], e['scope_id']) for e in allowed[item.payload['signing_key']['key_id']]}
+        if any((e['scope_kind'], e['scope_id']) not in permitted for e in item.payload['entries']):
+            wire._fail('repair_status_disclosure')
+    if type(current_statuses) not in (list, tuple) or not 1 <= len(current_statuses) <= 16: wire._fail('repair_status_missing')
+    checked = []
+    def observe(item):
+        checked.append(item)
+        if on_observed is not None: on_observed(item)
+    for entry in current_statuses:
+        try:
+            p = wire.parse_new_wire(entry['raw'], policy, budget).value['payload']; issuer = p['signing_key']['key_id']
+            if issuer not in signers: wire._fail('repair_status_disclosure')
+            status.authenticate_status_original(entry, expected_root=root, expected_signing_key=signers[issuer], at=at,
+                allowed_scopes=allowed[issuer], policy=policy, budget=budget, on_authenticated=observe)
+        except (KeyError, TypeError): denial = denial or 'repair_invalid_status'
+        except wire.RepairWireError as error: denial = denial or error.code
+    if len({item.ref for item in checked}) != len(checked): denial = denial or 'repair_duplicate_status'
+    previous = (*source['statuses'], *plan.statuses)
+    try: empty._history_floors((*previous, *checked), previous=previous, current=checked)
+    except wire.RepairWireError as error: denial = denial or error.code
+    for need in obligations:
+        values = [entry for item in checked if item.payload['signing_key'] == need['signer'] for entry in item.payload['entries']
+            if (entry['scope_kind'], entry['scope_id']) == (need['scope_kind'], need['scope_id'])]
+        if not values: denial = denial or 'repair_status_missing'
+        for value in values:
+            if value['status'] == 'revoked': denial = denial or 'repair_authority_revoked'
+            elif value['minimum_document_revision'] > need['revision']: denial = denial or 'repair_status_revision'
+            elif value['operation_mask'] & need['mask'] != need['mask']: denial = denial or 'repair_status_operation'
+    if checked: expires = min(expires, *(item.payload['valid_until'] for item in checked))
+    if at >= expires: denial = denial or 'repair_access_expired'
+    return dict(expires_at=expires, consents=tuple(consents), statuses=tuple(checked), obligations=tuple(obligations),
+        subject=owner_id, bootstrap=bootstrap, denial_code=denial)

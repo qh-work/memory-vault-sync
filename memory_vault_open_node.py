@@ -289,6 +289,10 @@ class OpenParticipant:
             if packet_payload.get("consumer") in ("mailbox_root","mailbox_feed"):
                 if packet_payload.get("kind") not in ("bootstrap.probe","bootstrap.answer","bootstrap.proof_child_request","mailbox.body_read"):
                     raise MemoryError("open_invalid_repair_request")
+                if packet_payload['consumer'] == 'mailbox_root':
+                    from memory_vault_open_repair_mailbox_copy_service import root_replica_service_for_packet
+                    replica = root_replica_service_for_packet(state, packet_payload)
+                    if replica is not None: return replica
                 from memory_vault_open_repair_mailbox_resources import RepairMailboxResources
                 from memory_vault_open_repair_mailbox_root import MailboxRootActivation
                 from memory_vault_open_repair_mailbox_source import MailboxRootSource, MailboxRecoveryService

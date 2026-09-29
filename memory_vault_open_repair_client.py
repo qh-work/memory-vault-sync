@@ -349,11 +349,11 @@ class AckOwnerRecoveryClient:
             timeout=timeout,empty_expected=dict(receipt_writer=expected_receipt_writer,
                 message_id=expected_message_id,envelope_ref=expected_envelope_ref),_source_state="occupied")
 
-    def _known_replica(self, entries, root, parties, budget):
+    def _known_replica(self, entries, root, parties, budget, *, _allow_role_aliases=False):
         # Retained facts establish lower bounds only. Accept signatures only
         # from independently supplied parties; no returned key becomes trusted.
         signers={p["signing_key"]["key_id"]:p["signing_key"] for p in parties}
-        if len(parties) not in (4,5) or len(signers)!=len(parties):_fail("repair_replica_read_distinct_parties_required")
+        if len(parties) not in (4,5) or not _allow_role_aliases and len(signers)!=len(parties):_fail("repair_replica_read_distinct_parties_required")
         checked=[]
         for entry in entries:
             raw,ref=ack._entry(entry)
@@ -706,7 +706,18 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
         # history resolver validates full pack membership and all opaque refs;
         # it grants no authority. Signatures, source events, current status and
         # exact role closure are still verified by recover() below.
-        history_role="history.mailbox_root" if source_state=="root" else "history.mailbox_feed"
+        if source_state == 'replica_root':
+            packed_child=next(item for item in children if item['role']=='replica.read_pack')
+            download(packed_child);reference=wire.raw_ref(packed_child['ref'])
+            read_pack=wire.parse_raw_pack(originals[reference],reference,self.policy,budget)
+            wanted={wire.raw_ref(item['ref']) for item in children if item['role'] in proof.replica_read_pack_roles(source_state)}
+            members={(item.raw_sha256,item.size):i for i,item in enumerate(read_pack.entries)}
+            if set(members)!={(ref.raw_sha256,ref.size) for ref in wanted}:_fail('repair_proof_mismatch')
+            for ref in wanted:
+                raw=read_pack.entry(members[(ref.raw_sha256,ref.size)],ref).raw
+                if ref in available and available[ref]!=raw:_fail('repair_ref_conflict')
+                available[ref]=raw
+        history_role="history.mailbox_root" if source_state in ("root","replica_root") else "history.mailbox_feed"
         for item in children:
             if item["role"] in ("history.raw_pack",history_role):download(item)
         packed=wire.LocalRawResolver(self.policy,budget)
@@ -720,7 +731,7 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
             for prior in tree.predecessors:reuse(prior)
         for reference in roles.get(history_role,()):
             tree=history.resolve_historical_inputs(originals[reference],packed,self.policy,budget)
-            if tree.manifest.value['variant']!=('mailbox_root' if source_state=='root' else 'mailbox_feed'):_fail('repair_proof_mismatch')
+            if tree.manifest.value['variant']!=('mailbox_root' if source_state in ('root','replica_root') else 'mailbox_feed'):_fail('repair_proof_mismatch')
             reuse(tree)
         # Reuse only the complete RawRef advertised by the proof, never a hash-
         # only alias. Logical proof-byte limits include every reused original.

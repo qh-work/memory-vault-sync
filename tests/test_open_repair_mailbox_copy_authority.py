@@ -197,3 +197,60 @@ class MailboxRootCopyAuthorityTests(unittest.TestCase):
         with self.assertRaises(wire.RepairWireError):
             self.commit(store)
         self.assertEqual(self.p.db.execute('SELECT count(*) FROM open_repair_copy_commits').fetchone()[0], 0)
+
+    def read_permissions(self, custody):
+        from memory_vault_open_repair_copy_authority import copy_return_permissions
+        plan = self.verify(); budget = wire.RepairBudget(self.source.policy)
+        signers = dict(owner=self.owner_signer, source=self.source.identity, maintainer=self.source.identity)
+        bootstrap = plan.source['setup']['originals']['bootstrap']; consents = {}
+        values = {json.loads(entry['raw'])['payload']['signing_key']['key_id']: json.loads(entry['raw'])['payload']['entries']
+            for entry in self.statuses}
+        for variant, signer in signers.items():
+            originals, scopes = copy_return_permissions(plan, signer.key_id, self.source.policy, budget)
+            consent = self.sign('mailbox.replica_return_consent', signer, dict(consent_id='synthetic_return_' + variant,
+                revision=1, variant=variant, root_key=self.root_key, source_custody_ref=self.custody['ref'],
+                historical_manifest_ref=self.saved['manifest']['ref'], assignment_ref=self.assignment['ref'],
+                subject=dict(signing_key_id=self.owner_signer.key_id, encryption_key_id=self.owner['encryption_key']['key_id']),
+                target=self.target, target_storage_epoch=self.intent['target_storage_epoch'], bootstrap_grant_ref=bootstrap.ref.as_dict(),
+                return_permission=dict(originals=originals, status_scopes=scopes, until=self.until)))
+            consents[variant] = consent
+            scope_id = status.status_scope(self.root_key, 'authority', dict(authority_kind='mailbox.replica_return_consent',
+                authority_sha256=consent['ref']['raw_sha256']), self.source.policy, budget)
+            values[signer.key_id].append(dict(scope_kind='authority', scope_id=scope_id, minimum_document_revision=1, status='active', operation_mask=2))
+        target_scope = status.status_scope(self.root_key, 'resource', json.loads(custody['raw'])['payload']['resource'], self.source.policy, budget)
+        values[self.p.state.identity.key_id] = [dict(scope_kind='resource', scope_id=target_scope,
+            minimum_document_revision=1, status='active', operation_mask=2)]
+        current = []
+        for signer in (self.owner_signer, self.source.identity, self.p.state.identity):
+            signed = issue_status(signer, root=self.root_key, revision=3, issued_at=self.now, valid_until=self.until,
+                entries=sorted(values[signer.key_id], key=lambda e: (e['scope_kind'], e['scope_id'])))
+            entry = status_entry(signed); entry['ref']['key'] = entry['ref']['raw_sha256']; current.append(entry)
+        return consents, current
+
+    def read_context(self):
+        return dict(expected_root=self.root_key, expected_owner=self.owner, expected_source=self.source.target,
+            source_storage_epoch=self.source.node['payload']['storage_epoch'], expected_maintainer=self.source.target,
+            limit_policy=self.source.limits)
+
+    def test_root_read_uses_separate_return_permission_after_source_loss_and_preserves_revocation(self):
+        from memory_vault_open_repair_mailbox_copy_state import MailboxCopyState
+        store = MailboxCopyState(self.p.state); store.initialize()
+        custody = self.commit(store); rid = json.loads(custody['raw'])['payload']['resource']['resource_id']
+        consents, current = self.read_permissions(custody); context = self.read_context()
+        self.source.db.close(); self.p.db.close(); self.p.connect()
+        store = MailboxCopyState(self.p.state); store.initialize()
+        decision = store.prepare_root_read(rid, consents, **context, current_statuses=current)
+        self.assertEqual(decision['state'], 'permission_checked')
+        self.assertEqual(decision['bootstrap'].ref.as_dict(), self.event['setup']['originals']['bootstrap'].ref.as_dict())
+        entries = json.loads(current[0]['raw'])['payload']['entries']
+        own_scope = status.status_scope(self.root_key, 'authority', dict(authority_kind='mailbox.replica_return_consent',
+            authority_sha256=consents['owner']['ref']['raw_sha256']), self.source.policy, wire.RepairBudget(self.source.policy))
+        for item in entries:
+            if item['scope_id'] == own_scope: item['status'] = 'revoked'
+        revoked = status_entry(issue_status(self.owner_signer, root=self.root_key, revision=4, entries=entries,
+            issued_at=self.now, valid_until=self.until))
+        with self.assertRaisesRegex(wire.RepairWireError, 'repair_authority_revoked'):
+            store.prepare_root_read(rid, consents, **context, current_statuses=[revoked, *current[1:]])
+        self.p.db.close(); self.p.connect(); store = MailboxCopyState(self.p.state); store.initialize()
+        with self.assertRaises(wire.RepairWireError):
+            store.prepare_root_read(rid, consents, **context, current_statuses=current)

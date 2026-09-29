@@ -659,3 +659,57 @@ same carrier while its original use/handle remains valid. It does not probe for
 an empty slot again, generate new consent, or clear the source's budget. After
 that window expires it reports that reconciliation is required; A can use the
 independent occupied recovery path instead of assuming the upload failed.
+
+## Mailbox directory replica commands (development after alpha.0.25)
+
+The Python client can upload an explicitly selected mailbox directory replica,
+install its independent return consents, and recover the original directory
+after the source goes offline. These commands use existing identities and
+protected transport storage. They do not open the content Vault. A directory
+contains catalog and slot references; it does not contain a copied message feed
+or authorize reading message ciphertexts.
+
+The destination must already have the exact mailbox copy reservation. Remote
+mailbox reservations require the separate `--enable-remote-mailbox-copy` node
+option alongside enabled repair/provider services. An ACK copy reservation or
+directory lease cannot substitute for that reservation. The upload bundle must
+contain the real destination offer, maintainer assignment, and independently
+signed owner/source disclosures; this command does not create those permissions.
+
+```sh
+python -B memory_vault_open_repair_admin.py copy-upload-root \
+  --network-config /absolute/private/maintainer/open.json \
+  --request /absolute/private/root-copy.json \
+  --output /absolute/private/root-copy-result.json --repair-profile receipt-index
+
+python -B memory_vault_open_repair_admin.py configure-replica-root \
+  --node-config /absolute/private/replica/node.json \
+  --request /absolute/private/root-return.json \
+  --output /absolute/private/root-return-result.json
+
+python -B memory_vault_open_repair_admin.py recover-replica-root \
+  --network-config /absolute/private/recipient/open.json \
+  --request /absolute/private/root-recovery.json \
+  --output /absolute/private/root-originals.json --repair-profile receipt-index
+```
+
+Each original entry is `{ "raw_base64url": "...", "ref": RawRef }`. Requests are
+private JSON files. Outputs are new private files, never overwritten. The
+explicit client profile is an acceptance ceiling and cannot enlarge signed
+source limits, resource budgets, or permission windows.
+
+| Command | Request schema and required fields |
+| --- | --- |
+| `copy-upload-root` | `memory-vault-open-mailbox-root-copy-request/v1`: `node`, `root_key`, `owner`, `source`, `source_storage_epoch`, `target`, `target_storage_epoch`, `manifest`, `custody`, `allocation`, `offer`, `assignment`, `reservation`, `owner_disclosure`, `source_disclosure`, `originals` (source history packs), `current_statuses` |
+| `configure-replica-root` | `memory-vault-open-mailbox-root-replica-read-config/v1`: `resource_id`, `context`, `consents` (`owner`, `source`, `maintainer`), `current_statuses`. Context contains `expected_root`, `expected_owner`, `expected_source`, `source_storage_epoch`, `expected_maintainer`; each consent is an independently signed `mailbox.replica_return_consent` original. |
+| `recover-replica-root` | `memory-vault-open-mailbox-root-replica-recovery-request/v1`: `node`, `root_key`, `target`, `source`, `source_storage_epoch`, `maintainer`, original owner `root`, `read`, `bootstrap`, `known_statuses`, `archive_statuses` |
+
+Upload verifies the destination's signing and encryption key possession before
+disclosing originals. Its durable journal replays exact requests after a lost
+reply and restart, within the original finite window. The destination commits
+the whole authenticated directory graph and actual reserved storage before
+issuing custody. Recovery independently verifies that graph, original owner
+authority, current READ permissions and all three return consents. Revocations
+and status revision floors remain in the recipient's transport database across
+failed recovery and restart. `mailbox_root_replica_recovered` means the exact
+directory originals were recovered; it is not a saved-message receipt.

@@ -408,7 +408,8 @@ def configure_replica(node_config, request_path, output, *, source_state='unboun
     from memory_vault_open_node import OpenParticipant
     from memory_vault_open_repair_index_admin import _node_config
     from memory_vault_open_repair_copy_service import ReplicaReadService,ReplicaEmptyReadService,ReplicaOccupiedReadService
-    if source_state not in {"unbound","empty","occupied"}:raise RepairWireError("repair_invalid_request_bundle")
+    from memory_vault_open_repair_mailbox_copy_service import MailboxRootReplicaReadService
+    if source_state not in {"unbound","empty","occupied","root"}:raise RepairWireError("repair_invalid_request_bundle")
     from memory_vault_trust import Identity
     request_path, output = _absolute_path(request_path), _absolute_path(output)
     if os.path.lexists(output):
@@ -418,7 +419,8 @@ def configure_replica(node_config, request_path, output, *, source_state='unboun
         raise RepairWireError("repair_request_missing")
     request = object_fields(document(raw, maximum=MAX_BUNDLE_BYTES),
         {"schema_version", "resource_id", "context", "consents", "current_statuses"})
-    if request["schema_version"] != {"unbound":REPLICA_CONFIG_SCHEMA,"empty":EMPTY_REPLICA_CONFIG_SCHEMA,"occupied":OCCUPIED_REPLICA_CONFIG_SCHEMA}[source_state]:
+    if request["schema_version"] != {"unbound":REPLICA_CONFIG_SCHEMA,"empty":EMPTY_REPLICA_CONFIG_SCHEMA,"occupied":OCCUPIED_REPLICA_CONFIG_SCHEMA,
+            "root":"memory-vault-open-mailbox-root-replica-read-config/v1"}[source_state]:
         raise RepairWireError("repair_invalid_request_bundle")
     consents = object_fields(request["consents"], {"owner", "source", "maintainer"}|({"recipient"} if source_state=="occupied" else set()))
     if type(request["current_statuses"]) is not list or not 1 <= len(request["current_statuses"]) <= 16:
@@ -432,12 +434,13 @@ def configure_replica(node_config, request_path, output, *, source_state='unboun
             contact_policy=config.get('contact_policy'), delivery_policy=config.get('delivery_policy'),
             provider_policy=config.get('provider_policy'), repair_policy=config['repair_policy']) as participant:
         with participant.state.db() as db:
-            service = {"unbound":ReplicaReadService,"empty":ReplicaEmptyReadService,"occupied":ReplicaOccupiedReadService}[source_state](participant._repair_service(db).state)
+            service = {"unbound":ReplicaReadService,"empty":ReplicaEmptyReadService,"occupied":ReplicaOccupiedReadService,
+                "root":MailboxRootReplicaReadService}[source_state](participant._repair_service(db).state)
             service.initialize()
             result = service.configure(request["resource_id"], context=request["context"],
                 consents={name: _entry(entry) for name, entry in consents.items()},
                 current_statuses=[_entry(entry) for entry in request["current_statuses"]])
-    evidence = dict(result, schema_version="memory-vault-open-ack-replica-read-config-result/v1",
+    evidence = dict(result, schema_version="memory-vault-open-mailbox-root-replica-read-config-result/v1" if source_state=='root' else "memory-vault-open-ack-replica-read-config-result/v1",
         recipient_saved=False, vault_modified=False, network_started=False)
     encoded = canonical_bytes(evidence) + b"\n"
     _write_new_private(output, encoded)
@@ -458,6 +461,8 @@ def main(argv=None):
                             ("copy-upload-empty", "retain the exact bound slot and its complete original history"),
                             ("copy-reserve-occupied", "reserve an existing receipt replica with explicit recipient consent"),
                             ("copy-upload-occupied", "copy an existing receipt with all three original history generations"),
+                            ("copy-upload-root", "upload an independently authorized mailbox directory replica"),
+                            ("recover-replica-root", "recover the original mailbox directory from an explicitly selected replica"),
                             ("recover-replica-occupied", "recover the original signed receipt from an authorized replica")):
         recover = commands.add_parser(name, help=help_text)
         recover.add_argument("--network-config", required=True, type=Path)
@@ -466,16 +471,20 @@ def main(argv=None):
         recover.add_argument("--timeout", type=float, default=30)
         recover.add_argument("--repair-profile", choices=("unbound", "receipt", "receipt-index"),
             help="explicit client acceptance ceiling; never changes the source's signed limits")
-    for name in ("configure-replica","configure-replica-empty","configure-replica-occupied"):
+    for name in ("configure-replica","configure-replica-empty","configure-replica-occupied","configure-replica-root"):
         configure = commands.add_parser(name, help="install separately signed replica return consents locally")
         configure.add_argument("--node-config", required=True, type=Path)
         configure.add_argument("--request", required=True, type=Path)
         configure.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
-        if args.command in {"configure-replica","configure-replica-empty","configure-replica-occupied"}:
+        if args.command in {"configure-replica","configure-replica-empty","configure-replica-occupied","configure-replica-root"}:
             result = configure_replica(args.node_config, args.request, args.output,
-                source_state="occupied" if args.command.endswith("-occupied") else "empty" if args.command.endswith("-empty") else "unbound")
+                source_state="root" if args.command.endswith("-root") else "occupied" if args.command.endswith("-occupied") else "empty" if args.command.endswith("-empty") else "unbound")
+        elif args.command in {"copy-upload-root", "recover-replica-root"}:
+            from memory_vault_open_repair_mailbox_copy_admin import upload_root, recover_root
+            method=upload_root if args.command=='copy-upload-root' else recover_root
+            result=method(args.network_config,args.request,args.output,timeout=args.timeout,repair_profile=args.repair_profile)
         elif args.command in {"copy-reserve", "copy-upload", "copy-reserve-empty", "copy-upload-empty", "copy-reserve-occupied", "copy-upload-occupied"}:
             result = copy_ack(args.network_config, args.request, args.output, timeout=args.timeout,
                 repair_profile=args.repair_profile, operation=args.command.split("-")[1],

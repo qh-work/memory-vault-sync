@@ -95,6 +95,24 @@ class OpenRepairProofTypeScriptTests(unittest.TestCase):
         self.assertTrue(result["ok"],result)
         self.assertEqual(result["result"]["manifest"],manifest)
 
+    def test_mailbox_root_replica_profile_is_explicit_in_python_and_native(self):
+        import memory_vault_open_repair_proof as proof
+        manifest, options = self.py.mailbox_manifest()
+        reference = self.py.fixture['entries']['root']['ref']
+        packed = self.py.fixture['packs'][0]['ref']
+        rows = [dict(role=role, ref=packed if role == 'replica.read_pack' else reference)
+            for role in sorted(proof.MAILBOX_ROOT_REPLICA_ROLES)]
+        rows.append(dict(role='history.raw_pack', ref=packed))
+        manifest['children'] = [dict(index=i, **row) for i, row in enumerate(rows)]
+        raw = self.py.response(manifest).raw
+        self.py.verify(raw, **dict(options, expected_source_state='replica_root'))
+        call = self.call(); call['raw'] = base64.b64encode(raw).decode()
+        call['options'].update(consumer='mailbox_root', expectedSourceState='replica_root', selector=options['selector'])
+        old = copy.deepcopy(call); old['options']['expectedSourceState'] = 'root'
+        good, bad = self.ts([call, old])
+        self.assertTrue(good['ok'], good); self.assertEqual(good['result']['manifest'], manifest)
+        self.assertFalse(bad['ok'])
+
     def test_mailbox_feed_manifest_native_python_parity(self):
         manifest,options=self.py.mailbox_feed_manifest()
         call=self.call();call['raw']=base64.b64encode(self.py.response(manifest).raw).decode()

@@ -28,6 +28,7 @@ def _entry(item):
 
 
 class AckCopyUploadClient:
+    journal_type=AckCopyPreparation
     # These helpers use only identity, target keys/epoch, the finite deadline and
     # this client's own durable _step. No index allocation/publication is used.
     _provider_rpc=AckIndexPublicationClient._provider_rpc
@@ -37,7 +38,7 @@ class AckCopyUploadClient:
     _prove_directory=AckIndexPublicationClient._prove_directory
 
     def __init__(self,journal,*,encryption_identity,transport=None,allow_loopback=False):
-        if type(journal) is not AckCopyPreparation or encryption_identity.public_descriptor()!=journal.keys['encryption_key']:
+        if type(journal) is not self.journal_type or encryption_identity.public_descriptor()!=journal.keys['encryption_key']:
             wire._fail('repair_invalid_context')
         self.journal,self.db,self.policy=journal,journal.db,journal.policy
         self.identity,self.encryption=journal.identity,encryption_identity
@@ -137,6 +138,14 @@ class AckCopyUploadClient:
     def upload_occupied(self,base,*args,target_node_entry,timeout=60,**context):
         return self._upload(base,*args,target_node_entry=target_node_entry,timeout=timeout,source_state='occupied',**context)
 
+    def _upload_context_keys(self,source_state):
+        names=('expected_ack_slot','expected_owner','expected_source','source_storage_epoch','expected_target','target_storage_epoch','limit_policy')
+        if source_state in ('empty','occupied'):names+=('expected_receipt_writer','expected_message_id','expected_envelope_ref')
+        return names
+
+    def _upload_preparer(self,source_state):
+        return {'unbound':self.journal.prepare_upload_unbound,'empty':self.journal.prepare_upload_empty,'occupied':self.journal.prepare_upload_occupied}[source_state]
+
     def _upload(self,base,*args,target_node_entry,timeout,source_state,**context):
         """Use the originals for the selected source generation, except at.
 
@@ -148,10 +157,9 @@ class AckCopyUploadClient:
             self.source_state=source_state
             self.deadline=time.monotonic()+timeout
             budget=self._budget()
-            names=('expected_ack_slot','expected_owner','expected_source','source_storage_epoch','expected_target','target_storage_epoch','limit_policy')
-            if source_state in ('empty','occupied'):names+=('expected_receipt_writer','expected_message_id','expected_envelope_ref')
+            names=self._upload_context_keys(source_state)
             self.context=wire.build_new_wire({k:context[k] for k in names},self.policy,budget).value
-            prepare={'unbound':self.journal.prepare_upload_unbound,'empty':self.journal.prepare_upload_empty,'occupied':self.journal.prepare_upload_occupied}[source_state]
+            prepare=self._upload_preparer(source_state)
             prepared=prepare(*args,at=self._now(),**dict(context,**self.context))
             allocation_entry=next(e['entry'] for e in prepared['children'] if e['role']=='copy.allocation')
             allocation=wire.parse_new_wire(allocation_entry['raw'],self.policy,budget).value['payload']

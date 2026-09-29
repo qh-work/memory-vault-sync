@@ -1,5 +1,6 @@
 """Real HTTP root replica upload with durable restart and exact original storage."""
 import json
+import sqlite3
 from pathlib import Path
 import threading
 import unittest
@@ -14,6 +15,8 @@ from memory_vault_open_repair_mailbox_copy_state import MailboxCopyState
 from memory_vault_open_repair_mailbox_copy_upload import MailboxRootCopyUpload
 import memory_vault_open_repair_stage as stage
 import memory_vault_open_repair_wire as wire
+import memory_vault_open_repair_history as history
+from memory_vault_open_repair_mailbox_copy_authority import verify_mailbox_root_replica
 from tests import test_open_repair_mailbox_copy_authority as fixtures
 from tests import test_open_repair_copy_upload as http_fixture
 
@@ -71,6 +74,7 @@ class MailboxRootCopyUploadTests(unittest.TestCase):
         h = self.h
         self.participant = OpenParticipant(h.p.state.identity, self.directory, seeds=[], descriptor=self.descriptor,
             encryption_identity=h.p.state.encryption_identity, allow_loopback=True,
+            provider_policy=dict(enabled=True),
             repair_policy=dict(enabled=True, limit_policy=h.source.limits))
         for name in ('handle_repair', 'handle_blob'):
             original = getattr(self.participant, name)
@@ -113,7 +117,28 @@ class MailboxRootCopyUploadTests(unittest.TestCase):
         value = wire.parse_new_wire(reply['raw'], self.policy, budget).value
         self.assertEqual(value['kind'], 'mailbox.copy_committed')
         custody = decode_entry(value['custody'], self.policy, budget)
+        manifest = decode_entry(value['manifest'], self.policy, budget)
         self.assertEqual(json.loads(custody['raw'])['payload']['original_custody_ref'], h.custody['ref'])
+        def verify(original_manifest, original_custody):
+            meter = wire.RepairBudget(self.policy); resolver = wire.LocalRawResolver(self.policy, meter)
+            for row in self.rows: resolver.put(row['ref']['namespace'], row['ref']['key'], row['raw'])
+            source = history.resolve_historical_inputs(h.saved['manifest']['raw'], resolver, self.policy, meter)
+            for item in source.roles: resolver.put(item.original.ref.namespace, item.original.ref.key, item.original.raw)
+            return verify_mailbox_root_replica(original_manifest, resolver, original_custody, expected_root=h.root_key,
+                expected_owner=h.owner, expected_source=h.source.target, source_storage_epoch=h.source.node['payload']['storage_epoch'],
+                expected_maintainer=h.source.target, expected_target=h.target, target_storage_epoch=h.intent['target_storage_epoch'],
+                limit_policy=h.source.limits, policy=self.policy, budget=meter)
+        checked = verify(manifest, custody)
+        self.assertEqual(checked['source']['custody'].raw, h.custody['raw'])
+        from memory_vault import canonical_bytes
+        from tests.open_repair_ack_fixtures import reference, signed_entry
+        changed = json.loads(manifest['raw'])
+        changed['edges'] = [edge for edge in changed['edges'] if edge['relation'] != 'catalog-slot']
+        raw = canonical_bytes(changed); false_manifest = dict(raw=raw, ref=reference(raw, 'synthetic_incomplete_root_graph'))
+        payload = json.loads(custody['raw'])['payload']; payload['replica_manifest_ref'] = false_manifest['ref']
+        false_custody = signed_entry(payload, h.p.state.identity, 'synthetic_forged_replica_graph')
+        with self.assertRaisesRegex(wire.RepairWireError, 'repair_copy_commit_mismatch'):
+            verify(false_manifest, false_custody)
         h.source.db.close()
         self.restart()
         with self.participant.state.db() as db:
@@ -129,3 +154,93 @@ class MailboxRootCopyUploadTests(unittest.TestCase):
             RepairCopyUpload(self.h.p.state).intent(self.rid, self.intent)
         self.assertIsNone(MailboxRootCopyUpload(self.h.p.state)._session(self.rid))
         self.assertIsNone(self.h.p.db.execute('SELECT requests FROM open_repair_copy_work WHERE resource_id=?', (self.rid,)).fetchone())
+
+    def client(self):
+        from memory_vault_open_repair_mailbox_copy_prepare import MailboxRootCopyPreparation
+        from memory_vault_open_repair_mailbox_copy_client import MailboxRootCopyUploadClient
+        db = sqlite3.connect(self.directory / 'synthetic-copy-client.sqlite3')
+        journal = MailboxRootCopyPreparation(db, self.h.source.identity, self.h.source.encryption_identity, policy=self.policy)
+        client = MailboxRootCopyUploadClient(journal, encryption_identity=self.h.source.encryption_identity,
+            transport=self.transport, allow_loopback=True)
+        return client, db
+
+    def run_client(self, client, statuses=None):
+        from memory_vault import canonical_bytes
+        from tests.open_repair_ack_fixtures import reference
+        h = self.h
+        node_raw = canonical_bytes(self.descriptor)
+        return client.upload(self.base, h.saved['manifest'], h.resolver(wire.RepairBudget(self.policy)), h.custody,
+            h.allocation, h.offer, h.assignment, h.reservation, *h.consents,
+            target_node_entry=dict(raw=node_raw, ref=reference(node_raw, 'synthetic_copy_destination')), expected_root=h.root_key, expected_owner=h.owner,
+            expected_source=h.source.target, source_storage_epoch=h.source.node['payload']['storage_epoch'],
+            expected_target=h.target, target_storage_epoch=h.intent['target_storage_epoch'],
+            current_statuses=h.statuses if statuses is None else statuses, limit_policy=h.source.limits)
+
+    def test_client_resumes_exact_custody_after_lost_reply_and_both_restarts(self):
+        from memory_vault import MemoryError
+        client, db = self.client(); self.addCleanup(db.close)
+        request = self.transport.request_repair
+        lost = []
+        def lose_commit(base, raw, **options):
+            result = request(base, raw, **options)
+            if json.loads(raw).get('payload', {}).get('kind') == 'mailbox.root_copy_commit' and not lost:
+                lost.append(raw)
+                raise MemoryError('open_network_unavailable', retryable=True)
+            return result
+        with patch.object(self.transport, 'request_repair', side_effect=lose_commit):
+            with self.assertRaises(MemoryError): self.run_client(client)
+        self.assertEqual(len(lost), 1)
+        self.assertEqual(self.h.p.db.execute('SELECT count(*) FROM open_repair_copy_commits').fetchone()[0], 1)
+        db.close(); self.restart()
+        client, db = self.client(); self.addCleanup(db.close)
+        result = self.run_client(client)
+        self.assertEqual(result['state'], 'replica_committed')
+        self.assertEqual(self.run_client(client), result)
+        requests = [bytes(row[0]) for row in db.execute("SELECT request FROM ack_copy_client_steps WHERE mode='repair'")]
+        self.assertIn(lost[0], requests)
+        self.assertEqual(self.h.p.db.execute('SELECT count(*) FROM open_repair_copy_commits').fetchone()[0], 1)
+
+    def test_authenticated_revocation_survives_client_restart_before_any_network_disclosure(self):
+        from memory_vault_open_provider import issue_status
+        from tests.test_open_repair_status import status_entry
+        h = self.h; p = json.loads(h.statuses[0]['raw'])['payload']
+        p['entries'][0]['status'] = 'revoked'
+        revoked = status_entry(issue_status(h.owner_signer, root=h.root_key, revision=3,
+            entries=p['entries'], issued_at=h.now, valid_until=h.until))
+        with patch.object(self.transport, 'request', side_effect=AssertionError('unexpected disclosure')) as send:
+            for values in ([revoked, h.statuses[1]], h.statuses):
+                client, db = self.client()
+                try:
+                    with self.assertRaises(wire.RepairWireError): self.run_client(client, values)
+                finally: db.close()
+            send.assert_not_called()
+
+    def test_owner_recovers_original_root_over_http_after_source_loss_and_replica_restart(self):
+        from memory_vault import canonical_bytes
+        from memory_vault_open_repair_mailbox_copy_service import MailboxRootReplicaReadService
+        from memory_vault_open_repair_mailbox_copy_client import MailboxRootReplicaRecoveryClient
+        from tests.open_repair_ack_fixtures import reference
+        h = self.h
+        store = MailboxCopyState(h.p.state); store.initialize(); custody = h.commit(store)
+        rid = json.loads(custody['raw'])['payload']['resource']['resource_id']
+        consents, current = h.read_permissions(custody)
+        context = h.read_context(); context.pop('limit_policy')
+        with self.participant.state.db() as db:
+            service = MailboxRootReplicaReadService(self.participant._repair_service(db).state); service.initialize()
+            self.assertEqual(service.configure(rid, context=context, consents=consents, current_statuses=current)['state'], 'configured')
+        h.source.db.close(); self.restart()
+        observed = []
+        client = MailboxRootReplicaRecoveryClient(h.owner_signer, h.h.host.h.f['encryption']['owner'],
+            policy=self.policy, limit_policy=h.source.limits, allow_loopback=True, transport=self.transport,
+            clock=lambda: h.now, status_observer=observed.append)
+        node = canonical_bytes(self.descriptor); setup = h.event['setup']['originals']
+        result = client.recover(self.base, target_node_entry=dict(raw=node, ref=reference(node, 'synthetic_read_destination')),
+            expected_target=h.target, expected_root=h.root_key, expected_source=h.source.target,
+            source_storage_epoch=h.source.node['payload']['storage_epoch'], expected_maintainer=h.source.target,
+            root_entry=entry(setup['root']), read_entry=entry(setup['read']), bootstrap_entry=entry(setup['bootstrap']), timeout=30)
+        self.assertEqual(result.replica['custody'].raw, custody['raw'])
+        self.assertEqual(result.replica['source']['custody'].raw, h.custody['raw'])
+        self.assertEqual(result.replica['source']['setup']['originals']['catalog'].raw, setup['catalog'].raw)
+        self.assertEqual(len(result.current_statuses), 3)
+        self.assertEqual({item.ref for item in observed}, {item.ref for item in result.current_statuses})
+        self.assertEqual(self.errors, [])

@@ -52,13 +52,16 @@ OFFER_FIXED_ROLES = empty.ROLES | OFFER_CURRENT_ROLES | {"history.ack_empty", "a
 MAILBOX_CURRENT_ROLES = frozenset("current.status."+name for name in
     "root root_read root_bootstrap catalog anchor_resource slot read maintenance bootstrap data_resource metadata_resource".split())
 MAILBOX_ROOT_ROLES = history._ROLES["mailbox_root"] | MAILBOX_CURRENT_ROLES | {"history.mailbox_root","root.custody"}
+MAILBOX_ROOT_REPLICA_EXTRA = frozenset(role for role in REPLICA_FIXED_ROLES
+    if role.startswith(('copy.', 'replica.', 'return.')) or role == 'current.status.replica_read') | {'replica.read_pack'}
+MAILBOX_ROOT_REPLICA_ROLES = (MAILBOX_ROOT_ROLES - MAILBOX_CURRENT_ROLES) | MAILBOX_ROOT_REPLICA_EXTRA
 MAILBOX_FEED_CURRENT_ROLES = frozenset('current.status.'+name for name in 'slot read maintenance bootstrap disclosure metadata_resource'.split())
 MAILBOX_ACK_CONFIGURATION_ROLES = frozenset(('ack.root_authority','ack.write_grant','bootstrap.ack_offer',
     'historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'))
 MAILBOX_FEED_ROLES = (history._ROLES['mailbox_feed'] | history._ROLES['mailbox_member'] | MAILBOX_FEED_CURRENT_ROLES | {'history.mailbox_feed','feed.custody'}) - {
     'ack.root_authority','ack.write_grant','bootstrap.ack_offer','historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'}
 CONSUMER_STATES = {"ack_owner": SOURCE_STATES, "ack_offer": {"empty": (OFFER_FIXED_ROLES, 2)},
-                   "mailbox_root": {"root": (MAILBOX_ROOT_ROLES,1)},"mailbox_feed":{"feed":(MAILBOX_FEED_ROLES,2)}}
+                   "mailbox_root": {"root": (MAILBOX_ROOT_ROLES,1), "replica_root": (MAILBOX_ROOT_REPLICA_ROLES,1)},"mailbox_feed":{"feed":(MAILBOX_FEED_ROLES,2)}}
 HANDLE_FIELDS = probe._COMMON | {"handle_id", "probe_ref", "challenge_ref", "answer_ref", "service_generation", "manifest_ref", "child_count"}
 CHILD_FIELDS = probe._COMMON | {"request_id", "probe_ref", "handle_ref", "manifest_ref", "service_generation", "child_index", "offset", "requested_bytes"}
 MANIFEST_FIELDS = frozenset("schema_version kind probe_ref subject target target_storage_epoch consumer selector bootstrap_grant_ref service_generation response_profile children".split())
@@ -151,6 +154,9 @@ def _manifest(value, expected, maximum_items, expected_source_state=None):
         singleton = {"mailbox.root_authority","mailbox.root_read_grant","mailbox.catalog","bootstrap.mailbox_root",
             "resource.anchor_allocate","resource.anchor_offer","resource.anchor_activation","resource.anchor_active",
             "source.descriptor","history.mailbox_root","root.custody"}
+        if source_state == 'replica_root':
+            singleton |= MAILBOX_ROOT_REPLICA_EXTRA - {'copy.current_status', 'current.status.replica_read'}
+            if any(not 1 <= counts.get(role, 0) <= 16 for role in ('copy.current_status', 'current.status.replica_read')): _fail()
         if any(counts.get(role)!=1 for role in singleton) or any(counts.get(role,0)<1 for role in fixed_roles):
             _fail()
     elif consumer=='mailbox_feed':

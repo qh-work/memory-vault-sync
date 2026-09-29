@@ -379,13 +379,18 @@ class RepairCopyState(RepairCopyResources):
             expected_source=expected_source,expected_maintainer=expected_maintainer,expected_target=s.target,
             target_storage_epoch=s.node['payload']['storage_epoch'],current_statuses=current_statuses,at=s._now(),
             action=action,policy=policy,budget=budget,on_observed=lambda item:self._observe_single(row,caps,root_digest,item))
+        return self._finish_copy_read(resource_id,replica,plan,root_digest,budget,
+            source_statuses=replica['source'].statuses,action=action,_include_replica=_include_replica)
+
+    def _finish_copy_read(self,resource_id,replica,plan,root_digest,budget,*,source_statuses,action,_include_replica):
+        s=self.source;policy=s._budget_policy(budget);root=replica['custody'].payload['root_key']
         denial=plan['denial_code']
         # These originals were fully authenticated in this same reconstruction.
         # Match the exact stored raw bytes AND complete reference before reuse.
         # Unknown historical observations still undergo signature verification;
         # no cache or pre-authenticated object crosses a request boundary.
         authenticated={(item.raw,canonical_bytes(item.ref.as_dict())):item for item in
-            (*replica['source'].statuses,*replica['authority'].statuses,*plan['statuses'])}
+            (*source_statuses,*replica['authority'].statuses,*plan['statuses'])}
         with s._transaction() as now:
             row,current=self._committed(resource_id)
             if s._saved(current,'custody')['raw']!=replica['custody'].raw:wire._fail('repair_copy_commit_mismatch')
