@@ -726,6 +726,36 @@ class MailboxSetupBuilder:
         return self._sign("delivery.destination",dict(destination_id=self._id("destination"),sender=p["sender"],recipient=probe._dual(self.owner),
             slot_key=p["slot_key"],slot_ref=slot_entries["slot"]["ref"],**refs,**fields),at,expires_at,budget)
 
+    def destination_bundle(self, slot_entries, contact_originals, *, at, expires_at, status_revision, status_until):
+        """Build B's exact destination and complete admission status originals.
+
+        The caller must persist this bundle before sending and coordinate the
+        explicit status revision with its other documents for this owner/root.
+        This signs no ACK authority and makes no claim about source liveness.
+        """
+        from memory_vault_open_provider import issue_status
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_bootstrap
+        budget=wire.RepairBudget(self.policy);p=self.plan
+        wire.u53(status_revision,1);wire.u53(status_until)
+        setup=verify_mailbox_feed_bootstrap({name:slot_entries[name] for name in ('slot','read','maintenance','bootstrap')},expected_slot=p['slot_key'],expected_owner=self.owner,
+            expected_target=p['target'],target_storage_epoch=p['slot_key']['writer_storage_epoch'],
+            limit_policy=p['limits'],at=at,policy=self.policy,budget=budget)
+        if not at<status_until<=min(value.payload['expires_at'] for value in setup.values()):
+            _fail('repair_resource_expired')
+        destination=self.destination_document(slot_entries,contact_originals,at=at,expires_at=expires_at)
+        entries=[('destination',destination)]+[(name,slot_entries[name]) for name in ('slot','read','maintenance','bootstrap')]
+        scopes=[]
+        for name,entry in entries:
+            value=wire.parse_new_wire(entry['raw'],self.policy,budget).value['payload']
+            kind='mailbox_slot' if name=='slot' else 'authority'
+            subject=p['slot_key'] if name=='slot' else dict(authority_kind=value['kind'],authority_sha256=entry['ref']['raw_sha256'])
+            scopes.append(dict(scope_kind=kind,scope_id=status.status_scope(p['root_key'],kind,subject,self.policy,budget),
+                minimum_document_revision=value.get('revision',1),status='active',operation_mask=127))
+        scopes.sort(key=lambda value:(value['scope_kind'],value['scope_id']))
+        signed=issue_status(self.identity,root=p['root_key'],revision=status_revision,entries=scopes,issued_at=at,valid_until=status_until)
+        raw=wire.build_new_wire(signed,self.policy,budget).raw;digest=budget._hash(raw)
+        return dict(destination=destination,owner_status=dict(raw=raw,ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw))))
+
     def readiness_packet(self, owner_status, *, at, expires_at, read_until, retain_until):
         from memory_vault_open_repair_bind import encode_entry
         budget=wire.RepairBudget(self.policy)

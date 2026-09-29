@@ -197,6 +197,29 @@ signed destination and slot controls; the sender reuses its own frozen outbox
 ciphertext and contact originals. Preparation never invents permission or sends
 plaintext to the mailbox node.
 
+The receiver's `MailboxSetupBuilder.destination_bundle` builds both originals
+from the exact configured slot and the approved contact documents. Supply an
+explicit owner/root status revision, coordinated with any other status issuer
+using that identity. Persist the returned bytes before sharing or retrying;
+regenerating the same revision with different contents is a conflict.
+
+```python
+bundle = builder.destination_bundle(
+    slot_entries, approved_contact_originals,
+    at=now, expires_at=destination_until,
+    status_revision=next_owner_status_revision, status_until=status_until,
+)
+destination_entry = bundle["destination"]
+current_owner_status = bundle["owner_status"]
+```
+
+This authenticates all four slot controls and the original approved contact,
+then signs the five exact scopes required for message admission. It does not
+supply ACK permission, clear revocations, or claim that a remote source accepts
+the new status. The source still enforces its retained revision floors and
+revocations. The builder requires the receiver's existing identities; never
+send those private keys to the sender or source.
+
 ```python
 prepared = agent.handle({"op": "connect", "invitation": {
     "schema_version": "memory-vault-open-mailbox-connect/v1",

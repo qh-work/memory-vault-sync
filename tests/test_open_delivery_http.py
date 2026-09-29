@@ -204,7 +204,8 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         docs={name:session[name] for name in ('node','policy','request','decision')}
         docs.update(knock_lease=session['lease'],grant=session['decision']['payload']['grant'],delivery_lease=session['decision']['payload']['grant']['payload']['resource_lease'])
         contact={name:canonical_bytes(value) for name,value in docs.items()}
-        destination=builder.destination_document(slot_entries,contact,at=now,expires_at=now+60)
+        destination_bundle=builder.destination_bundle(slot_entries,contact,at=now,expires_at=now+60,status_revision=2,status_until=now+100)
+        destination=destination_bundle['destination']
         if self._testMethodName=='test_sender_admits_message_over_http':
             from memory_vault_open_client import MAILBOX_CONNECT_SCHEMA
             prepared=self.call(self.a,op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='prepare',
@@ -217,14 +218,8 @@ class MailboxStagingHTTPTests(unittest.TestCase):
                 draft=MailboxMessageDraftStore(sender_db,self.ai,sender_encryption).prepare(envelope,recipient=owner,
                     slot_entries={name:slot_entries[name] for name in ('slot','read','maintenance')},destination_entry=destination,
                     contact_originals=contact,at=now,attempt_until=now+60,consent_until=now+100)
-        scoped=[]
-        for name,value in [('destination',destination),*[(name,slot_entries[name]) for name in ('slot','read','maintenance','bootstrap')]]:
-            payload=json.loads(value['raw'])['payload'];kind='mailbox_slot' if name=='slot' else 'authority'
-            subject=slot if name=='slot' else dict(authority_kind=payload['kind'],authority_sha256=value['ref']['raw_sha256'])
-            scope=status.status_scope(root,kind,subject,DEFAULT_POLICY,RepairBudget(DEFAULT_POLICY))
-            scoped.append(dict(scope_kind=kind,scope_id=scope,minimum_document_revision=1,status='active',operation_mask=127))
-        scoped.sort(key=lambda value:(value['scope_kind'],value['scope_id']))
-        owner_status=status_entry(issue_status(self.bi,root=root,revision=2,entries=scoped,issued_at=now,valid_until=now+100))
+        owner_status=destination_bundle['owner_status']
+        scoped=json.loads(owner_status['raw'])['payload']['entries']
         delivery=DeliveryState(db,self.host.identities[0],self.host.nodes[0],enabled=True)
         staging=MailboxMessageStaging(resources,delivery);staging.initialize()
         raw=wire.build_new_wire(draft['originals'],DEFAULT_POLICY,RepairBudget(DEFAULT_POLICY)).raw
