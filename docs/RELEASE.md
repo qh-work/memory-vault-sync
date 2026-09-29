@@ -1,10 +1,20 @@
 # Distribution scope and publication gates
 
-The source checkout targets **alpha.0.16 (candidate, not yet published)**.
+The source checkout targets **alpha.0.17 (candidate, not yet published)**.
 It includes the explicit remote unbound replica reservation/upload client,
 independent custody verification, persistent work/status/retry state and
 separately authorized replica READ recovery. Exact-source full cloud and
 extracted-package acceptance remain required.
+
+This candidate adds explicit `copy-reserve`, `copy-upload`, `configure-replica`,
+and `recover-replica` commands. They use existing local identities and protected
+transport state, preserve exact retry requests, and keep return permissions
+separate from copy custody. Owner recovery remembers authenticated status facts
+across failed commands and restarts. New-node setup can explicitly enable finite
+remote copy reservations. No command opens the private content Vault. The replica
+recovery example explicitly selects the existing 60-second client ceiling for
+slower supported Python runtimes; signed deadlines and resource budgets remain
+unchanged. These additions are later than the immutable alpha.0.16 candidate.
 
 The immutable alpha.0.15 candidate remains unpublished: full run
 [36536522221](https://github.com/qh-work/memory-vault-sync/actions/runs/36536522221)
@@ -38,7 +48,7 @@ The protocol is independent of language, storage, model, session, device and
 task. The authorized full client automates the same canonical record contract;
 an independent implementation is not required to install it or import Python.
 
-The current prerelease build target is **0.28.0-alpha.0.16**, an open encrypted
+The current prerelease build target is **0.28.0-alpha.0.17**, an open encrypted
 delivery preview. Python and native TypeScript six-operation Agents connect explicit first-contact
 approval to encrypted chat or selected original memories, durable local saving,
 original-node storage receipts and separate recipient-save receipts. Setup
@@ -65,13 +75,13 @@ instructions or acceptance of this prerelease.
 
 The release builder produces:
 
-- `memory-vault-protocol-v0.28.0-alpha.0.16.zip`: specification, schemas, synthetic
+- `memory-vault-protocol-v0.28.0-alpha.0.17.zip`: specification, schemas, synthetic
   interchange examples and implementer guides, **no executable files**.
-- `memory-vault-client-v0.28.0-alpha.0.16.zip`: complete source-built runtime, plugin,
+- `memory-vault-client-v0.28.0-alpha.0.17.zip`: complete source-built runtime, plugin,
   local marketplace catalog and explicit setup instructions.
-- `memory-vault-review-v0.28.0-alpha.0.16.zip`: public synthetic tests and source/build
+- `memory-vault-review-v0.28.0-alpha.0.17.zip`: public synthetic tests and source/build
   material for reviewers to run only with their user's authorization.
-- `memory-vault-network-test-v0.28.0-alpha.0.16.zip`: synthetic endpoint template;
+- `memory-vault-network-test-v0.28.0-alpha.0.17.zip`: synthetic endpoint template;
   this release has unconfigured service trust and requires operator provisioning.
 - `memory_vault.py`: core source; Experience use also needs the companion module
   included in the client/review packages.

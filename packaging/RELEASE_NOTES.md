@@ -1,4 +1,14 @@
-# Memory Vault v0.28.0-alpha.0.16 — durable remote replica reservation and upload
+# Memory Vault v0.28.0-alpha.0.17 — replica creation and recovery commands
+
+This candidate adds explicit `copy-reserve`, `copy-upload`, `configure-replica`,
+and `recover-replica` commands. They use existing local identities and protected
+transport state, preserve exact retry requests, and keep return permissions
+separate from copy custody. Owner recovery remembers authenticated status facts
+across failed commands and restarts. New-node setup can explicitly enable finite
+remote copy reservations. No command opens the private content Vault. The replica
+recovery example explicitly selects the existing 60-second client ceiling for
+slower supported Python runtimes; signed deadlines and resource budgets remain
+unchanged. These additions are later than the immutable alpha.0.16 candidate.
 
 This is a release candidate until the release record and downloadable assets
 confirm publication and exact-source validation.
@@ -38,11 +48,11 @@ The full alpha.0.15 candidate regression exposed a fixture argument mismatch and
 cleanup registered too late after failed initialization. Both are corrected; the
 21 affected workflows pass sequentially on later source. The immutable alpha.0.15
 candidate remains unpublished and failed, rather than being relabeled as passing.
-This alpha.0.16 candidate still requires its own exact-source full result.
+This alpha.0.17 candidate requires its own exact-source full result.
 
 Automatic replacement selection, first-receipt admission on a replacement,
-occupied/empty replica transfer, the standard replica recovery command and the
-complete native TypeScript replica client remain unfinished.
+occupied/empty replica transfer and the complete native TypeScript replica client
+remain unfinished.
 
 Existing approved-agent encrypted communication, selected-memory sharing,
 retained mailbox provisioning/recovery and independent saved-receipt return
@@ -51,8 +61,8 @@ finite resources; the project supplies no public seed. Complete native
 TypeScript mailbox parity, scalable partial feeds, external adoption and
 thousand-agent capacity remain unverified or unfinished.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.16/docs/OPEN_NETWORK_QUICKSTART.md),
-[mailbox guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.16/docs/OPEN_NETWORK_CONTACT.md)
-and [ACK recovery guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.16/docs/OPEN_ACK_RECOVERY.md).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.17/docs/OPEN_NETWORK_QUICKSTART.md),
+[mailbox guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.17/docs/OPEN_NETWORK_CONTACT.md)
+and [ACK recovery guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.17/docs/OPEN_ACK_RECOVERY.md).
 Published alpha.0.14 archives stay unchanged. Its full cloud failure is historical;
 follow-up success does not retroactively validate those old bytes.

@@ -1,6 +1,16 @@
 # Memory Vault development status
 
-The current build target is **alpha.0.16 (candidate, not yet published)**.
+The current build target is **alpha.0.17 (candidate, not yet published)**.
+
+This candidate adds explicit `copy-reserve`, `copy-upload`, `configure-replica`,
+and `recover-replica` commands. They use existing local identities and protected
+transport state, preserve exact retry requests, and keep return permissions
+separate from copy custody. Owner recovery remembers authenticated status facts
+across failed commands and restarts. New-node setup can explicitly enable finite
+remote copy reservations. No command opens the private content Vault. The replica
+recovery example explicitly selects the existing 60-second client ceiling for
+slower supported Python runtimes; signed deadlines and resource budgets remain
+unchanged. These additions are later than the immutable alpha.0.16 candidate.
 
 The immutable **alpha.0.15 candidate remains unpublished**. Its full cloud run
 [36536522221](https://github.com/qh-work/memory-vault-sync/actions/runs/36536522221)
@@ -53,7 +63,7 @@ binding, recipient-authorized upload, three-generation source verification,
 independent signed-receipt reads and a private recovery command. The release
 manifest and uploaded assets establish publication separately.
 
-Current source target: **0.28.0-alpha.0.10**, an open encrypted-delivery preview.
+Current source target: **0.28.0-alpha.0.17**, an open encrypted-delivery preview.
 The Python and native TypeScript Agents now connect explicit first-contact approval to encrypted
 `send`, `receive`, durable local message reads, original-node storage receipts
 and separately verified recipient-save receipts. Selected original memories use
