@@ -191,11 +191,14 @@ class AckOwnerRecoveryClient:
                 available[ref]=raw
         available[ack._entry(target_node_entry)[1]]=node.document.raw
         originals,roles = {},{}
-        for item in held.manifest.value["children"]:
+        children=held.manifest.value["children"]
+        for item in children:
+            roles.setdefault(item["role"],[]).append(wire.raw_ref(item["ref"]))
+        def download(item):
+            nonlocal proof_bytes
             reference = wire.raw_ref(item["ref"])
-            roles.setdefault(item["role"],[]).append(reference)
             if reference in originals:
-                continue
+                return
             if reference.size>self.policy.max_document_bytes or proof_bytes+reference.size>grant["limits"]["max_proof_bytes"]:
                 _fail("repair_over_budget")
             if reference in available:
@@ -219,6 +222,25 @@ class AckOwnerRecoveryClient:
                 _fail("repair_ref_mismatch")
             proof_bytes+=len(assembled)
             originals[reference]=assembled
+        if source_state=="replica_unbound":
+            # Fetch exact containers first; membership is structural evidence,
+            # never a substitute for source/copy/return authority checks below.
+            for item in children:
+                if item["role"] in {"history.raw_pack","history.ack_unbound"}:download(item)
+            packed=wire.LocalRawResolver(self.policy,budget)
+            for reference in roles.get("history.raw_pack",()):
+                if packed.put(reference.namespace,reference.key,originals[reference]).ref!=reference:
+                    _fail("repair_ref_mismatch")
+            for reference in roles.get("history.ack_unbound",()):
+                tree=history.resolve_historical_inputs(originals[reference],packed,self.policy,budget)
+                if tree.manifest.value['variant']!='ack_unbound':_fail('repair_proof_mismatch')
+                for row in tree.roles:
+                    item=row.original
+                    if item.ref in available and available[item.ref]!=item.raw:_fail('repair_ref_conflict')
+                    available[item.ref]=item.raw
+        # Retain every advertised full reference and charge its logical bytes,
+        # including those whose exact bytes were recovered from a pack.
+        for item in children:download(item)
         if self._now()>=held.handle.payload["expires_at"] or time.monotonic()>=deadline:
             _fail("repair_access_expired")
         def entry(role):

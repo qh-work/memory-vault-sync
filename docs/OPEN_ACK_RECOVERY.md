@@ -119,6 +119,17 @@ recovery and automatic replacement selection remain unfinished. Explicit Python
 remote reservation and copy upload are available in the alpha.0.16 candidate;
 published alpha.0.14 archives do not include these features.
 
+## Development after alpha.0.18: reuse packed replica originals
+
+The Python replica recovery client fetches the proof's exact history manifest and
+packs first. It reuses their validated full original references for matching
+proof children, avoiding a second network download of the same bytes. Every
+advertised original still counts toward the logical proof-byte ceiling, and the
+complete source/copy/custody chain, independent return consents, current statuses
+and deadline checks remain required. Opaque reference keys are preserved; a
+matching digest alone is insufficient. This optimization is later than the
+immutable alpha.0.18 candidate.
+
 ## Owner recovery command
 
 Prepare a private UTF-8 JSON request from the owner's retained originals:

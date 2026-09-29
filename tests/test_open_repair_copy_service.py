@@ -160,6 +160,40 @@ class ReplicaReadHTTPTests(unittest.TestCase):
         self.assertEqual({e.ref for e in again.archive_statuses},{e.ref for e in result.archive_statuses})
         self.assertEqual(self.errors,[])
 
+    def test_client_reuses_exact_packed_members_without_reducing_logical_proof_charge(self):
+        import memory_vault_open_repair_history as history
+        from memory_vault_open_repair_client import AckOwnerRecoveryClient
+        host=self;children=[];responses=[]
+        class ObservedTransport:
+            def request_repair(self,base,raw,**options):
+                if options.get('child'):children.append(json.loads(raw)['payload']['child_index'])
+                result=host.transport.request_repair(base,raw,**options)
+                if not options.get('child'):responses.append(result)
+                return result
+        _,args=self.recovery_client()
+        client=AckOwnerRecoveryClient(self.h.f['signers']['owner'],self.h.f['encryption']['owner'],
+            policy=self.policy,limit_policy=self.h.f['expected']['limit_policy'],allow_loopback=True,transport=ObservedTransport())
+        result=client.recover_replica(self.base,**args)
+        budget=wire.RepairBudget(self.policy);resolver=wire.LocalRawResolver(self.policy,budget)
+        rows=result.proof.manifest.value['children']
+        for row in rows:
+            if row['role']=='history.raw_pack':
+                ref=wire.raw_ref(row['ref']);resolver.put(ref.namespace,ref.key,result.originals[ref])
+        ref=wire.raw_ref(next(row['ref'] for row in rows if row['role']=='history.ack_unbound'))
+        tree=history.resolve_historical_inputs(result.originals[ref],resolver,self.policy,budget)
+        packed={row.original.ref:row.original.raw for row in tree.roles}
+        covered=[row for row in rows if wire.raw_ref(row['ref']) in packed]
+        self.assertGreater(len(covered),3)
+        self.assertTrue(any(row['ref']['key']!=row['ref']['raw_sha256'] for row in covered))
+        for row in covered:
+            self.assertNotIn(row['index'],children)
+            self.assertEqual(result.originals[wire.raw_ref(row['ref'])],packed[wire.raw_ref(row['ref'])])
+        self.assertEqual(result.metrics['requests'],2+len(children))
+        self.assertEqual(result.metrics['proof_bytes'],len(responses[1])+len(result.proof.handle.raw)+
+            len(result.proof.manifest.raw)+sum(len(raw) for raw in result.originals.values()))
+        self.assertEqual(result.replica['source'].custody.raw,self.h.f['custody']['raw'])
+        self.assertEqual(self.errors,[])
+
     def test_client_retained_owner_revocation_stops_before_network(self):
         from tests.open_repair_ack_fixtures import signed_entry
         client,args=self.recovery_client()
