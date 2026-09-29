@@ -213,6 +213,27 @@ destination_entry = bundle["destination"]
 current_owner_status = bundle["owner_status"]
 ```
 
+For restart-safe issuance, use `MailboxDestinationStore` with the receiver's
+existing protected transport database instead of calling the builder directly:
+
+```python
+store = MailboxDestinationStore(receiver_db, receiver_identity, receiver_encryption)
+bundle = store.prepare(
+    mailbox_plan, slot_entries, approved_contact_originals,
+    at=now, expires_at=destination_until,
+    status_revision=next_owner_status_revision, status_until=status_until,
+)
+```
+
+The store commits the original destination and status together before returning.
+An identical retry, including after reopening the database, returns those exact
+bytes regardless of its new call time. Changed inputs under the same root and
+revision are rejected, as is a new issuance below the last locally stored
+revision. Explicit revision coordination across other devices remains required.
+A cached bundle is historical issuance, not a fresh availability or permission
+check. The journal is bounded to 128 bundles, retains its originals and refuses
+further issuance when full; it does not silently evict revision history.
+
 This authenticates all four slot controls and the original approved contact,
 then signs the five exact scopes required for message admission. It does not
 supply ACK permission, clear revocations, or claim that a remote source accepts

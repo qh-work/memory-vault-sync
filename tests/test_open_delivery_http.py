@@ -204,7 +204,21 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         docs={name:session[name] for name in ('node','policy','request','decision')}
         docs.update(knock_lease=session['lease'],grant=session['decision']['payload']['grant'],delivery_lease=session['decision']['payload']['grant']['payload']['resource_lease'])
         contact={name:canonical_bytes(value) for name,value in docs.items()}
-        destination_bundle=builder.destination_bundle(slot_entries,contact,at=now,expires_at=now+60,status_revision=2,status_until=now+100)
+        from memory_vault_open_repair_client import MailboxDestinationStore
+        with self.b._network() as owner_network:
+            with owner_network.participant.state.db() as owner_db:
+                destination_bundle=MailboxDestinationStore(owner_db,self.bi,owner_encryption).prepare(plan,slot_entries,contact,
+                    at=now,expires_at=now+60,status_revision=2,status_until=now+100)
+        # A restarted client must return the original signed issuance, even
+        # when the retry clock differs. Reusing its revision cannot resign.
+        with self.b._network() as owner_network:
+            with owner_network.participant.state.db() as owner_db:
+                store=MailboxDestinationStore(owner_db,self.bi,owner_encryption)
+                self.assertEqual(store.prepare(plan,slot_entries,contact,at=now+1,expires_at=now+60,status_revision=2,status_until=now+100),destination_bundle)
+                with self.assertRaisesRegex(RepairWireError,'repair_destination_conflict'):
+                    store.prepare(plan,slot_entries,contact,at=now+1,expires_at=now+59,status_revision=2,status_until=now+100)
+                with self.assertRaisesRegex(RepairWireError,'repair_destination_revision_rollback'):
+                    store.prepare(plan,slot_entries,contact,at=now+1,expires_at=now+60,status_revision=1,status_until=now+100)
         destination=destination_bundle['destination']
         if self._testMethodName=='test_sender_admits_message_over_http':
             from memory_vault_open_client import MAILBOX_CONNECT_SCHEMA
