@@ -123,7 +123,7 @@ jobs:
       - name: Exercise Agent receipt and mailbox recovery
         run: python -B -m unittest -v tests.test_open_repair_copy_occupied.OccupiedReplicaAgentTests tests.test_open_repair_mailbox_message_copy.MailboxMessageCopyTests.test_agent_receives_replica_memory_and_retains_statuses_after_source_loss
       - name: Exercise proof, HTTP deadlines and independent mailbox receipt return
-        run: python -B -m unittest -v tests.test_open_transport tests.test_open_repair_proof tests.test_open_repair_admin tests.test_open_repair_copy_occupied.OccupiedCopyStateTests tests.test_open_repair_mailbox_message_copy.MailboxMessageCopyTests.test_replica_memory_returns_independent_receipt_to_original_sender
+        run: python -B -m unittest -v tests.test_open_transport tests.test_open_repair_http tests.test_open_repair_proof tests.test_open_repair_admin tests.test_open_repair_copy_occupied.OccupiedCopyStateTests tests.test_open_repair_mailbox_message_copy.MailboxMessageCopyTests.test_replica_memory_returns_independent_receipt_to_original_sender
 
   scale:
     name: Synthetic routing seed ${{ matrix.seed }}

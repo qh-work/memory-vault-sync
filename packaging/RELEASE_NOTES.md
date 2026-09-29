@@ -30,7 +30,9 @@ independent, and observed revocations cannot be erased by retrying. The explicit
 `mailbox` profile is a bounded ceiling for new full proofs; it does not enlarge
 existing signed grants. Repair HTTP replies now use the caller's remaining
 absolute deadline after connecting, avoiding premature connection-timeout errors
-while still bounding slow headers.
+while still bounding slow headers. Nodes retain the three-second complete-input
+deadline, then bound repair response processing separately at sixty seconds;
+slower proof construction no longer closes a valid exchange after three seconds.
 
 Exact-source cloud regression, supported Python 3.10, extracted-client checks and
 final public-archive review are pending for this candidate. Prior releases'

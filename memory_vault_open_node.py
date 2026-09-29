@@ -39,6 +39,8 @@ from memory_vault_trust import Identity, _absolute_path, _atomic_write_private, 
 NODE_CONFIG = "memory-vault-open-node-config/v1"
 NODE_PATH = "/open/v1/node"
 RENEW_BEFORE_SECONDS = 300
+HTTP_REQUEST_SECONDS = 3
+REPAIR_RESPONSE_SECONDS = 60
 
 
 class _TransportState(NetworkClient):
@@ -884,19 +886,39 @@ class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
 
     def setup(self):
-        self.request.settimeout(3)
+        self.request.settimeout(HTTP_REQUEST_SECONDS)
         super().setup()
         self.rfile = _HeaderBudget(self.rfile)
-        # Limit the whole incoming exchange, including a drip-fed header/body.
-        self._deadline = threading.Timer(3, self._abort)
+        # Bound the complete incoming headers/body, including drip-fed input.
+        self._deadline_lock = threading.Lock()
+        self._deadline_at = time.monotonic() + HTTP_REQUEST_SECONDS
+        self._deadline = threading.Timer(HTTP_REQUEST_SECONDS, self._abort)
         self._deadline.daemon = True
         self._deadline.start()
 
+    def _begin_repair_response(self):
+        # Input is complete. Proof construction may outlast the input timeout,
+        # but this response stays finite; signed access/work limits still apply
+        # inside the service and the client retains its absolute deadline.
+        with self._deadline_lock:
+            if time.monotonic() >= self._deadline_at:
+                raise TimeoutError("open_request_timeout")
+            self._deadline.cancel()
+            self.request.settimeout(REPAIR_RESPONSE_SECONDS)
+            self._deadline_at = time.monotonic() + REPAIR_RESPONSE_SECONDS
+            self._deadline = threading.Timer(REPAIR_RESPONSE_SECONDS, self._abort)
+            self._deadline.daemon = True
+            self._deadline.start()
+
     def _abort(self):
-        try:
-            self.request.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
+        with self._deadline_lock:
+            # A cancelled input timer may already be waiting on this lock.
+            if time.monotonic() < self._deadline_at:
+                return
+            try:
+                self.request.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
     def finish(self):
         try:
@@ -958,6 +980,7 @@ class _Handler(BaseHTTPRequestHandler):
                 raise MemoryError("open_invalid_http_request")
             is_child = False
             if is_repair:
+                self._begin_repair_response()
                 encoded, is_child = self.server.participant.handle_repair(raw)
             elif is_blob:
                 from memory_vault_open_blob import decode_blob_frame, encode_blob_frame
