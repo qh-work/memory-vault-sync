@@ -13,6 +13,7 @@ from memory_vault_open_transport import OpenHTTPTransport, endpoint
 import memory_vault_open_repair_ack as ack
 import memory_vault_open_repair_bootstrap as bootstrap
 import memory_vault_open_repair_empty as empty
+import memory_vault_open_repair_history as history
 import memory_vault_open_repair_occupied as occupied
 import memory_vault_open_repair_original as original
 import memory_vault_open_repair_probe as probe
@@ -486,7 +487,7 @@ class RecoveredMailboxRootProof:
 
 class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
     """Recover B's original mailbox directory from independently retained S1."""
-    def _download_mailbox(self, base_url, *, target, node_payload, bootstrap_original, expiry, started, deadline, budget, consumer, source_state):
+    def _download_mailbox(self, base_url, *, target, node_payload, bootstrap_original, expiry, started, deadline, budget, consumer, source_state, available=None):
         grant=bootstrap_original.payload
         binding=dict(expected_subject=self.subject,expected_target=target,target_storage_epoch=node_payload["storage_epoch"],
             bootstrap_grant_sha256=bootstrap_original.ref.raw_sha256,selector=grant["selector"],consumer=consumer,policy=self.policy,budget=budget)
@@ -516,25 +517,55 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
             expected_source_state=source_state,consumer=consumer,policy=self.policy,budget=budget)
         proof_bytes=len(response)+len(held.handle.raw)+len(held.manifest.raw)
         originals,roles={},{}
-        for item in held.manifest.value["children"]:
-            reference=wire.raw_ref(item["ref"]);roles.setdefault(item["role"],[]).append(reference)
-            if reference in originals:
-                continue
+        available={} if available is None else dict(available)
+        children=held.manifest.value["children"]
+        for item in children:
+            roles.setdefault(item["role"],[]).append(wire.raw_ref(item["ref"]))
+        def download(item):
+            nonlocal proof_bytes
+            reference=wire.raw_ref(item["ref"])
+            if reference in originals:return
             if reference.size>self.policy.max_document_bytes or proof_bytes+reference.size>grant["limits"]["max_proof_bytes"]:
                 _fail("repair_over_budget")
-            chunks=[];offset=0
-            while offset<reference.size:
-                count=min(proof.MAX_CHILD_BYTES,reference.size-offset)
-                child=proof.make_bootstrap_child_request(self.identity,held,subject=self.subject,target=target,at=self._now(),
-                    expires_at=held.handle.payload["expires_at"],child_index=item["index"],offset=offset,requested_bytes=count,policy=self.policy,budget=budget)
-                value=request(child.raw,True)
-                if len(value)!=count:
-                    _fail("repair_ref_mismatch")
-                budget._bytes("input_bytes",len(value));chunks.append(value);offset+=count
-            budget._bytes("output_bytes",reference.size);assembled=b"".join(chunks)
-            if budget._hash(assembled)!=reference.raw_sha256:
-                _fail("repair_ref_mismatch")
+            if reference in available:
+                assembled=available[reference]
+                if type(assembled) is not bytes or len(assembled)!=reference.size:_fail("repair_ref_mismatch")
+                budget._bytes("input_bytes",len(assembled))
+            else:
+                chunks=[];offset=0
+                while offset<reference.size:
+                    count=min(proof.MAX_CHILD_BYTES,reference.size-offset)
+                    child=proof.make_bootstrap_child_request(self.identity,held,subject=self.subject,target=target,at=self._now(),
+                        expires_at=held.handle.payload["expires_at"],child_index=item["index"],offset=offset,requested_bytes=count,policy=self.policy,budget=budget)
+                    value=request(child.raw,True)
+                    if len(value)!=count:_fail("repair_ref_mismatch")
+                    budget._bytes("input_bytes",len(value));chunks.append(value);offset+=count
+                budget._bytes("output_bytes",reference.size);assembled=b"".join(chunks)
+            if budget._hash(assembled)!=reference.raw_sha256:_fail("repair_ref_mismatch")
             originals[reference]=assembled;proof_bytes+=len(assembled)
+        # Download the signed proof's exact history containers first. The typed
+        # history resolver validates full pack membership and all opaque refs;
+        # it grants no authority. Signatures, source events, current status and
+        # exact role closure are still verified by recover() below.
+        history_role="history.mailbox_root" if source_state=="root" else "history.mailbox_feed"
+        for item in children:
+            if item["role"] in ("history.raw_pack",history_role):download(item)
+        packed=wire.LocalRawResolver(self.policy,budget)
+        for reference in roles.get("history.raw_pack",()):
+            if packed.put(reference.namespace,reference.key,originals[reference]).ref!=reference:_fail("repair_ref_mismatch")
+        def reuse(tree):
+            for row in tree.roles:
+                item=row.original
+                if item.ref in available and available[item.ref]!=item.raw:_fail("repair_ref_conflict")
+                available[item.ref]=item.raw
+            for prior in tree.predecessors:reuse(prior)
+        for reference in roles.get(history_role,()):
+            tree=history.resolve_historical_inputs(originals[reference],packed,self.policy,budget)
+            if tree.manifest.value['variant']!=('mailbox_root' if source_state=='root' else 'mailbox_feed'):_fail('repair_proof_mismatch')
+            reuse(tree)
+        # Reuse only the complete RawRef advertised by the proof, never a hash-
+        # only alias. Logical proof-byte limits include every reused original.
+        for item in children:download(item)
         return held,originals,roles,dict(requests=requests,wire_bytes=wire_bytes,proof_bytes=proof_bytes)
 
     def recover(self, base_url, *, target_node_entry, expected_target, expected_root,
@@ -580,7 +611,9 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
             _fail("repair_access_expired")
         held,originals,roles,counts=self._download_mailbox(base_url,target=target,node_payload=node.payload,
             bootstrap_original=setup["bootstrap"],expiry=expiry,started=started,deadline=deadline,budget=budget,
-            consumer="mailbox_root",source_state="root")
+            consumer="mailbox_root",source_state="root",
+            available={**{item.ref:item.raw for item in (*setup.values(),*known)},
+                ack._entry(target_node_entry)[1]:node.document.raw})
         def entry(reference):
             return dict(raw=originals[reference],ref=reference.as_dict())
         resolver=wire.LocalRawResolver(self.policy,budget)
@@ -1869,7 +1902,9 @@ class MailboxFeedRecoveryClient(MailboxRootRecoveryClient):
             *(v.payload['expires_at'] for v in setup.values()))
         if expiry<=started:_fail('repair_access_expired')
         held,originals,roles,counts=self._download_mailbox(base_url,target=target,node_payload=node.payload,bootstrap_original=setup['bootstrap'],
-            expiry=expiry,started=started,deadline=deadline,budget=budget,consumer='mailbox_feed',source_state='feed')
+            expiry=expiry,started=started,deadline=deadline,budget=budget,consumer='mailbox_feed',source_state='feed',
+            available={**{item.ref:item.raw for item in (*setup.values(),*known)},
+                ack._entry(target_node_entry)[1]:node.document.raw})
         def entry(reference):return dict(raw=originals[reference],ref=reference.as_dict())
         resolver=wire.LocalRawResolver(self.policy,budget)
         for reference in roles['history.raw_pack']:
