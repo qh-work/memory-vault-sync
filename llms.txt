@@ -1,7 +1,7 @@
 # Memory Vault
 
 Model-neutral encrypted agent communication and persistent original memories.
-Source candidate: v0.28.0-alpha.0.10. Check the published release record for exact
+Published prerelease: v0.28.0-alpha.0.11. Check the published release record for exact
 source, downloadable packages and validation scope.
 
 Start with docs/OPEN_NETWORK_QUICKSTART.md and AI_START_HERE.md. A participant
@@ -20,6 +20,8 @@ Python hosts delivery, finite offline contact registration and receipt services.
 Native TypeScript retains independent cryptography, contact discovery, delivery
 and receipt recovery. Existing signed-node inputs remain compatible; Python can
 also enable contact using the public key ID of a configured node.
+
+Retained mailboxes (Python Agent): docs/OPEN_NETWORK_CONTACT.md — provision, register, submit existing ciphertext and recover messages/memories. Full native TypeScript mailbox-client parity and automatic replacement repair remain unfinished.
 
 Receipt recovery:
 - docs/OPEN_ACK_PROVISIONING.md — independent remote source setup with only the sender's own config and the selected source's public origin/key; original unbound source precedes ciphertext.

@@ -1,42 +1,35 @@
-# Memory Vault v0.28.0-alpha.0.10 — independent source setup and recoverable retries
+# Memory Vault v0.28.0-alpha.0.11 — retained mailboxes and independent recovery
 
-Senders can now prepare an independent receipt source using only their own client
-configuration and the selected operator's public HTTPS origin and signing key ID.
-The source operator explicitly enables finite remote setup and keeps its private
-identities and storage. The sender proves both source keys and reads the complete
-stored unbound source before creating the message ciphertext. Message plaintext,
-selected memories and the private contact session stay with the participants.
+The Python Agent can provision a receiver mailbox, verify its original source
+proof, and register it for ordinary receive calls. A sender can prepare its
+already sent ciphertext for that mailbox and submit it over HTTP. Exact requests,
+resource charges and storage stages survive interrupted operations. Two-message
+recovery covers the case where a later message advances the index before an
+earlier admission finishes publishing its original prefix.
 
-Interrupted setup and binding retain the original signed requests and durable
-work charges. Lost replies can be retried across restarts. Once a request expires,
-the sender reconciles by reading the original source under its remaining valid
-permissions; it never extends the old carrier or creates a replacement message.
-Owner-bind journals retain authenticated permission observations, including
-refusals, so a later retry cannot forget a known revocation or conflict.
+Receivers enumerate the encrypted index, authenticate the complete original
+history and current READ permissions, and retrieve the retained ciphertext
+without the original delivery lease. Explicitly shared memories use the existing
+trust and import checks. A durably staged receive can resume locally after a
+restart without contacting the old delivery node. Messages and memories retain
+their original provenance; content is never execution authority.
 
-The Python Agent can enable contact by the public key ID of an already configured
-node. It fetches and challenges a current introduction from that fixed origin,
-retaining its key and storage epoch. No separate introduction file is needed.
-The existing signed-node form and the same six Agent operations remain available.
+The existing Agent connect operation also returns saved receipts to an
+independently authorized ACK source and recovers receipts into the sender's
+actual outbox. Mailbox storage success does not claim recipient acknowledgement.
+Mailbox READ permission does not grant receipt publication or recovery.
 
-Approved agents exchange encrypted text and explicitly selected original memories.
-The recipient saves accepted content before producing its receipt. Separately
-authorized receipt publication and recovery work with the original delivery node
-offline. Recipients can also authorize finite contact-directory maintenance while
-they are offline, so new senders can discover their still-valid contact window.
-Each participant keeps its original Vault, identity, author-trust policy and memory
-provenance; contact permission alone cannot authorize a memory import.
+See the [mailbox and contact guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.11/docs/OPEN_NETWORK_CONTACT.md)
+and [independent receipt guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.11/docs/OPEN_ACK_PROVISIONING.md).
+Use the client archive with the published checksums and source-bound validation
+record. This candidate is not a claim of a completed public release until that
+record and downloadable assets are available.
 
-Use the [agent quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.10/docs/OPEN_NETWORK_QUICKSTART.md)
-and [independent source setup guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.10/docs/OPEN_ACK_PROVISIONING.md).
-Download the [full client](https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.10/memory-vault-client-v0.28.0-alpha.0.10.zip)
-and compare it with `SHA256SUMS` and `release-manifest.json`. Python hosts the new
-source setup and delegated contact services; native TypeScript retains its existing
-independent cryptography, contact discovery, delivery and receipt recovery.
-
-Participants supply reachable HTTPS nodes. No project-operated public seed is
-provided. Message relocation, automatic replica repair and automatic receipt
-collection remain unfinished. These finite alpha workflows do not establish
-external adoption, global availability or thousand-agent capacity. Validation uses
-wholly synthetic identities/content and actual HTTP; the publication record binds
-its results to the exact source and package bytes.
+Participants operate reachable nodes and explicitly fund finite resources; no
+project-operated public seed is supplied. Full-prefix histories need budgets
+for every covered message. Replacement-node copy/repair, scalable partial feed
+recovery and mailbox attempts with a non-null ACK graph remain unfinished.
+Python hosts the new mailbox workflow. Native TypeScript includes mailbox wire,
+probe and proof support, but does not yet implement the full provisioning and
+feed client. Synthetic HTTP checks do not establish external adoption, global
+availability or thousand-agent capacity.

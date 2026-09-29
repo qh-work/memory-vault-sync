@@ -404,3 +404,325 @@ class RepairRemoteSetupService:
             return response
         finally:
             self._settle(ctx,budget,response)
+
+
+class MailboxRemoteSetupService:
+    """Finite opt-in remote mailbox allocation with resumable exact originals."""
+    def __init__(self, state, *, policy=None):
+        from memory_vault_open_repair_mailbox_resources import RepairMailboxResources
+        self.state,self.db=state,state.db
+        self.policy=remote_policy(policy)
+        self.resources=RepairMailboxResources(state)
+
+    def initialize(self):
+        self.resources.initialize()
+        with self.state._transaction():
+            if self.policy['enabled']:
+                encoded=canonical_bytes({k:v for k,v in self.policy.items() if k!='enabled'}).decode()
+                old=self.state._one("SELECT value FROM open_repair_state WHERE name='mailbox_remote_setup_policy'")
+                if old is not None and old['value']!=encoded:
+                    wire._fail('repair_remote_policy_mismatch')
+                self.db.execute("INSERT OR IGNORE INTO open_repair_state VALUES('mailbox_remote_setup_policy',?)",(encoded,))
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_repair_mailbox_remote_owners(
+                owner TEXT PRIMARY KEY,requests INTEGER NOT NULL,signatures INTEGER NOT NULL,
+                bytes INTEGER NOT NULL,metadata INTEGER NOT NULL)''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_repair_mailbox_remote_allocations(
+                owner TEXT NOT NULL,root_digest TEXT NOT NULL,request_digest TEXT NOT NULL,
+                request BLOB NOT NULL,response BLOB,retain_until INTEGER NOT NULL,
+                PRIMARY KEY(owner,root_digest))''')
+
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_repair_mailbox_remote_stages(
+                owner TEXT NOT NULL,root_digest TEXT NOT NULL,kind TEXT NOT NULL,
+                request_digest TEXT NOT NULL,request BLOB NOT NULL,response BLOB,
+                PRIMARY KEY(owner,root_digest,kind))''')
+
+    def handle(self, raw):
+        from dataclasses import replace
+        if not self.policy['enabled']:
+            wire._fail('repair_remote_setup_closed')
+        if type(raw) is not bytes or not 0<len(raw)<=MAX_BYTES:
+            wire._fail('repair_remote_setup_too_large')
+        s=self.state
+        budget=wire.RepairBudget(replace(s.policy,max_signature_checks=min(s.policy.max_signature_checks,self.policy['max_signatures'])))
+        request=wire.parse_new_wire(raw,budget.policy,budget)
+        p=wire.object_fields(request.value,{'schema_version','kind','owner','allocations'})
+        if p['schema_version']!=SCHEMA or p['kind']!='mailbox.source_allocate':
+            wire._fail('repair_remote_setup_mismatch')
+        owner=p['owner'];owner_id=resource._dual_key(owner,budget)['signing_key_id']
+        if type(p['allocations']) is not wire._DraftList or len(p['allocations'])!=3:
+            wire._fail('repair_invalid_resource')
+        entries=[decode_entry(value,budget.policy,budget) for value in p['allocations']]
+        # Author identity and intent are established before charging that owner.
+        # The shared capacity transaction still authorizes every actual reserve.
+        # Local mailbox operations currently use the node's exact wire policy.
+        if budget.policy!=s.policy:
+            wire._fail('repair_remote_setup_capacity')
+        checked=[self.resources._validate(entry,owner,budget) for entry in entries]
+        intents=[item[2]['intent'] for item in checked]
+        if ({v['purpose'] for v in intents}!={'anchor_catalog','feed_metadata','mailbox_data'}
+                or len({v['allocation_id'] for v in intents})!=3 or any(v['root_key']!=intents[0]['root_key'] for v in intents)):
+            wire._fail('repair_remote_setup_mismatch')
+        root_digest=budget._hash(wire._canonical(intents[0]['root_key'],budget));digest=budget._hash(request.raw)
+        until=max(v['windows']['retain_until'] for v in intents)
+        limit=s.limits
+        for intent in intents:
+            ceilings=dict(max_live_bytes=6*1024*1024,max_meta_bytes=4*limit['max_proof_bytes'],max_items=128,
+                max_requests=limit['max_signature_checks'],max_pending=limit['max_pending'],max_replay_records=limit['max_replay_records'],
+                max_jobs=16,max_job_bytes=limit['max_proof_bytes'])
+            if any(intent['budget'][k]>v for k,v in ceilings.items()):
+                wire._fail('repair_remote_setup_capacity')
+        allowance=budget.policy.max_signature_checks
+        byte_allowance=len(raw)+MAX_BYTES
+        with s._transaction() as now:
+            marker=s._one("SELECT value FROM open_repair_state WHERE name='mailbox_remote_setup_policy'")
+            if marker is None or marker['value']!=canonical_bytes({k:v for k,v in self.policy.items() if k!='enabled'}).decode():
+                wire._fail('repair_remote_policy_mismatch')
+            old=s._one("SELECT * FROM open_repair_mailbox_remote_allocations WHERE owner=? AND root_digest=?",(owner_id,root_digest))
+            if old is not None and old['request_digest']!=digest:
+                wire._fail('repair_remote_setup_conflict')
+            usage=s._one("SELECT * FROM open_repair_mailbox_remote_owners WHERE owner=?",(owner_id,))
+            if usage is None:
+                if old is not None:
+                    wire._fail('repair_remote_setup_ledger_missing')
+                if self.db.execute("SELECT count(*) FROM open_repair_mailbox_remote_owners").fetchone()[0]>=self.policy['max_owners']:
+                    wire._fail('repair_remote_setup_capacity')
+                s.capacity.reserve('mailbox','setup_'+owner_id,budget._hash(owner_id.encode()),self.policy['max_journal_bytes'],
+                    until,owner=owner_id,operation_id='mailbox_remote_setup')
+                self.db.execute("INSERT INTO open_repair_mailbox_remote_owners VALUES(?,0,0,0,0)",(owner_id,))
+                usage=dict(requests=0,signatures=0,bytes=0,metadata=0)
+            metadata=0 if old is not None else len(raw)+MAX_BYTES+2*ROW_CHARGE
+            roots=self.db.execute("SELECT count(*) FROM open_repair_mailbox_remote_allocations WHERE owner=?",(owner_id,)).fetchone()[0]
+            if (usage['requests']>=self.policy['max_requests'] or usage['signatures']+allowance>self.policy['max_signatures']
+                    or usage['bytes']+byte_allowance>self.policy['max_bytes'] or usage['metadata']+metadata>self.policy['max_journal_bytes']
+                    or (old is None and (roots+1)*3>self.policy['max_owner_resources'])):
+                wire._fail('repair_remote_setup_capacity')
+            if old is None:
+                pending=self.db.execute("SELECT count(*) FROM open_repair_mailbox_remote_allocations WHERE owner=? AND response IS NULL",(owner_id,)).fetchone()[0]
+                if pending>=self.policy['max_pending']:
+                    wire._fail('repair_remote_setup_capacity')
+                if any(not item[2]['issued_at']<=now<item[2]['expires_at'] for item in checked) or min(min(v['windows'].values()) for v in intents)<=now:
+                    wire._fail('repair_resource_expired')
+                if max(max(v['windows'].values()) for v in intents)>now+self.policy['max_lifetime']:
+                    wire._fail('repair_remote_setup_mismatch')
+                self.db.execute("INSERT INTO open_repair_mailbox_remote_allocations VALUES(?,?,?,?,NULL,?)",(owner_id,root_digest,digest,raw,until))
+            self.db.execute("UPDATE open_repair_mailbox_remote_owners SET requests=requests+1,signatures=signatures+?,bytes=bytes+?,metadata=metadata+? WHERE owner=?",
+                (allowance,byte_allowance,metadata,owner_id))
+        response=None
+        try:
+            if old is not None and old['response'] is not None:
+                response=bytes(old['response'])
+                return response
+            offers=self.resources.allocate_initial(entries,expected_owner=owner,_budget=budget)
+            response=wire.build_new_wire(dict(schema_version=SCHEMA,kind='mailbox.source_offers',root_key=intents[0]['root_key'],
+                offers={name:encode_entry(value,budget.policy,budget) for name,value in offers.items()}),budget.policy,budget).raw
+            if len(response)>MAX_BYTES:
+                wire._fail('repair_remote_setup_too_large')
+            with s._transaction():
+                self.db.execute("UPDATE open_repair_mailbox_remote_allocations SET response=? WHERE owner=? AND root_digest=? AND request_digest=?",
+                    (response,owner_id,root_digest,digest))
+            return response
+        finally:
+            with s._transaction():
+                self.db.execute("UPDATE open_repair_mailbox_remote_owners SET signatures=signatures-?,bytes=bytes-? WHERE owner=?",
+                    (allowance-budget.snapshot()['signature_checks'],MAX_BYTES-(len(response) if response is not None else 0),owner_id))
+
+    def activate(self, raw):
+        """Resume one recipient-signed slot/root stage using reserved resources."""
+        from memory_vault_open_repair_mailbox_root import MailboxRootActivation
+        if not self.policy['enabled']:
+            wire._fail('repair_remote_setup_closed')
+        if type(raw) is not bytes or not 0<len(raw)<=MAX_BYTES:
+            wire._fail('repair_remote_setup_too_large')
+        s=self.state;budget=wire.RepairBudget(s.policy)
+        parsed=wire.parse_new_wire(raw,s.policy,budget)
+        signed=resource._fields(parsed.value,{'payload','proof'})
+        ready=signed['payload'].get('kind')=='mailbox.source_ready'
+        extra={'read_until','retain_until'} if ready else set()
+        p=resource._fields(signed['payload'],resource.COMMON|{'issued_at','expires_at','owner','root_key','slot_key','entries'}|extra)
+        if p['schema_version']!=SCHEMA or p['kind'] not in ('mailbox.source_slot','mailbox.source_root','mailbox.source_ready'):
+            wire._fail('repair_remote_setup_mismatch')
+        owner=resource._dual_key(p['owner'],budget)
+        history._slot(p['slot_key'],p['root_key']);resource._lifetime(p)
+        if p['root_key']['owner']!=owner or p['signing_key']!=p['owner']['signing_key']:
+            wire._fail('repair_remote_setup_mismatch')
+        original._verify_control_signature(p,signed['proof'],p['owner']['signing_key'],budget)
+        root_digest=budget._hash(wire._canonical(p['root_key'],budget));digest=budget._hash(raw)
+        owner_id=owner['signing_key_id'];kind=p['kind'];allowance=s.policy.max_signature_checks
+        if ready:
+            if not p['issued_at']<wire.u53(p['read_until'])<=wire.u53(p['retain_until']):
+                wire._fail('repair_resource_expired')
+        fields=({'owner_status'} if ready else {'maintenance','read','slot','bootstrap','activation'} if kind=='mailbox.source_slot'
+            else {'root','read','catalog','bootstrap','activation'})
+        entries={name:decode_entry(value,s.policy,budget) for name,value in resource._fields(p['entries'],fields).items()}
+        root=MailboxRootActivation(self.resources);root.initialize()
+        with s._transaction() as now:
+            allocation=s._one('SELECT * FROM open_repair_mailbox_remote_allocations WHERE owner=? AND root_digest=?',(owner_id,root_digest))
+            if allocation is None or allocation['response'] is None:
+                wire._fail('repair_unknown_resource')
+            old=s._one('SELECT * FROM open_repair_mailbox_remote_stages WHERE owner=? AND root_digest=? AND kind=?',(owner_id,root_digest,kind))
+            if old is not None and old['request_digest']!=digest:
+                wire._fail('repair_remote_setup_conflict')
+            usage=s._one('SELECT * FROM open_repair_mailbox_remote_owners WHERE owner=?',(owner_id,))
+            if usage is None:
+                wire._fail('repair_remote_setup_ledger_missing')
+            charge=0 if old is not None else len(raw)+MAX_BYTES+2*ROW_CHARGE
+            if (usage['requests']>=self.policy['max_requests'] or usage['signatures']+allowance>self.policy['max_signatures']
+                    or usage['bytes']+len(raw)+MAX_BYTES>self.policy['max_bytes']
+                    or usage['metadata']+charge>self.policy['max_journal_bytes']):
+                wire._fail('repair_remote_setup_capacity')
+            if old is None:
+                if not p['issued_at']<=now<p['expires_at'] or p['expires_at']>allocation['retain_until']:
+                    wire._fail('repair_resource_expired')
+                self.db.execute('INSERT INTO open_repair_mailbox_remote_stages VALUES(?,?,?,?,?,NULL)',(owner_id,root_digest,kind,digest,raw))
+            self.db.execute('UPDATE open_repair_mailbox_remote_owners SET requests=requests+1,signatures=signatures+?,bytes=bytes+?,metadata=metadata+? WHERE owner=?',
+                (allowance,len(raw)+MAX_BYTES,charge,owner_id))
+        response=None
+        try:
+            if old is not None and old['response'] is not None:
+                response=bytes(old['response']);return response
+            def guard():
+                if not p['issued_at']<=s._now()<p['expires_at']:
+                    return 'repair_resource_expired'
+            if kind=='mailbox.source_slot':
+                result=root.slots.activate(entries,expected_slot=p['slot_key'],_budget=budget,_transaction_guard=guard)
+            elif kind=='mailbox.source_root':
+                result={'active':root.activate(entries,expected_root=p['root_key'],slot_keys=[p['slot_key']],_budget=budget,_transaction_guard=guard)}
+            else:
+                from memory_vault_open_repair_mailbox_source import MailboxRootSource
+                source=MailboxRootSource(root);source.initialize()
+                with s._transaction(guard=guard):
+                    held=s._one('SELECT resource_id FROM open_repair_mailbox_roots WHERE root_digest=? AND owner=?',(root_digest,owner_id))
+                    if held is None:
+                        wire._fail('repair_unknown_resource')
+                    rid=held['resource_id']
+                root.observe_owner_status(rid,entries['owner_status'],_budget=budget)
+                observation='setup_'+digest
+                source.observe_resources(rid,observation,valid_until=p['read_until'],_budget=budget,_transaction_guard=guard)
+                source.prepare_history(rid,observation,_budget=budget,_transaction_guard=guard)
+                result={'custody':source.finalize_root(rid,read_until=p['read_until'],retain_until=p['retain_until'],
+                    _budget=budget,_transaction_guard=guard)}
+            response=wire.build_new_wire(dict(schema_version=SCHEMA,kind=kind+'_active',request_sha256=digest,
+                originals={name:encode_entry(value,s.policy,budget) for name,value in result.items()}),s.policy,budget).raw
+            if len(response)>MAX_BYTES:
+                wire._fail('repair_remote_setup_too_large')
+            with s._transaction():
+                self.db.execute('UPDATE open_repair_mailbox_remote_stages SET response=? WHERE owner=? AND root_digest=? AND kind=? AND request_digest=?',
+                    (response,owner_id,root_digest,kind,digest))
+            return response
+        finally:
+            with s._transaction():
+                self.db.execute('UPDATE open_repair_mailbox_remote_owners SET signatures=signatures-?,bytes=bytes-? WHERE owner=?',
+                    (allowance-budget.snapshot()['signature_checks'],MAX_BYTES-(len(response) if response is not None else 0),owner_id))
+
+
+class MailboxRemoteMessageService:
+    """Resume a sender-signed admission of E already committed by delivery."""
+    def __init__(self, state, delivery_state, *, policy=None):
+        from memory_vault_open_repair_mailbox_resources import RepairMailboxResources
+        from memory_vault_open_repair_mailbox_source import MailboxMessageStaging
+        self.state,self.db=state,state.db
+        self.policy=remote_policy(policy)
+        self.staging=MailboxMessageStaging(RepairMailboxResources(state),delivery_state)
+
+    def initialize(self):
+        self.staging.initialize()
+        with self.state._transaction():
+            if self.policy['enabled']:
+                value=canonical_bytes({k:v for k,v in self.policy.items() if k!='enabled'}).decode()
+                prior=self.state._one("SELECT value FROM open_repair_state WHERE name='mailbox_remote_message_policy'")
+                if prior is not None and prior['value']!=value:wire._fail('repair_remote_policy_mismatch')
+                self.db.execute("INSERT OR IGNORE INTO open_repair_state VALUES('mailbox_remote_message_policy',?)",(value,))
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_mailbox_remote_messages(
+                sender TEXT NOT NULL,message_id TEXT NOT NULL,resource_id TEXT NOT NULL,
+                digest TEXT NOT NULL,request BLOB NOT NULL,response BLOB,
+                PRIMARY KEY(sender,message_id))''')
+            self.db.execute('''CREATE TABLE IF NOT EXISTS open_mailbox_remote_message_usage(
+                resource_id TEXT PRIMARY KEY,requests INTEGER NOT NULL,signatures INTEGER NOT NULL,bytes INTEGER NOT NULL)''')
+
+    def handle(self, raw):
+        if not self.policy['enabled']:wire._fail('repair_remote_setup_closed')
+        if type(raw) is not bytes or not 0<len(raw)<=MAX_BYTES:wire._fail('repair_remote_setup_too_large')
+        s=self.state;budget=wire.RepairBudget(s.policy)
+        signed=resource._fields(wire.parse_new_wire(raw,s.policy,budget).value,{'payload','proof'})
+        p=resource._fields(signed['payload'],resource.COMMON|set('issued_at expires_at subject target target_storage_epoch slot_key message_id draft owner_status object_until enum_until'.split()))
+        if p['schema_version']!=SCHEMA or p['kind']!='mailbox.source_message':wire._fail('repair_remote_setup_mismatch')
+        sender=resource._dual_key(p['subject'],budget);resource._lifetime(p)
+        history._slot(p['slot_key'],p['slot_key']['root_key']);original._opaque(p['message_id'])
+        if (p['signing_key']!=p['subject']['signing_key'] or p['target']!=s.target
+                or p['target_storage_epoch']!=s.node['payload']['storage_epoch']
+                or not p['issued_at']<wire.u53(p['object_until'])<=wire.u53(p['enum_until'])):
+            wire._fail('repair_remote_setup_mismatch')
+        original._verify_control_signature(p,signed['proof'],p['subject']['signing_key'],budget)
+        slot_digest=budget._hash(wire._canonical(p['slot_key'],budget));digest=budget._hash(raw)
+        slot=s._one('SELECT * FROM open_repair_mailbox_slot_activations WHERE slot_digest=?',(slot_digest,))
+        if slot is None:wire._fail('repair_unknown_resource')
+        controls=wire.parse_new_wire(bytes(slot['inputs']),s.policy,budget).value
+        configured=wire.parse_new_wire(controls['slot']['raw'].encode(),s.policy,budget).value['payload']
+        if configured['sender']!=sender:wire._fail('repair_remote_setup_mismatch')
+        draft_input=resource._fields(p['draft'],{'raw','ref'})
+        if type(draft_input['raw']) is not str:wire._fail('repair_message_mismatch')
+        draft=dict(raw=draft_input['raw'].encode('utf-8'),ref=draft_input['ref'])
+        reference=wire.raw_ref(draft['ref'])
+        if reference.namespace!='meta' or len(draft['raw'])!=reference.size or budget._hash(draft['raw'])!=reference.raw_sha256:
+            wire._fail('repair_ref_mismatch')
+        owner_status=decode_entry(p['owner_status'],s.policy,budget)
+        draft_doc=wire.parse_new_wire(draft['raw'],s.policy,budget)
+        attempt=decode_entry(draft_doc.value['attempt'],s.policy,budget)
+        attempted=wire.parse_new_wire(attempt['raw'],s.policy,budget).value['payload']
+        if attempted['message_id']!=p['message_id'] or attempted['slot_key']!=p['slot_key']:wire._fail('repair_message_mismatch')
+        rid=slot['metadata_resource_id'];sender_id=sender['signing_key_id']
+        with s._transaction() as now:
+            current=s._one('SELECT * FROM open_repair_mailbox_resources WHERE resource_id=?',(rid,))
+            if current is None or current['status']!='active':wire._fail('repair_resource_inactive')
+            offer=wire.parse_new_wire(s._saved(current,'offer')['raw'],s.policy,budget).value['payload']
+            from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
+            scope=status.status_scope(p['slot_key']['root_key'],'mailbox_slot',p['slot_key'],s.policy,budget)
+            code=MailboxStatusLedger(self.staging.resources).check_locked(rid,[dict(issuer=configured['recipient']['signing_key_id'],
+                scope_kind='mailbox_slot',scope_id=scope,document_revision=configured['revision'],operation_mask=65)])
+            if code:wire._fail(code)
+            old=s._one('SELECT * FROM open_mailbox_remote_messages WHERE sender=? AND message_id=?',(sender_id,p['message_id']))
+            if old is not None and (old['digest']!=digest or old['resource_id']!=rid):wire._fail('repair_message_conflict')
+            usage=s._one('SELECT * FROM open_mailbox_remote_message_usage WHERE resource_id=?',(rid,))
+            marker=s._one('SELECT value FROM open_repair_state WHERE name=?',('mailbox_message_usage:'+rid,))
+            count=self.db.execute('SELECT count(*) FROM open_mailbox_remote_messages WHERE resource_id=?',(rid,)).fetchone()[0]
+            if ((usage is None)!=(marker is None) or (usage is None and count)
+                    or (usage is not None and count>usage['requests'])):wire._fail('repair_remote_setup_ledger_missing')
+            if usage is not None and marker['value']!=s._expected_binding()+'|'+str(usage['requests'])+'|'+str(usage['signatures'])+'|'+str(usage['bytes']):
+                wire._fail('repair_remote_setup_ledger_missing')
+            # Completed replies perform only the request authentication above;
+            # no admission/history phases run again. Charge the measured work
+            # instead of consuming an entire phase ceiling on every retry.
+            allowance=(budget.snapshot()['signature_checks'] if old is not None and old['response'] is not None
+                else 6*s.policy.max_signature_checks)
+            held=usage if usage is not None else dict(requests=0,signatures=0,bytes=0)
+            charge=0 if old is not None else len(raw)+MAX_BYTES+2*ROW_CHARGE
+            if (held['requests']>=min(self.policy['max_requests'],offer['budget']['max_requests'],offer['budget']['max_replay_records'])
+                    or held['signatures']+allowance>self.policy['max_signatures'] or held['bytes']+len(raw)+MAX_BYTES>self.policy['max_bytes']
+                    or current['metadata_bytes']+charge>offer['budget']['max_meta_bytes']):wire._fail('repair_remote_setup_capacity')
+            if old is None:
+                if not p['issued_at']<=now<p['expires_at'] or p['enum_until']>offer['windows']['retain_until']:wire._fail('repair_resource_expired')
+                self.db.execute('INSERT INTO open_mailbox_remote_messages VALUES(?,?,?,?,?,NULL)',(sender_id,p['message_id'],rid,digest,raw))
+                self.db.execute('UPDATE open_repair_mailbox_resources SET metadata_bytes=metadata_bytes+? WHERE resource_id=?',(charge,rid))
+            self.db.execute('INSERT INTO open_mailbox_remote_message_usage VALUES(?,?,?,?) ON CONFLICT(resource_id) DO UPDATE SET requests=excluded.requests,signatures=excluded.signatures,bytes=excluded.bytes',
+                (rid,held['requests']+1,held['signatures']+allowance,held['bytes']+len(raw)+MAX_BYTES))
+            self.db.execute('INSERT INTO open_repair_state VALUES(?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value',
+                ('mailbox_message_usage:'+rid,s._expected_binding()+'|'+str(held['requests']+1)+'|'+str(held['signatures']+allowance)+'|'+str(held['bytes']+len(raw)+MAX_BYTES)))
+        if old is not None and old['response'] is not None:return bytes(old['response'])
+        if not p['issued_at']<=s._now()<p['expires_at']:wire._fail('repair_resource_expired')
+        self.staging.stage_delivered(draft['raw'],owner_status)
+        self.staging.prepare_member_history(sender_id,p['message_id'])
+        admitted=self.staging.commit_member(sender_id,p['message_id'],object_until=p['object_until'],enum_until=p['enum_until'])
+        self.staging.prepare_feed_history(p['slot_key'],head_ref=admitted['head']['ref'])
+        custody=self.staging.finalize_feed(p['slot_key'],admitted['head']['ref'],read_until=p['enum_until'],retain_until=p['enum_until'])
+        response=s._sign(dict(schema_version=SCHEMA,kind='mailbox.source_message_stored',signing_key=s.identity.public_descriptor(),
+            request_sha256=digest,slot_key=p['slot_key'],message_id=p['message_id'],stored_at=s._now(),
+            originals={name:encode_entry(value,s.policy,budget) for name,value in dict(core=admitted['core'],link=admitted['link'],
+                custody=admitted['custody'],head=admitted['head'],feed_custody=custody).items()}),'mailbox_message_result',budget)['raw']
+        if len(response)>MAX_BYTES:wire._fail('repair_remote_setup_too_large')
+        with s._transaction():
+            self.db.execute('UPDATE open_mailbox_remote_messages SET response=? WHERE sender=? AND message_id=? AND digest=? AND response IS NULL',
+                (response,sender_id,p['message_id'],digest))
+            held=s._one('SELECT response FROM open_mailbox_remote_messages WHERE sender=? AND message_id=? AND digest=?',(sender_id,p['message_id'],digest))
+            if held is None or held['response'] is None:wire._fail('repair_remote_setup_ledger_missing')
+            response=bytes(held['response'])
+        return response

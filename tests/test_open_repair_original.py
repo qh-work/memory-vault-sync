@@ -23,13 +23,12 @@ def local_policy(**changes):
     return replace(policy, **changes)
 
 
-def contact_fixture():
+def contact_fixture(*, identities=None, encryption=None, now=2_000_000_000, storage_epoch="synthetic_epoch"):
     """Whole synthetic approved chain, with in-memory keys and no private files."""
-    sender, recipient, node = [Identity(Ed25519PrivateKey.generate()) for _ in range(3)]
-    sender_enc, recipient_enc = [EncryptionIdentity.generate() for _ in range(2)]
-    now = 2_000_000_000
+    sender, recipient, node = identities or [Identity(Ed25519PrivateKey.generate()) for _ in range(3)]
+    sender_enc, recipient_enc = encryption or [EncryptionIdentity.generate() for _ in range(2)]
     docs = {}
-    docs["node"] = issue_node(node, base_url="http://127.0.0.1:18501", storage_epoch="synthetic_epoch",
+    docs["node"] = issue_node(node, base_url="http://127.0.0.1:18501", storage_epoch=storage_epoch,
                               roles=["directory", "router"], revision=1,
                               issued_at=now, expires_at=now + 3600)
 
@@ -38,33 +37,33 @@ def contact_fixture():
 
     for role, purpose in (("knock_lease", "knock"), ("delivery_lease", "delivery")):
         docs[role] = signed(node, "resource.lease", node_key_id=node.key_id,
-            storage_epoch="synthetic_epoch", owner_key_id=recipient.key_id,
+            storage_epoch=storage_epoch, owner_key_id=recipient.key_id,
             owner_encryption_key=recipient_enc.public_descriptor(), lease_id="synthetic_" + purpose,
             resource_id="synthetic_" + purpose + "_resource", purpose=purpose,
             max_items=2, max_bytes=2 * SLOT_BYTES if purpose == "knock" else 32768)
     knock = docs["knock_lease"]["payload"]
     docs["policy"] = signed(recipient, "contact.policy", node_key_id=node.key_id,
-        storage_epoch="synthetic_epoch", lease_id=knock["lease_id"], resource_id=knock["resource_id"],
+        storage_epoch=storage_epoch, lease_id=knock["lease_id"], resource_id=knock["resource_id"],
         lease_sha256=document_sha256(docs["knock_lease"]), encryption_key=recipient_enc.public_descriptor(),
         revision=1, status="active", max_pending=2)
     docs["request"] = signed(sender, "contact.request", request_id="synthetic_request",
         encryption_key=sender_enc.public_descriptor(), recipient_key_id=recipient.key_id,
         recipient_encryption_key_id=recipient_enc.key_id, node_key_id=node.key_id,
-        storage_epoch="synthetic_epoch", lease_id=knock["lease_id"], resource_id=knock["resource_id"],
+        storage_epoch=storage_epoch, lease_id=knock["lease_id"], resource_id=knock["resource_id"],
         policy_sha256=document_sha256(docs["policy"]), request_class="message")
     docs["grant"] = signed(recipient, "contact.grant", request_id="synthetic_request",
         request_sha256=document_sha256(docs["request"]), subject_key_id=sender.key_id,
         subject_encryption_key_id=sender_enc.key_id, recipient_encryption_key_id=recipient_enc.key_id,
-        node_key_id=node.key_id, storage_epoch="synthetic_epoch", operations=["message.store"],
+        node_key_id=node.key_id, storage_epoch=storage_epoch, operations=["message.store"],
         resource_id=docs["delivery_lease"]["payload"]["resource_id"], resource_lease=docs["delivery_lease"])
     docs["decision"] = signed(recipient, "contact.decision", request_id="synthetic_request",
         request_sha256=document_sha256(docs["request"]), subject_key_id=sender.key_id,
         subject_encryption_key_id=sender_enc.key_id, recipient_encryption_key_id=recipient_enc.key_id,
-        node_key_id=node.key_id, storage_epoch="synthetic_epoch", policy_sha256=document_sha256(docs["policy"]),
+        node_key_id=node.key_id, storage_epoch=storage_epoch, policy_sha256=document_sha256(docs["policy"]),
         decision="approved", reason="accepted", grant=docs["grant"])
     expected = dict(sender_key_id=sender.key_id, sender_encryption_key_id=sender_enc.key_id,
         recipient_key_id=recipient.key_id, recipient_encryption_key_id=recipient_enc.key_id,
-        node_key_id=node.key_id, storage_epoch="synthetic_epoch", at=now)
+        node_key_id=node.key_id, storage_epoch=storage_epoch, at=now)
     return docs, expected, dict(sender=sender, recipient=recipient, node=node)
 
 

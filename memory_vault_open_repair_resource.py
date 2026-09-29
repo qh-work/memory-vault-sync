@@ -318,3 +318,90 @@ def verify_ack_resource_inputs(entries, *, expected_ack_slot, expected_owner, ex
                 and all(at < item["expires_at"] for item in (root, read, activation))):
             _mismatch()
         return AuthenticatedAckResourceInputs(MappingProxyType(checked), at)
+
+
+def verify_mailbox_resource_inputs(entries, *, expected_root, expected_owner, expected_target,
+        target_storage_epoch, expected_purpose, expected_scope, expected_authority_refs,
+        expected_offer_refs, at, policy, budget):
+    """Authenticate a mailbox allocation/offer/activation/active chain offline.
+
+    Scope and authority references must come from the caller's independently
+    checked owner chain. This proves original resource events, not custody,
+    current permission, physical storage, or the owner authority chain itself.
+    """
+    wire._context(policy,budget)
+    expected = wire.build_new_wire(dict(root=expected_root,owner=expected_owner,target=expected_target,
+        epoch=target_storage_epoch,purpose=expected_purpose,scope=expected_scope,
+        authorities=expected_authority_refs,offers=expected_offer_refs,at=at),policy,budget).value
+    history._root(expected["root"])
+    _opaque(expected["epoch"]);wire.u53(expected["at"])
+    owner_id = _dual_key(expected["owner"],budget)
+    target_id = _dual_key(expected["target"],budget)
+    if (expected["root"]["root_kind"] != "mailbox" or expected["root"]["owner"] != owner_id
+            or expected["purpose"] not in ("anchor_catalog","feed_metadata","mailbox_data")):
+        _mismatch()
+    roles = ("allocate","offer","activation","active")
+    _fields(entries,roles)
+    checked = {}
+    for role,index in zip(roles,(0,1,4,5)):
+        value = _fields(entries[role],{"raw","ref"})
+        ref = _ref(wire.build_new_wire(value["ref"],policy,budget).value)
+        draft = wire.parse_new_wire(value["raw"],policy,budget)
+        if len(draft.raw) != ref.size or budget._hash(draft.raw) != ref.raw_sha256:
+            wire._fail("repair_ref_mismatch")
+        signed = _fields(draft.value,{"payload","proof"})
+        p = _fields(signed["payload"],COMMON | frozenset(_FIELDS[index].split()))
+        if p["schema_version"] != SCHEMA or p["kind"] != _KINDS[index]:
+            _invalid()
+        original._verify_control_signature(p,signed["proof"],
+            expected["target" if role in ("offer","active") else "owner"]["signing_key"],budget)
+        checked[role] = AuthenticatedRepairOriginal(draft.raw,ref,p)
+    allocate,offer,activation,active = (checked[r].payload for r in roles)
+    for p in (allocate,activation):
+        _lifetime(p)
+        if p["target_node_key_id"] != target_id["signing_key_id"] or p["target_storage_epoch"] != expected["epoch"]:
+            _mismatch()
+    for name in ("request_id",):
+        _opaque(allocate[name])
+    _opaque(activation["activation_id"]);_opaque(offer["offer_id"])
+    for p in (allocate,offer):
+        intent = _fields(p["intent"],_INTENT)
+        if intent["kind"] != "resource.owner_intent" or intent["purpose"] != expected["purpose"]:
+            _invalid()
+        _opaque(intent["allocation_id"]);_opaque(intent["target_storage_epoch"])
+        history._root(intent["root_key"])
+        _dual_key_shape(intent["owner"]);_dual_key_shape(intent["target"])
+        _budget(intent["budget"]);_windows(intent["windows"])
+        if p["intent_sha256"] != budget._hash(wire._canonical(p["intent"],budget)):
+            _mismatch()
+    intent = allocate["intent"]
+    if (offer["intent"] != intent or intent["root_key"] != expected["root"]
+            or intent["owner"] != expected["owner"] or intent["target"] != expected["target"]
+            or intent["target_storage_epoch"] != expected["epoch"] or intent["purpose"] != expected["purpose"]):
+        _mismatch()
+    _windows(intent["windows"],issued=allocate["issued_at"])
+    history._resource(offer["resource"])
+    if (offer["resource"]["node_key_id"] != target_id["signing_key_id"]
+            or offer["resource"]["storage_epoch"] != expected["epoch"]
+            or offer["target_encryption_key"] != expected["target"]["encryption_key"]
+            or _ref(offer["allocation_request_ref"]) != checked["allocate"].ref
+            or _ref(active["offer_ref"]) != checked["offer"].ref
+            or _ref(active["activation_ref"]) != checked["activation"].ref):
+        _mismatch()
+    if (activation["subject"] != expected["owner"] or activation["root_key"] != expected["root"]
+            or activation["scope"] != expected["scope"] or activation["authority_refs"] != expected["authorities"]
+            or activation["resource_offer_refs"] != expected["offers"]
+            or checked["offer"].ref.as_dict() not in expected["offers"]
+            or active["root_key"] != expected["root"] or active["purpose"] != expected["purpose"]):
+        _mismatch()
+    _budget(offer["budget"]);_windows(offer["windows"])
+    wire.u53(offer["reservation_generation"],1)
+    if (any(offer[name] != intent[name] for name in ("budget","windows"))
+            or any(active[name] != offer[name] for name in ("resource","reservation_generation","budget","windows"))):
+        _mismatch()
+    issued,reserved,activated = (wire.u53(v) for v in (offer["issued_at"],offer["reservation_until"],active["activated_at"]))
+    if not (allocate["issued_at"] <= issued < allocate["expires_at"]
+            and issued <= activation["issued_at"] <= activated <= expected["at"]
+            and activated < min(reserved,activation["expires_at"],*offer["windows"].values())):
+        _mismatch()
+    return MappingProxyType(checked)

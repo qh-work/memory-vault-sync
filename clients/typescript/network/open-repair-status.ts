@@ -9,7 +9,9 @@ import {parseOriginalControl, canonicalOriginalControl, verifyBoundedControlSign
 type Obj = Record<string, any>;
 const SCHEMA = 'memory-vault-open-authority/v1';
 const MAX_BYTES = 16384, MAX_SECONDS = 604800;
-const AUTHORITY_KINDS = new Set(['ack.root_authority','ack.read_grant','ack.write_grant','ack.disclosure','bootstrap.grant']);
+const AUTHORITY_KINDS = new Set(['ack.root_authority','ack.read_grant','ack.write_grant','ack.disclosure','bootstrap.grant',
+  'ack.index_consent','mailbox.root_authority','mailbox.root_read_grant','mailbox.maintenance_root','mailbox.read_grant',
+  'delivery.destination','message.disclosure']);
 const SCOPE_KINDS = new Set(['catalog','mailbox_slot','ack_slot','authority','resource','assignment','contact_policy']);
 const PAYLOAD = ['schema_version','kind','signing_key','scope_key','revision','issued_at','valid_until','entries'];
 const ENTRY = ['scope_kind','scope_id','minimum_document_revision','status','operation_mask'];
@@ -62,6 +64,13 @@ export function statusScope(expectedRoot:unknown,kind:unknown,subject:unknown,
     fields(s,['root_key','slot_id','receipt_writer','grant_id']);root(s.root_key);
     if(r.root_kind!=='ack_return'||!same(s.root_key,r))fail();opaque(s.slot_id);opaque(s.grant_id);
     try{dualId(s.receipt_writer);}catch{fail();}payload={kind:'ack_slot',root_key:r,ack_slot:s};
+  }else if(value.scope_kind==='mailbox_slot'){
+    fields(s,['root_key','slot_id','writer','writer_storage_epoch']);root(s.root_key);
+    if(r.root_kind!=='mailbox'||!same(s.root_key,r))fail();opaque(s.slot_id);opaque(s.writer_storage_epoch);
+    try{dualId(s.writer);}catch{fail();}payload={kind:'mailbox_slot',root_key:r,slot_key:s};
+  }else if(value.scope_kind==='catalog'){
+    fields(s,['root_key']);if(r.root_kind!=='mailbox'||!same(s.root_key,r))fail();
+    payload={kind:'catalog',root_key:r};
   }else fail();
   return budget.hash(canonicalOriginalControl(payload,budget));
 }

@@ -84,6 +84,7 @@ class SavedReceiptPublicationTests(unittest.TestCase):
             TrustStore(ClientConfig.load(self.delivery.b.client_config).trust_path).add(self.delivery.ai.public_descriptor())
             remembered=self.delivery.call(self.delivery.a,op="remember",request_id="req_ack_saved_memory",kind="observation",text="Synthetic current-facts reminder for ACK integration.")
             selected=[remembered["memory_id"]]
+        self.selected_memory_ids=selected
         upload=OpenDeliveryClient._upload
         async def before_upload(client,row,node,handle,budget):
             if self.ack is None:self._ack_before_upload(row)
@@ -155,10 +156,46 @@ class SavedReceiptPublicationTests(unittest.TestCase):
         self.send(memory=True);received=self.save_without_old_receipt_upload()
         self.assertEqual(received["messages"][0]["content_kind"],"memory_transfer")
         self.assertGreater(received["messages"][0]["share"]["records_added"],0)
-        with self.delivery.b._network() as network:
-            original=bytes(network._delivery()._inbox(self.message_id)["receipt"])
-            result=network.publish_saved_ack(self.ack.http.base,self.request)
-        self.assertEqual(result.source.inputs["receipt"].raw,original)
+        from memory_vault_open_client import ACK_CONNECT_SCHEMA
+        from memory_vault_open_transport import OpenHTTPTransport
+        def encoded(entry):return dict(raw=entry['raw'].decode('utf-8'),ref=entry['ref'])
+        request={name:(encoded(value) if name.endswith('_entry') else [encoded(v) for v in value] if name=='current_statuses' else value)
+            for name,value in self.request.items()}
+        invitation=dict(schema_version=ACK_CONNECT_SCHEMA,action='return_receipt',base_url=self.ack.http.base,repair_profile='receipt',request=request)
+        returned=self.delivery.call(self.delivery.b,op='connect',invitation=invitation)
+        self.assertEqual(returned['state'],'retained_at_ack_source');self.assertFalse(returned['from_local_history'])
+        with patch.object(OpenHTTPTransport,'request_repair',side_effect=AssertionError('completed return contacted source')):
+            retry=self.delivery.call(self.delivery.b,op='connect',invitation=invitation)
+        self.assertTrue(retry['from_local_history']);self.assertFalse(retry['network_accessed'])
+        self.assertEqual(retry['commit_ref'],returned['commit_ref'])
+        self.ack.http.restart();f=self.ack.f
+        owner_request=dict(target_node_entry=encoded(f['entries']['descriptor']),expected_target=f['expected']['expected_target'],
+            expected_ack_slot=f['expected']['expected_ack_slot'],root_entry=encoded(f['entries']['root']),read_entry=encoded(f['entries']['read']),
+            bootstrap_entry=encoded(f['entries']['bootstrap']),expected_receipt_writer=self.ack.expected['expected_receipt_writer'],
+            expected_message_id=self.message_id,expected_envelope_ref=self.envelope_ref)
+        bad_request=dict(owner_request,root_entry=dict(owner_request['root_entry'],raw=owner_request['root_entry']['raw']+' '))
+        with patch.object(OpenHTTPTransport,'request_repair',side_effect=AssertionError('invalid recovery invitation contacted source')):
+            rejected=self.delivery.a.handle(dict(op='connect',invitation=dict(schema_version=ACK_CONNECT_SCHEMA,action='recover_receipt',
+                base_url=self.ack.http.base,repair_profile='receipt',request=bad_request)))
+        self.assertFalse(rejected['ok'])
+        with self.delivery.a._network() as network:
+            with network.participant.state.db() as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM open_mailbox_setup_jobs').fetchone()[0],0)
+        recovered=self.delivery.call(self.delivery.a,op='connect',invitation=dict(schema_version=ACK_CONNECT_SCHEMA,action='recover_receipt',
+            base_url=self.ack.http.base,repair_profile='receipt',request=owner_request))
+        self.assertTrue(recovered['endpoint_validated']);self.assertFalse(recovered['acknowledgement_pending'])
+        self.assertEqual(recovered['commit_ref'],returned['commit_ref'])
+        with self.delivery.a._network() as network:
+            with network.participant.state.db() as db:
+                self.assertGreater(db.execute('SELECT count(*) FROM open_mailbox_setup_statuses').fetchone()[0],0)
+            stored=network.participant.state.db()
+            with stored as db:
+                self.assertIsNotNone(db.execute('SELECT acknowledgement FROM open_delivery_outbox WHERE message_id=?',(self.message_id,)).fetchone()[0])
+        with patch.object(OpenDeliveryClient,'call',side_effect=AssertionError('acknowledged retry used original delivery node')):
+            sent=self.delivery.call(self.delivery.a,op='send',request_id='req_saved_ack_send',recipients=[self.delivery.bi.key_id],
+                text='Synthetic saved ACK message',memory_ids=self.selected_memory_ids)
+        self.assertTrue(sent['endpoint_validated']);self.assertFalse(sent['network_accessed'])
+        self.assertEqual(self.delivery.host.processes,{})
 
     def test_unsaved_wrong_tuple_and_unknown_request_fields_refuse_before_ack_network(self):
         self.send();publisher=self.publisher()

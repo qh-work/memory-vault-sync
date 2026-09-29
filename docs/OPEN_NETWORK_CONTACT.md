@@ -137,3 +137,138 @@ B 离线期间 A 的普通 send、Memory 和 ack-only 均拒绝，Vault 不增�
 
 Python/native TypeScript 双向使用真实签名、成熟加密挑战及隔离本机 HTTP。
 没有实际运行以上实验前，只能称设计闭环；不能声称已通过或用预共享 grant 替代首次联系。
+
+
+## Retaining an approved mailbox for ordinary receive
+
+The current Python agent can retain a mailbox selected by its own signed slot,
+READ, maintenance and bootstrap controls. This registers local polling; it does
+not create the mailbox, issue missing grants, establish author trust, or promise
+that a source is online. Supply the original entries returned by mailbox setup,
+the expected sender/source descriptors, and the finite limits used in those
+grants. Encode each original `raw` byte string as its exact UTF-8 text, without
+parsing and reserializing the signed document:
+
+```python
+def json_entry(entry):
+    return {"raw": entry["raw"].decode("utf-8"), "ref": entry["ref"]}
+
+invitation = {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "register",
+    "base_url": source_url,
+    "limit_policy": mailbox_limits,
+    "expected_slot": slot_key,
+    "expected_sender": sender_descriptor,
+    "expected_target": source_descriptor,
+    "target_node_entry": json_entry(current_node_entry),
+    "slot_entries": {
+        name: json_entry(slot_entries[name])
+        for name in ("slot", "read", "maintenance", "bootstrap")
+    },
+}
+registered = agent.handle({"op": "connect", "invitation": invitation})
+received = agent.handle({"op": "receive", "limit": 4})
+```
+
+Configuration and current-status observations share the existing protected
+transport database. A newly opened agent resumes staged imports locally first,
+then polls configured mailboxes before the original contact queues. Each call
+attempts at most four registered mailboxes, rotating across at most sixteen
+local registrations. Errors remain visible in the receive result. Endpoint and
+identity must match authenticated controls; every network recovery rechecks
+current authority, retained revocations and finite resource limits.
+
+`connect` with the same schema and `action: "list"` lists local receiver IDs.
+`action: "remove"` additionally takes `receiver_id` and stops that local polling;
+it does not revoke remote grants or erase messages, receipts or status history.
+An identical registration is idempotent. Changed configuration requires explicit
+removal and registration again; retained status history still applies. This is
+also how to replace an expired source descriptor with a newly authenticated one.
+Memory shares continue through the normal trust/admission checks. A receipt
+saved by mailbox reception remains available for the independently authorized
+ACK return; a successful receive does not claim that the sender received it.
+
+### Retain an already sent message in its authorized mailbox
+
+After mailbox setup, the sender can use the same Agent `connect` operation to
+prepare and submit an existing outgoing message. The receiver supplies its
+signed destination and slot controls; the sender reuses its own frozen outbox
+ciphertext and contact originals. Preparation never invents permission or sends
+plaintext to the mailbox node.
+
+```python
+prepared = agent.handle({"op": "connect", "invitation": {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "prepare", "message_id": sent_message_id,
+    "slot_entries": {name: json_entry(slot_entries[name])
+                     for name in ("slot", "read", "maintenance")},
+    "destination_entry": json_entry(destination_entry),
+    "attempt_until": attempt_until, "consent_until": consent_until,
+}})
+retained = agent.handle({"op": "connect", "invitation": {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "admit", "message_id": sent_message_id,
+    "base_url": source_url, "target": source_descriptor,
+    "target_node_entry": json_entry(current_node_entry),
+    "owner_status_entry": json_entry(current_owner_status),
+    "expires_at": request_expires_at,
+    "object_until": object_until, "enum_until": enum_until,
+}})
+```
+
+Check each operation's success before continuing. All deadlines must fit the
+original grants and allocated resources. The source must explicitly enable
+repair remote setup and delivery, and the ciphertext must already be committed
+at that source. Requests are limited to 64 KiB and the configured finite source
+budgets; this endpoint does not upload a new ciphertext body. Oversized original
+bundles fail explicitly.
+
+The sender saves the exact signed admission request before network access and
+verifies the source's signed result against that request, message and ciphertext.
+Retries reuse the request and resume durable source stages; changed parameters
+for the same message are rejected. The source publishes the encrypted mailbox
+index and feed custody before reporting success. `retained_at_mailbox` means a
+storage assertion from the source, with `recipient_acknowledged: false`. The
+receiver independently checks current authority and the full original history
+when receiving. Independent receipt return still needs its separate ACK grants.
+
+A full feed proof contains the original history of every covered message.
+Provision proof-item, proof-byte, signature and metadata budgets for that
+history before signing the slot; the single-message example's ceilings are not
+multi-message capacity promises. The HTTP mailbox workflow bounds its local
+aggregate verification to 512 signatures and its persisted proof encoding to
+2 MiB, further constrained by the configured node limits and signed resources.
+No grant or resource ceiling is enlarged when a request runs out of budget.
+
+
+### Provision and register a receiver mailbox
+
+The receiver can provision its chosen mailbox source through `connect`. Supply
+an explicit `MailboxSetupBuilder` plan with the receiver's root/slot identifiers,
+the selected sender and source identities, and finite resource budgets/windows.
+The node must advertise the supplied signed descriptor and explicitly enable
+remote mailbox setup. No public discovery result grants this permission.
+
+```python
+ready = receiver.handle({"op": "connect", "invitation": {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "provision", "base_url": source_url,
+    "target_node_entry": json_entry(current_node_entry),
+    "plan": mailbox_plan, "sender": sender_descriptor,
+    "setup_until": setup_until, "read_until": read_until,
+    "retain_until": retain_until,
+}})
+```
+
+The operation persists exact allocation, slot, root and readiness exchanges,
+independently recovers the source proof, and registers the receiver only after
+verification. Its `mailbox_ready` result includes a setup ID, receiver ID and
+source custody reference. Subsequent ordinary `receive` calls poll that mailbox.
+A partially completed request resumes its stored exchanges. After a successful
+setup, an identical retry restores the saved local registration without spending
+another remote proof budget: it returns `mailbox_configured`,
+`network_accessed: false` and `source_rechecked: false`. That local result does
+not claim the source is still online or currently authorizes reads. Every
+receive independently checks current authority. Changed inputs for the same
+setup are rejected. Independent ACK return still needs its separate grants.

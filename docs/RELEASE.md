@@ -1,15 +1,14 @@
 # Distribution scope and publication gates
 
-This alpha.0.10 release adds remote source preparation with independently held
-private configurations, durable setup/bind retries and contact enablement through
-an already configured node. Actual memory delivery and independent original-receipt
-recovery remain connected. It retains separate
-publication and READ permissions, original bytes, and durable shared work/replay
-limits across restart. The [directory guide](OPEN_ACK_DIRECTORY.md) describes the
-source and owner commands. Message movement, automatic repair and global
-reliability remain unfinished. Earlier delivery, selected-memory sharing and the
-current-fact scorer remain available. Exact validation belongs to the source-bound
-release record.
+The alpha.0.11 prerelease adds recipient mailbox provisioning and
+registration, sender admission, retained ciphertext recovery, restart-safe memory
+import and independent receipt operations through the Python Agent. Source
+requests, budgets, history and observations remain persistent across retries.
+Replacement-node copy/repair, partial feed recovery and complete native
+TypeScript mailbox-client parity remain unfinished. Exact package validation
+belongs to the source-bound release record.
+
+Published [v0.28.0-alpha.0.11](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.11) is built from `438f109595f4dd469fe8b4eee11c016a10d25558`. All eight public assets were anonymously downloaded and compared byte for byte with the reviewed packages. Four targeted synthetic HTTP workflows passed using the extracted client runtime, covering mailbox provisioning, interrupted two-message admission/recovery, cold selected-memory import/resume and independent receipt return/recovery. [Full exact-source cloud regression](https://github.com/qh-work/memory-vault-sync/actions/runs/36510116540) remains pending; this publication does not claim full-suite acceptance, external adoption or global availability.
 
 Published [v0.28.0-alpha.0.10](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.10) has eight assets, downloaded and compared byte for byte with the reviewed packages. The release is built from `7d844bea6f961ee714a236c61e352d6e9002d2fa`; [its cloud run](https://github.com/qh-work/memory-vault-sync/actions/runs/36474765248) completed 861 tests. The client archive also completed independent remote source setup, selected-memory delivery and original-receipt recovery after the delivery node stopped. These checks use synthetic data and do not establish external adoption or global-scale reliability.
 
@@ -19,7 +18,7 @@ The protocol is independent of language, storage, model, session, device and
 task. The authorized full client automates the same canonical record contract;
 an independent implementation is not required to install it or import Python.
 
-The current prerelease build target is **0.28.0-alpha.0.10**, an open encrypted
+The current prerelease build target is **0.28.0-alpha.0.11**, an open encrypted
 delivery preview. Python and native TypeScript six-operation Agents connect explicit first-contact
 approval to encrypted chat or selected original memories, durable local saving,
 original-node storage receipts and separate recipient-save receipts. Setup
@@ -46,13 +45,13 @@ instructions or acceptance of this prerelease.
 
 The release builder produces:
 
-- `memory-vault-protocol-v0.28.0-alpha.0.10.zip`: specification, schemas, synthetic
+- `memory-vault-protocol-v0.28.0-alpha.0.11.zip`: specification, schemas, synthetic
   interchange examples and implementer guides, **no executable files**.
-- `memory-vault-client-v0.28.0-alpha.0.10.zip`: complete source-built runtime, plugin,
+- `memory-vault-client-v0.28.0-alpha.0.11.zip`: complete source-built runtime, plugin,
   local marketplace catalog and explicit setup instructions.
-- `memory-vault-review-v0.28.0-alpha.0.10.zip`: public synthetic tests and source/build
+- `memory-vault-review-v0.28.0-alpha.0.11.zip`: public synthetic tests and source/build
   material for reviewers to run only with their user's authorization.
-- `memory-vault-network-test-v0.28.0-alpha.0.10.zip`: synthetic endpoint template;
+- `memory-vault-network-test-v0.28.0-alpha.0.11.zip`: synthetic endpoint template;
   this release has unconfigured service trust and requires operator provisioning.
 - `memory_vault.py`: core source; Experience use also needs the companion module
   included in the client/review packages.

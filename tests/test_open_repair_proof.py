@@ -59,6 +59,73 @@ class RepairProofTests(unittest.TestCase):
         options.update(changes)
         return proof.verify_bootstrap_proof_response(self.response().raw if raw is None else raw, **options)
 
+    def mailbox_manifest(self):
+        # Manifest-format fixture only; these locators do not assert mailbox
+        # authority. The mailbox source consumer separately validates children.
+        manifest=copy.deepcopy(self.manifest)
+        selector=dict(root_key_sha256="a"*64,anchor_ref=dict(namespace="anchor",key="b"*64),
+            root_authority_sha256="c"*64,read_grant_sha256="d"*64)
+        manifest.update(consumer="mailbox_root",selector=selector,response_profile="mailbox_root_service_v1")
+        reference=self.fixture["entries"]["root"]["ref"]
+        manifest["children"]=[dict(index=i,role=role,ref=reference) for i,role in enumerate(sorted(proof.MAILBOX_ROOT_ROLES))]
+        manifest["children"].append(dict(index=len(manifest["children"]),role="history.raw_pack",ref=self.fixture["packs"][0]["ref"]))
+        return manifest,dict(consumer="mailbox_root",expected_source_state="root",selector=selector)
+
+    def test_mailbox_root_proof_manifest_requires_complete_roles_and_unique_locators(self):
+        manifest,options=self.mailbox_manifest()
+        self.verify(self.response(manifest).raw,**options)
+        duplicate=copy.deepcopy(manifest)
+        row=copy.deepcopy(next(v for v in duplicate["children"] if v["role"]=="mailbox.slot"))
+        row["index"]=len(duplicate["children"]);duplicate["children"].append(row)
+        with self.assertRaises(wire.RepairWireError):
+            self.response(duplicate)
+        another=copy.deepcopy(duplicate);another["children"][-1]["ref"]["key"]="f"*64
+        self.verify(self.response(another).raw,**options)
+        missing=copy.deepcopy(manifest);missing["children"]=[v for v in missing["children"] if v["role"]!="current.status.root_read"]
+        for i,row in enumerate(missing["children"]):
+            row["index"]=i
+        with self.assertRaises(wire.RepairWireError):
+            self.response(missing)
+        with self.assertRaises(wire.RepairWireError):
+            self.verify(self.response(manifest).raw)
+
+    def mailbox_feed_manifest(self):
+        # Container fixture only; the HTTP test validates real feed originals.
+        manifest=copy.deepcopy(self.manifest)
+        selector=dict(root_key_sha256='a'*64,slot_key_sha256='b'*64,feed_ref=dict(namespace='feed',key='c'*64),
+            slot_sha256='d'*64,read_grant_sha256='e'*64,maintenance_root_sha256='f'*64)
+        manifest.update(consumer='mailbox_feed',selector=selector,response_profile='mailbox_feed_service_v1')
+        reference=self.fixture['entries']['root']['ref']
+        manifest['children']=[dict(index=i,role=role,ref=reference) for i,role in enumerate(sorted(proof.MAILBOX_FEED_ROLES))]
+        for ref in (self.fixture['packs'][0]['ref'],dict(namespace='meta',key='0'*64,raw_sha256='0'*64,size=1)):
+            manifest['children'].append(dict(index=len(manifest['children']),role='history.raw_pack',ref=ref))
+        return manifest,dict(consumer='mailbox_feed',expected_source_state='feed',selector=selector)
+
+    def test_mailbox_feed_manifest_requires_complete_roles_and_two_packs(self):
+        manifest,options=self.mailbox_feed_manifest()
+        self.verify(self.response(manifest).raw,**options)
+        missing=copy.deepcopy(manifest);missing['children'].pop()
+        with self.assertRaises(wire.RepairWireError):self.response(missing)
+        with self.assertRaises(wire.RepairWireError):self.verify(self.response(manifest).raw)
+
+    def test_mailbox_body_request_binds_core_object_and_transport_profile(self):
+        manifest,options=self.mailbox_feed_manifest()
+        held=self.verify(self.response(manifest).raw,**options)
+        index=next(v['index'] for v in manifest['children'] if v['role']=='member.core')
+        reference=dict(namespace='object',key='a'*64,raw_sha256='b'*64,size=200000)
+        args=dict(subject=self.subject,target=self.target,at=self.now,expires_at=self.now+20,
+            child_index=index,offset=100000,requested_bytes=65536,policy=self.policy,budget=wire.RepairBudget(self.policy))
+        packet=proof.make_mailbox_body_request(self.fixture['signers']['owner'],held,envelope_ref=reference,**args)
+        verify=dict(expected_subject=self.subject,expected_target=self.target,at=self.now,
+            policy=self.policy,budget=wire.RepairBudget(self.policy))
+        entry=dict(raw=packet.raw,ref=packet.ref.as_dict())
+        self.assertEqual(proof.verify_mailbox_body_request(entry,held,**verify).payload['envelope_ref'],reference)
+        with self.assertRaises(wire.RepairWireError):proof.verify_bootstrap_child_request(entry,held,**verify)
+        for changes in (dict(child_index=0),dict(offset=200000),dict(requested_bytes=65537)):
+            with self.assertRaises(wire.RepairWireError):
+                proof.make_mailbox_body_request(self.fixture['signers']['owner'],held,envelope_ref=reference,
+                    **dict(args,**changes,budget=wire.RepairBudget(self.policy)))
+
     def assertCode(self, code, callback, *args, **kwargs):
         with self.assertRaises(wire.RepairWireError) as caught:
             callback(*args, **kwargs)

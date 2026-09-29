@@ -1128,8 +1128,32 @@ sequence; interior/empty domains remain distinct. Checkpoint commits the
 accepted prefix only. **It has no active_tail_ref, page, link, head, custody or
 capsule reference.** Inclusion proofs and prefix extension proofs use the
 existing deterministic alignment/padding rules; unknown/forked heads are not
-made trustworthy by a higher count. The full-count frontier case must be
-specified identically in both runtimes.
+made trustworthy by a higher count. The implemented candidate fixes these byte
+domains identically in Python and native TypeScript (all hashes are SHA-256):
+
+- `B = H(ASCII("memory-vault-mailbox-slot/v1") || NUL || canonical(SlotKey))`.
+- An empty leaf is `H(ASCII("memory-vault-mailbox-empty/v1") || NUL || B)`.
+- A populated leaf is `H(ASCII("memory-vault-mailbox-leaf/v1") || NUL || B ||
+  uint32_be(sequence) || sealed_core_sha256)`.
+- A height-h parent is `H(ASCII("memory-vault-mailbox-node/v1") || NUL || B ||
+  uint8(h) || left_hash || right_hash)`, for heights 1 through 16.
+
+Hash operands above are the 32 decoded bytes, not their hexadecimal text.
+Empty subtrees are obtained recursively from two equal empty children with
+the parent rule. An inclusion path contains exactly 16 sibling hashes in
+ascending height order and cannot name a sequence at or beyond `count`.
+The frontier has exactly 17 entries indexed by height. Entry h is a hash
+exactly when bit h of `count` is set, otherwise null. At count 65536 only
+entry 16 is present and equals `leaf_root`; another append is refused.
+At smaller counts, the root pads the accepted prefix with empty subtrees.
+These conventions apply only to this new repair profile; they do not change
+legacy message bytes or make an old message repairable.
+
+Original slot activation now commits both resource-active originals and the
+signed count-zero checkpoint/head in one protected-database transaction. The
+initial head has a null range root and catalog generation zero. This local
+slot commit is still not root custody, a current service proof, or S1; the
+remaining root setup must finish before the node advertises a usable cold entry.
 
 After link exists, each B-private page has exact plaintext
 `schema_version,kind,slot_key,start,end,entries`; each of at most 16 entries is
@@ -1654,6 +1678,7 @@ nonce answers are canonical Base64url, and keys/epoch match the exact target.
 | bootstrap.answer / C | issued_at,expires_at,challenge_ref,probe_ref,subject:DualID,target:DualID,target_storage_epoch,purpose=bootstrap.service_proof,consumer,bootstrap_grant_sha256,answer |
 | bootstrap.proof_handle / P | issued_at,expires_at,handle_id,probe_ref,challenge_ref,answer_ref,subject:DualID,target:DualID,target_storage_epoch,purpose=bootstrap.service_proof,consumer,bootstrap_grant_sha256,service_generation,manifest_ref,child_count |
 | bootstrap.proof_child_request / C | issued_at,expires_at,request_id,subject:DualID,target:DualID,target_storage_epoch,purpose=bootstrap.service_proof_child,consumer,probe_ref,handle_ref,manifest_ref,service_generation,child_index,offset,requested_bytes |
+| mailbox.body_read / B | issued_at,expires_at,request_id,subject:DualID,target:DualID,target_storage_epoch,purpose=mailbox.message_body,consumer=mailbox_feed,probe_ref,handle_ref,manifest_ref,service_generation,child_index,envelope_ref,offset,requested_bytes |
 
 C encrypts its nonce to P's exact X25519 key; probe AAD is all payload fields
 except target_nonce_jwe. P checks bounded parser/target/epoch/signature/time/
@@ -1708,6 +1733,33 @@ window and current generation on every read, charges the shared work ledger,
 and returns exactly that child range. The client checks child size/hash after
 assembly. This is not a head.intent or a bearer handle. Changed or missing
 bytes invalidate the generation; never switch silently to another proof.
+
+For `mailbox.body_read`, `child_index` selects a `member.core` in the frozen
+mailbox feed proof; it does not turn E into a proof-manifest child. The requested
+object RawRef must equal that signed core's envelope_ref. B first verifies the
+complete member, its encrypted core and current READ observations. P rechecks
+B's selected slot/read/maintenance controls, A's consent, the actual active data
+resource and its READ status, core.object_until and retention, in addition to
+the live dual-possession handle. It serves the separately retained committed
+mailbox ciphertext, without looking up an active original delivery lease.
+Each range is positive and at most 65,536 bytes; E remains at most 6 MiB.
+Request IDs share the persistent replay ledger with metadata reads. The current
+implementation conservatively charges the entire recovery session against both
+the metadata limits and the data resource's request/replay/job-byte ceilings.
+A revoked, expired, missing or inactive dependency refuses the body read. B
+checks the complete E hash and rechecks member authority after assembly; E still
+requires ordinary envelope verification/decryption before any inbox import.
+
+A recipient may durably stage E and the complete raw feed/member originals in
+its existing protected inbox before importing a selected memory share. Resume
+rechecks the feed custody, encrypted index membership, member authority and
+whole READ observations at the recorded reception time, and then decrypts E
+again. A later resume is completion of that received transfer, not permission
+to perform a new remote read. Exact proof/body mismatches refuse import. The
+existing share transfer receipt makes a repeated Vault import idempotent.
+The original delivery lease is unnecessary for this path. A real recipient
+receipt is retained after saving; mailbox READ authority does not authorize
+its independent ACK publication or justify reporting that it reached A.
 
 ### 9.4 Complete permission closure at the client
 

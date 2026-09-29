@@ -7,9 +7,11 @@ authority or encryption downgrade is selected by a failed open operation.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import time
 from pathlib import Path
 
-from memory_vault import MemoryError
+from memory_vault import MemoryError, canonical_bytes
 from memory_vault_client import ClientConfig
 from memory_vault_network import _read_private
 from memory_vault_network_crypto import EncryptionIdentity, document, object_fields
@@ -17,6 +19,8 @@ from memory_vault_open_node import OpenParticipant
 from memory_vault_trust import Identity
 
 CONFIG_SCHEMA = "memory-vault-open-client-config/v1"
+MAILBOX_CONNECT_SCHEMA = "memory-vault-open-mailbox-connect/v1"
+ACK_CONNECT_SCHEMA = "memory-vault-open-ack-connect/v1"
 
 
 class OpenNetworkClient:
@@ -55,6 +59,10 @@ class OpenNetworkClient:
         self.close()
 
     def connect(self, *, invitation=None, request_id=None):
+        if isinstance(invitation, dict) and invitation.get('schema_version') == ACK_CONNECT_SCHEMA:
+            return self._ack_connect(invitation)
+        if isinstance(invitation, dict) and invitation.get('schema_version') == MAILBOX_CONNECT_SCHEMA:
+            return self._mailbox_connect(invitation)
         if invitation is not None:
             from memory_vault_open_contact_client import OpenContactClient, CONNECT_SCHEMA
             if not isinstance(invitation, dict) or invitation.get("schema_version") != CONNECT_SCHEMA:
@@ -85,8 +93,217 @@ class OpenNetworkClient:
     def send(self, **arguments):
         return asyncio.run(self._delivery().send(**arguments))
 
-    def receive(self, **arguments):
-        return asyncio.run(self._delivery().receive(**arguments))
+    def receive(self, limit=4):
+        from memory_vault_open_repair_wire import RepairWireError
+        delivery=self._delivery();deadline=time.monotonic()+60
+        result=asyncio.run(delivery.receive(limit=limit,_pending_only=True))
+        if len(result['messages'])>=limit:return result
+        self._mailbox_receivers_initialize()
+        with self.participant.state.db() as db:
+            rows=db.execute('SELECT receiver_id,body FROM open_mailbox_receivers ORDER BY last_attempt,receiver_id LIMIT 4').fetchall()
+        for row in rows:
+            remaining=deadline-time.monotonic()
+            if len(result['messages'])>=limit or remaining<=0:break
+            with self.participant.state.db() as db:
+                db.execute('UPDATE open_mailbox_receivers SET last_attempt=? WHERE receiver_id=?',(time.time_ns(),row['receiver_id']))
+            try:
+                config=document(bytes(row['body']),maximum=65536)
+                options=self._mailbox_receiver_options(config)
+                def accessed():result['network_accessed']=True
+                received=self.receive_mailbox(config['base_url'],limit_policy=config['limit_policy'],
+                    limit=limit-len(result['messages']),timeout=min(60,remaining),_network_observer=accessed,**options)
+                result['messages'].extend(received['messages'])
+                result['errors'].extend(received['errors'])
+            except (MemoryError,RepairWireError) as error:
+                result['errors'].append(dict(receiver_id=row['receiver_id'],code=error.code,retryable=getattr(error,'retryable',False)))
+        if len(result['messages'])<limit and time.monotonic()<deadline:
+            legacy=asyncio.run(delivery.receive(limit=limit-len(result['messages']),_skip_pending=True,_deadline=deadline))
+            result['messages'].extend(legacy['messages']);result['errors'].extend(legacy['errors'])
+            result['network_accessed']|=legacy['network_accessed']
+        result['errors']=result['errors'][:4]
+        return result
+
+    def _mailbox_receivers_initialize(self):
+        # Bind to the existing protected identity/config before retaining grants.
+        self._delivery()
+        with self.participant.state.db() as db:
+            db.execute('CREATE TABLE IF NOT EXISTS open_mailbox_receivers(receiver_id TEXT PRIMARY KEY,body BLOB NOT NULL,last_attempt INTEGER NOT NULL DEFAULT 0)')
+
+    def _mailbox_receiver_options(self, config):
+        options={name:config[name] for name in ('expected_target','expected_sender','expected_slot')}
+        def decode(entry):
+            object_fields(entry,{'raw','ref'})
+            if not isinstance(entry['raw'],str):raise MemoryError('open_invalid_mailbox_receiver')
+            return dict(raw=entry['raw'].encode('utf-8'),ref=entry['ref'])
+        options['target_node_entry']=decode(config['target_node_entry'])
+        object_fields(config['slot_entries'],{'slot','read','maintenance','bootstrap'})
+        options['slot_entries']={name:decode(entry) for name,entry in config['slot_entries'].items()}
+        return options
+
+    def _mailbox_connect(self, invitation):
+        from dataclasses import replace
+        from memory_vault_open_transport import endpoint
+        from memory_vault_open_repair_state import DEFAULT_POLICY
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_bootstrap
+        from memory_vault_open_repair_wire import RepairBudget,RepairWireError,build_new_wire,raw_ref
+        from memory_vault_open_repair_original import verify_original_control,_node_shape
+        from memory_vault_open_repair_resource import _dual_key
+        value=document(invitation,maximum=65536)
+        action=value.get('action')
+        if action=='provision':
+            object_fields(value,{'schema_version','action','base_url','target_node_entry','plan','sender','setup_until','read_until','retain_until'})
+            from memory_vault_open_repair_client import MailboxSetupClient,MailboxSetupJournal,MailboxSetupBuilder
+            from memory_vault_open_repair_bind import decode_entry
+            object_fields(value['target_node_entry'],{'raw','ref'})
+            if not isinstance(value['target_node_entry']['raw'],str):raise MemoryError('open_invalid_mailbox_request')
+            policy=replace(DEFAULT_POLICY,max_signature_checks=512);budget=RepairBudget(policy)
+            try:
+                builder=MailboxSetupBuilder(self.identity,self.encryption,value['plan'],policy=policy)
+                sender=build_new_wire(value['sender'],policy,budget).value
+                if _dual_key(sender,budget)!=builder.plan['sender']:raise MemoryError('open_invalid_mailbox_receiver')
+                owner=dict(signing_key=self.identity.public_descriptor(),encryption_key=self.encryption.public_descriptor())
+                key=hashlib.sha256(build_new_wire(dict(owner=owner,root_key=builder.plan['root_key']),policy,budget).raw).hexdigest()
+                binding=hashlib.sha256(canonical_bytes(value)).hexdigest()
+                with self.participant.state.db() as db:
+                    exists=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='open_mailbox_setup_completions'").fetchone()
+                    cached=None if exists is None else db.execute('SELECT binding,config,result FROM open_mailbox_setup_completions WHERE setup_id=?',(key,)).fetchone()
+                if cached is not None:
+                    if cached['binding']!=binding:raise MemoryError('repair_setup_journal_conflict')
+                    self._mailbox_connect(document(bytes(cached['config']),maximum=65536))
+                    return dict(document(bytes(cached['result']),maximum=8192),state='mailbox_configured',network_accessed=False,source_rechecked=False)
+                client=MailboxSetupClient(self.identity,self.encryption,policy=policy,limit_policy=builder.plan['limits'],
+                    allow_loopback=self.participant.transport.allow_loopback,transport=self.participant.transport)
+                with self.participant.state.db() as db:
+                    journal=MailboxSetupJournal(db)
+                    result=client.provision(value['base_url'],target_node_entry=dict(raw=value['target_node_entry']['raw'].encode('utf-8'),ref=value['target_node_entry']['ref']),
+                        plan=value['plan'],journal=journal,setup_until=value['setup_until'],read_until=value['read_until'],retain_until=value['retain_until'])
+                    request=build_new_wire(document(journal.step(key,'slot')[0],maximum=65536),policy,RepairBudget(policy)).value
+                    entries={name:decode_entry(request['payload']['entries'][name],policy,RepairBudget(policy)) for name in ('slot','read','maintenance','bootstrap')}
+                config=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='register',base_url=value['base_url'],
+                    limit_policy=value['plan']['limits'],expected_slot=value['plan']['slot_key'],expected_sender=value['sender'],expected_target=value['plan']['target'],
+                    target_node_entry=value['target_node_entry'],slot_entries={name:dict(raw=item['raw'].decode('utf-8'),ref=item['ref']) for name,item in entries.items()})
+                registered=self._mailbox_connect(config)
+                ready=dict(state='mailbox_ready',setup_id=key,receiver_id=registered['receiver_id'],network_accessed=True,source_rechecked=True,
+                    custody_ref=result.source['custody'].ref.as_dict(),receipt_return='separate_authority_required')
+                with self.participant.state.db() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    db.execute('CREATE TABLE IF NOT EXISTS open_mailbox_setup_completions(setup_id TEXT PRIMARY KEY,binding TEXT NOT NULL,config BLOB NOT NULL,result BLOB NOT NULL)')
+                    prior=db.execute('SELECT binding FROM open_mailbox_setup_completions WHERE setup_id=?',(key,)).fetchone()
+                    if prior is not None and prior['binding']!=binding:raise MemoryError('repair_setup_journal_conflict')
+                    db.execute('INSERT OR IGNORE INTO open_mailbox_setup_completions VALUES(?,?,?,?)',(key,binding,canonical_bytes(config),canonical_bytes(ready)))
+            except RepairWireError as error:raise MemoryError(error.code) from error
+            return ready
+        if action=='prepare':
+            object_fields(value,{'schema_version','action','message_id','slot_entries','destination_entry','attempt_until','consent_until'})
+            from memory_vault_open_repair_client import MailboxMessageDraftStore
+            def entry(item):
+                object_fields(item,{'raw','ref'})
+                if not isinstance(item['raw'],str):raise MemoryError('open_invalid_mailbox_request')
+                return dict(raw=item['raw'].encode('utf-8'),ref=item['ref'])
+            delivery=self._delivery()
+            object_fields(value['slot_entries'],{'slot','read','maintenance'})
+            try:
+                with self.participant.state.db() as db:
+                    row=db.execute('SELECT envelope,session FROM open_delivery_outbox WHERE message_id=?',(value['message_id'],)).fetchone()
+                    if row is None or row['envelope'] is None or row['session'] is None:raise MemoryError('open_delivery_outbox_missing')
+                    session=document(bytes(row['session']),maximum=65536);keys=delivery._keys(session)
+                    recipient=dict(signing_key=keys['recipient_signing_key'],encryption_key=keys['recipient_encryption_key'])
+                    docs={name:session[name] for name in ('node','policy','request','decision')}
+                    grant=session['decision']['payload']['grant']
+                    docs.update(knock_lease=session['lease'],grant=grant,delivery_lease=grant['payload']['resource_lease'])
+                    result=MailboxMessageDraftStore(db,self.identity,self.encryption).prepare(bytes(row['envelope']),recipient=recipient,
+                        slot_entries={name:entry(item) for name,item in value['slot_entries'].items()},destination_entry=entry(value['destination_entry']),
+                        contact_originals={name:canonical_bytes(item) for name,item in docs.items()},at=int(time.time()),
+                        attempt_until=value['attempt_until'],consent_until=value['consent_until'])
+            except RepairWireError as error:raise MemoryError(error.code) from error
+            return dict(state='mailbox_draft_saved',message_id=value['message_id'],attempt_ref=result['attempt']['ref'],
+                disclosure_ref=result['disclosure']['ref'],network_accessed=False)
+        if action=='admit':
+            object_fields(value,{'schema_version','action','base_url','message_id','target','target_node_entry','owner_status_entry','expires_at','object_until','enum_until'})
+            from memory_vault_open_repair_client import MailboxMessageDraftStore
+            def entry(item):
+                object_fields(item,{'raw','ref'})
+                if not isinstance(item['raw'],str):raise MemoryError('open_invalid_mailbox_request')
+                return dict(raw=item['raw'].encode('utf-8'),ref=item['ref'])
+            try:
+                with self.participant.state.db() as db:
+                    result=MailboxMessageDraftStore(db,self.identity,self.encryption).admit(value['base_url'],value['message_id'],
+                        target_node_entry=entry(value['target_node_entry']),target=value['target'],owner_status_entry=entry(value['owner_status_entry']),
+                        at=int(time.time()),expires_at=value['expires_at'],object_until=value['object_until'],enum_until=value['enum_until'],
+                        transport=self.participant.transport,allow_loopback=self.participant.transport.allow_loopback)
+            except RepairWireError as error:raise MemoryError(error.code) from error
+            return dict(state='retained_at_mailbox',message_id=result['message_id'],stored_at=result['stored_at'],network_accessed=True,
+                custody_ref=result['originals']['custody']['ref'],feed_custody_ref=result['originals']['feed_custody']['ref'],recipient_acknowledged=False)
+        self._mailbox_receivers_initialize()
+        if action=='list':
+            object_fields(value,{'schema_version','action'})
+            with self.participant.state.db() as db:
+                ids=[v[0] for v in db.execute('SELECT receiver_id FROM open_mailbox_receivers ORDER BY receiver_id')]
+            return dict(state='configured',mailboxes=ids,network_accessed=False)
+        if action=='remove':
+            object_fields(value,{'schema_version','action','receiver_id'})
+            from memory_vault_network_crypto import opaque
+            opaque(value['receiver_id'])
+            with self.participant.state.db() as db:
+                db.execute('DELETE FROM open_mailbox_receivers WHERE receiver_id=?',(value['receiver_id'],))
+            return dict(state='removed',receiver_id=value['receiver_id'],network_accessed=False)
+        object_fields(value,{'schema_version','action','base_url','limit_policy','expected_slot','expected_sender','expected_target','target_node_entry','slot_entries'})
+        if action!='register':raise MemoryError('open_invalid_mailbox_receiver')
+        try:
+            options=self._mailbox_receiver_options(value)
+            policy=replace(DEFAULT_POLICY,max_signature_checks=512);budget=RepairBudget(policy);now=int(time.time())
+            expected=build_new_wire(dict(slot=value['expected_slot'],sender=value['expected_sender'],target=value['expected_target']),policy,budget).value
+            owner=dict(signing_key=self.identity.public_descriptor(),encryption_key=self.encryption.public_descriptor())
+            setup=verify_mailbox_feed_bootstrap(options['slot_entries'],expected_slot=expected['slot'],expected_owner=owner,
+                expected_target=expected['target'],target_storage_epoch=expected['slot']['writer_storage_epoch'],
+                limit_policy=value['limit_policy'],at=now,policy=policy,budget=budget)
+            if setup['slot'].payload['sender']!=_dual_key(expected['sender'],budget):raise MemoryError('open_invalid_mailbox_receiver')
+            entry=options['target_node_entry'];ref=raw_ref(entry['ref'])
+            node=verify_original_control(entry['raw'],expected_signing_key=expected['target']['signing_key'],expected_schema='memory-vault-open-control/v1',
+                expected_kind='node',at=now,policy=policy,budget=budget)
+            _node_shape(node,now,budget)
+            if (ref.namespace!='meta' or len(entry['raw'])!=ref.size or node.raw_sha256!=ref.raw_sha256 or node.payload['storage_epoch']!=expected['slot']['writer_storage_epoch']
+                    or endpoint(value['base_url'],allow_loopback=self.participant.transport.allow_loopback)!=endpoint(node.payload['base_url'],allow_loopback=self.participant.transport.allow_loopback)):
+                raise MemoryError('open_invalid_mailbox_receiver')
+        except RepairWireError as error:
+            raise MemoryError(error.code) from error
+        receiver_id='mailbox_'+hashlib.sha256(canonical_bytes(value['expected_slot'])).hexdigest()
+        raw=canonical_bytes(value)
+        with self.participant.state.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old=db.execute('SELECT body FROM open_mailbox_receivers WHERE receiver_id=?',(receiver_id,)).fetchone()
+            if old is not None and bytes(old[0])!=raw:raise MemoryError('open_mailbox_receiver_conflict')
+            if old is None:
+                if db.execute('SELECT count(*) FROM open_mailbox_receivers').fetchone()[0]>=16:raise MemoryError('open_mailbox_receiver_capacity')
+                db.execute('INSERT INTO open_mailbox_receivers(receiver_id,body) VALUES(?,?)',(receiver_id,raw))
+        return dict(state='registered',receiver_id=receiver_id,network_accessed=False,receipt_return='separate_authority_required')
+
+    def receive_mailbox(self, base_url, *, limit_policy, status_observer=None, _network_observer=None, **arguments):
+        """Receive an explicitly selected mailbox using retained original grants.
+
+        The caller supplies the finite mailbox profile already used in its
+        signed grants. Bodies come from the retained mailbox copy; receipts
+        remain available for the independently authorized return operation.
+        """
+        from dataclasses import replace
+        from memory_vault_open_repair_client import MailboxFeedRecoveryClient
+        from memory_vault_open_repair_state import DEFAULT_POLICY
+        transport=self.participant.transport
+        if _network_observer is not None:
+            actual=transport
+            class ObservedTransport:
+                def request_repair(self,*args,**kwargs):
+                    _network_observer()
+                    return actual.request_repair(*args,**kwargs)
+            transport=ObservedTransport()
+        reader = MailboxFeedRecoveryClient(self.identity, self.encryption,
+            policy=replace(DEFAULT_POLICY, max_signature_checks=512), limit_policy=limit_policy,
+            status_observer=status_observer, transport=transport,
+            allow_loopback=self.participant.transport.allow_loopback)
+        try:
+            return asyncio.run(self._delivery().receive_mailbox(reader, base_url, **arguments))
+        finally:
+            reader.close()
 
     def read_message(self, **arguments):
         return self._delivery().read_message(**arguments)
@@ -107,6 +324,62 @@ class OpenNetworkClient:
             allow_loopback=self.participant.transport.allow_loopback)
         discovered = DiscoveredAckRecoveryClient(OpenProviderClient(self.participant, self.encryption), reader)
         return asyncio.run(discovered.recover(**arguments))
+
+    def _ack_connect(self, invitation):
+        """Explicit original-grant operations through the existing Agent facade."""
+        from memory_vault_open_repair_wire import RepairWireError
+        from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS,INDEX_WORKFLOW_LIMITS
+        value=document(invitation,maximum=65536)
+        object_fields(value,{'schema_version','action','base_url','repair_profile','request'})
+        profiles={'receipt':RECEIPT_WORKFLOW_LIMITS,'receipt-index':INDEX_WORKFLOW_LIMITS}
+        if not isinstance(value['repair_profile'],str) or value['repair_profile'] not in profiles:raise MemoryError('open_invalid_repair_policy')
+        request=dict(value['request'])
+        def decode(entry):
+            object_fields(entry,{'raw','ref'})
+            if not isinstance(entry['raw'],str):raise MemoryError('open_invalid_ack_request')
+            return dict(raw=entry['raw'].encode('utf-8'),ref=entry['ref'])
+        try:
+            if value['action']=='return_receipt':
+                from memory_vault_open_repair_receipt import REQUEST_FIELDS
+                object_fields(request,REQUEST_FIELDS)
+                for name in REQUEST_FIELDS:
+                    if name.endswith('_entry'):request[name]=decode(request[name])
+                if not isinstance(request['current_statuses'],list):raise MemoryError('open_invalid_ack_request')
+                request['current_statuses']=[decode(entry) for entry in request['current_statuses']]
+                result=self.publish_saved_ack(value['base_url'],request,repair_profile=value['repair_profile'])
+                return dict(state='retained_at_ack_source',message_id=request['message_id'],
+                    receipt_ref=result.source.inputs['receipt'].ref.as_dict(),commit_ref=result.source.commit.ref.as_dict(),
+                    from_local_history=result.from_local_history,network_accessed=not result.from_local_history)
+            if value['action']!='recover_receipt':raise MemoryError('open_invalid_ack_request')
+            from memory_vault_open_repair_client import AckOwnerRecoveryClient,MailboxSetupJournal
+            object_fields(request,{'target_node_entry','expected_target','expected_ack_slot','root_entry','read_entry','bootstrap_entry',
+                'expected_receipt_writer','expected_message_id','expected_envelope_ref'})
+            for name in ('target_node_entry','root_entry','read_entry','bootstrap_entry'):request[name]=decode(request[name])
+            plan=canonical_bytes(dict(kind='ack.owner_recovery',owner=self.identity.public_descriptor(),
+                **{name:request[name] for name in ('expected_target','expected_ack_slot','expected_receipt_writer','expected_message_id','expected_envelope_ref')},
+                grants={name:request[name]['ref'] for name in ('root_entry','read_entry','bootstrap_entry')}))
+            key=hashlib.sha256(plan).hexdigest()
+            with self.participant.state.db() as db:
+                journal=MailboxSetupJournal(db);journal.initialize()
+                exists=db.execute('SELECT 1 FROM open_mailbox_setup_jobs WHERE job_key=?',(key,)).fetchone() is not None
+                if exists:journal.start(key,plan)
+                known=journal.statuses(key) if exists else ()
+                def observed(value):
+                    # Reserve a new journal only after a relevant signed status
+                    # is authenticated; malformed invitations consume no slot.
+                    journal.start(key,plan)
+                    journal.observe(key,value)
+                reader=AckOwnerRecoveryClient(self.identity,self.encryption,limit_policy=profiles[value['repair_profile']],
+                    transport=self.participant.transport,allow_loopback=self.participant.transport.allow_loopback,
+                    status_observer=observed)
+                try:
+                    recovered=reader.recover_occupied(value['base_url'],known_statuses=known,**request)
+                    result=self._delivery().accept_recovered_receipt(recovered.source.inputs['receipt'].raw)
+                    return dict(result,commit_ref=recovered.source.commit.ref.as_dict(),network_accessed=True)
+                finally:
+                    reader.close()
+        except RepairWireError as error:
+            raise MemoryError(error.code) from error
 
     def publish_saved_ack(self, base_url, request, *, timeout=30, repair_profile="receipt"):
         """Explicitly share one actually saved receipt through an ACK source.

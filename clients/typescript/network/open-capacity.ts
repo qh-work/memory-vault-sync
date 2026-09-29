@@ -103,7 +103,7 @@ export class CapacityAuthority{
   }
   reserve(service:string,reservationId:string,inputDigest:string,chargeBytes:number,retainUntil:number,
     options:{owner:string;operation_id:string}):boolean{
-    this.writeLock();if(!['ack','repair_index','contact_directory'].includes(service))fail('invalid_service');
+    this.writeLock();if(!['ack','repair_index','contact_directory','mailbox'].includes(service))fail('invalid_service');
     for(const value of [reservationId,options.owner,options.operation_id])if(typeof value!=='string'||/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.exec(value)?.[0]!==value)fail('invalid_reservation');
     if(typeof inputDigest!=='string'||/^[0-9a-f]{64}$/.exec(inputDigest)?.[0]!==inputDigest)fail('invalid_reservation');
     number(chargeBytes,1);number(retainUntil);

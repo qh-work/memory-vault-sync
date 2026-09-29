@@ -248,15 +248,33 @@ class OpenParticipant:
             capacity_policy=self.repair_policy.get("capacity_policy"))
         return RepairIndexService(state)
 
-    def _repair_service(self, db, packet_payload=None):
-        from memory_vault_open_repair_state import RepairAckState
+    def _repair_service(self, db, packet_payload=None, *, mailbox_workflow=False):
+        from dataclasses import replace
+        from memory_vault_open_repair_state import RepairAckState, DEFAULT_POLICY, DEFAULT_LIMITS
         from memory_vault_open_repair_service import RepairBootstrapService
+        policy=DEFAULT_POLICY
+        if mailbox_workflow or (packet_payload is not None and packet_payload.get('consumer')=='mailbox_feed'):
+            # Full-prefix verification covers several separately authorized
+            # members. Keep a finite aggregate ceiling within node limits.
+            limits=self.repair_policy.get('limit_policy') or DEFAULT_LIMITS
+            policy=replace(policy,max_signature_checks=min(512,limits['max_signature_checks']),
+                max_document_bytes=max(policy.max_document_bytes,min(2097152,2*limits['max_proof_bytes'])),
+                max_string_bytes=max(policy.max_string_bytes,min(1048576,limits['max_proof_bytes'])))
         state = RepairAckState(db, self.identity, self.descriptor,
-            encryption_identity=self.encryption_identity,
+            encryption_identity=self.encryption_identity,policy=policy,
             limit_policy=self.repair_policy.get("limit_policy"),
             capacity_policy=self.repair_policy.get("capacity_policy"))
         state.initialize()
         if packet_payload is not None:
+            if packet_payload.get("consumer") in ("mailbox_root","mailbox_feed"):
+                if packet_payload.get("kind") not in ("bootstrap.probe","bootstrap.answer","bootstrap.proof_child_request","mailbox.body_read"):
+                    raise MemoryError("open_invalid_repair_request")
+                from memory_vault_open_repair_mailbox_resources import RepairMailboxResources
+                from memory_vault_open_repair_mailbox_root import MailboxRootActivation
+                from memory_vault_open_repair_mailbox_source import MailboxRootSource, MailboxRecoveryService
+                service = MailboxRecoveryService(MailboxRootSource(MailboxRootActivation(RepairMailboxResources(state))),consumer=packet_payload['consumer'])
+                service.initialize()
+                return service
             if packet_payload.get("kind") == "ack.put_request":
                 from memory_vault_open_repair_put import RepairAckPutService
                 service = RepairAckPutService(state)
@@ -281,6 +299,13 @@ class OpenParticipant:
         from memory_vault_open_repair_state import DEFAULT_POLICY
         meter = repair_wire.RepairBudget(DEFAULT_POLICY)
         parsed = repair_wire.parse_new_wire(raw, DEFAULT_POLICY, meter)
+        if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "mailbox.source_allocate":
+            from memory_vault_open_repair_remote_setup import MailboxRemoteSetupService
+            with self.state.db() as db:
+                service = MailboxRemoteSetupService(self._repair_service(db).state,
+                    policy=self.repair_policy.get("remote_setup"))
+                service.initialize()
+                return service.handle(parsed.raw), False
         if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "ack.source_allocate":
             with self.state.db() as db:
                 return self._repair_remote_setup_service(db).handle(parsed.raw), False
@@ -296,11 +321,27 @@ class OpenParticipant:
         if type(payload) is not repair_wire._DraftDict:
             raise MemoryError("open_invalid_repair_request")
         kind = payload.get("kind")
+        if kind == 'mailbox.source_message':
+            from memory_vault_open_repair_remote_setup import MailboxRemoteMessageService
+            from memory_vault_open_delivery_state import DeliveryState
+            with self.state.db() as db:
+                service=MailboxRemoteMessageService(self._repair_service(db,mailbox_workflow=True).state,
+                    DeliveryState(db,self.identity,self.descriptor,**self.delivery_policy),
+                    policy=self.repair_policy.get('remote_setup'))
+                service.initialize()
+                return service.handle(parsed.raw),False
+        if kind in ("mailbox.source_slot", "mailbox.source_root", "mailbox.source_ready"):
+            from memory_vault_open_repair_remote_setup import MailboxRemoteSetupService
+            with self.state.db() as db:
+                service = MailboxRemoteSetupService(self._repair_service(db).state,
+                    policy=self.repair_policy.get("remote_setup"))
+                service.initialize()
+                return service.activate(parsed.raw), False
         if kind == "ack.source_setup":
             with self.state.db() as db:
                 return self._repair_remote_setup_service(db).handle(parsed.raw), False
         from memory_vault_open_repair_index_service import KINDS as INDEX_KINDS
-        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "ack.bind_request") and kind not in INDEX_KINDS:
+        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "mailbox.body_read", "ack.bind_request") and kind not in INDEX_KINDS:
             raise MemoryError("open_invalid_repair_request")
         digest = meter._hash(parsed.raw)
         packet = dict(raw=parsed.raw, ref=dict(namespace="meta", key=digest, raw_sha256=digest, size=len(parsed.raw)))
@@ -308,6 +349,14 @@ class OpenParticipant:
             if kind in INDEX_KINDS:
                 return self._repair_index_service(db).handle(kind, packet).raw, False
             service = self._repair_service(db, payload)
+            if payload.get("consumer") in ("mailbox_root","mailbox_feed"):
+                if kind == "bootstrap.probe":
+                    return service.challenge(packet)["raw"], False
+                if kind == "bootstrap.answer":
+                    return service.answer(packet), False
+                return service.child(packet, body=kind == 'mailbox.body_read'), True
+            if kind == 'mailbox.body_read':
+                raise MemoryError('open_invalid_repair_request')
             if kind == "bootstrap.probe":
                 result, child = service.challenge(packet).raw, False
             elif kind == "bootstrap.answer":

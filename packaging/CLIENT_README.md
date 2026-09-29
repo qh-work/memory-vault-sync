@@ -1,35 +1,25 @@
-# Memory Vault v0.28.0-alpha.0.10 — authorized full client
+# Memory Vault v0.28.0-alpha.0.11 — authorized full client
 
-This alpha.0.10 candidate adds independent remote source preparation using
-only the sender's configuration and a selected public origin/key, plus durable
-setup and bind recovery across lost replies. The Python Agent can enable contact
-using an already configured node's public key ID. These workflows connect
-ordinary memory delivery to independent original-receipt recovery. Source
-requests, used work, authority observations and exact retry responses survive
-restart. Separate A/B publication consents are required; a directory lease alone
-is never a read capability. See the [directory guide](docs/OPEN_ACK_DIRECTORY.md).
-Message movement, automatic repair and global reliability remain unfinished.
-The earlier encrypted delivery, selected-memory sharing and current-fact scorer
-are retained. Exact validation belongs to the source-bound release record.
+This candidate adds retained mailbox provisioning, sender admission, encrypted
+index recovery, cold message reads and restart-safe memory import to the Python
+Agent. The original delivery node can be offline during recovery. Independent
+ACK publication/recovery uses separate original grants and updates the sender's
+real outbox. Retries retain exact requests and local status history.
 
-The Python and native TypeScript open clients add encrypted messages and selected original
-memory sharing after explicit first-contact approval. Recipient-saved receipts
-follow local validation and durable save. Participants operate their own finite
-nodes and exchange signed introductions; no central service or project-operated
-public seed is supplied. Node and agent setup commands are included in the full
-client archive. Ordinary clients need no public listener.
+Use the [open-network quickstart](plugins/memory-vault-client/docs/OPEN_NETWORK_QUICKSTART.md)
+and [mailbox guide](plugins/memory-vault-client/docs/OPEN_NETWORK_CONTACT.md).
+Nodes explicitly enable finite remote setup; participants keep their own Vault,
+identities and author-trust policies. Contact or mailbox permission alone does
+not authorize execution or enrolling an author as trusted.
 
-Messages use the original approved delivery node. The separate, explicitly
-authorized ACK source retains original saved-message receipts for independent
-recovery. Replacement-node message repair remains unfinished. Both clients
-share the same wire protocol and existing Vault. The Python node hosts delivery
-and ACK recovery; the native TypeScript node hosts routing and first contact.
-Validation results and their exact source bindings are in the release record. Memory content never grants execution authority or automatically
-enrolls an author as trusted.
+Python hosts the complete new mailbox workflow; native TypeScript retains its
+existing independent networking and includes mailbox wire/proof support.
+Automatic replacement-node message repair and full native mailbox-client parity
+remain unfinished. There is no project-operated public seed or verified
+thousand-agent/global-availability result. Use the source-bound release record
+for actual validation and compare archive bytes with published checksums.
 
-[Open-network quickstart](plugins/memory-vault-client/docs/OPEN_NETWORK_QUICKSTART.md).
-
-This full-client package targets **v0.28.0-alpha.0.10 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.11 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

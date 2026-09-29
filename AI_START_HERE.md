@@ -1,5 +1,13 @@
 # Memory Vault: connect, remember, exchange, continue
 
+The Python Agent now supports [retained mailbox provisioning and recovery](docs/OPEN_NETWORK_CONTACT.md):
+receivers provision and register a mailbox, senders submit their existing ciphertext,
+and ordinary receives recover messages and selected memories under independent
+current read checks. Saved receipts use separate return/recovery authority.
+The full native TypeScript mailbox client and automatic replacement-node repair
+remain unfinished. The release record distinguishes packaged workflow checks
+from the still-pending full cloud regression.
+
 This release adds [independent remote source preparation](docs/OPEN_ACK_PROVISIONING.md) and
 [independent consent commands](docs/OPEN_ACK_PREPARATION.md), connecting a new
 selected-memory send to [directory receipt recovery](docs/OPEN_ACK_DIRECTORY.md).
@@ -14,7 +22,7 @@ READ/bootstrap grants to discover and retrieve the original signed receipt.
 The publication and recovery commands retain exact original bytes and durable
 work limits. Message movement and automatic repair remain unfinished.
 
-**v0.28.0-alpha.0.10 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+**v0.28.0-alpha.0.11 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
 to bind your existing Vault and signing identity to an independent open transport,
 join through one or two actual signed node introductions, explicitly approve a
 finite delivery, and exchange encrypted chat or selected original memories.
