@@ -57,6 +57,65 @@ def upload_root(network_config, request_path, output, *, timeout=30, repair_prof
     return _upload_mailbox(network_config, request_path, output, timeout=timeout, repair_profile=repair_profile, source_state='root')
 
 
+def reserve_mailbox(network_config, request_path, output, *, source_state, timeout=30, repair_profile=None):
+    """Reserve real target capacity, then sign only this maintainer's assignment."""
+    if source_state not in ('root', 'feed', 'message'):
+        raise wire.RepairWireError('repair_invalid_request_bundle')
+    feed = source_state != 'root'
+    names = ('node', 'manifest', 'custody', 'reservation') + (('sender_reservation',) if feed else ())
+    request, output, limits = _request(request_path, output,
+        'memory-vault-open-mailbox-'+source_state+'-copy-reservation-request/v1',
+        set(names) | {'root_key', 'owner', 'source', 'source_storage_epoch', 'intent', 'originals', 'current_statuses'}
+            | ({'slot_key', 'sender'} if feed else set()) | ({'envelope_ref'} if source_state == 'message' else set()),
+        repair_profile or 'unbound')
+    if feed: history._slot(request['slot_key'], request['root_key'])
+    if type(request['originals']) is not list or not 1 <= len(request['originals']) <= 64:
+        raise wire.RepairWireError('repair_invalid_request_bundle')
+    if type(request['current_statuses']) is not list or not 1 <= len(request['current_statuses']) <= 16:
+        raise wire.RepairWireError('repair_invalid_status')
+    entries = {name: _entry(request[name]) for name in names}
+    originals = [_entry(value) for value in request['originals']]
+    statuses = [_entry(value) for value in request['current_statuses']]
+    if type(request['intent']) is not dict or request['intent'].get('root_key') != request['root_key']:
+        raise wire.RepairWireError('repair_invalid_request_bundle')
+    def resolver():
+        result = wire.LocalRawResolver(DEFAULT_POLICY, wire.RepairBudget(DEFAULT_POLICY))
+        for entry in originals:
+            ref = wire.raw_ref(entry['ref'])
+            if result.put(ref.namespace, ref.key, entry['raw']).ref != ref:
+                raise wire.RepairWireError('repair_ref_mismatch')
+        return result
+    context = dict(expected_owner=request['owner'], expected_source=request['source'],
+        source_storage_epoch=request['source_storage_epoch'], current_statuses=statuses, limit_policy=limits)
+    if feed:
+        context.update(expected_slot=request['slot_key'], expected_sender=request['sender'],
+            sender_reservation_entry=entries['sender_reservation'])
+    else: context['expected_root'] = request['root_key']
+    if source_state == 'message': context['expected_envelope_ref'] = request['envelope_ref']
+    journal_type, client_type = {
+        'root': (MailboxRootCopyPreparation, MailboxRootCopyUploadClient),
+        'feed': (MailboxFeedCopyPreparation, MailboxFeedCopyUploadClient),
+        'message': (MailboxMessageCopyPreparation, MailboxMessageCopyUploadClient)}[source_state]
+    with OpenNetworkClient(_absolute_path(network_config)) as network, network.participant.state.db() as db:
+        journal = journal_type(db, network.identity, network.encryption, policy=DEFAULT_POLICY)
+        client = client_type(journal, encryption_identity=network.encryption,
+            transport=network.participant.transport, allow_loopback=network.participant.transport.allow_loopback)
+        try:
+            result = client.reserve(_base(entries['node']), entries['manifest'], resolver(), entries['custody'],
+                entries['reservation'], request['intent'], target_node_entry=entries['node'], timeout=timeout, **context)
+            assigned = journal.prepare_reservation(entries['manifest'], resolver(), entries['custody'],
+                entries['reservation'], request['intent'], offer_entry=result['offer'], at=int(time.time()), **context)
+        finally: client.close()
+    evidence = dict(schema_version='memory-vault-open-mailbox-'+source_state+'-copy-reservation-result/v1',
+        state='capacity_reserved_and_assigned', root_key=request['root_key'],
+        target=request['intent']['target'], target_storage_epoch=request['intent']['target_storage_epoch'],
+        allocation=_encoded(result['allocation']['raw'], wire.raw_ref(result['allocation']['ref'])),
+        offer=_encoded(result['offer']['raw'], wire.raw_ref(result['offer']['ref'])),
+        assignment=_encoded(assigned['assignment']['raw'], wire.raw_ref(assigned['assignment']['ref'])),
+        vault_modified=False, recipient_saved=False)
+    return _output(output, evidence)
+
+
 def upload_feed(network_config, request_path, output, *, timeout=30, repair_profile=None):
     return _upload_mailbox(network_config, request_path, output, timeout=timeout, repair_profile=repair_profile, source_state='feed')
 

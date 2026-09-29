@@ -215,6 +215,14 @@ class AckCopyUploadClient:
         return self._reserve(base,manifest_entry,resolver,custody_entry,consent_entry,intent,
             target_node_entry=target_node_entry,timeout=timeout,source_state='occupied',**context)
 
+    reservation_request_kind = 'ack.copy_allocate'
+    reservation_response_kind = 'ack.copy_allocation'
+
+    def _reservation_preparer(self, source_state):
+        return {'unbound': self.journal.prepare_reservation_unbound,
+            'empty': self.journal.prepare_reservation_empty,
+            'occupied': self.journal.prepare_reservation_occupied}[source_state]
+
     def _reserve(self,base,manifest_entry,resolver,custody_entry,consent_entry,intent,*,target_node_entry,timeout,source_state,**context):
         """Obtain a remote offer after original reservation-disclosure checks.
 
@@ -229,7 +237,7 @@ class AckCopyUploadClient:
         with self.lock:
             self.source_state=source_state
             self.deadline=time.monotonic()+timeout
-            prepare={'unbound':self.journal.prepare_reservation_unbound,'empty':self.journal.prepare_reservation_empty,'occupied':self.journal.prepare_reservation_occupied}[source_state]
+            prepare=self._reservation_preparer(source_state)
             prepared=prepare(manifest_entry,resolver,custody_entry,consent_entry,intent,
                 at=self._now(),budget=resolver.budget,**context)
             self.intent=allocation=prepared['allocation'];self.status_stamp=prepared['status_stamp']
@@ -239,14 +247,14 @@ class AckCopyUploadClient:
             # namespace cannot collide with an upload's original job ID.
             self.job='\0reservation:'+self.plan.intent['job_id']
             self._open_network(base,target_node_entry,budget)
-            request=wire.build_new_wire(dict(schema_version=resource.SCHEMA,kind='ack.copy_allocate',
+            request=wire.build_new_wire(dict(schema_version=resource.SCHEMA,kind=self.reservation_request_kind,
                 caller=self.journal.keys,allocation=encode_entry(allocation)),self.policy,budget).raw
             def check(raw,b):
                 if raw!=request:wire._fail('repair_copy_upload_conflict')
             def verify(raw,q,b):
                 value=wire.parse_new_wire(raw,self.policy,b).value
                 wire.object_fields(value,{'schema_version','kind','offer'})
-                if value['schema_version']!=resource.SCHEMA or value['kind']!='ack.copy_allocation':wire._fail('repair_invalid_response')
+                if value['schema_version']!=resource.SCHEMA or value['kind']!=self.reservation_response_kind:wire._fail('repair_invalid_response')
                 offered=decode_entry(value['offer'],self.policy,b)
                 offer=index._signed(offered,self.plan.intent['target']['signing_key'],'resource.offer',index.OFFER_FIELDS,self.policy,b)
                 o=offer.payload;i=self.plan.intent

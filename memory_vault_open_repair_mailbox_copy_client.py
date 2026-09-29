@@ -32,6 +32,8 @@ class MailboxRootCopyUploadClient(AckCopyUploadClient):
     commit_fields = COMMIT_FIELDS
     history_role = 'history.mailbox_root'
     verify_replica = staticmethod(verify_mailbox_root_replica)
+    reservation_request_kind = 'mailbox.copy_allocate'
+    reservation_response_kind = 'mailbox.copy_allocation'
 
     def _commit_bound(self):
         return None
@@ -55,8 +57,18 @@ class MailboxRootCopyUploadClient(AckCopyUploadClient):
         if source_state != 'root': wire._fail('repair_copy_scope')
         return self.journal.prepare_upload_root
 
-    def _reserve(self, *args, **options):
-        wire._fail('repair_copy_preparation_required')
+    def reserve(self, base, manifest_entry, resolver, custody_entry, reservation_entry, intent, *,
+            target_node_entry, timeout=60, **context):
+        return self._reserve(base, manifest_entry, resolver, custody_entry, reservation_entry, intent,
+            target_node_entry=target_node_entry, timeout=timeout, source_state=self.upload_state, **context)
+
+    def _reservation_preparer(self, source_state):
+        if source_state != self.upload_state: wire._fail('repair_copy_scope')
+        return self.journal.prepare_reservation
+
+    def _reserve(self, *args, source_state, **options):
+        if source_state != self.upload_state: wire._fail('repair_copy_scope')
+        return super()._reserve(*args, source_state=source_state, **options)
 
     def _expected(self, budget):
         return dict(expected_subject=self.journal.keys, expected_target=self.plan.intent['target'],

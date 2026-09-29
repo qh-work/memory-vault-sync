@@ -461,6 +461,9 @@ def main(argv=None):
                             ("copy-upload-empty", "retain the exact bound slot and its complete original history"),
                             ("copy-reserve-occupied", "reserve an existing receipt replica with explicit recipient consent"),
                             ("copy-upload-occupied", "copy an existing receipt with all three original history generations"),
+                            ("copy-reserve-root", "reserve space for an independently authorized mailbox directory copy"),
+                            ("copy-reserve-feed", "reserve a message index copy with separate sender consent"),
+                            ("copy-reserve-message", "reserve ciphertext space with separate sender consent"),
                             ("copy-upload-root", "upload an independently authorized mailbox directory replica"),
                             ("copy-upload-feed", "upload an exact message index with independent sender disclosure"),
                             ("copy-upload-message", "store exact original ciphertext with independent message authority"),
@@ -473,7 +476,7 @@ def main(argv=None):
         recover.add_argument("--request", required=True, type=Path, help="private original request bundle")
         recover.add_argument("--output", required=True, type=Path, help="new private evidence file; never overwritten")
         recover.add_argument("--timeout", type=float, default=30)
-        recover.add_argument("--repair-profile", choices=("unbound", "receipt", "receipt-index") + (("mailbox",) if name in ("copy-upload-root", "copy-upload-feed", "recover-replica-root", "recover-replica-feed", "copy-upload-message", "receive-replica-message") else ()),
+        recover.add_argument("--repair-profile", choices=("unbound", "receipt", "receipt-index") + (("mailbox",) if name in ("copy-reserve-root", "copy-reserve-feed", "copy-reserve-message", "copy-upload-root", "copy-upload-feed", "recover-replica-root", "recover-replica-feed", "copy-upload-message", "receive-replica-message") else ()),
             help="explicit client acceptance ceiling; never changes the source's signed limits")
     for name in ("configure-replica","configure-replica-empty","configure-replica-occupied","configure-replica-root","configure-replica-feed","configure-replica-message"):
         configure = commands.add_parser(name, help="install separately signed replica return consents locally")
@@ -485,6 +488,10 @@ def main(argv=None):
         if args.command in {"configure-replica","configure-replica-empty","configure-replica-occupied","configure-replica-root","configure-replica-feed","configure-replica-message"}:
             result = configure_replica(args.node_config, args.request, args.output,
                 source_state="message" if args.command.endswith("-message") else "feed" if args.command.endswith("-feed") else "root" if args.command.endswith("-root") else "occupied" if args.command.endswith("-occupied") else "empty" if args.command.endswith("-empty") else "unbound")
+        elif args.command in {"copy-reserve-root", "copy-reserve-feed", "copy-reserve-message"}:
+            from memory_vault_open_repair_mailbox_copy_admin import reserve_mailbox
+            result = reserve_mailbox(args.network_config, args.request, args.output,
+                source_state=args.command.rsplit("-", 1)[1], timeout=args.timeout, repair_profile=args.repair_profile)
         elif args.command in {"copy-upload-root", "copy-upload-feed", "recover-replica-root", "recover-replica-feed", "copy-upload-message", "receive-replica-message"}:
             from memory_vault_open_repair_mailbox_copy_admin import upload_root, upload_feed, recover_root, recover_feed, upload_message, receive_message
             method={'copy-upload-root':upload_root,'copy-upload-feed':upload_feed,'recover-replica-root':recover_root,'recover-replica-feed':recover_feed,'copy-upload-message':upload_message,'receive-replica-message':receive_message}[args.command]

@@ -69,6 +69,45 @@ class MailboxRootCopyAdminTests(admin_fixture._AdminFixture, unittest.TestCase):
         self.assertFalse(self.vault.exists())
         self.assertEqual({path: path.read_bytes() for path in self.originals}, self.originals)
 
+    def test_reservation_command_requires_operator_opt_in_and_reuses_real_assignment(self):
+        from memory_vault_open_repair_copy_resources import remote_copy_policy
+        from tests.test_open_repair_mailbox_reservation import MailboxReservationTests
+        self.owner_config('target')
+        h = self.h
+        material = MailboxReservationTests()
+        material.configure_reservation(h)
+        self.request = dict(schema_version='memory-vault-open-mailbox-root-copy-reservation-request/v1',
+            node=self.node, root_key=h.root_key, owner=h.owner, source=h.source.target,
+            source_storage_epoch=h.source.node['payload']['storage_epoch'], intent=material.intent,
+            originals=[self.encode(h.saved['pack'])], current_statuses=[self.encode(e) for e in material.statuses],
+            manifest=self.encode(h.saved['manifest']), custody=self.encode(h.custody),
+            reservation=self.encode(material.reservation))
+        code, output, error = self.call('copy-reserve-root')
+        self.assertEqual((code, output), (1, ''))
+        self.assertFalse(self.output.exists())
+        self.remote.participant.repair_policy['remote_mailbox_copy'] = remote_copy_policy(dict(enabled=True))
+        self.request_path = self.directory / 'enabled.json'
+        code, output, error = self.call('copy-reserve-root')
+        self.assertEqual((code, error), (0, ''))
+        evidence = json.loads(self.output.read_bytes())
+        self.assertEqual(evidence['state'], 'capacity_reserved_and_assigned')
+        self.assertEqual(stat.S_IMODE(self.output.stat().st_mode), 0o600)
+        payload = json.loads(unb64url(evidence['assignment']['raw_base64url'], maximum=65536))['payload']
+        self.assertEqual(payload['operation_mask'], 70)
+        self.assertEqual(payload['resource_offer_ref'], evidence['offer']['ref'])
+        self.request_path = self.directory / 'retry-reservation.json'
+        code, output, error = self.call('copy-reserve-root')
+        self.assertEqual(json.loads(error)['error'], 'repair_output_exists')
+        self.request_path = self.directory / 'restarted-reservation.json'
+        self.output = self.directory / 'restarted-result.json'
+        self.remote.restart()
+        self.remote.participant.repair_policy['remote_mailbox_copy'] = remote_copy_policy(dict(enabled=True))
+        code, output, error = self.call('copy-reserve-root')
+        self.assertEqual((code, error), (0, ''))
+        self.assertEqual(json.loads(self.output.read_bytes()), evidence)
+        self.assertFalse(self.vault.exists())
+        self.assertEqual({path: path.read_bytes() for path in self.originals}, self.originals)
+
     def configure_node(self, custody):
         from memory_vault_open_node import NODE_CONFIG
         h = self.h; state = h.p.state

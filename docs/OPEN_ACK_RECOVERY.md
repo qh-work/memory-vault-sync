@@ -660,6 +660,39 @@ an empty slot again, generate new consent, or clear the source's budget. After
 that window expires it reports that reconciliation is required; A can use the
 independent occupied recovery path instead of assuming the upload failed.
 
+## Mailbox replica capacity reservation (development after alpha.0.26)
+
+The maintainer can now request a real destination reservation with
+`copy-reserve-root`, `copy-reserve-feed`, or `copy-reserve-message` before upload.
+The destination operator must enable `--enable-remote-mailbox-copy` alongside
+repair and provider services. The client verifies the destination keys and
+storage epoch before sending the consented opaque intent.
+
+```sh
+python -B memory_vault_open_repair_admin.py copy-reserve-message \
+  --network-config /absolute/private/maintainer/open.json \
+  --request /absolute/private/message-reservation.json \
+  --output /absolute/private/message-reservation-result.json --repair-profile mailbox
+```
+
+The request schema is `memory-vault-open-mailbox-<kind>-copy-reservation-request/v1`,
+where `<kind>` is `root`, `feed`, or `message`. All three require `node`, `root_key`,
+`owner`, `source`, `source_storage_epoch`, `manifest`, `custody`, `reservation`,
+`intent`, `originals`, and `current_statuses`. Feed and message requests also
+require `slot_key`, `sender`, and `sender_reservation`; message requests additionally
+require the exact `envelope_ref`. Entries use the `{raw_base64url, ref}` format
+below. `originals` contains the original source history packs.
+
+Owner and sender reservation consents must already bind the exact intent, original
+custody and selected destination. Authenticated revocations remain effective after
+restart, including when another input fails. A successful result has state
+`capacity_reserved_and_assigned` and includes the real `allocation`, destination
+`offer`, and maintainer `assignment` entries for the corresponding upload bundle.
+Assignments authorize only COPY, READ and RETAIN. Independent disclosures and
+replica-return consents remain separate steps; reservation itself copies no
+messages or memories. Repeating the exact request reuses the existing reservation
+within its original finite window. Output files are private and never overwritten.
+
 ## Mailbox directory replica commands (development after alpha.0.25)
 
 The Python client can upload an explicitly selected mailbox directory replica,

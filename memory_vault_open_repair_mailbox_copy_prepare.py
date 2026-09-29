@@ -1,8 +1,8 @@
-"""Private, durable preparation of fully authorized discovery-root uploads.
+"""Private, durable mailbox reservations and fully authorized replica uploads.
 
-The input already contains M's allocation, P's real offer, M's assignment and
-independent B/S disclosures. Importing that exact transcript cannot reserve
-capacity, add a delegation or manufacture another participant's permission.
+Reservation preparation signs M's request only after original consent; a real
+P offer is required before M assigns it. Upload requires the resulting exact
+transcript and independent disclosures; neither path signs for another party.
 """
 import json
 import secrets
@@ -44,6 +44,22 @@ class MailboxRootCopyPreparation(AckCopyPreparation):
     def _body_children(self, plan, entry, budget):
         if entry is not None: wire._fail('repair_copy_scope')
         return ()
+
+    def prepare_reservation(self, manifest_entry, resolver, custody_entry, reservation_entry, intent, *,
+            expected_owner, expected_source, source_storage_epoch, current_statuses, at, limit_policy,
+            expected_root=None, expected_slot=None, expected_sender=None, expected_envelope_ref=None,
+            sender_reservation_entry=None, offer_entry=None, budget=None):
+        """Sign only this maintainer's request, or assign a real signed offer."""
+        from memory_vault_open_repair_mailbox_reservation import prepare
+        _require(budget is None or budget is resolver.budget)
+        selection = {name: value for name, value in (('expected_root', expected_root),
+            ('expected_slot', expected_slot), ('expected_sender', expected_sender),
+            ('expected_envelope_ref', expected_envelope_ref)) if value is not None}
+        return prepare(self, manifest_entry, resolver, custody_entry, reservation_entry, intent,
+            expected_owner=expected_owner, expected_source=expected_source,
+            source_storage_epoch=source_storage_epoch, current_statuses=current_statuses,
+            at=at, limit_policy=limit_policy, selection=selection,
+            sender_reservation_entry=sender_reservation_entry, offer_entry=offer_entry)
 
     def prepare_upload_root(self, manifest_entry, resolver, custody_entry, allocation_entry, offer_entry,
             assignment_entry, reservation_entry, owner_disclosure_entry, source_disclosure_entry, *,
