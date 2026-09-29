@@ -39,6 +39,9 @@ class RepairCopyState(RepairCopyResources):
         # Service rows use this same reservation; no separate uncharged store.
         for table,columns in (
                 ('open_repair_copy_read_config','length(raw)+length(digest)'),
+                ('open_repair_copy_upload_sessions','length(intent)+length(challenge)+length(nonce)+coalesce(length(answer),0)+coalesce(length(handle),0)+coalesce(length(closed),0)+coalesce(length(result),0)'),
+                ('open_repair_copy_upload_chunks','length(response)'),
+                ('open_repair_copy_upload_work','0'),
                 ('open_repair_bootstrap_usage','0'),('open_repair_bootstrap_work','0'),
                 ('open_repair_bootstrap_challenges','length(probe)+length(probe_ref)+length(challenge)+length(challenge_ref)+length(nonce)+coalesce(length(response),0)+coalesce(length(handle_ref),0)'),
                 ('open_repair_bootstrap_handles','length(response)'),('open_repair_bootstrap_requests','0')):

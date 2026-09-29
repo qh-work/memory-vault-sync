@@ -2683,3 +2683,34 @@ work accounting, restart-safe upload, full original/current COPY verification
 and the atomic `RepairCopyState.commit_unbound` transition are required before
 publishing replica custody. This wire extension alone does not expose a copy
 HTTP endpoint or complete remote repair.
+
+### Persistent copy-stage receiver (development after the alpha.0.15 candidate)
+
+`RepairCopyUpload` receives an `ack_copy_unbound` stage under an existing exact
+`RepairCopyResources` reservation in the node's protected transport database.
+Its local entry points are `intent(resource_id, entry)`, `answer`, `child` and
+`close`; `commit_closed` then requires independently held owner/source/maintainer
+bindings and reruns the complete original and current COPY verification.
+
+Intent/challenge, nonce, answer/handle, exact frames and responses, close/result
+and actual work are durable. Only the signing caller may consume the reservation;
+its encryption answer must succeed before a handle permits chunks. Exact retries
+return saved results; a newly signed request for an already occupied child offset
+is a conflict. Restart preserves both progress and used work. Gaps and incorrect
+whole-child hashes cannot close. A closed stage is still provisional: it contains
+no replica custody until the separately authorized atomic commit succeeds.
+
+The receiver intersects node, reservation and exchange deadlines without renewal.
+It shares the copy request ledger and its 64-attempt local ceiling with later copy
+and read preparation. Interrupted attempts retain their full signature allowance;
+successful and denied admitted attempts retain actual checks and wire charges.
+Stage bytes consume the original job-byte budget, while signatures, responses,
+sessions and replay metadata consume the original metadata capacity. Existing
+shared capacity must remain present. No private staging database or extra resource
+reservation is created, and no live obligations are evicted to make room.
+
+This storage integration is not yet routed through the HTTP node or exposed by a
+remote-copy client. The sending caller must verify advance disclosure and target
+dual possession before transfer. HTTP orchestration, operator admission, current
+status refresh and later occupied/empty variants remain separate unfinished work.
+The immutable alpha.0.15 candidate does not contain this later receiver.
