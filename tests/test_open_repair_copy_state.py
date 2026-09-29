@@ -154,6 +154,59 @@ class CopyStateTests(unittest.TestCase):
             source_storage_epoch=self.f['expected']['target_storage_epoch'],expected_maintainer=self.base.keys,
             limit_policy=self.f['expected']['limit_policy'])
 
+    def portable(self):
+        custody=self.commit();rid=json.loads(custody['raw'])['payload']['resource']['resource_id']
+        held=self.destination.state._one('SELECT * FROM open_repair_copy_commits WHERE resource_id=?',(rid,))
+        manifest=self.destination.state._saved(held,'manifest')
+        # Copy actual committed bytes to an independent client. No operator DB,
+        # private target key, or caller-created authenticated wrapper is used.
+        entries=[]
+        for table in ('objects','observations'):
+            for raw,ref in self.destination.db.execute('SELECT raw,ref FROM open_repair_copy_'+table+' WHERE resource_id=?',(rid,)):
+                entries.append(dict(raw=bytes(raw),ref=json.loads(bytes(ref))))
+        expected=dict(expected_ack_slot=self.f['expected']['expected_ack_slot'],expected_owner=self.f['expected']['expected_owner'],
+            expected_source=self.f['expected']['expected_target'],source_storage_epoch=self.f['expected']['target_storage_epoch'],
+            expected_maintainer=self.base.keys,expected_target=self.destination.state.target,
+            target_storage_epoch=self.destination.state.node['payload']['storage_epoch'],limit_policy=self.f['expected']['limit_policy'])
+        return manifest,custody,entries,expected
+
+    def verify_portable(self,bundle):
+        manifest,custody,entries,expected=bundle
+        policy=self.destination.state.policy;budget=wire.RepairBudget(policy)
+        resolver=wire.LocalRawResolver(policy,budget)
+        for entry in entries:
+            ref=wire.raw_ref(entry['ref']);resolver.put(ref.namespace,ref.key,entry['raw'])
+        return authority.verify_unbound_replica_event(manifest,resolver,custody,**expected,policy=policy,budget=budget)
+
+    def test_independent_client_reconstructs_replica_without_destination_database(self):
+        bundle=self.portable();expected_source=self.f['custody']['raw']
+        self.destination.db.close();self.destination.connect()
+        for table in ('objects','observations','commits','resources'):
+            self.destination.db.execute('DELETE FROM open_repair_copy_'+table)
+        self.destination.db.commit()
+        self.f['entries']={};self.f['packs']=[];self.f['custody']=None
+        result=self.verify_portable(bundle)
+        self.assertEqual(result['state'],'historical_replica')
+        self.assertEqual(result['source'].custody.raw,expected_source)
+        self.assertEqual(result['custody'].raw,bundle[1]['raw'])
+        self.assertNotIn('object_readable',result)
+
+    def test_replica_client_requires_exact_original_reference_not_matching_hash(self):
+        bundle=self.portable()
+        missing=self.f['custody']['ref']
+        for entry in bundle[2]:
+            if entry['ref']==missing:entry['ref']=dict(missing,key='f'*64)
+        with self.assertRaises(wire.RepairWireError):self.verify_portable(bundle)
+
+    def test_replica_client_rejects_wrong_independent_source_identity(self):
+        bundle=self.portable();bundle[3]['expected_source']=bundle[3]['expected_target']
+        with self.assertRaises(wire.RepairWireError):self.verify_portable(bundle)
+
+    def test_replica_client_rejects_tampered_manifest_bytes(self):
+        bundle=self.portable();value=json.loads(bundle[0]['raw']);value['kind']='replica.changed'
+        bundle[0]['raw']=canonical_bytes(value)
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_ref_mismatch'):self.verify_portable(bundle)
+
     def test_reconstructs_history_from_destination_only_after_expiry_and_restart(self):
         custody=self.commit();rid=json.loads(custody['raw'])['payload']['resource']['resource_id']
         original=self.f['custody']['raw']

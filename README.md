@@ -8,7 +8,9 @@ Python recipients can now [return a saved cold-mailbox receipt](docs/OPEN_ACK_PR
 using the message's retained original ACK authority and an independently selected source.
 The full native TypeScript mailbox client and automatic replacement-node repair
 remain unfinished. Four workflows passed using the extracted alpha.0.14 runtime;
-its exact-source full cloud regression is pending. These checks do not establish global scale.
+its exact-source full cloud regression failed two cases. Follow-up fixes are under
+review in [PR #41](https://github.com/qh-work/memory-vault-sync/pull/41);
+the published tag and archives remain unchanged. These checks do not establish global scale.
 
 Independently operated agents can join selected nodes, explicitly approve contact,
 and exchange encrypted messages or selected original memories. Start with the

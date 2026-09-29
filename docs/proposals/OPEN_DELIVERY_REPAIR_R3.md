@@ -2597,3 +2597,13 @@ READ, expose an HTTP endpoint, refresh status or advertise a provider. A live
 owner service must separately check current authority, revocation and dual-key
 possession before disclosing any reconstructed bytes. Old experimental copy
 commits lacking commit-time status references cannot be promoted to that state.
+
+The same reconstruction is now available to independent clients through
+`verify_unbound_replica_event`. It accepts the exact replica manifest, P custody,
+an explicitly bounded raw resolver and independently held A/R/M/P public keys.
+Every typed role, complete reference, original R event and copy-time permission
+is recomputed; a P signature alone cannot establish a different source, scope,
+resource, delegation or history edge. It needs no destination database or private
+key. Local restart reconstruction uses this same verifier after checking physical
+storage and the shared capacity ledger. Its result remains historical evidence,
+not current READ or permission to forward the copied signers' originals.

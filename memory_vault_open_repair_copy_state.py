@@ -4,7 +4,6 @@ Transport callers must independently authenticate the maintainer and disclosure
 before upload. A reservation, staged bytes or a verifier result is not custody.
 """
 import json
-from types import MappingProxyType
 
 from memory_vault import canonical_bytes
 import memory_vault_open_repair_copy_authority as authority
@@ -241,42 +240,14 @@ class RepairCopyState(RepairCopyResources):
             if (reserved is None or reserved['digest']!=row['request_digest'] or reserved['charge_bytes']!=row['charge_bytes']
                     or reserved['retain_until']!=row['retain_until'] or reserved['owner']!=row['caller']
                     or reserved['operation_id']!=row['allocation_id']):wire._fail('repair_copy_ledger_missing')
-            manifest,custody,entries=self._load_inventory(row,held,budget)
-        def one(role):
-            values=entries.get(role,())
-            if len(values)!=1:wire._fail('repair_copy_commit_mismatch')
-            return values[0]
+            _,_,entries=self._load_inventory(row,held,budget)
         resolver=wire.LocalRawResolver(s.policy,budget)
-        for entry in entries.get('history.raw_pack',()):
-            ref=wire.raw_ref(entry['ref'])
-            if resolver.put(ref.namespace,ref.key,entry['raw']).ref!=ref:wire._fail('repair_ref_mismatch')
-        plan=authority.verify_unbound_copy(one('history.ack_unbound'),resolver,one('ack.slot_custody'),
-            one('copy.allocation'),one('copy.offer'),one('copy.assignment'),one('copy.reservation_consent'),
-            one('copy.owner_disclosure'),one('copy.source_disclosure'),expected_ack_slot=expected_ack_slot,
-            expected_owner=expected_owner,expected_source=expected_source,source_storage_epoch=source_storage_epoch,
-            expected_maintainer=expected_maintainer,expected_target=s.target,target_storage_epoch=s.node['payload']['storage_epoch'],
-            current_statuses=entries['copy.current_status'],at=wire.u53(custody.payload['stored_at']),
+        for values in entries.values():
+            for entry in values:
+                ref=wire.raw_ref(entry['ref'])
+                if resolver.put(ref.namespace,ref.key,entry['raw']).ref!=ref:wire._fail('repair_ref_mismatch')
+        return authority.verify_unbound_replica_event(s._saved(held,'manifest'),resolver,s._saved(held,'custody'),
+            expected_ack_slot=expected_ack_slot,expected_owner=expected_owner,expected_source=expected_source,
+            source_storage_epoch=source_storage_epoch,expected_maintainer=expected_maintainer,
+            expected_target=s.target,target_storage_epoch=s.node['payload']['storage_epoch'],
             limit_policy=limit_policy,policy=s.policy,budget=budget)
-        if plan.denial_code:wire._fail(plan.denial_code)
-        if (custody.payload['assignment_ref']!=plan.assignment.ref.as_dict()
-                or custody.payload['original_custody_ref']!=plan.source.custody.ref.as_dict()
-                or custody.payload['read_until']!=plan.read_until or custody.payload['retain_until']!=plan.retain_until):
-            wire._fail('repair_copy_commit_mismatch')
-        expected_roles={(item.role,*history._ref_tuple(item.original.ref)) for item in plan.originals}
-        for role,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
-                ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):
-            expected_roles.add((role,*history._ref_tuple(item.ref)))
-        expected_roles.add(('history.ack_unbound',*history._ref_tuple(one('history.ack_unbound')['ref'])))
-        expected_roles.update(('copy.current_status',*history._ref_tuple(item.ref)) for item in plan.statuses)
-        expected_roles.update(('history.raw_pack',*history._ref_tuple(item['pack_ref'])) for item in plan.source.manifest.manifest.value['roles'])
-        if {(item['role'],*history._ref_tuple(item['ref'])) for item in manifest['original_roles']}!=expected_roles:
-            wire._fail('repair_copy_commit_mismatch')
-        expected_edges=[]
-        for item in plan.source.manifest.manifest.value['roles']:
-            for ref in (item['document_ref'],item['pack_ref']):
-                expected_edges.append(dict(parent_ref=one('history.ack_unbound')['ref'],relation='manifest-member',child_ref=ref))
-        key=lambda e:(*history._ref_tuple(e['parent_ref']),e['relation'],*history._ref_tuple(e['child_ref']))
-        expected_edges=sorted({key(e):e for e in expected_edges}.values(),key=key)
-        if manifest['edges']!=expected_edges:wire._fail('repair_copy_commit_mismatch')
-        return dict(state='historical_replica',custody=custody,source=plan.source,authority=plan,
-            entries=MappingProxyType({role:tuple(values) for role,values in entries.items()}))

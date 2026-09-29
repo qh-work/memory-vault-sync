@@ -4,6 +4,7 @@ The returned observations must be retained before a caller acts on denial_code.
 This module does not reserve storage, persist bytes, advertise or serve a replica.
 """
 from dataclasses import dataclass
+from types import MappingProxyType
 
 import memory_vault_open_repair_ack as ack
 import memory_vault_open_repair_empty as empty
@@ -16,10 +17,93 @@ from memory_vault_open_repair_copy_prepare import CONSENT_FIELDS
 from memory_vault_open_repair_copy_resources import INTENT_FIELDS
 
 DISCLOSURE_FIELDS = resource.COMMON | frozenset('issued_at expires_at consent_id revision variant root_key assignment_ref source_custody_ref historical_manifest_ref target target_storage_epoch disclosure'.split())
+REPLICA_FIELDS = resource.COMMON | frozenset('root_key scope original_custody_ref replica_manifest_ref assignment_ref resource_offer_ref resource reservation_generation stored_at read_until retain_until'.split())
 
 
 def _same(value):
     if not value:wire._fail('repair_copy_authority_mismatch')
+
+
+def verify_unbound_replica_event(manifest_entry,resolver,custody_entry,*,expected_ack_slot,
+        expected_owner,expected_source,source_storage_epoch,expected_maintainer,expected_target,
+        target_storage_epoch,limit_policy,policy,budget):
+    """Reconstruct P's historical copy event from exact originals on any client.
+
+    No database, local identity, network or current serving authority is assumed.
+    P's signature never substitutes for the original R event or A-to-M-to-P
+    authority. A caller must separately establish live READ and disclosure rights.
+    """
+    wire._context(policy,budget)
+    if resolver.policy is not policy or resolver.budget is not budget:
+        wire._fail('repair_invalid_context')
+    target=wire.build_new_wire(expected_target,policy,budget).value
+    target_ids=resource._dual_key(target,budget)
+    custody=index._signed(custody_entry,target['signing_key'],'replica.custody',REPLICA_FIELDS,policy,budget)
+    p=custody.payload
+    history._resource(p['resource']);history._root(p['root_key'])
+    stored_at=wire.u53(p['stored_at'])
+    if (not stored_at<wire.u53(p['read_until'])<=wire.u53(p['retain_until'])
+            or wire.u53(p['reservation_generation'],1)!=1
+            or p['resource']['node_key_id']!=target_ids['signing_key_id']
+            or p['resource']['storage_epoch']!=target_storage_epoch):
+        wire._fail('repair_copy_commit_mismatch')
+    wire.object_fields(manifest_entry,{'raw','ref'})
+    ref=wire.raw_ref(manifest_entry['ref'])
+    manifest=wire.parse_new_wire(manifest_entry['raw'],policy,budget)
+    if ref.namespace!='meta' or len(manifest.raw)!=ref.size or budget._hash(manifest.raw)!=ref.raw_sha256:
+        wire._fail('repair_ref_mismatch')
+    value=wire.object_fields(manifest.value,{'schema_version','kind','root_key','scope','original_roles','physical_objects','edges'})
+    if (value['schema_version']!=resource.SCHEMA or value['kind']!='replica.manifest'
+            or p['replica_manifest_ref']!=ref.as_dict() or p['root_key']!=value['root_key']
+            or p['scope']!=value['scope'] or value['physical_objects']!=value['original_roles']
+            or not isinstance(value['original_roles'],(list,tuple)) or not 1<=len(value['original_roles'])<=128):
+        wire._fail('repair_copy_commit_mismatch')
+    entries={};previous=None
+    for row in value['original_roles']:
+        wire.object_fields(row,{'role','ref'})
+        if type(row['role']) is not str:wire._fail('repair_copy_commit_mismatch')
+        reference=wire.raw_ref(row['ref']);key=(row['role'],*history._ref_tuple(reference))
+        if previous is not None and key<=previous:wire._fail('repair_copy_commit_mismatch')
+        previous=key
+        item=resolver.resolve(reference)
+        entries.setdefault(row['role'],[]).append(dict(raw=item.raw,ref=item.ref.as_dict()))
+    def one(role):
+        values=entries.get(role,())
+        if len(values)!=1:wire._fail('repair_copy_commit_mismatch')
+        return values[0]
+    plan=verify_unbound_copy(one('history.ack_unbound'),resolver,one('ack.slot_custody'),
+        one('copy.allocation'),one('copy.offer'),one('copy.assignment'),one('copy.reservation_consent'),
+        one('copy.owner_disclosure'),one('copy.source_disclosure'),expected_ack_slot=expected_ack_slot,
+        expected_owner=expected_owner,expected_source=expected_source,source_storage_epoch=source_storage_epoch,
+        expected_maintainer=expected_maintainer,expected_target=target,target_storage_epoch=target_storage_epoch,
+        current_statuses=entries.get('copy.current_status',()),at=stored_at,
+        limit_policy=limit_policy,policy=policy,budget=budget)
+    if plan.denial_code:wire._fail(plan.denial_code)
+    if (p['assignment_ref']!=plan.assignment.ref.as_dict()
+            or p['original_custody_ref']!=plan.source.custody.ref.as_dict()
+            or p['resource_offer_ref']!=plan.offer.ref.as_dict() or p['resource']!=plan.offer.payload['resource']
+            or p['root_key']!=plan.assignment.payload['root_key'] or p['scope']!=plan.assignment.payload['scope']
+            or p['read_until']!=plan.read_until or p['retain_until']!=plan.retain_until):
+        wire._fail('repair_copy_commit_mismatch')
+    roles={(item.role,*history._ref_tuple(item.original.ref)) for item in plan.originals}
+    for role,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
+            ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):
+        roles.add((role,*history._ref_tuple(item.ref)))
+    roles.add(('history.ack_unbound',*history._ref_tuple(one('history.ack_unbound')['ref'])))
+    roles.update(('copy.current_status',*history._ref_tuple(item.ref)) for item in plan.statuses)
+    roles.update(('history.raw_pack',*history._ref_tuple(item['pack_ref'])) for item in plan.source.manifest.manifest.value['roles'])
+    edges=[]
+    for item in plan.source.manifest.manifest.value['roles']:
+        for child in (item['document_ref'],item['pack_ref']):
+            edges.append(dict(parent_ref=one('history.ack_unbound')['ref'],relation='manifest-member',child_ref=child))
+    edge_key=lambda e:(*history._ref_tuple(e['parent_ref']),e['relation'],*history._ref_tuple(e['child_ref']))
+    edges=sorted({edge_key(e):e for e in edges}.values(),key=edge_key)
+    if (roles!={(item['role'],*history._ref_tuple(item['ref'])) for item in value['original_roles']}
+            or value['edges']!=edges
+            or len({history._ref_tuple(item['ref']) for item in value['original_roles']})>plan.offer.payload['budget']['max_items']):
+        wire._fail('repair_copy_commit_mismatch')
+    return dict(state='historical_replica',custody=custody,source=plan.source,authority=plan,
+        entries=MappingProxyType({role:tuple(values) for role,values in entries.items()}))
 
 
 def source_inventory(source, reservation, policy, budget):
