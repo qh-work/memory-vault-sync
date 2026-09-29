@@ -6,6 +6,8 @@ The caller must prove the destination's dual keys before transmitting its output
 """
 import hashlib
 import json
+import secrets
+from contextlib import contextmanager
 
 from memory_vault import canonical_bytes
 import memory_vault_open_repair_ack as ack
@@ -48,6 +50,8 @@ class AckCopyPreparation:
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_prepare_jobs(job_id TEXT PRIMARY KEY,root_digest TEXT NOT NULL,intent_digest TEXT NOT NULL,consent_ref BLOB NOT NULL,request BLOB NOT NULL,ref BLOB NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_prepare_status(root_digest TEXT NOT NULL,raw_digest TEXT NOT NULL,raw BLOB NOT NULL,ref BLOB NOT NULL,PRIMARY KEY(root_digest,raw_digest))')
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_prepare_blocked(root_digest TEXT PRIMARY KEY,reason TEXT NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_prepare_uploads(job_id TEXT PRIMARY KEY,digest TEXT NOT NULL,raw BLOB NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_prepare_upload_work(id TEXT PRIMARY KEY,job_id TEXT NOT NULL,allowance INTEGER NOT NULL,actual INTEGER)')
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_prepare_assignments(job_id TEXT PRIMARY KEY,offer_ref BLOB NOT NULL,raw BLOB NOT NULL,ref BLOB NOT NULL)')
 
     def prepare_unbound(self, *args, **kwargs):
@@ -114,7 +118,7 @@ class AckCopyPreparation:
             and c['target'] == value['target'] and c['target_storage_epoch'] == value['target_storage_epoch']
             and c['issued_at'] >= source.stored_at and disclosure['intent_sha256'] == digest
             and at < wire.u53(disclosure['until']) <= maximum)
-        signers = {key['signing_key']['key_id']:key['signing_key'] for key in (owner, source_keys)}
+        signers = {key['signing_key']['key_id']:key['signing_key'] for key in (owner, source_keys, mine)}
         allowed = {key:[] for key in signers}
         for item in source.statuses:
             allowed[item.payload['signing_key']['key_id']].extend(
@@ -284,3 +288,139 @@ class AckCopyPreparation:
         self.db.execute('INSERT INTO ack_copy_prepare_assignments VALUES(?,?,?,?)',
             (intent['job_id'],canonical_bytes(offer.ref.as_dict()),raw,canonical_bytes(result['ref'])))
         return result
+
+
+    @contextmanager
+    def _upload_transaction(self):
+        _require(not self.db.in_transaction)
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            yield
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+
+    def prepare_upload_unbound(self,manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
+            reservation_entry,owner_disclosure_entry,source_disclosure_entry,*,expected_ack_slot,expected_owner,
+            expected_source,source_storage_epoch,expected_target,target_storage_epoch,current_statuses,at,limit_policy):
+        """Retain one exact outgoing stage only after original COPY/disclosure checks.
+
+        No bytes are transmitted. Destination possession must precede any send.
+        Authenticated denial observations survive even a later preparation failure.
+        """
+        import memory_vault_open_repair_copy_authority as authority
+        import memory_vault_open_repair_stage as stage
+        from memory_vault_open_repair_index_state import encode_entry,decode_entry
+        policy=self.policy;budget=resolver.budget;wire._context(policy,budget);at=wire.u53(at)
+        _require(not self.db.in_transaction and resolver.policy is policy and policy.max_signature_checks<=64)
+        def freeze(entry):
+            wire.object_fields(entry,{'raw','ref'})
+            return dict(raw=wire._snapshot(entry['raw'],policy,budget),ref=wire.raw_ref(entry['ref']).as_dict())
+        manifest_entry,custody_entry,allocation_entry,offer_entry,assignment_entry,reservation_entry,owner_disclosure_entry,source_disclosure_entry=map(freeze,
+            (manifest_entry,custody_entry,allocation_entry,offer_entry,assignment_entry,reservation_entry,owner_disclosure_entry,source_disclosure_entry))
+        if type(current_statuses) not in (list,tuple) or not 1<=len(current_statuses)<=16:wire._fail('repair_status_missing')
+        current_statuses=tuple(map(freeze,current_statuses))
+        binding=wire.build_new_wire(dict(slot=expected_ack_slot,owner=expected_owner,source=expected_source,target=expected_target),policy,budget).value
+        expected_ack_slot,expected_owner,expected_source,expected_target=(binding[k] for k in ('slot','owner','source','target'))
+        bound=self.db.execute('SELECT value FROM ack_copy_prepare_binding WHERE id=1').fetchone()
+        _require(bound is not None and bytes(bound[0])==canonical_bytes(self.keys))
+        allocation=wire.parse_new_wire(allocation_entry['raw'],policy,budget).value['payload']
+        intent=allocation['intent'];job=intent['job_id'];root=intent['root_key']
+        root_digest=budget._hash(wire._canonical(root,budget))
+        saved=self.db.execute('SELECT request,ref FROM ack_copy_prepare_jobs WHERE job_id=?',(job,)).fetchone()
+        assigned=self.db.execute('SELECT raw,ref FROM ack_copy_prepare_assignments WHERE job_id=?',(job,)).fetchone()
+        _require(saved is not None and assigned is not None
+            and dict(raw=bytes(saved[0]),ref=json.loads(bytes(saved[1])))==allocation_entry
+            and dict(raw=bytes(assigned[0]),ref=json.loads(bytes(assigned[1])))==assignment_entry)
+        ticket=secrets.token_hex(16);allowance=policy.max_signature_checks
+        with self._upload_transaction():
+            blocked=self.db.execute("SELECT reason FROM ack_copy_prepare_blocked WHERE root_digest IN (?, '*')",(root_digest,)).fetchone()
+            if blocked:wire._fail(blocked[0])
+            count,used=self.db.execute('SELECT count(*),coalesce(sum(coalesce(actual,allowance)),0) FROM ack_copy_prepare_upload_work WHERE job_id=?',(job,)).fetchone()
+            maximum=min(64,intent['budget']['max_requests'])
+            if count>=maximum or used+allowance>maximum*64:wire._fail('repair_copy_work_capacity')
+            self.db.execute('INSERT INTO ack_copy_prepare_upload_work VALUES(?,?,?,NULL)',(ticket,job,allowance))
+        def observe(item):
+            with self._upload_transaction():
+                held=self.db.execute('SELECT raw,ref FROM ack_copy_prepare_status WHERE root_digest=? AND raw_digest=?',(root_digest,item.ref.raw_sha256)).fetchone()
+                if held is not None:return
+                count,size=self.db.execute('SELECT count(*),coalesce(sum(length(raw)+length(ref)),0) FROM ack_copy_prepare_status').fetchone()
+                encoded=canonical_bytes(item.ref.as_dict())
+                if count>=64 or size+len(item.raw)+len(encoded)>1048576:
+                    self.db.execute("INSERT OR IGNORE INTO ack_copy_prepare_blocked VALUES('*','repair_copy_journal_capacity')")
+                    return
+                self.db.execute('INSERT INTO ack_copy_prepare_status VALUES(?,?,?,?)',(root_digest,item.ref.raw_sha256,item.raw,encoded))
+        try:
+            plan=authority.verify_unbound_copy(manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
+                reservation_entry,owner_disclosure_entry,source_disclosure_entry,expected_ack_slot=expected_ack_slot,
+                expected_owner=expected_owner,expected_source=expected_source,source_storage_epoch=source_storage_epoch,
+                expected_maintainer=self.keys,expected_target=expected_target,target_storage_epoch=target_storage_epoch,
+                current_statuses=current_statuses,at=at,limit_policy=limit_policy,policy=policy,budget=budget,on_observed=observe)
+            signers={p['signing_key']['key_id']:p['signing_key'] for p in (expected_owner,expected_source,self.keys)}
+            previous=[]
+            # All prior facts, including expired ones, remain lower bounds.
+            status_rows=list(self.db.execute('SELECT raw,ref FROM ack_copy_prepare_status WHERE root_digest=? ORDER BY raw_digest',(root_digest,)))
+            status_stamp=tuple((bytes(row[0]),bytes(row[1])) for row in status_rows)
+            for raw,ref in status_rows:
+                payload=wire.parse_new_wire(bytes(raw),policy,budget).value['payload']
+                issuer=payload['signing_key']['key_id']
+                if issuer not in signers:wire._fail('repair_status_mismatch')
+                previous.append(status.authenticate_status_original(dict(raw=bytes(raw),ref=json.loads(bytes(ref))),
+                    expected_root=root,expected_signing_key=signers[issuer],at=payload['issued_at'],
+                    allowed_scopes=[dict(scope_kind=e['scope_kind'],scope_id=e['scope_id']) for e in payload['entries']],policy=policy,budget=budget))
+            empty._history_floors((*plan.source.statuses,*previous,*plan.statuses),previous=previous,current=plan.statuses)
+            if plan.denial_code:wire._fail(plan.denial_code)
+            for old in previous:
+                for e in old.payload['entries']:
+                    if any(old.payload['signing_key']==need['signer'] and (e['scope_kind'],e['scope_id'])==(need['scope_kind'],need['scope_id'])
+                           and e['status']=='revoked' for need in plan.obligations):wire._fail('repair_authority_revoked')
+            rows={}
+            def add(role,item):
+                if hasattr(item,'raw'):item=index._entry(item)
+                reference=wire.raw_ref(item['ref'])
+                if len(item['raw'])!=reference.size or budget._hash(item['raw'])!=reference.raw_sha256:wire._fail('repair_ref_mismatch')
+                rows[(role,*history._ref_tuple(reference))]=dict(role=role,entry=item)
+            for item in plan.originals:add(item.role,item.original)
+            for role,item in (('history.ack_unbound',manifest_entry),('copy.allocation',plan.allocation),('copy.offer',plan.offer),
+                    ('copy.assignment',plan.assignment),('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):add(role,item)
+            for member in plan.source.manifest.manifest.value['roles']:add('history.raw_pack',resolver.resolve(member['pack_ref']))
+            for item in plan.statuses:add('copy.current_status',item)
+            children=[rows[k] for k in sorted(rows)]
+            manifest=stage.make_stage_manifest(root_key=root,scope=intent['scope'],consumer='ack_copy_unbound',
+                children=[dict(index=i,role=e['role'],ref=e['entry']['ref']) for i,e in enumerate(children)],policy=policy,budget=budget)
+            semantic=dict(allocation_ref=allocation_entry['ref'],assignment_ref=assignment_entry['ref'],manifest=manifest.value,
+                children=[dict(role=e['role'],entry=encode_entry(e['entry'])) for e in children],target=expected_target,
+                target_storage_epoch=target_storage_epoch)
+            document=wire.build_new_wire(semantic,policy,budget);semantic=document.value
+            digest=budget._hash(document.raw)
+            until=min(at+60,plan.read_until,plan.retain_until,plan.offer.payload['reservation_until'],allocation['expires_at'])
+            if at>=until:wire._fail('repair_resource_expired')
+            options=dict(expected_subject=self.keys,expected_target=expected_target,target_storage_epoch=target_storage_epoch,
+                at=at,expected_consumer='ack_copy_unbound',policy=policy,budget=budget)
+            with self._upload_transaction():
+                blocked=self.db.execute("SELECT reason FROM ack_copy_prepare_blocked WHERE root_digest IN (?, '*')",(root_digest,)).fetchone()
+                if blocked:wire._fail(blocked[0])
+                current_stamp=tuple((bytes(row[0]),bytes(row[1])) for row in self.db.execute('SELECT raw,ref FROM ack_copy_prepare_status WHERE root_digest=? ORDER BY raw_digest',(root_digest,)))
+                if current_stamp!=status_stamp:wire._fail('repair_status_changed')
+                prior=self.db.execute('SELECT digest,raw FROM ack_copy_prepare_uploads WHERE job_id=?',(job,)).fetchone()
+                if prior is not None:
+                    if prior[0]!=digest:wire._fail('repair_copy_upload_conflict')
+                    held=wire.parse_new_wire(bytes(prior[1]),policy,budget).value
+                    if held['semantic']!=semantic:wire._fail('repair_storage_corrupt')
+                    outgoing=decode_entry(held['intent'],policy,budget)
+                    checked=stage.verify_stage_intent(outgoing,**options)
+                    if checked.payload['manifest']!=manifest.value or checked.payload['expires_at']>until:wire._fail('repair_copy_upload_conflict')
+                    return dict(intent=outgoing,children=tuple(children),expires_at=checked.payload['expires_at'])
+                outgoing=stage.make_stage_intent(self.identity,allocation_id=intent['allocation_id'],manifest=manifest.value,expires_at=until,**options)
+                raw=wire.build_new_wire(dict(semantic=semantic,intent=encode_entry(outgoing)),policy,budget).raw
+                count,size=self.db.execute('SELECT count(*),coalesce(sum(length(raw)),0) FROM ack_copy_prepare_uploads').fetchone()
+                if count>=16 or size+len(raw)>4194304 or len(raw)>intent['budget']['max_job_bytes']:wire._fail('repair_copy_journal_capacity')
+                self.db.execute('INSERT INTO ack_copy_prepare_uploads VALUES(?,?,?)',(job,digest,raw))
+                return dict(intent=index._entry(outgoing),children=tuple(children),expires_at=until)
+        finally:
+            actual=budget.snapshot()['signature_checks']
+            with self._upload_transaction():
+                held=self.db.execute('SELECT allowance,actual FROM ack_copy_prepare_upload_work WHERE id=?',(ticket,)).fetchone()
+                if held is None or held[1] is not None or not 0<=actual<=held[0]:wire._fail('repair_service_work_corrupt')
+                self.db.execute('UPDATE ack_copy_prepare_upload_work SET actual=? WHERE id=?',(actual,ticket))

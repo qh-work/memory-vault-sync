@@ -36,11 +36,19 @@ class CopyUploadTests(unittest.TestCase):
         rows.extend(dict(role='history.raw_pack',**e) for e in h.f['packs'])
         self.rows=sorted(rows,key=lambda e:(e['role'],e['ref']['namespace'],e['ref']['key'],e['ref']['raw_sha256'],e['ref']['size']))
         self.upload=RepairCopyUpload(self.state);self.upload.initialize()
-        manifest=stage.make_stage_manifest(root_key=h.base.intent['root_key'],scope=h.base.intent['scope'],consumer='ack_copy_unbound',
-            children=[dict(index=i,role=e['role'],ref=e['ref']) for i,e in enumerate(self.rows)],
-            policy=self.policy,budget=wire.RepairBudget(self.policy))
-        self.intent=entry(stage.make_stage_intent(h.f['signers']['maintainer'],allocation_id=h.base.intent['allocation_id'],
-            manifest=manifest.value,expires_at=h.base.now+40,**self.options()))
+        prepared=self.prepare_upload()
+        self.assertEqual(self.rows,[dict(role=e['role'],**e['entry']) for e in prepared['children']])
+        self.intent=prepared['intent']
+
+    def prepare_upload(self,current=None):
+        h=self.h;journal=h.base.journal;resolver,_,_=load_fixture(h.f,journal.policy)
+        statuses=current if current is not None else [signed_entry(p,s,'current_'+str(i)) for i,(p,s) in enumerate(zip(h.status_values,h.status_signers))]
+        return journal.prepare_upload_unbound(h.f['manifest'],resolver,h.f['custody'],h.request,h.offer,h.assignment,
+            h.base.consent,h.disclosures['owner'],h.disclosures['source'],
+            expected_ack_slot=self.context['expected_ack_slot'],expected_owner=self.context['expected_owner'],
+            expected_source=self.context['expected_source'],source_storage_epoch=self.context['source_storage_epoch'],
+            expected_target=self.state.target,target_storage_epoch=self.state.node['payload']['storage_epoch'],
+            current_statuses=statuses,at=h.base.now,limit_policy=h.f['expected']['limit_policy'])
 
     def options(self):
         return dict(expected_subject=self.h.base.keys,expected_target=self.state.target,
@@ -131,6 +139,24 @@ class CopyUploadTests(unittest.TestCase):
         self.restart();self.assertTrue(self.upload.answer(self.rid,answer)['raw'])
         self.assertEqual(self.state.db.execute('SELECT requests FROM open_repair_copy_work WHERE resource_id=?',(self.rid,)).fetchone()[0],3)
         self.assertEqual(self.state.db.execute('SELECT count(*) FROM open_repair_copy_upload_work WHERE actual IS NOT NULL').fetchone()[0],3)
+
+    def test_sender_prepared_upload_is_exact_after_journal_restart(self):
+        self.h.base.local.db.close();self.h.base.local.connect();self.h.base.open_journal()
+        prepared=self.prepare_upload()
+        self.assertEqual(prepared['intent'],self.intent)
+        self.assertEqual(self.h.base.local.db.execute('SELECT count(*) FROM ack_copy_prepare_uploads').fetchone()[0],1)
+
+    def test_sender_retains_revocation_and_refuses_old_upload_after_restart(self):
+        import copy
+        values=copy.deepcopy(self.h.status_values);values[0]['revision']+=1
+        for e in values[0]['entries']:e['status']='revoked'
+        current=[signed_entry(p,s,'denied_current_'+str(i)) for i,(p,s) in enumerate(zip(values,self.h.status_signers))]
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_authority_revoked'):
+            self.prepare_upload(current)
+        self.h.base.local.db.close();self.h.base.local.connect();self.h.base.open_journal()
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_status_rollback|repair_authority_revoked'):
+            self.prepare_upload()
+        self.assertEqual(self.h.base.local.db.execute('SELECT count(*) FROM ack_copy_prepare_uploads').fetchone()[0],1)
 
 
 class CopyUploadHTTPTests(unittest.TestCase):

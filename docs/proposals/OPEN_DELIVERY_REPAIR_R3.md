@@ -2743,3 +2743,14 @@ advance disclosure and target dual possession, persist outbound retries, and
 coordinate current status. Automated orchestration and later occupied/empty
 variants remain unfinished.
 The immutable alpha.0.15 candidate does not contain this later receiver.
+
+The maintainer preparation journal now retains the exact outgoing unbound stage
+and its complete original children after verifying current COPY and disclosure
+authority. Reopening the journal returns those same bytes within the original
+window; it cannot silently replace a previously prepared upload. Authenticated
+status observations, including revocations, survive a failed preparation and
+restart. Preparation reserves bounded verification work before admitting the
+operation and preserves interrupted charges. It does not transmit bytes or prove
+target possession. The network orchestrator must establish the destination's
+dual-key possession before sending this retained output. This sender preparation
+is also later than the immutable alpha.0.15 candidate.
