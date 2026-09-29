@@ -20,6 +20,7 @@ from memory_vault_trust import Identity
 
 CONFIG_SCHEMA = "memory-vault-open-client-config/v1"
 MAILBOX_CONNECT_SCHEMA = "memory-vault-open-mailbox-connect/v1"
+ACK_CONNECT_SCHEMA = "memory-vault-open-ack-connect/v1"
 
 
 class OpenNetworkClient:
@@ -58,6 +59,8 @@ class OpenNetworkClient:
         self.close()
 
     def connect(self, *, invitation=None, request_id=None):
+        if isinstance(invitation, dict) and invitation.get('schema_version') == ACK_CONNECT_SCHEMA:
+            return self._ack_connect(invitation)
         if isinstance(invitation, dict) and invitation.get('schema_version') == MAILBOX_CONNECT_SCHEMA:
             return self._mailbox_connect(invitation)
         if invitation is not None:
@@ -237,6 +240,62 @@ class OpenNetworkClient:
             allow_loopback=self.participant.transport.allow_loopback)
         discovered = DiscoveredAckRecoveryClient(OpenProviderClient(self.participant, self.encryption), reader)
         return asyncio.run(discovered.recover(**arguments))
+
+    def _ack_connect(self, invitation):
+        """Explicit original-grant operations through the existing Agent facade."""
+        from memory_vault_open_repair_wire import RepairWireError
+        from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS,INDEX_WORKFLOW_LIMITS
+        value=document(invitation,maximum=65536)
+        object_fields(value,{'schema_version','action','base_url','repair_profile','request'})
+        profiles={'receipt':RECEIPT_WORKFLOW_LIMITS,'receipt-index':INDEX_WORKFLOW_LIMITS}
+        if not isinstance(value['repair_profile'],str) or value['repair_profile'] not in profiles:raise MemoryError('open_invalid_repair_policy')
+        request=dict(value['request'])
+        def decode(entry):
+            object_fields(entry,{'raw','ref'})
+            if not isinstance(entry['raw'],str):raise MemoryError('open_invalid_ack_request')
+            return dict(raw=entry['raw'].encode('utf-8'),ref=entry['ref'])
+        try:
+            if value['action']=='return_receipt':
+                from memory_vault_open_repair_receipt import REQUEST_FIELDS
+                object_fields(request,REQUEST_FIELDS)
+                for name in REQUEST_FIELDS:
+                    if name.endswith('_entry'):request[name]=decode(request[name])
+                if not isinstance(request['current_statuses'],list):raise MemoryError('open_invalid_ack_request')
+                request['current_statuses']=[decode(entry) for entry in request['current_statuses']]
+                result=self.publish_saved_ack(value['base_url'],request,repair_profile=value['repair_profile'])
+                return dict(state='retained_at_ack_source',message_id=request['message_id'],
+                    receipt_ref=result.source.inputs['receipt'].ref.as_dict(),commit_ref=result.source.commit.ref.as_dict(),
+                    from_local_history=result.from_local_history,network_accessed=not result.from_local_history)
+            if value['action']!='recover_receipt':raise MemoryError('open_invalid_ack_request')
+            from memory_vault_open_repair_client import AckOwnerRecoveryClient,MailboxSetupJournal
+            object_fields(request,{'target_node_entry','expected_target','expected_ack_slot','root_entry','read_entry','bootstrap_entry',
+                'expected_receipt_writer','expected_message_id','expected_envelope_ref'})
+            for name in ('target_node_entry','root_entry','read_entry','bootstrap_entry'):request[name]=decode(request[name])
+            plan=canonical_bytes(dict(kind='ack.owner_recovery',owner=self.identity.public_descriptor(),
+                **{name:request[name] for name in ('expected_target','expected_ack_slot','expected_receipt_writer','expected_message_id','expected_envelope_ref')},
+                grants={name:request[name]['ref'] for name in ('root_entry','read_entry','bootstrap_entry')}))
+            key=hashlib.sha256(plan).hexdigest()
+            with self.participant.state.db() as db:
+                journal=MailboxSetupJournal(db);journal.initialize()
+                exists=db.execute('SELECT 1 FROM open_mailbox_setup_jobs WHERE job_key=?',(key,)).fetchone() is not None
+                if exists:journal.start(key,plan)
+                known=journal.statuses(key) if exists else ()
+                def observed(value):
+                    # Reserve a new journal only after a relevant signed status
+                    # is authenticated; malformed invitations consume no slot.
+                    journal.start(key,plan)
+                    journal.observe(key,value)
+                reader=AckOwnerRecoveryClient(self.identity,self.encryption,limit_policy=profiles[value['repair_profile']],
+                    transport=self.participant.transport,allow_loopback=self.participant.transport.allow_loopback,
+                    status_observer=observed)
+                try:
+                    recovered=reader.recover_occupied(value['base_url'],known_statuses=known,**request)
+                    result=self._delivery().accept_recovered_receipt(recovered.source.inputs['receipt'].raw)
+                    return dict(result,commit_ref=recovered.source.commit.ref.as_dict(),network_accessed=True)
+                finally:
+                    reader.close()
+        except RepairWireError as error:
+            raise MemoryError(error.code) from error
 
     def publish_saved_ack(self, base_url, request, *, timeout=30, repair_profile="receipt"):
         """Explicitly share one actually saved receipt through an ACK source.

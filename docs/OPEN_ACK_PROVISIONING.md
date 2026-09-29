@@ -195,3 +195,50 @@ To advertise this occupied source through one explicitly selected directory,
 continue with [directory publication preparation](OPEN_ACK_PREPARATION.md).
 Selecting `receipt-index` alone does not sign B's directory publication consent
 or publish anything to a directory.
+
+
+## Returning and recovering receipts through the Agent interface
+
+The Python Agent `connect` operation also accepts the closed local schema
+`memory-vault-open-ack-connect/v1`. These operations require the same original
+ACK grants and binding as the commands above; contact approval or mailbox READ
+authority does not supply them. They neither create an ACK source nor discover
+one implicitly.
+
+Use `action: "return_receipt"` at B with `base_url`, `repair_profile` (`receipt`
+or `receipt-index`), and the existing saved-receipt publication `request`:
+`message_id`, `envelope_ref`, `ack_slot`, `owner`, `target`, `target_node_entry`,
+`root_entry`, `write_entry`, `bootstrap_entry`, `binding_entry`,
+`current_statuses`, `read_until`, and `retain_until`. Each original entry is
+`{"raw": "exact original UTF-8 text", "ref": original_ref}`; do not parse and
+reserialize its signed text. Status entries use the same encoding. For example:
+
+```python
+returned = agent_b.handle({
+    "op": "connect",
+    "invitation": {
+        "schema_version": "memory-vault-open-ack-connect/v1",
+        "action": "return_receipt",
+        "base_url": ack_source_url,
+        "repair_profile": "receipt",
+        "request": saved_receipt_request,
+    },
+})
+```
+
+B signs consent for its actual saved receipt and retains the publication journal
+in its existing protected database. A completed repeat uses the retained result
+and reports `from_local_history: true`, not a fresh remote observation.
+
+At A, use the same schema with `action: "recover_receipt"`. Its request has
+`target_node_entry`, `expected_target`, `expected_ack_slot`, `root_entry`,
+`read_entry`, `bootstrap_entry`, `expected_receipt_writer`,
+`expected_message_id`, and `expected_envelope_ref`. Original entries have the
+same text encoding. A verifies current READ authority and B's disclosure,
+persists authenticated status observations, retrieves the original B receipt,
+and binds it to the exact local outbox envelope and recipient. Success updates
+that send's acknowledgement. Repeating the original `send` then reports
+`endpoint_validated: true` without contacting the original delivery node.
+Unknown local messages or conflicting receipts refuse that update. Successful
+ACK-source retention alone does not establish that A has recovered the receipt,
+and a saved receipt does not establish that an agent understood the content.

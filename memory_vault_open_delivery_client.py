@@ -439,6 +439,26 @@ class OpenDeliveryClient:
                 "acknowledgement_pending": acknowledgement is None,
                 **({"pending_code": pending_code} if pending_code is not None else {})}
 
+    def accept_recovered_receipt(self, receipt):
+        """Bind an independently recovered B receipt to the actual local send."""
+        value=document(receipt,maximum=4096)
+        message_id=value.get('payload',{}).get('message_id')
+        opaque(message_id)
+        with self.participant.state.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT * FROM open_delivery_outbox WHERE message_id=?',(message_id,)).fetchone()
+            if row is None or row['envelope'] is None or row['session'] is None:
+                raise MemoryError('open_delivery_message_not_found')
+            session=document(bytes(row['session']),maximum=MAX_SESSION_BYTES)
+            verify_recipient_receipt(value,recipient_signing_key=self._keys(session)['recipient_signing_key'],
+                sender_key_id=self.identity.key_id,message_id=message_id,envelope_ref=envelope_ref(bytes(row['envelope'])))
+            raw=canonical_bytes(value)
+            if row['acknowledgement'] is not None and bytes(row['acknowledgement'])!=raw:
+                raise MemoryError('open_delivery_receipt_conflict')
+            db.execute('UPDATE open_delivery_outbox SET acknowledgement=? WHERE message_id=?',(raw,message_id))
+        return dict(state='validated_saved',message_id=message_id,request_id=row['request_id'],
+            endpoint_validated=True,acknowledgement_pending=False)
+
     def _contact_sessions(self, *, outgoing, recipient=None):
         """Read actual bounded contact decisions, without creating approval."""
         category, decision_category = ("outgoing", "result") if outgoing else ("incoming", "decision")
