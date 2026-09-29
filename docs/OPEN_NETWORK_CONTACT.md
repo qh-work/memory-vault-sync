@@ -240,3 +240,35 @@ multi-message capacity promises. The HTTP mailbox workflow bounds its local
 aggregate verification to 512 signatures and its persisted proof encoding to
 2 MiB, further constrained by the configured node limits and signed resources.
 No grant or resource ceiling is enlarged when a request runs out of budget.
+
+
+### Provision and register a receiver mailbox
+
+The receiver can provision its chosen mailbox source through `connect`. Supply
+an explicit `MailboxSetupBuilder` plan with the receiver's root/slot identifiers,
+the selected sender and source identities, and finite resource budgets/windows.
+The node must advertise the supplied signed descriptor and explicitly enable
+remote mailbox setup. No public discovery result grants this permission.
+
+```python
+ready = receiver.handle({"op": "connect", "invitation": {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "provision", "base_url": source_url,
+    "target_node_entry": json_entry(current_node_entry),
+    "plan": mailbox_plan, "sender": sender_descriptor,
+    "setup_until": setup_until, "read_until": read_until,
+    "retain_until": retain_until,
+}})
+```
+
+The operation persists exact allocation, slot, root and readiness exchanges,
+independently recovers the source proof, and registers the receiver only after
+verification. Its `mailbox_ready` result includes a setup ID, receiver ID and
+source custody reference. Subsequent ordinary `receive` calls poll that mailbox.
+A partially completed request resumes its stored exchanges. After a successful
+setup, an identical retry restores the saved local registration without spending
+another remote proof budget: it returns `mailbox_configured`,
+`network_accessed: false` and `source_rechecked: false`. That local result does
+not claim the source is still online or currently authorizes reads. Every
+receive independently checks current authority. Changed inputs for the same
+setup are rejected. Independent ACK return still needs its separate grants.

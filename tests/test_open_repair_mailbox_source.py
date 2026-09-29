@@ -438,6 +438,42 @@ class MailboxSourceTests(unittest.TestCase):
             remote=self.http_service(h,remote_setup=True)
             node_entry=signed_entry(dict(h.f["docs"]["descriptor"]["payload"],base_url=remote.base_url),
                 h.f["signers"]["target"],"synthetic_provision_node")
+            if 'agent' in self._testMethodName:
+                from tests.test_open_agent import configured_agent
+                from types import SimpleNamespace
+                from unittest.mock import patch
+                from memory_vault_open_client import MAILBOX_CONNECT_SCHEMA
+                from memory_vault_open_repair_resource import _dual_key
+                with patch('time.time',return_value=h.now):
+                    agent,identity,encryption,_=configured_agent(SimpleNamespace(root=h.path.parent/'agent-provision',nodes=[json.loads(node_entry['raw'])]))
+                    owner=dict(signing_key=identity.public_descriptor(),encryption_key=encryption.public_descriptor())
+                    selected_root=dict(root,owner=_dual_key(owner,RepairBudget(DEFAULT_POLICY)),root_id='synthetic_agent_root')
+                    selected_slot=dict(slot,root_key=selected_root)
+                    selected_plan=dict(plan,root_key=selected_root,slot_key=selected_slot)
+                    invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='provision',base_url=remote.base_url,
+                        target_node_entry=dict(raw=node_entry['raw'].decode(),ref=node_entry['ref']),plan=selected_plan,
+                        sender=dict(signing_key=h.f['signers']['writer'].public_descriptor(),encryption_key=h.f['encryption']['writer'].public_descriptor()),
+                        setup_until=h.now+60,read_until=h.now+100,retain_until=h.now+100)
+                    result=agent.handle(dict(op='connect',invitation=invitation))
+                    self.assertTrue(result['ok'],result)
+                    self.assertEqual(result['result']['state'],'mailbox_ready')
+                    with patch('memory_vault_open_transport.OpenHTTPTransport.request_repair',side_effect=AssertionError('cached setup accessed network')):
+                        again=agent.handle(dict(op='connect',invitation=invitation))
+                    self.assertTrue(again['ok'],again)
+                    self.assertEqual(again['result']['state'],'mailbox_configured')
+                    self.assertFalse(again['result']['network_accessed'])
+                    self.assertFalse(again['result']['source_rechecked'])
+                    with patch('memory_vault_open_transport.OpenHTTPTransport.request_repair',side_effect=AssertionError('changed setup accessed network')):
+                        changed=agent.handle(dict(op='connect',invitation=dict(invitation,retain_until=h.now+99)))
+                    self.assertFalse(changed['ok'])
+                    self.assertEqual(changed['error']['code'],'repair_setup_journal_conflict')
+                    self.assertEqual(again['result']['setup_id'],result['result']['setup_id'])
+                    listed=agent.handle(dict(op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='list')))
+                    self.assertEqual(listed['result']['mailboxes'],[result['result']['receiver_id']])
+                    with agent._network() as network:
+                        with network.participant.state.db() as local:
+                            self.assertEqual(local.execute('SELECT count(*) FROM open_mailbox_setup_steps').fetchone()[0],4)
+                return
             path=h.path.parent/"recipient-setup.sqlite3";path.touch(mode=0o600)
             db=sqlite3.connect(path);self.addCleanup(db.close)
             journal=MailboxSetupJournal(db)
@@ -620,6 +656,9 @@ class MailboxSourceTests(unittest.TestCase):
             builder.slot_documents(allocations,wrong,at=h.now,expires_at=h.now+600)
 
     def test_custody_message_draft_preserves_ciphertext_and_sender_originals_after_restart(self):
+        self.test_custody_setup_builder_creates_actual_root_without_handwritten_authorities()
+
+    def test_custody_recovery_remote_agent_provision_registers_mailbox(self):
         self.test_custody_setup_builder_creates_actual_root_without_handwritten_authorities()
 
     def test_custody_recovery_remote_provision_resumes_after_process_restart(self):

@@ -150,6 +150,49 @@ class OpenNetworkClient:
         from memory_vault_open_repair_resource import _dual_key
         value=document(invitation,maximum=65536)
         action=value.get('action')
+        if action=='provision':
+            object_fields(value,{'schema_version','action','base_url','target_node_entry','plan','sender','setup_until','read_until','retain_until'})
+            from memory_vault_open_repair_client import MailboxSetupClient,MailboxSetupJournal,MailboxSetupBuilder
+            from memory_vault_open_repair_bind import decode_entry
+            object_fields(value['target_node_entry'],{'raw','ref'})
+            if not isinstance(value['target_node_entry']['raw'],str):raise MemoryError('open_invalid_mailbox_request')
+            policy=replace(DEFAULT_POLICY,max_signature_checks=512);budget=RepairBudget(policy)
+            try:
+                builder=MailboxSetupBuilder(self.identity,self.encryption,value['plan'],policy=policy)
+                sender=build_new_wire(value['sender'],policy,budget).value
+                if _dual_key(sender,budget)!=builder.plan['sender']:raise MemoryError('open_invalid_mailbox_receiver')
+                owner=dict(signing_key=self.identity.public_descriptor(),encryption_key=self.encryption.public_descriptor())
+                key=hashlib.sha256(build_new_wire(dict(owner=owner,root_key=builder.plan['root_key']),policy,budget).raw).hexdigest()
+                binding=hashlib.sha256(canonical_bytes(value)).hexdigest()
+                with self.participant.state.db() as db:
+                    exists=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='open_mailbox_setup_completions'").fetchone()
+                    cached=None if exists is None else db.execute('SELECT binding,config,result FROM open_mailbox_setup_completions WHERE setup_id=?',(key,)).fetchone()
+                if cached is not None:
+                    if cached['binding']!=binding:raise MemoryError('repair_setup_journal_conflict')
+                    self._mailbox_connect(document(bytes(cached['config']),maximum=65536))
+                    return dict(document(bytes(cached['result']),maximum=8192),state='mailbox_configured',network_accessed=False,source_rechecked=False)
+                client=MailboxSetupClient(self.identity,self.encryption,policy=policy,limit_policy=builder.plan['limits'],
+                    allow_loopback=self.participant.transport.allow_loopback,transport=self.participant.transport)
+                with self.participant.state.db() as db:
+                    journal=MailboxSetupJournal(db)
+                    result=client.provision(value['base_url'],target_node_entry=dict(raw=value['target_node_entry']['raw'].encode('utf-8'),ref=value['target_node_entry']['ref']),
+                        plan=value['plan'],journal=journal,setup_until=value['setup_until'],read_until=value['read_until'],retain_until=value['retain_until'])
+                    request=build_new_wire(document(journal.step(key,'slot')[0],maximum=65536),policy,RepairBudget(policy)).value
+                    entries={name:decode_entry(request['payload']['entries'][name],policy,RepairBudget(policy)) for name in ('slot','read','maintenance','bootstrap')}
+                config=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='register',base_url=value['base_url'],
+                    limit_policy=value['plan']['limits'],expected_slot=value['plan']['slot_key'],expected_sender=value['sender'],expected_target=value['plan']['target'],
+                    target_node_entry=value['target_node_entry'],slot_entries={name:dict(raw=item['raw'].decode('utf-8'),ref=item['ref']) for name,item in entries.items()})
+                registered=self._mailbox_connect(config)
+                ready=dict(state='mailbox_ready',setup_id=key,receiver_id=registered['receiver_id'],network_accessed=True,source_rechecked=True,
+                    custody_ref=result.source['custody'].ref.as_dict(),receipt_return='separate_authority_required')
+                with self.participant.state.db() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    db.execute('CREATE TABLE IF NOT EXISTS open_mailbox_setup_completions(setup_id TEXT PRIMARY KEY,binding TEXT NOT NULL,config BLOB NOT NULL,result BLOB NOT NULL)')
+                    prior=db.execute('SELECT binding FROM open_mailbox_setup_completions WHERE setup_id=?',(key,)).fetchone()
+                    if prior is not None and prior['binding']!=binding:raise MemoryError('repair_setup_journal_conflict')
+                    db.execute('INSERT OR IGNORE INTO open_mailbox_setup_completions VALUES(?,?,?,?)',(key,binding,canonical_bytes(config),canonical_bytes(ready)))
+            except RepairWireError as error:raise MemoryError(error.code) from error
+            return ready
         if action=='prepare':
             object_fields(value,{'schema_version','action','message_id','slot_entries','destination_entry','attempt_until','consent_until'})
             from memory_vault_open_repair_client import MailboxMessageDraftStore
