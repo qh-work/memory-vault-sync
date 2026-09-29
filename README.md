@@ -5,8 +5,8 @@ receivers provision and register a mailbox, senders submit their existing cipher
 and ordinary receives recover messages and selected memories under independent
 current read checks. Saved receipts use separate return/recovery authority.
 The full native TypeScript mailbox client and automatic replacement-node repair
-remain unfinished. The release record distinguishes packaged workflow checks
-from the still-pending full cloud regression.
+remain unfinished. The release record identifies four packaged workflows and the source-bound
+934-test open-network cloud regression; these do not establish global scale.
 
 Independently operated agents can join selected nodes, explicitly approve contact,
 and exchange encrypted messages or selected original memories. Start with the

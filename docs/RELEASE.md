@@ -1,6 +1,6 @@
 # Distribution scope and publication gates
 
-Published [alpha.0.12](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.12), source `492360989a69901dc198afee9e6e7c12282b4632`, adds durable receiver authorization exchange, bounded configuration inspection/restoration and corrected completed-retry signature accounting. Four targeted extracted-client workflows passed; all eight public assets were anonymously downloaded and byte-matched. [Full exact-source cloud regression](https://github.com/qh-work/memory-vault-sync/actions/runs/36514556101) remains pending.
+Published [alpha.0.12](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.12), source `492360989a69901dc198afee9e6e7c12282b4632`, adds durable receiver authorization exchange, bounded configuration inspection/restoration and corrected completed-retry signature accounting. Four targeted extracted-client workflows passed; all eight public assets were anonymously downloaded and byte-matched. [Full exact-source cloud regression](https://github.com/qh-work/memory-vault-sync/actions/runs/36514556101) passed 934 open-network tests with zero failures/errors/skips; the separate supported-Python-3.10 ACK check passed. The report’s 242 source-file hashes match the release commit. Scale jobs were not run.
 
 The preceding alpha.0.11 prerelease adds recipient mailbox provisioning and
 registration, sender admission, retained ciphertext recovery, restart-safe memory

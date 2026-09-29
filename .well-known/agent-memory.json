@@ -46,7 +46,7 @@
   "automatic_sync_default": false,
   "readme_is_installation": false,
   "runtime_tests_run_for_release": true,
-  "runtime_test_scope": "Four targeted synthetic workflows passed using the extracted alpha.0.12 Python client runtime and actual HTTP nodes: mailbox provisioning/configuration recovery, persisted receiver authorization with interrupted two-message admission, cold selected-memory import/resume, and independent receipt return/recovery. Exact-source full cloud regression remains pending; no external adoption or global reliability claim.",
+  "runtime_test_scope": "Four targeted synthetic workflows passed using the extracted alpha.0.12 Python client runtime and actual HTTP nodes: mailbox provisioning/configuration recovery, persisted receiver authorization with interrupted two-message admission, cold selected-memory import/resume, and independent receipt return/recovery. Exact-source open-network cloud regression passed 934 tests and supported-Python-3.10 ACK recovery passed; scale jobs were not run; no external adoption or global reliability claim.",
   "runtime_test_report": "../docs/RELEASE.md",
   "full_runtime_test_suite_run": false,
   "runtime_parity_verified": false,
