@@ -253,6 +253,12 @@ class OpenParticipant:
         from memory_vault_open_repair_state import RepairAckState, DEFAULT_POLICY, DEFAULT_LIMITS
         from memory_vault_open_repair_service import RepairBootstrapService
         policy=DEFAULT_POLICY
+        if packet_payload is not None and packet_payload.get('kind')=='ack.put_request':
+            # Occupied admission authenticates the retained empty/unbound
+            # closures plus B's receipt and current originals. Separate root
+            # status adds real work; stay inside the configured node ceiling.
+            limits=self.repair_policy.get('limit_policy') or DEFAULT_LIMITS
+            policy=replace(policy,max_signature_checks=min(96,limits['max_signature_checks']))
         if mailbox_workflow or (packet_payload is not None and packet_payload.get('consumer')=='mailbox_feed'):
             # Full-prefix verification covers several separately authorized
             # members. Keep a finite aggregate ceiling within node limits.

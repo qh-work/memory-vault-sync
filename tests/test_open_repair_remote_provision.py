@@ -98,6 +98,31 @@ class RemoteProvisionTests(unittest.TestCase):
             self.assertEqual(bytes(row['acknowledgement']), original)
         self.assertEqual(self.delivery.host.processes, {})
 
+    def test_existing_combined_owner_status_resumes_without_replacing_originals(self):
+        from memory_vault_open_repair_remote_provision import RemoteAckSourceProvisioner
+        original_step=RemoteAckSourceProvisioner._step
+        def legacy_setup(client,name,make):
+            result=original_step(client,name,make)
+            if name=='setup':
+                base=[('ack.root_authority',result['root']),('ack.read_grant',result['read']),('bootstrap.grant',result['bootstrap'])]
+                original_step(client,'owner_status',lambda:client._status(base,2))
+            return result
+        output=self.root/'legacy-combined-source.json'
+        with patch.object(RemoteAckSourceProvisioner,'_step',new=legacy_setup):
+            first=prepare_remote_source(self.delivery.a.network_config,output,**self.options)
+        with self.delivery.a._network() as network:
+            with network.participant.state.db() as db:
+                before=bytes(db.execute('SELECT steps FROM open_repair_source_provision').fetchone()[0])
+        self.assertNotIn('root_status',json.loads(before))
+        self.source.stop(0);self.source.start(0)
+        resumed={key:value for key,value in self.options.items() if key not in ('recipient','text')}
+        second=prepare_remote_source(self.delivery.a.network_config,self.root/'legacy-combined-retry.json',**resumed)
+        self.assertEqual(json.loads(output.read_bytes()),json.loads((self.root/'legacy-combined-retry.json').read_bytes()))
+        with self.delivery.a._network() as network:
+            with network.participant.state.db() as db:
+                after=bytes(db.execute('SELECT steps FROM open_repair_source_provision').fetchone()[0])
+        self.assertEqual(before,after)
+
     def test_completed_bind_with_expired_carrier_reconciles_without_new_envelope(self):
         original_bind = OwnerAckBindClient.bind
         def shorter_bind(client, *args, **kwargs):
@@ -179,7 +204,7 @@ class RemoteProvisionTests(unittest.TestCase):
             changed = dict(roles)
             for role in ('current.status.ack_root','current.status.ack_read',
                          'current.status.ack_owner_bootstrap','current.status.ack_slot'):
-                changed[role] = [reference]
+                if roles[role]==[held]:changed[role] = [reference]
             learned.update(entry)
             return verify_current(client,source,changed,dict(originals)|{reference:raw},target,budget,*args,**kwargs)
         output = self.root / 'remote-revoked-current.json'

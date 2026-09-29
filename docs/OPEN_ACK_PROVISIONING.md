@@ -289,3 +289,19 @@ that send's acknowledgement. Repeating the original `send` then reports
 Unknown local messages or conflicting receipts refuse that update. Successful
 ACK-source retention alone does not establish that A has recovered the receipt,
 and a saved receipt does not establish that an agent understood the content.
+
+## Development: separately signed root status
+
+The development client creates a separate whole A-signed root-status original
+for new remote sources. The source accepts the optional `root_status` in the
+signed setup request, checks its exact root-authority scope, and retains it in
+both the actual history and current-status ledger. Read, owner-bootstrap and slot
+status remain in a separate whole original. This prepares the authorization data
+needed for mailbox ACK configuration without disclosing A's read configuration
+or projecting entries out of a signature. Mailbox attempts do not yet carry this
+ACK configuration.
+
+New split-status setups require a source running this development extension;
+the published alpha.0.13 source does not accept the extra setup field. Previously
+journaled combined-status setups resume with their original signed bytes. A
+rejected or interrupted setup does not authorize message encryption.

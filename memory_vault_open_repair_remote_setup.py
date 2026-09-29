@@ -112,7 +112,7 @@ class RepairRemoteSetupService:
             return dict(kind='allocate',owner=owner,allocation_id=intent['allocation_id'],request_id=p['request_id'],
                 allocation=entry,entries=[entry],retain_until=intent['windows']['retain_until'],payload=p)
         signed = wire.object_fields(value,{'payload','proof'})
-        p = wire.object_fields(signed['payload'],SETUP_FIELDS)
+        p = wire.object_fields(signed['payload'],SETUP_FIELDS | ({'root_status'} if isinstance(signed['payload'],dict) and 'root_status' in signed['payload'] else set()))
         if p['schema_version'] != SCHEMA or p['kind'] != 'ack.source_setup':
             wire._fail('repair_remote_setup_mismatch')
         resource._dual_key(p['subject'],budget); resource._dual_key(p['target'],budget)
@@ -133,6 +133,7 @@ class RepairRemoteSetupService:
         if row is None or json.loads(bytes(row['owner_keys'])) != p['subject'] or json.loads(bytes(row['offer_ref'])) != offer_ref.as_dict():
             wire._fail('repair_remote_setup_mismatch')
         entries = {name:decode_entry(p[name],budget.policy,budget) for name in ('node','root','read','bootstrap','activation','owner_status')}
+        if 'root_status' in p:entries['root_status']=decode_entry(p['root_status'],budget.policy,budget)
         return dict(kind='setup',owner=p['subject'],allocation_id=row['allocation_id'],request_id=p['request_id'],
             resource_id=row['resource_id'],entries=list(entries.values()),setup=entries,
             retain_until=p['retain_until'],payload=p)
@@ -268,9 +269,21 @@ class RepairRemoteSetupService:
             duties.append(dict(scope_kind='authority',scope_id=status.status_scope(root,'authority',
                 dict(authority_kind=kind,authority_sha256=item.ref.raw_sha256),budget.policy,budget),revision=item.payload['revision'],mask=mask))
         duties.append(dict(scope_kind='ack_slot',scope_id=status.status_scope(root,'ack_slot',slot,budget.policy,budget),revision=boot.originals['root'].payload['revision'],mask=66))
-        observation=status.authenticate_status_original(ctx['setup']['owner_status'],expected_root=root,
-            expected_signing_key=owner['signing_key'],at=self.state._now(),
-            allowed_scopes=[{k:item[k] for k in ('scope_kind','scope_id')} for item in duties],policy=budget.policy,budget=budget)
+        groups=[('owner_status',duties)]
+        if 'root_status' in ctx['setup']:
+            # Both are whole A-signed originals. Never project signed entries.
+            groups=[('root_status',duties[:1]),('owner_status',duties[1:])]
+        authenticated=[]
+        for name,selected in groups:
+            observation=status.authenticate_status_original(ctx['setup'][name],expected_root=root,
+                expected_signing_key=owner['signing_key'],at=self.state._now(),
+                allowed_scopes=[{k:item[k] for k in ('scope_kind','scope_id')} for item in selected],policy=budget.policy,budget=budget)
+            authenticated.append((observation,selected))
+        for observation,selected in authenticated:
+            self._record_setup_status(ctx,boot,budget,observation,selected)
+
+    def _record_setup_status(self,ctx,boot,budget,observation,duties):
+        root=ctx['payload']['ack_slot']['root_key']
         root_digest=budget._hash(wire._canonical(root,budget)); code=None; rid=ctx['resource_id']
         with self.state._transaction():
             source=self.state._row(rid); caps=json.loads(self.state._saved(source,'offer')['raw'])['payload']['budget']
@@ -351,6 +364,7 @@ class RepairRemoteSetupService:
             expected_ack_slot=p['ack_slot'],_budget=budget,_transaction_guard=lambda:self._live(ctx))
         self._phase(ctx,'active')
         roles={role:entries['owner_status'] for role in ack.ROLES if role.startswith('historical.status.')}
+        if 'root_status' in entries:roles['historical.status.ack_root']=entries['root_status']
         roles.update({'ack.root_authority':entries['root'],'ack.read_grant':entries['read'],'bootstrap.ack_owner':entries['bootstrap'],
             'resource.ack_allocate':self.state._saved(source,'allocation'),'resource.ack_offer':offer,
             'resource.ack_activation':entries['activation'],'resource.ack_active':active['active'],
@@ -364,7 +378,7 @@ class RepairRemoteSetupService:
         custody=self.state.finalize_unbound(rid,dict(raw=manifest,ref=_ref(manifest)),[dict(raw=pack.raw,ref=pack.ref.as_dict())],
             expected_ack_slot=p['ack_slot'],read_until=p['read_until'],retain_until=p['retain_until'],
             _budget=budget,_transaction_guard=lambda:self._live(ctx))
-        prepared=self.access.prepare(rid,action='challenge',current_statuses=[entries['owner_status'],active['status']],policy=budget.policy,budget=budget)
+        prepared=self.access.prepare(rid,action='challenge',current_statuses=[entries['owner_status'],active['status']]+([entries['root_status']] if 'root_status' in entries else []),policy=budget.policy,budget=budget)
         with self.state._transaction():decision=self.access.check_locked(prepared)
         if not decision.allowed:wire._fail(decision.code)
         ctx['output_bytes']=sum(len(v['raw']) for v in (active['active'],active['status'],custody))

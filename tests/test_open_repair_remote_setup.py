@@ -95,6 +95,46 @@ class RemoteSetupTests(unittest.TestCase):
         self.assertTrue(all(b>a for a,b in zip(usage,current)))
         self.assertEqual(self.local.db.execute('SELECT count(*) FROM open_repair_ack_resources').fetchone()[0],1)
 
+    def split_setup_request(self, *, revoked=False):
+        packet=json.loads(self.setup_request());p=packet['payload'];signer=self.f['signers']['owner']
+        entry=decode_entry(p['owner_status'],self.local.state.policy,wire.RepairBudget(self.local.state.policy))
+        observation=json.loads(entry['raw'])['payload']
+        root=p['ack_slot']['root_key']
+        scope=hashlib.sha256(canonical_bytes(dict(kind='authority',root_key=root,
+            authority_kind='ack.root_authority',authority_sha256=self.f['entries']['root']['ref']['raw_sha256']))).hexdigest()
+        root_observation=copy.deepcopy(observation)
+        root_observation['revision']=observation['revision']+1
+        root_observation['entries']=[dict(v,status='revoked' if revoked else 'active') for v in observation['entries'] if v['scope_id']==scope]
+        observation['entries']=[v for v in observation['entries'] if v['scope_id']!=scope]
+        self.assertEqual(len(root_observation['entries']),1)
+        p['owner_status']=self.encode(signed_entry(observation,signer,'owner_status'))
+        p['root_status']=self.encode(signed_entry(root_observation,signer,'root_status'))
+        return canonical_bytes(dict(payload=p,proof=signer.sign_message(p)))
+
+    def test_non_object_setup_payload_rejects_without_charging(self):
+        for payload in (None, [], 'root_status'):
+            with self.subTest(payload=payload):
+                with self.assertRaises(wire.RepairWireError):
+                    self.service.handle(canonical_bytes(dict(payload=payload,proof={})))
+        self.assertEqual(self.local.db.execute('SELECT count(*) FROM open_repair_remote_owners').fetchone()[0],0)
+
+    def test_separate_root_original_survives_real_storage_and_restart(self):
+        self.allocate();request=self.split_setup_request()
+        first=self.service.handle(request)
+        self.assertEqual(json.loads(first)['kind'],'ack.source_ready')
+        self.assertEqual(self.local.state._row(self.local.resource_id)['status'],'unbound')
+        packet=json.loads(request)['payload']
+        entry=decode_entry(packet['root_status'],self.local.state.policy,wire.RepairBudget(self.local.state.policy))
+        self.assertIsNotNone(self.local.db.execute('SELECT 1 FROM open_repair_access_documents WHERE raw=?',(entry['raw'],)).fetchone())
+        self.restart();self.assertEqual(self.service.handle(request),first)
+
+    def test_separate_root_revocation_is_persistent_before_activation(self):
+        self.allocate();request=self.split_setup_request(revoked=True)
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_authority_revoked'):self.service.handle(request)
+        self.assertEqual(self.local.state._row(self.local.resource_id)['status'],'pending')
+        self.restart()
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_authority_revoked'):self.service.handle(request)
+
     def test_active_crash_remains_honest_and_same_finish_recovers(self):
         self.allocate(); request=self.setup_request()
         with patch.object(self.local.state,'finalize_unbound',side_effect=RuntimeError('synthetic interruption')):

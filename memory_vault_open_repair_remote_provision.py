@@ -279,7 +279,11 @@ class RemoteAckSourceProvisioner(AckSourceProvisioner):
         self._verify_offer(offer, allocation)
         setup = self._step('setup', lambda: self._build_owner_setup(offer))
         base = [('ack.root_authority', setup['root']), ('ack.read_grant', setup['read']), ('bootstrap.grant', setup['bootstrap'])]
-        owner_status = self._step('owner_status', lambda: self._status(base, 2))
+        held=self._load(p['request_id'])
+        # Existing combined originals remain immutable on resumed setups.
+        split='root_status' in held[1] or 'owner_status' not in held[1]
+        root_status=self._step('root_status',lambda:self._status(base[:1],1,include_slot=False)) if split else None
+        owner_status = self._step('owner_status', lambda: self._status(base[1:] if split else base, 2))
         def make_finish():
             now = int(time.time())
             payload = dict(schema_version=SCHEMA, kind='ack.source_setup', signing_key=self.owner['signing_key'],
@@ -289,6 +293,7 @@ class RemoteAckSourceProvisioner(AckSourceProvisioner):
                 node=encode_original(p['node']), owner_status=encode_original(owner_status),
                 read_until=p['until'], retain_until=p['until'],
                 **{name: encode_original(value) for name, value in setup.items()})
+            if root_status is not None:payload['root_status']=encode_original(root_status)
             return dict(payload=payload, proof=self.delivery.identity.sign_message(payload))
         finish = self._step('remote_setup_request', make_finish)
         def finish_or_reconcile():
@@ -312,10 +317,16 @@ class RemoteAckSourceProvisioner(AckSourceProvisioner):
         self.unbound = dict(resource_id=json.loads(offer['raw'])['payload']['resource']['resource_id'], setup=setup,
             active=dict(active=response['active'], status=response['status']), owner_status=owner_status,
             custody=response['custody'], offer=offer, allocation=allocation)
+        if root_status is not None:self.unbound['root_status']=root_status
         return self.unbound
 
     def _recovery(self, context, cls=AckOwnerRecoveryClient):
-        return cls(self.delivery.identity, self.delivery.encryption, policy=self.policy,
+        from dataclasses import replace
+        # Binding verifies both complete unbound and empty histories in one
+        # local operation. Separate originals add real signature work. This
+        # finite client CPU budget changes no signed service/resource limit.
+        policy=replace(self.policy,max_signature_checks=96) if cls is OwnerAckBindClient else self.policy
+        return cls(self.delivery.identity, self.delivery.encryption, policy=policy,
                    limit_policy=PROFILES[self.plan['profile']], transport=self.transfer,
                    allow_loopback=self.delivery.participant.transport.allow_loopback,
                    status_observer=lambda observed:self._observe_status(context,observed))
@@ -339,7 +350,7 @@ class RemoteAckSourceProvisioner(AckSourceProvisioner):
                 _fail('repair_provision_conflict')
             if actual['envelope'] is not None:
                 return
-        known = [unbound['owner_status'], unbound['active']['status']]
+        known = [unbound['owner_status'], unbound['active']['status']]+([unbound['root_status']] if 'root_status' in unbound else [])
         context = self._status_context(known)
         recovered = self._recovery(context).recover(self.base_url, **self._recovery_inputs(),
             known_statuses=known, archive_statuses=context.archive, timeout=self._remaining())
@@ -352,6 +363,7 @@ class RemoteAckSourceProvisioner(AckSourceProvisioner):
             'source.descriptor': p['node']}
         expected.update({name:unbound['owner_status'] for name in ('historical.status.ack_root',
             'historical.status.ack_read','historical.status.ack_owner_bootstrap','historical.status.ack_slot')})
+        if 'root_status' in unbound:expected['historical.status.ack_root']=unbound['root_status']
         for role in recovered.source.manifest.roles:
             if role.role in expected and (role.original.raw != expected[role.role]['raw']
                     or role.original.ref.as_dict() != expected[role.role]['ref']):
@@ -383,7 +395,7 @@ class RemoteAckSourceProvisioner(AckSourceProvisioner):
         # status of every old scope, so the live unbound preflight stays current.
         new_scopes = self._status([('ack.write_grant', write), ('bootstrap.grant', bootstrap)],
                                  3, include_slot=False)
-        return [self.unbound['owner_status'], new_scopes, active['status']]
+        return [self.unbound['owner_status'], new_scopes, active['status']]+([self.unbound['root_status']] if 'root_status' in self.unbound else [])
 
     def _remote_bind(self, resource_id, write_entry, offer_bootstrap_entry, *, expected_receipt_writer,
                      expected_message_id, expected_envelope_ref, current_statuses, read_until, retain_until):
@@ -394,7 +406,7 @@ class RemoteAckSourceProvisioner(AckSourceProvisioner):
             expected_receipt_writer=expected_receipt_writer, expected_message_id=expected_message_id,
             expected_envelope_ref=expected_envelope_ref, current_statuses=current_statuses,
             read_until=read_until, retain_until=retain_until,
-            known_statuses=[self.unbound['owner_status'], self.unbound['active']['status']], timeout=self._remaining())
+            known_statuses=[self.unbound['owner_status'], self.unbound['active']['status']]+([self.unbound['root_status']] if 'root_status' in self.unbound else []), timeout=self._remaining())
         context = self._status_context(inputs['known_statuses'])
         inputs['archive_statuses'] = context.archive
         with self.delivery.participant.state.db() as db:
