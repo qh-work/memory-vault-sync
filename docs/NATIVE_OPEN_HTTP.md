@@ -25,7 +25,11 @@ automatic renewal remains unfinished; operators must still supply a valid
 renewed descriptor in its protected config. The running node picks up a valid
 same-binding successor during maintenance, preserving contact/index state.
 Other configuration changes require restart; lower revisions and binding
-changes are refused. This reload does not sign or generate a successor.
+changes are refused. This reload does not sign or generate a successor. Python and Node
+now share a separate SQLite process-ownership lock beside the node config.
+Only one current-version node process can hold it; normal exit or process
+death releases it without deleting lock files. It does not lock the transport
+or Vault database. Python retains its existing config file lock as well.
 
 The listener remains restricted to loopback and nonprivileged ports. An owner
 must separately provide HTTPS termination for public use. Directory service

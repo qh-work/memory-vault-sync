@@ -435,6 +435,28 @@ class OpenTypeScriptHTTPTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM open_contact_floors").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT count(*) FROM open_index_replay").fetchone()[0], 0)
 
+    def test_python_and_native_share_publication_ownership(self):
+        from memory_vault import MemoryError
+        from memory_vault_open_node import _publication_lock
+        host = self.host(1, native={0})
+        original = host.configs[0].read_bytes()
+        with self.assertRaisesRegex(MemoryError, "open_node_publication_busy"):
+            with _publication_lock(host.configs[0]):
+                self.fail("Python acquired the native owner's lock")
+        host.stop(0)
+        with _publication_lock(host.configs[0]):
+            attempt = subprocess.run(host.command(0), stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, timeout=8, cwd=self.fixture)
+            self.assertNotEqual(attempt.returncode, 0)
+            self.assertIn(b"open_node_publication_busy", attempt.stderr)
+        host.start(0)
+        self.assertEqual(host.configs[0].read_bytes(), original)
+        # Abrupt death must release the OS-backed lock without removing a file.
+        host.processes[0].kill()
+        host.processes[0].wait(timeout=3)
+        with _publication_lock(host.configs[0]):
+            pass
+
     def test_native_installs_signed_successor_without_restart(self):
         host = self.host(1, native={0})
         old = host.nodes[0]

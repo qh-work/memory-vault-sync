@@ -4,7 +4,7 @@ import {performance} from 'node:perf_hooks';
 import {pathToFileURL} from 'node:url';
 import {canonicalBytes,document,objectFields} from './crypto.ts';
 import type {SigningIdentityDocument} from './crypto.ts';
-import {absolutePath,readPrivate,NetworkError} from './io.ts';
+import {absolutePath,readPrivate,openPrivateDatabase,NetworkError} from './io.ts';
 import {OpenParticipant} from './open-participant.ts';
 import type {SignedOpen,SignedNode} from './open-control.ts';
 import type {IndexOptions} from './open-state.ts';
@@ -57,7 +57,7 @@ export function openHTTPServer(participant:OpenParticipant):http.Server{
   server.on('clientError',(_error,socket)=>socket.destroy());
   return server;
 }
-export async function startOpenNode(configPath:string):Promise<{close:()=>Promise<void>}>{
+async function startOwnedOpenNode(configPath:string):Promise<{close:()=>Promise<void>}>{
   const parsed=document(readPrivate(absolutePath(configPath),MAX_RPC_BYTES)!,MAX_RPC_BYTES);
   const config=objectFields(parsed,['schema_version','identity_path','state_directory','node','seeds','allow_loopback','index_policy','listen_host','listen_port',
     ...(Object.hasOwn(parsed,'contact_policy')?['contact_policy']:[])]);
@@ -84,6 +84,21 @@ export async function startOpenNode(configPath:string):Promise<{close:()=>Promis
   void maintain(true);
   return {close:async()=>{if(stopped)return;stopped=true;clearTimeout(timer);participant.close();
     await new Promise<void>(accept=>{server.close(()=>accept());server.closeAllConnections();});}};
+}
+/** Same lifetime SQLite ownership lock as the Python node, separate from transport. */
+export function acquirePublicationLock(configPath:string):()=>void{
+  const db=openPrivateDatabase(absolutePath(configPath)+'.publication.sqlite3');
+  try{db.exec('PRAGMA busy_timeout=0; BEGIN IMMEDIATE');}
+  catch(error){db.close();throw new NetworkError((error as any)?.errcode===5||
+    (error as any)?.errcode===6?'open_node_publication_busy':'open_node_publication_unavailable');}
+  let closed=false;return ()=>{if(!closed){closed=true;db.close();}};
+}
+export async function startOpenNode(configPath:string):Promise<{close:()=>Promise<void>}>{
+  const release=acquirePublicationLock(configPath);
+  try{
+    const running=await startOwnedOpenNode(configPath);
+    return {close:async()=>{try{await running.close();}finally{release();}}};
+  }catch(error){release();throw error;}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
   try{

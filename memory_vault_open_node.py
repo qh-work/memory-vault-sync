@@ -8,6 +8,8 @@ fresh, signed challenge. Resource service is an explicit local owner policy.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
 import asyncio
 from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1033,6 +1035,45 @@ def _run_node(config_path):
             worker.join()
 
 
+@contextlib.contextmanager
+def _publication_lock(config_path):
+    """Shared Python/Node process ownership, released by SQLite on process exit.
+
+    Separate from transport storage: a lifetime write lock must never block
+    message, contact or routing transactions. Keep the existing config flock.
+    """
+    from memory_vault_storage import open_file
+    path = Path(str(_absolute_path(config_path)) + ".publication.sqlite3")
+    fd = open_file(path, os.O_CREAT | os.O_RDWR, private=True)
+    try:
+        before = os.fstat(fd)
+    finally:
+        os.close(fd)
+    for suffix in ("-wal", "-shm", "-journal"):
+        try:
+            fd = open_file(Path(str(path)+suffix), os.O_RDONLY, private=True)
+        except FileNotFoundError:
+            continue
+        else:
+            os.close(fd)
+    connection = sqlite3.connect(path, timeout=0)
+    try:
+        after = path.lstat()
+        if (before.st_ino, before.st_dev) != (after.st_ino, after.st_dev):
+            raise MemoryError("open_node_publication_path_changed")
+        connection.execute("PRAGMA trusted_schema=OFF")
+        connection.execute("PRAGMA journal_mode=WAL")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as exc:
+            if str(exc) in ("database is locked", "database table is locked"):
+                raise MemoryError("open_node_publication_busy") from None
+            raise
+        yield
+    finally:
+        connection.close()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run an owner-configured finite open routing node")
     parser.add_argument("--config", required=True, type=Path)
@@ -1040,7 +1081,7 @@ def main(argv=None):
     # A second process must not sign a different successor to the same saved
     # revision. The existing cross-platform protected file lock is held for
     # this node's lifetime; a crashed process releases the OS lock naturally.
-    with _exclusive_store(_absolute_path(args.config)):
+    with _exclusive_store(_absolute_path(args.config)), _publication_lock(args.config):
         _run_node(args.config)
 
 
