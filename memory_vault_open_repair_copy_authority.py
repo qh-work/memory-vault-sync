@@ -41,7 +41,7 @@ def verify_occupied_replica_event(*args,expected_receipt_writer,expected_message
         expected_envelope_ref=expected_envelope_ref))
 
 
-def _replica_container(manifest_entry,resolver,custody_entry,*,expected_target,target_storage_epoch,policy,budget):
+def _replica_container(manifest_entry,resolver,custody_entry,*,expected_target,target_storage_epoch,policy,budget,deferred_object=None):
     wire._context(policy,budget)
     if resolver.policy is not policy or resolver.budget is not budget:
         wire._fail('repair_invalid_context')
@@ -74,6 +74,9 @@ def _replica_container(manifest_entry,resolver,custody_entry,*,expected_target,t
         reference=wire.raw_ref(row['ref']);key=(row['role'],*history._ref_tuple(reference))
         if previous is not None and key<=previous:wire._fail('repair_copy_commit_mismatch')
         previous=key
+        if deferred_object is not None and row['role']=='message.envelope':
+            if reference!=wire.raw_ref(deferred_object) or reference.namespace!='object':wire._fail('repair_copy_commit_mismatch')
+            continue
         item=resolver.resolve(reference)
         entries.setdefault(row['role'],[]).append(dict(raw=item.raw,ref=item.ref.as_dict()))
     return target,custody,value,entries
@@ -114,20 +117,21 @@ def _verify_replica_event(manifest_entry,resolver,custody_entry,*,expected_ack_s
         entries=MappingProxyType({role:tuple(values) for role,values in entries.items()}))
 
 
-def _check_replica_closure(p,value,plan,*,source_custody,source_histories,additional=(),extra_edges=()):
+def _check_replica_closure(p,value,plan,*,source_custody,source_histories,additional=(),extra_edges=(),extra_references=()):
     if (p['assignment_ref']!=plan.assignment.ref.as_dict()
             or p['original_custody_ref']!=source_custody.ref.as_dict()
             or p['resource_offer_ref']!=plan.offer.ref.as_dict() or p['resource']!=plan.offer.payload['resource']
             or p['root_key']!=plan.assignment.payload['root_key'] or p['scope']!=plan.assignment.payload['scope']
             or p['read_until']!=plan.read_until or p['retain_until']!=plan.retain_until):
         wire._fail('repair_copy_commit_mismatch')
-    expected = _replica_manifest_value(plan, source_histories=source_histories, additional=additional, extra_edges=extra_edges)
+    expected = _replica_manifest_value(plan, source_histories=source_histories, additional=additional, extra_edges=extra_edges,
+        extra_references=extra_references)
     if (value != expected
             or len({history._ref_tuple(item['ref']) for item in value['original_roles']})>plan.offer.payload['budget']['max_items']):
         wire._fail('repair_copy_commit_mismatch')
 
 
-def _replica_manifest_value(plan, *, source_histories, additional=(), extra_edges=()):
+def _replica_manifest_value(plan, *, source_histories, additional=(), extra_edges=(), extra_references=()):
     """Canonical unsigned copy graph derived only from complete original inputs.
 
     This grants no authority. The custody verifier still checks its full hash,
@@ -138,6 +142,7 @@ def _replica_manifest_value(plan, *, source_histories, additional=(), extra_edge
             ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):
         roles.add((role,*history._ref_tuple(item.ref)))
     for role,item in additional:roles.add((role,*history._ref_tuple(item.ref)))
+    for role,reference in extra_references:roles.add((role,*history._ref_tuple(reference)))
     roles.update(('copy.current_status',*history._ref_tuple(item.ref)) for item in plan.statuses)
     edges=list(extra_edges)
     for role,entry,source_manifest in source_histories:

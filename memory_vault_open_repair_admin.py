@@ -408,8 +408,8 @@ def configure_replica(node_config, request_path, output, *, source_state='unboun
     from memory_vault_open_node import OpenParticipant
     from memory_vault_open_repair_index_admin import _node_config
     from memory_vault_open_repair_copy_service import ReplicaReadService,ReplicaEmptyReadService,ReplicaOccupiedReadService
-    from memory_vault_open_repair_mailbox_copy_service import MailboxRootReplicaReadService,MailboxFeedReplicaReadService
-    if source_state not in {"unbound","empty","occupied","root","feed"}:raise RepairWireError("repair_invalid_request_bundle")
+    from memory_vault_open_repair_mailbox_copy_service import MailboxRootReplicaReadService,MailboxFeedReplicaReadService,MailboxMessageReplicaReadService
+    if source_state not in {"unbound","empty","occupied","root","feed","message"}:raise RepairWireError("repair_invalid_request_bundle")
     from memory_vault_trust import Identity
     request_path, output = _absolute_path(request_path), _absolute_path(output)
     if os.path.lexists(output):
@@ -420,9 +420,9 @@ def configure_replica(node_config, request_path, output, *, source_state='unboun
     request = object_fields(document(raw, maximum=MAX_BUNDLE_BYTES),
         {"schema_version", "resource_id", "context", "consents", "current_statuses"})
     if request["schema_version"] != {"unbound":REPLICA_CONFIG_SCHEMA,"empty":EMPTY_REPLICA_CONFIG_SCHEMA,"occupied":OCCUPIED_REPLICA_CONFIG_SCHEMA,
-            "root":"memory-vault-open-mailbox-root-replica-read-config/v1", "feed":"memory-vault-open-mailbox-feed-replica-read-config/v1"}[source_state]:
+            "root":"memory-vault-open-mailbox-root-replica-read-config/v1", "feed":"memory-vault-open-mailbox-feed-replica-read-config/v1", "message":"memory-vault-open-mailbox-message-replica-read-config/v1"}[source_state]:
         raise RepairWireError("repair_invalid_request_bundle")
-    consents = object_fields(request["consents"], {"owner", "source", "maintainer"}|({"recipient"} if source_state=="occupied" else {"sender"} if source_state=="feed" else set()))
+    consents = object_fields(request["consents"], {"owner", "source", "maintainer"}|({"recipient"} if source_state=="occupied" else {"sender"} if source_state in ("feed","message") else set()))
     if type(request["current_statuses"]) is not list or not 1 <= len(request["current_statuses"]) <= 16:
         raise RepairWireError("repair_invalid_status")
     config = _node_config(_absolute_path(node_config))
@@ -435,7 +435,7 @@ def configure_replica(node_config, request_path, output, *, source_state='unboun
             provider_policy=config.get('provider_policy'), repair_policy=config['repair_policy']) as participant:
         with participant.state.db() as db:
             service = {"unbound":ReplicaReadService,"empty":ReplicaEmptyReadService,"occupied":ReplicaOccupiedReadService,
-                "root":MailboxRootReplicaReadService,"feed":MailboxFeedReplicaReadService}[source_state](participant._repair_service(db,mailbox_workflow=source_state=="feed").state)
+                "root":MailboxRootReplicaReadService,"feed":MailboxFeedReplicaReadService,"message":MailboxMessageReplicaReadService}[source_state](participant._repair_service(db,mailbox_workflow=source_state in ("feed","message")).state)
             service.initialize()
             result = service.configure(request["resource_id"], context=request["context"],
                 consents={name: _entry(entry) for name, entry in consents.items()},
@@ -463,6 +463,8 @@ def main(argv=None):
                             ("copy-upload-occupied", "copy an existing receipt with all three original history generations"),
                             ("copy-upload-root", "upload an independently authorized mailbox directory replica"),
                             ("copy-upload-feed", "upload an exact message index with independent sender disclosure"),
+                            ("copy-upload-message", "store exact original ciphertext with independent message authority"),
+                            ("receive-replica-message", "recover a message and import explicitly shared memory into the recipient inbox"),
                             ("recover-replica-root", "recover the original mailbox directory from an explicitly selected replica"),
                             ("recover-replica-feed", "recover and decrypt the original message index from an authorized replica"),
                             ("recover-replica-occupied", "recover the original signed receipt from an authorized replica")):
@@ -471,21 +473,21 @@ def main(argv=None):
         recover.add_argument("--request", required=True, type=Path, help="private original request bundle")
         recover.add_argument("--output", required=True, type=Path, help="new private evidence file; never overwritten")
         recover.add_argument("--timeout", type=float, default=30)
-        recover.add_argument("--repair-profile", choices=("unbound", "receipt", "receipt-index") + (("mailbox",) if name in ("copy-upload-root", "copy-upload-feed", "recover-replica-root", "recover-replica-feed") else ()),
+        recover.add_argument("--repair-profile", choices=("unbound", "receipt", "receipt-index") + (("mailbox",) if name in ("copy-upload-root", "copy-upload-feed", "recover-replica-root", "recover-replica-feed", "copy-upload-message", "receive-replica-message") else ()),
             help="explicit client acceptance ceiling; never changes the source's signed limits")
-    for name in ("configure-replica","configure-replica-empty","configure-replica-occupied","configure-replica-root","configure-replica-feed"):
+    for name in ("configure-replica","configure-replica-empty","configure-replica-occupied","configure-replica-root","configure-replica-feed","configure-replica-message"):
         configure = commands.add_parser(name, help="install separately signed replica return consents locally")
         configure.add_argument("--node-config", required=True, type=Path)
         configure.add_argument("--request", required=True, type=Path)
         configure.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
-        if args.command in {"configure-replica","configure-replica-empty","configure-replica-occupied","configure-replica-root","configure-replica-feed"}:
+        if args.command in {"configure-replica","configure-replica-empty","configure-replica-occupied","configure-replica-root","configure-replica-feed","configure-replica-message"}:
             result = configure_replica(args.node_config, args.request, args.output,
-                source_state="feed" if args.command.endswith("-feed") else "root" if args.command.endswith("-root") else "occupied" if args.command.endswith("-occupied") else "empty" if args.command.endswith("-empty") else "unbound")
-        elif args.command in {"copy-upload-root", "copy-upload-feed", "recover-replica-root", "recover-replica-feed"}:
-            from memory_vault_open_repair_mailbox_copy_admin import upload_root, upload_feed, recover_root, recover_feed
-            method={'copy-upload-root':upload_root,'copy-upload-feed':upload_feed,'recover-replica-root':recover_root,'recover-replica-feed':recover_feed}[args.command]
+                source_state="message" if args.command.endswith("-message") else "feed" if args.command.endswith("-feed") else "root" if args.command.endswith("-root") else "occupied" if args.command.endswith("-occupied") else "empty" if args.command.endswith("-empty") else "unbound")
+        elif args.command in {"copy-upload-root", "copy-upload-feed", "recover-replica-root", "recover-replica-feed", "copy-upload-message", "receive-replica-message"}:
+            from memory_vault_open_repair_mailbox_copy_admin import upload_root, upload_feed, recover_root, recover_feed, upload_message, receive_message
+            method={'copy-upload-root':upload_root,'copy-upload-feed':upload_feed,'recover-replica-root':recover_root,'recover-replica-feed':recover_feed,'copy-upload-message':upload_message,'receive-replica-message':receive_message}[args.command]
             result=method(args.network_config,args.request,args.output,timeout=args.timeout,repair_profile=args.repair_profile)
         elif args.command in {"copy-reserve", "copy-upload", "copy-reserve-empty", "copy-upload-empty", "copy-reserve-occupied", "copy-upload-occupied"}:
             result = copy_ack(args.network_config, args.request, args.output, timeout=args.timeout,

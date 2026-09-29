@@ -50,6 +50,7 @@ class AckCopyUploadClient:
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_client_sessions(job_id TEXT PRIMARY KEY,raw BLOB NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_client_steps(job_id TEXT NOT NULL,step INTEGER NOT NULL,mode TEXT NOT NULL,request BLOB NOT NULL,response BLOB,PRIMARY KEY(job_id,step))')
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_client_work(id TEXT PRIMARY KEY,job_id TEXT NOT NULL,wire_bytes INTEGER NOT NULL,signature_checks INTEGER,network INTEGER NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_client_body_bytes(job_id TEXT NOT NULL,step INTEGER NOT NULL,bytes INTEGER NOT NULL,PRIMARY KEY(job_id,step))')
 
     def close(self):
         if self.own_transport:self.transport.close()
@@ -69,8 +70,10 @@ class AckCopyUploadClient:
             target_storage_epoch=self.plan.intent['target_storage_epoch'],expected_consumer='ack_copy_'+self.source_state,
             at=self._now(),policy=self.policy,budget=budget)
 
-    def _step(self,number,build,check_request,verify,*,mode='repair',response_allowance=8192):
+    def _step(self,number,build,check_request,verify,*,mode='repair',response_allowance=8192,body_bytes=0):
         if mode not in ('provider','repair','blob') or not 0<=number<68:wire._fail('repair_invalid_context')
+        wire.u53(body_bytes)
+        if body_bytes and (mode!='blob' or self.plan.intent['purpose']!='message_replica' or body_bytes>blob.MAX_BLOB_CHUNK_BYTES):wire._fail('repair_invalid_context')
         budget=self._budget();ticket=secrets.token_hex(16);sent=False;response=None;request=None
         with self.journal._upload_transaction():
             self._guard()
@@ -81,6 +84,8 @@ class AckCopyUploadClient:
         try:
             saved=self.db.execute('SELECT mode,request,response FROM ack_copy_client_steps WHERE job_id=? AND step=?',(self.job,number)).fetchone()
             if saved is not None and saved[0]!=mode:wire._fail('repair_copy_upload_conflict')
+            charged=self.db.execute('SELECT bytes FROM ack_copy_client_body_bytes WHERE job_id=? AND step=?',(self.job,number)).fetchone()
+            if saved is not None and (charged[0] if charged else 0)!=body_bytes:wire._fail('repair_copy_upload_conflict')
             request=bytes(saved[1]) if saved is not None else build(budget)
             check_request(request,budget)
             if saved is not None and saved[2] is not None:
@@ -90,6 +95,7 @@ class AckCopyUploadClient:
                 self._guard()
                 if saved is None:
                     self.db.execute('INSERT INTO ack_copy_client_steps VALUES(?,?,?,?,NULL)',(self.job,number,mode,request))
+                    if body_bytes:self.db.execute('INSERT INTO ack_copy_client_body_bytes VALUES(?,?,?)',(self.job,number,body_bytes))
                 count,used=self.db.execute('SELECT coalesce(sum(network),0),coalesce(sum(wire_bytes),0) FROM ack_copy_client_work WHERE job_id=?',(self.job,)).fetchone()
                 reserve=len(request)+response_allowance
                 if count>=min(68,self.plan.intent['budget']['max_requests']) or used+reserve>4*self.plan.intent['budget']['max_job_bytes']:
@@ -127,6 +133,10 @@ class AckCopyUploadClient:
         size=self.db.execute('SELECT coalesce(sum(length(request)+coalesce(length(response),0)+128),0) FROM ack_copy_client_steps WHERE job_id=?',(self.job,)).fetchone()[0]
         size+=self.db.execute('SELECT count(*)*128 FROM ack_copy_client_work WHERE job_id=?',(self.job,)).fetchone()[0]
         size+=self.db.execute('SELECT coalesce(sum(length(raw)),0) FROM ack_copy_client_sessions WHERE job_id=?',(self.job,)).fetchone()[0]
+        bodies=self.db.execute('SELECT coalesce(sum(bytes),0),count(*) FROM ack_copy_client_body_bytes WHERE job_id=?',(self.job,)).fetchone()
+        if bodies[0] and (self.plan.intent['purpose']!='message_replica' or bodies[0]>min(self.plan.intent['scope']['envelope_ref']['size'],self.plan.intent['budget']['max_job_bytes'])):
+            wire._fail('repair_copy_journal_capacity')
+        size+=bodies[1]*128-bodies[0]
         if size>self.plan.intent['budget']['max_meta_bytes']:wire._fail('repair_copy_journal_capacity')
 
     def upload(self,base,*args,target_node_entry,timeout=60,**context):
@@ -265,13 +275,15 @@ class AckCopyUploadClient:
         step=4
         for i,row in enumerate(self.children):
             child=row['entry']
-            for offset in range(0,len(child['raw']),stage.STAGE_CHUNK_BYTES):
-                chunk=child['raw'][offset:offset+stage.STAGE_CHUNK_BYTES]
+            chunk_bytes=stage.stage_chunk_bytes(self._expected(self._budget())['expected_consumer'],row['role'])
+            for offset in range(0,len(child['raw']),chunk_bytes):
+                chunk=child['raw'][offset:offset+chunk_bytes]
                 def build(b):return stage.make_stage_child_frame(intent,_entry(handle),signer=self.identity,child_index=i,offset=offset,chunk=chunk,expires_at=self.until,**self._expected(b))
                 def check(raw,b):
                     item=stage.verify_stage_child_frame(raw,intent,_entry(handle),**self._expected(b))
                     if item.child_index!=i or item.offset!=offset or item.chunk!=chunk or item.child_ref!=wire.raw_ref(child['ref']):wire._fail('repair_stage_mismatch')
-                self._step(step,build,check,lambda raw,q,b:stage.verify_stage_child_response_frame(raw,q,intent,_entry(handle),**self._expected(b)),mode='blob')
+                self._step(step,build,check,lambda raw,q,b:stage.verify_stage_child_response_frame(raw,q,intent,_entry(handle),**self._expected(b)),mode='blob',
+                    body_bytes=len(chunk) if self.plan.intent['purpose']=='message_replica' and row['role']=='message.envelope' else 0)
                 step+=1
         _,_,result=self._step(step,lambda b:stage.make_stage_close(intent,_entry(handle),signer=self.identity,expires_at=self.until,**self._expected(b)).raw,
             lambda raw,b:stage.verify_stage_close(_raw_entry(raw,b),intent,_entry(handle),**self._expected(b)),

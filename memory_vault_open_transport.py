@@ -315,6 +315,14 @@ class OpenHTTPTransport:
             deadline_timer = threading.Timer(max(0, deadline - time.monotonic()), _close_socket, (connection.sock,))
             deadline_timer.daemon = True
             deadline_timer.start()
+            if repair:
+                # Building an authenticated repair proof can outlast the short
+                # connection timeout. The caller's absolute deadline still
+                # bounds the request, including drip-fed response headers.
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise MemoryError("open_budget_exhausted", retryable=True)
+                connection.sock.settimeout(remaining)
             connection.request("GET" if introduction else "POST", NODE_PATH if introduction else BLOB_PATH if blob else REPAIR_PATH if repair else RPC_PATH, body=raw, headers={
                 "Content-Type": "application/octet-stream" if blob else "application/json",
                 "Content-Length": str(len(raw)), "Accept-Encoding": "identity", "Connection": "close"})

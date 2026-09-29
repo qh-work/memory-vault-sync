@@ -87,7 +87,8 @@ class MailboxRootCopyUploadClient(AckCopyUploadClient):
             manifest, custody = self._committed_originals(value, budget)
             resolver = wire.LocalRawResolver(self.policy, budget)
             for row in self.children:
-                original = row['entry']; resolver.put(original['ref']['namespace'], original['ref']['key'], original['raw'])
+                original = row['entry']
+                if original['ref']['namespace']=='meta':resolver.put(original['ref']['namespace'], original['ref']['key'], original['raw'])
             source_manifest = next(row['entry'] for row in self.children if row['role'] == self.history_role)
             source = history.resolve_historical_inputs(source_manifest['raw'], resolver, self.policy, budget)
             for source_history in (source, *source.predecessors):
@@ -107,6 +108,7 @@ class MailboxFeedCopyUploadClient(MailboxRootCopyUploadClient):
     commit_kind = 'mailbox.feed_copy_commit'
     commit_fields = FEED_COMMIT_FIELDS
     history_role = 'history.mailbox_feed'
+    completed_kind = 'mailbox.feed_copy_committed'
 
     @staticmethod
     def verify_replica(*args, **options):
@@ -130,13 +132,34 @@ class MailboxFeedCopyUploadClient(MailboxRootCopyUploadClient):
 
     def _committed_originals(self, value, budget):
         wire.object_fields(value, {'schema_version', 'kind', 'manifest_ref', 'custody'})
-        if (value['schema_version'] != stage.SCHEMA or value['kind'] != 'mailbox.feed_copy_committed'
+        if (value['schema_version'] != stage.SCHEMA or value['kind'] != self.completed_kind
                 or wire.raw_ref(value['manifest_ref']) != wire.raw_ref(self.replica_manifest['ref'])):
             wire._fail('repair_copy_commit_mismatch')
         # Every original and edge is locally present from this invocation's
         # verified upload. P's custody binds these exact canonical manifest
         # bytes; the independent replica verifier below rechecks the whole DAG.
         return self.replica_manifest, decode_entry(value['custody'], self.policy, budget)
+
+
+class MailboxMessageCopyUploadClient(MailboxFeedCopyUploadClient):
+    from memory_vault_open_repair_mailbox_copy_prepare import MailboxMessageCopyPreparation as journal_type
+    upload_state = 'message'
+    consumer = 'mailbox_copy_message'
+    commit_kind = 'mailbox.message_copy_commit'
+    completed_kind = 'mailbox.message_copy_committed'
+
+    @staticmethod
+    def verify_replica(*args, **options):
+        from memory_vault_open_repair_mailbox_message_copy import verify_mailbox_message_replica
+        return verify_mailbox_message_replica(*args, **options)
+
+    def _upload_context_keys(self, source_state):
+        if source_state != 'message': wire._fail('repair_copy_scope')
+        return (*super()._upload_context_keys('feed'), 'expected_envelope_ref')
+
+    def _upload_preparer(self, source_state):
+        if source_state != 'message': wire._fail('repair_copy_scope')
+        return self.journal.prepare_upload_message
 
 
 
@@ -231,20 +254,35 @@ class MailboxRootReplicaRecoveryClient(MailboxRootRecoveryClient):
 @dataclass(frozen=True)
 class RecoveredMailboxFeedReplica(RecoveredMailboxRootReplica):
     members: tuple
+    context: object = None
 
 
 class MailboxFeedReplicaRecoveryClient(MailboxRootRecoveryClient):
+    resource_state = 'replica_feed'
+    bound_context = frozenset()
+
+    @staticmethod
+    def _verify_replica(*args, **options):
+        from memory_vault_open_repair_mailbox_feed_copy import verify_mailbox_feed_replica
+        return verify_mailbox_feed_replica(*args, **options)
+
+    @staticmethod
+    def _return(*args, **options):
+        from memory_vault_open_repair_mailbox_feed_copy import _check_mailbox_feed_return
+        return _check_mailbox_feed_return(*args, **options)
+
     def recover(self, base_url, *, target_node_entry, expected_target, expected_slot, expected_sender,
             expected_source, source_storage_epoch, expected_maintainer, slot_entries,
-            known_statuses=(), archive_statuses=(), timeout=30):
+            known_statuses=(), archive_statuses=(), timeout=30, **bound):
         from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_bootstrap
-        from memory_vault_open_repair_mailbox_feed_copy import verify_mailbox_feed_replica, _check_mailbox_feed_return
         from memory_vault_open_repair_client import read_mailbox_index
         import memory_vault_open_repair_resource as resource
         import memory_vault_open_repair_status as status
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 60:
             wire._fail('repair_invalid_deadline')
         budget = wire.RepairBudget(self.policy); started = self._now(); deadline = time.monotonic() + timeout
+        wire.object_fields(bound,self.bound_context)
+        bound=wire.build_new_wire(bound,self.policy,budget).value
         expected = wire.build_new_wire(dict(slot=expected_slot, target=expected_target, sender=expected_sender,
             source=expected_source, maintainer=expected_maintainer), self.policy, budget).value
         key, target, sender = (expected[name] for name in ('slot', 'target', 'sender')); root = key['root_key']
@@ -275,7 +313,7 @@ class MailboxFeedReplicaRecoveryClient(MailboxRootRecoveryClient):
         if expiry <= started: wire._fail('repair_access_expired')
         held, originals, roles, counts = self._download_mailbox(base_url, target=target, node_payload=node.payload,
             bootstrap_original=setup['bootstrap'], expiry=expiry, started=started, deadline=deadline, budget=budget,
-            consumer='mailbox_feed', source_state='replica_feed', available={item.ref: item.raw for item in (*setup.values(), *known)})
+            consumer='mailbox_feed', source_state=self.resource_state, available={item.ref: item.raw for item in (*setup.values(), *known)})
         def entry(reference): return dict(raw=originals[reference], ref=reference.as_dict())
         def one(role):
             if len(roles.get(role, ())) != 1: wire._fail('repair_proof_mismatch')
@@ -283,10 +321,10 @@ class MailboxFeedReplicaRecoveryClient(MailboxRootRecoveryClient):
         resolver = wire.LocalRawResolver(self.policy, budget)
         for reference, raw in originals.items():
             if resolver.put(reference.namespace, reference.key, raw).ref != reference: wire._fail('repair_ref_mismatch')
-        replica = verify_mailbox_feed_replica(one('replica.manifest'), resolver, one('replica.custody'), expected_slot=key,
+        replica = self._verify_replica(one('replica.manifest'), resolver, one('replica.custody'), expected_slot=key,
             expected_owner=self.subject, expected_sender=sender, expected_source=expected['source'], source_storage_epoch=source_storage_epoch,
             expected_maintainer=expected['maintainer'], expected_target=target, target_storage_epoch=node.payload['storage_epoch'],
-            limit_policy=self.limits, policy=self.policy, budget=budget)
+            limit_policy=self.limits, policy=self.policy, budget=budget, **bound)
         source = replica['source']
         for member in source['graph']['members']:
             if any(member['originals'][name].ref != item.ref or member['originals'][name].raw != item.raw for name, item in setup.items()):
@@ -295,7 +333,7 @@ class MailboxFeedReplicaRecoveryClient(MailboxRootRecoveryClient):
         extras = {'replica.manifest', 'replica.custody', 'replica.read_pack', 'return.owner', 'return.source',
             'return.maintainer', 'return.sender', 'current.status.replica_read'}
         if {(role, ref) for role, refs in roles.items() for ref in refs if role not in extras} != wanted: wire._fail('repair_proof_mismatch')
-        permission = _check_mailbox_feed_return(replica, {name: one('return.' + name) for name in ('owner', 'source', 'maintainer', 'sender')},
+        permission = self._return(replica, {name: one('return.' + name) for name in ('owner', 'source', 'maintainer', 'sender')},
             expected_owner=self.subject, expected_sender=sender, expected_source=expected['source'], expected_maintainer=expected['maintainer'],
             expected_target=target, target_storage_epoch=node.payload['storage_epoch'],
             current_statuses=[entry(ref) for ref in roles['current.status.replica_read']], at=self._now(), action='proof',
@@ -314,4 +352,76 @@ class MailboxFeedReplicaRecoveryClient(MailboxRootRecoveryClient):
         archive = {(item.raw, item.ref): item for item in (*previous, *current)}
         if len(archive) > 32: wire._fail('repair_status_history_capacity')
         return RecoveredMailboxFeedReplica(MappingProxyType(replica), held, current, tuple(archive.values()),
-            MappingProxyType(originals), MappingProxyType(dict(**counts, **budget.snapshot())), tuple(members))
+            MappingProxyType(originals), MappingProxyType(dict(**counts, **budget.snapshot())), tuple(members),
+            MappingProxyType(dict(expected=expected, bound=bound, base_url=base_url)))
+
+
+class MailboxMessageReplicaRecoveryClient(MailboxFeedReplicaRecoveryClient):
+    resource_state = 'replica_message'
+    bound_context = frozenset({'expected_envelope_ref'})
+
+    @staticmethod
+    def _verify_replica(*args, **options):
+        from memory_vault_open_repair_mailbox_message_copy import verify_mailbox_message_replica
+        return verify_mailbox_message_replica(*args, **options)
+
+    @staticmethod
+    def _return(*args, **options):
+        from memory_vault_open_repair_mailbox_message_copy import check_message_return
+        return check_message_return(*args, **options)
+
+    def read_message(self, base_url, recovered, *, timeout=30):
+        """Recheck original authority before E, then retrieve exact body ranges."""
+        from memory_vault_open_repair_client import _verify_mailbox_admission_metadata
+        from memory_vault_open_repair_mailbox_message_copy import verify_message_body
+        import memory_vault_open_repair_proof as proof
+        if (not isinstance(recovered,RecoveredMailboxFeedReplica) or recovered.context is None
+                or endpoint(base_url,allow_loopback=self.allow_loopback)!=endpoint(recovered.context['base_url'],allow_loopback=self.allow_loopback)):
+            wire._fail('repair_invalid_context')
+        if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=60:wire._fail('repair_invalid_deadline')
+        budget=wire.RepairBudget(self.policy);deadline=time.monotonic()+timeout
+        context=recovered.context;expected=context['expected'];bound=context['bound'];key=expected['slot']
+        wire.object_fields(bound,self.bound_context)
+        resolver=wire.LocalRawResolver(self.policy,budget)
+        for ref,raw in recovered.originals.items():
+            if ref.namespace!='meta' or resolver.put(ref.namespace,ref.key,raw).ref!=ref:wire._fail('repair_ref_mismatch')
+        def entry(role):
+            values=[v for v in recovered.proof.manifest.value['children'] if v['role']==role]
+            if len(values)!=1:wire._fail('repair_proof_mismatch')
+            ref=wire.raw_ref(values[0]['ref']);return dict(raw=recovered.originals[ref],ref=ref.as_dict())
+        replica=self._verify_replica(entry('replica.manifest'),resolver,entry('replica.custody'),expected_slot=key,
+            expected_owner=self.subject,expected_sender=expected['sender'],expected_source=expected['source'],source_storage_epoch=key['writer_storage_epoch'],
+            expected_maintainer=expected['maintainer'],expected_target=expected['target'],target_storage_epoch=recovered.proof.handle.payload['target_storage_epoch'],
+            limit_policy=self.limits,policy=self.policy,budget=budget,**bound)
+        consents={name:entry('return.'+name) for name in ('owner','source','maintainer','sender')}
+        permission=self._return(replica,consents,expected_owner=self.subject,expected_sender=expected['sender'],expected_source=expected['source'],
+            expected_maintainer=expected['maintainer'],expected_target=expected['target'],target_storage_epoch=recovered.proof.handle.payload['target_storage_epoch'],
+            current_statuses=[index._entry(v) for v in recovered.current_statuses],at=self._now(),action='child',policy=self.policy,budget=budget,
+            on_observed=self.status_observer)
+        if permission['denial_code']:wire._fail(permission['denial_code'])
+        previous=recovered.archive_statuses
+        empty._history_floors((*previous,*permission['statuses']),previous=previous,current=permission['statuses'])
+        self._floors(previous,permission['statuses'],[dict(item,kind=item['scope_kind']) for item in permission['obligations']])
+        member=replica['source']['message_member']
+        verified=_verify_mailbox_admission_metadata(member,expected_slot=key,expected_signing_key=expected['source']['signing_key'],
+            expected_owner=self.subject,expected_sender=expected['sender'],expected_target=expected['source'],encryption_identity=self.encryption_identity,
+            read_original=lambda ref:recovered.originals[wire.raw_ref(ref)],at=self._now(),limit_policy=self.limits,policy=self.policy,budget=budget)
+        ref=wire.raw_ref(bound['expected_envelope_ref'])
+        children=[v for v in recovered.proof.manifest.value['children'] if v['role']=='member.core' and v['ref']==verified['link']['core_ref']]
+        if len(children)!=1 or verified['core']['envelope_ref']!=ref.as_dict():wire._fail('repair_proof_mismatch')
+        if ref.size+recovered.metrics['proof_bytes']>self.limits['max_proof_bytes']:wire._fail('repair_over_budget')
+        offset=0;parts=[];requests=recovered.metrics['requests']
+        while offset<ref.size:
+            if time.monotonic()>=deadline or requests>=self.limits['max_requests']:wire._fail('repair_over_budget')
+            requests+=1;size=min(proof.MAX_CHILD_BYTES,ref.size-offset)
+            packet=proof.make_mailbox_body_request(self.identity,recovered.proof,envelope_ref=ref.as_dict(),subject=self.subject,target=expected['target'],
+                at=self._now(),expires_at=recovered.proof.handle.payload['expires_at'],child_index=children[0]['index'],offset=offset,requested_bytes=size,policy=self.policy,budget=budget)
+            raw=self.transport.request_repair(base_url,packet.raw,child=True,deadline=deadline)
+            if type(raw) is not bytes or len(raw)!=size:wire._fail('repair_ref_mismatch')
+            budget._bytes('input_bytes',len(raw));parts.append(raw);offset+=size
+        budget._bytes('output_bytes',ref.size);body=b''.join(parts)
+        verify_message_body(dict(raw=body,ref=ref.as_dict()),ref.as_dict(),self.policy,budget)
+        if self._now()>=min(permission['expires_at'],recovered.proof.handle.payload['expires_at']) or time.monotonic()>=deadline:wire._fail('repair_access_expired')
+        originals=dict(verified['originals']);originals[(ref.namespace,ref.key)]=dict(raw=body,ref=ref.as_dict())
+        return dict(verified,envelope=body,originals=MappingProxyType(originals),current_statuses=permission['statuses'],
+            replica=replica,consents=consents,replica_context=context)

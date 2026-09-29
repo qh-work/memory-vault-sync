@@ -41,6 +41,10 @@ class MailboxRootCopyPreparation(AckCopyPreparation):
     def _result_extra(self, plan, originals, budget):
         return {}
 
+    def _body_children(self, plan, entry, budget):
+        if entry is not None: wire._fail('repair_copy_scope')
+        return ()
+
     def prepare_upload_root(self, manifest_entry, resolver, custody_entry, allocation_entry, offer_entry,
             assignment_entry, reservation_entry, owner_disclosure_entry, source_disclosure_entry, *,
             expected_root, expected_owner, expected_source, source_storage_epoch, expected_target,
@@ -52,7 +56,7 @@ class MailboxRootCopyPreparation(AckCopyPreparation):
             current_statuses=current_statuses, at=at, limit_policy=limit_policy)
 
     def _prepare_mailbox_upload(self, entries, resolver, *, binding, source_storage_epoch,
-            target_storage_epoch, current_statuses, at, limit_policy):
+            target_storage_epoch, current_statuses, at, limit_policy, body_entry=None):
         p = self.policy; b = resolver.budget; wire._context(p, b); wire.u53(at)
         _require(not self.db.in_transaction and resolver.policy is p and p.max_signature_checks <= 64)
         def freeze(entry):
@@ -128,6 +132,7 @@ class MailboxRootCopyPreparation(AckCopyPreparation):
                 for member in source_manifest.manifest.value['roles']:
                     add('history.raw_pack', index._entry(resolver.resolve(member['pack_ref'])))
             for item in plan.statuses: add('copy.current_status', index._entry(item))
+            for role, entry in self._body_children(plan, body_entry, b): add(role, entry)
             children = tuple(rows[key] for key in sorted(rows))
             manifest = stage.make_stage_manifest(root_key=root, scope=plan.assignment.payload['scope'],
                 children=[dict(index=i, role=row['role'], ref=row['entry']['ref']) for i, row in enumerate(children)],
@@ -194,7 +199,8 @@ class MailboxFeedCopyPreparation(MailboxRootCopyPreparation):
         from memory_vault_open_repair_mailbox_feed_copy import feed_copy_histories, feed_copy_edges
         value = _replica_manifest_value(plan, source_histories=feed_copy_histories(plan.source, originals[0]),
             additional=(('copy.sender_disclosure', plan.disclosures[2]),),
-            extra_edges=feed_copy_edges(plan.source, budget.policy, budget))
+            extra_edges=feed_copy_edges(plan.source, budget.policy, budget),
+            extra_references=(('message.envelope', plan.source['message_scope']['envelope_ref']),) if 'message_scope' in plan.source else ())
         raw = wire.build_new_wire(value, budget.policy, budget).raw; digest = budget._hash(raw)
         return dict(replica_manifest=dict(raw=raw, ref=dict(namespace='meta', key=digest, raw_sha256=digest, size=len(raw))))
 
@@ -209,3 +215,35 @@ class MailboxFeedCopyPreparation(MailboxRootCopyPreparation):
                 sender=expected_sender, source=expected_source, target=expected_target),
             source_storage_epoch=source_storage_epoch, target_storage_epoch=target_storage_epoch,
             current_statuses=current_statuses, at=at, limit_policy=limit_policy)
+
+
+class MailboxMessageCopyPreparation(MailboxFeedCopyPreparation):
+    purpose = 'message_replica'
+    consumer = 'mailbox_copy_message'
+
+    @staticmethod
+    def verify_copy(*args, **options):
+        from memory_vault_open_repair_mailbox_message_copy import verify_mailbox_message_copy
+        return verify_mailbox_message_copy(*args, **options)
+
+    def _selection(self, binding):
+        return dict(super()._selection(binding), expected_envelope_ref=binding['envelope_ref'])
+
+    def _body_children(self, plan, entry, budget):
+        from memory_vault_open_repair_mailbox_message_copy import verify_message_body
+        body = verify_message_body(entry, plan.source['message_scope']['envelope_ref'], budget.policy, budget)
+        budget._bytes('input_bytes', len(body.raw)); budget._retain(len(body.raw))
+        return (('message.envelope', index._entry(body)),)
+
+    def prepare_upload_message(self, manifest_entry, resolver, custody_entry, allocation_entry, offer_entry,
+            assignment_entry, reservation_entry, sender_reservation_entry, owner_disclosure_entry,
+            source_disclosure_entry, sender_disclosure_entry, *, expected_slot, expected_owner, expected_sender,
+            expected_source, source_storage_epoch, expected_target, target_storage_epoch, current_statuses, at,
+            limit_policy, expected_envelope_ref, envelope_entry):
+        return self._prepare_mailbox_upload((manifest_entry, custody_entry, allocation_entry, offer_entry,
+            assignment_entry, reservation_entry, sender_reservation_entry, owner_disclosure_entry,
+            source_disclosure_entry, sender_disclosure_entry), resolver,
+            binding=dict(root=expected_slot['root_key'], slot=expected_slot, owner=expected_owner,
+                sender=expected_sender, source=expected_source, target=expected_target, envelope_ref=expected_envelope_ref),
+            source_storage_epoch=source_storage_epoch, target_storage_epoch=target_storage_epoch,
+            current_statuses=current_statuses, at=at, limit_policy=limit_policy, body_entry=envelope_entry)

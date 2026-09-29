@@ -1,14 +1,16 @@
 """Private bundles for explicit directory-copy upload and recipient recovery."""
 from dataclasses import replace
 import hashlib
+import math
 import os
+import time
 
 from memory_vault import canonical_bytes
-from memory_vault_network_crypto import document, object_fields
+from memory_vault_network_crypto import document, object_fields, unb64url
 from memory_vault_open_client import OpenNetworkClient
 from memory_vault_open_repair_admin import _entry, _encoded, _ReplicaStatusJournal, MAX_COPY_BUNDLE_BYTES
-from memory_vault_open_repair_mailbox_copy_client import MailboxRootCopyUploadClient, MailboxRootReplicaRecoveryClient, MailboxFeedCopyUploadClient, MailboxFeedReplicaRecoveryClient
-from memory_vault_open_repair_mailbox_copy_prepare import MailboxRootCopyPreparation, MailboxFeedCopyPreparation
+from memory_vault_open_repair_mailbox_copy_client import MailboxRootCopyUploadClient, MailboxRootReplicaRecoveryClient, MailboxFeedCopyUploadClient, MailboxFeedReplicaRecoveryClient, MailboxMessageCopyUploadClient, MailboxMessageReplicaRecoveryClient
+from memory_vault_open_repair_mailbox_copy_prepare import MailboxRootCopyPreparation, MailboxFeedCopyPreparation, MailboxMessageCopyPreparation
 from memory_vault_open_repair_state import DEFAULT_POLICY, DEFAULT_LIMITS, RECEIPT_WORKFLOW_LIMITS, INDEX_WORKFLOW_LIMITS, MAILBOX_WORKFLOW_LIMITS
 from memory_vault_trust import _absolute_path, _read_private, _write_new_private
 import memory_vault_open_repair_history as history
@@ -17,8 +19,10 @@ import memory_vault_open_repair_wire as wire
 
 UPLOAD_SCHEMA = 'memory-vault-open-mailbox-root-copy-request/v1'
 FEED_UPLOAD_SCHEMA = 'memory-vault-open-mailbox-feed-copy-request/v1'
+MESSAGE_UPLOAD_SCHEMA = 'memory-vault-open-mailbox-message-copy-request/v1'
 RECOVER_SCHEMA = 'memory-vault-open-mailbox-root-replica-recovery-request/v1'
 FEED_RECOVER_SCHEMA = 'memory-vault-open-mailbox-feed-replica-recovery-request/v1'
+MESSAGE_RECOVER_SCHEMA = 'memory-vault-open-mailbox-message-replica-recovery-request/v1'
 CONFIG_SCHEMA = 'memory-vault-open-mailbox-root-replica-read-config/v1'
 
 
@@ -46,7 +50,7 @@ def _output(path, evidence):
     if len(raw) > MAX_COPY_BUNDLE_BYTES: raise wire.RepairWireError('repair_over_budget')
     _write_new_private(path, raw)
     return dict(state=evidence['state'], evidence_path=str(path), evidence_sha256=hashlib.sha256(raw).hexdigest(),
-        vault_modified=False, recipient_saved=False)
+        vault_modified=evidence.get('vault_modified',False), recipient_saved=evidence.get('recipient_saved',False))
 
 
 def upload_root(network_config, request_path, output, *, timeout=30, repair_profile=None):
@@ -57,26 +61,36 @@ def upload_feed(network_config, request_path, output, *, timeout=30, repair_prof
     return _upload_mailbox(network_config, request_path, output, timeout=timeout, repair_profile=repair_profile, source_state='feed')
 
 
+def upload_message(network_config, request_path, output, *, timeout=30, repair_profile=None):
+    return _upload_mailbox(network_config,request_path,output,timeout=timeout,repair_profile=repair_profile,source_state='message')
+
+
 def _upload_mailbox(network_config, request_path, output, *, timeout, repair_profile, source_state):
     """Upload an already allocated and independently consented exact transcript."""
-    feed = source_state == 'feed'
+    feed = source_state in ('feed','message'); message=source_state=='message'
     names = ('node', 'manifest', 'custody', 'allocation', 'offer', 'assignment', 'reservation', 'owner_disclosure', 'source_disclosure')
     if feed: names += ('sender_reservation', 'sender_disclosure')
-    request, output, limits = _request(request_path, output, FEED_UPLOAD_SCHEMA if feed else UPLOAD_SCHEMA,
+    request, output, limits = _request(request_path, output, MESSAGE_UPLOAD_SCHEMA if message else FEED_UPLOAD_SCHEMA if feed else UPLOAD_SCHEMA,
         set(names) | {'root_key', 'owner', 'source', 'source_storage_epoch', 'target', 'target_storage_epoch', 'originals', 'current_statuses'}
-            | ({'slot_key', 'sender'} if feed else set()), repair_profile or 'unbound')
+            | ({'slot_key', 'sender'} if feed else set()) | ({'envelope'} if message else set()), repair_profile or 'unbound')
     if feed: history._slot(request['slot_key'], request['root_key'])
     if type(request['originals']) is not list or not 1 <= len(request['originals']) <= 64: raise wire.RepairWireError('repair_invalid_request_bundle')
     if type(request['current_statuses']) is not list or not 1 <= len(request['current_statuses']) <= 16: raise wire.RepairWireError('repair_invalid_status')
     entries = {name: _entry(request[name]) for name in names}
+    if message:
+        from memory_vault_open_delivery import MAX_ENVELOPE_BYTES
+        from memory_vault_open_repair_mailbox_message_copy import verify_message_body
+        value=object_fields(request['envelope'],{'ref','raw_base64url'})
+        envelope=dict(raw=unb64url(value['raw_base64url'],maximum=MAX_ENVELOPE_BYTES),ref=value['ref'])
+        verify_message_body(envelope,value['ref'],DEFAULT_POLICY,wire.RepairBudget(DEFAULT_POLICY))
     base = _base(entries['node'])
     resolver = wire.LocalRawResolver(DEFAULT_POLICY, wire.RepairBudget(DEFAULT_POLICY))
     for value in request['originals']:
         entry = _entry(value); ref = wire.raw_ref(entry['ref'])
         if resolver.put(ref.namespace, ref.key, entry['raw']).ref != ref: raise wire.RepairWireError('repair_ref_mismatch')
     with OpenNetworkClient(_absolute_path(network_config)) as network, network.participant.state.db() as db:
-        journal = (MailboxFeedCopyPreparation if feed else MailboxRootCopyPreparation)(db, network.identity, network.encryption, policy=DEFAULT_POLICY)
-        client = (MailboxFeedCopyUploadClient if feed else MailboxRootCopyUploadClient)(journal, encryption_identity=network.encryption,
+        journal = (MailboxMessageCopyPreparation if message else MailboxFeedCopyPreparation if feed else MailboxRootCopyPreparation)(db, network.identity, network.encryption, policy=DEFAULT_POLICY)
+        client = (MailboxMessageCopyUploadClient if message else MailboxFeedCopyUploadClient if feed else MailboxRootCopyUploadClient)(journal, encryption_identity=network.encryption,
             transport=network.participant.transport, allow_loopback=network.participant.transport.allow_loopback)
         try:
             originals = (entries['manifest'], resolver, entries['custody'], entries['allocation'], entries['offer'], entries['assignment'], entries['reservation'])
@@ -84,6 +98,7 @@ def _upload_mailbox(network_config, request_path, output, *, timeout, repair_pro
             originals += (entries['owner_disclosure'], entries['source_disclosure'])
             if feed: originals += (entries['sender_disclosure'],)
             selection = dict(expected_slot=request['slot_key'], expected_sender=request['sender']) if feed else dict(expected_root=request['root_key'])
+            if message:selection.update(expected_envelope_ref=envelope['ref'],envelope_entry=envelope)
             result = client.upload(base, *originals, target_node_entry=entries['node'], **selection,
                 expected_owner=request['owner'], expected_source=request['source'],
                 source_storage_epoch=request['source_storage_epoch'], expected_target=request['target'],
@@ -105,12 +120,19 @@ def recover_feed(network_config, request_path, output, *, timeout=30, repair_pro
     return _recover_mailbox(network_config, request_path, output, timeout=timeout, repair_profile=repair_profile, source_state='feed')
 
 
+def receive_message(network_config, request_path, output, *, timeout=30, repair_profile=None):
+    return _recover_mailbox(network_config,request_path,output,timeout=timeout,repair_profile=repair_profile,source_state='message')
+
+
 def _recover_mailbox(network_config, request_path, output, *, timeout, repair_profile, source_state):
     """Retain authenticated status floors, including when recovery is denied."""
-    feed = source_state == 'feed'
-    request, output, limits = _request(request_path, output, FEED_RECOVER_SCHEMA if feed else RECOVER_SCHEMA,
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 60:
+        raise wire.RepairWireError('repair_invalid_deadline')
+    deadline = time.monotonic() + timeout
+    feed = source_state in ('feed','message');message=source_state=='message'
+    request, output, limits = _request(request_path, output, MESSAGE_RECOVER_SCHEMA if message else FEED_RECOVER_SCHEMA if feed else RECOVER_SCHEMA,
         {'root_key', 'target', 'source', 'source_storage_epoch', 'maintainer', 'node', 'known_statuses', 'archive_statuses'}
-            | ({'slot_key', 'sender', 'slot_entries'} if feed else {'root', 'read', 'bootstrap'}), repair_profile or 'unbound')
+            | ({'slot_key', 'sender', 'slot_entries'} if feed else {'root', 'read', 'bootstrap'}) | ({'envelope_ref'} if message else set()), repair_profile or 'unbound')
     if feed: history._slot(request['slot_key'], request['root_key'])
     for name, maximum in (('known_statuses', 16), ('archive_statuses', 32)):
         if type(request[name]) is not list or len(request[name]) > maximum: raise wire.RepairWireError('repair_status_history_capacity')
@@ -128,17 +150,30 @@ def _recover_mailbox(network_config, request_path, output, *, timeout, repair_pr
         archived = {canonical_bytes(item['ref']): item for item in
             (*journal.statuses(parties), *[_entry(e) for e in request['archive_statuses']])}
         if len(archived) > 32: raise wire.RepairWireError('repair_status_history_capacity')
-        client = (MailboxFeedReplicaRecoveryClient if feed else MailboxRootReplicaRecoveryClient)(network.identity, network.encryption, limit_policy=limits,
+        client = (MailboxMessageReplicaRecoveryClient if message else MailboxFeedReplicaRecoveryClient if feed else MailboxRootReplicaRecoveryClient)(network.identity, network.encryption, limit_policy=limits,
             policy=replace(DEFAULT_POLICY, max_signature_checks=min(512, limits['max_signature_checks'])) if feed else DEFAULT_POLICY,
             transport=network.participant.transport, allow_loopback=network.participant.transport.allow_loopback,
             status_observer=journal.observe)
         try:
             selection = dict(expected_slot=request['slot_key'], expected_sender=request['sender'], slot_entries=slot_entries) if feed else dict(
                 expected_root=request['root_key'], root_entry=entries['root'], read_entry=entries['read'], bootstrap_entry=entries['bootstrap'])
+            if message:selection['expected_envelope_ref']=request['envelope_ref']
             result = client.recover(base, target_node_entry=entries['node'], expected_target=request['target'], **selection,
                 expected_source=request['source'], source_storage_epoch=request['source_storage_epoch'], expected_maintainer=request['maintainer'],
-                known_statuses=[_entry(e) for e in request['known_statuses']], archive_statuses=list(archived.values()), timeout=timeout)
+                known_statuses=[_entry(e) for e in request['known_statuses']], archive_statuses=list(archived.values()), timeout=deadline-time.monotonic())
             for item in result.archive_statuses: journal.observe(item)
+            if message:
+                body=client.read_message(base,result,timeout=deadline-time.monotonic())
+                delivery=network._delivery()
+                received=delivery.receive_recovered_mailbox_replica(client,result,body,target_node_entry=entries['node'])
+                saved=delivery._inbox(body['core']['message_id'])
+                saved_result=document(bytes(saved['result']))
+                return _output(output,dict(schema_version='memory-vault-open-mailbox-message-replica-receipt/v1',
+                    state='mailbox_message_replica_received',message_id=body['core']['message_id'],envelope_ref=request['envelope_ref'],
+                    replica_custody=_encoded(result.replica['custody'].raw,result.replica['custody'].ref),
+                    recipient_saved=saved['phase']=='saved',recipient_receipt=delivery._saved_receipt(body['core']['message_id']),
+                    vault_modified=bool(received['messages'] and saved_result.get('share') and saved_result['share']['records_added']),
+                    result=saved_result,receipt_state='retained_for_independent_return'))
         finally: client.close()
     evidence = dict(schema_version='memory-vault-open-mailbox-'+source_state+'-replica-recovery-result/v1', state='mailbox_'+source_state+'_replica_recovered',
         root_key=request['root_key'], target=request['target'], source=request['source'], source_storage_epoch=request['source_storage_epoch'],

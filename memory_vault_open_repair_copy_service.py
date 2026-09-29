@@ -55,11 +55,11 @@ class ReplicaReadAccess:
             for role,name in (('replica.manifest','manifest'),('replica.custody','custody')):
                 entry=self.store.source._saved(commit,name)
                 children.append(dict(role=role,raw=entry['raw'],ref=wire.raw_ref(entry['ref'])))
-        names=('owner','source','maintainer')+(('recipient',) if self.service.resource_state=='replica_occupied' else ('sender',) if self.service.resource_state=='replica_feed' else ())
+        names=('owner','source','maintainer')+(('recipient',) if self.service.resource_state=='replica_occupied' else ('sender',) if self.service.resource_state in ('replica_feed','replica_message') else ())
         for name,item in zip(names,held['consents']):
             children.append(dict(role='return.'+name,raw=item.raw,ref=item.ref))
         children.extend(dict(role='current.status.replica_read',raw=item.raw,ref=item.ref) for item in held['statuses'])
-        if self.service.resource_state in ('replica_empty','replica_occupied','replica_root','replica_feed'):
+        if self.service.resource_state in ('replica_empty','replica_occupied','replica_root','replica_feed','replica_message'):
             # A byte container of these already authorized originals reduces
             # round trips without changing their refs, authority or byte charge.
             # Source history packs remain separate and retain their exact bytes.
@@ -112,7 +112,7 @@ class ReplicaReadService(RepairBootstrapService):
         value=dict(context=context,consents={key:_encode(entry) for key,entry in consents.items()},
             statuses=[_encode(entry) for entry in current_statuses],bootstrap=_encode(dict(
                 raw=decision['bootstrap'].raw,ref=decision['bootstrap'].ref.as_dict())))
-        if self.resource_state in ('replica_occupied','replica_root','replica_feed'):value['source_state']=self.resource_state
+        if self.resource_state in ('replica_occupied','replica_root','replica_feed','replica_message'):value['source_state']=self.resource_state
         raw=wire.build_new_wire(value,budget.policy,budget).raw;digest=budget._hash(raw)
         with self.state._transaction() as now:
             row,held=self.store._committed(resource_id)
@@ -133,7 +133,7 @@ class ReplicaReadService(RepairBootstrapService):
         raw=bytes(saved['raw'])
         if budget._hash(raw)!=saved['digest']:wire._fail('repair_storage_corrupt')
         value=wire.parse_new_wire(raw,budget.policy,budget).value
-        tagged=self.resource_state in ('replica_occupied','replica_root','replica_feed')
+        tagged=self.resource_state in ('replica_occupied','replica_root','replica_feed','replica_message')
         wire.object_fields(value,{'context','consents','statuses','bootstrap'}|({'source_state'} if tagged else set()))
         if tagged and value['source_state']!=self.resource_state:wire._fail('repair_storage_corrupt')
         if (value['context']['expected_owner']['signing_key']['key_id']!=saved['owner']

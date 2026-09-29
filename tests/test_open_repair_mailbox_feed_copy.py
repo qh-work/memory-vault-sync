@@ -30,7 +30,14 @@ from tests import test_open_delivery_http as fixtures
 
 
 class FeedCopyFixture:
-    def __init__(self, test, fixture, staging, slot, head):
+    def __init__(self, test, fixture, staging, slot, head, *, message=False):
+        self.message = message
+        self.recipient_agent=fixture.b
+        self.call_agent=fixture.call
+        if message:
+            from memory_vault_open_repair_mailbox_message_copy import RESERVATION_KIND, DISCLOSURE_KIND
+        else:
+            from memory_vault_open_repair_mailbox_feed_copy import RESERVATION_KIND, DISCLOSURE_KIND
         self.test = test; self.staging = staging; self.source = staging.source; self.slot = slot; self.root = slot['root_key']
         s = self.source; self.now = int(time.time()); self.until = self.now + 50; self.policy = s.policy; self.limits = s.limits
         rid = staging.db.execute('SELECT resource_id FROM open_repair_mailbox_roots').fetchone()[0]
@@ -53,15 +60,21 @@ class FeedCopyFixture:
         self.event = verify_mailbox_feed_source_event(self.manifest, resolver, self.custody, expected_slot=slot,
             expected_owner=self.owner, expected_sender=self.sender, expected_target=s.target,
             limit_policy=self.limits, policy=self.policy, budget=budget)
+        if message:
+            from memory_vault_open_repair_mailbox_message_copy import select_message_source
+            self.envelope_ref = self.snapshot.envelopes[0].as_dict()
+            self.event = select_message_source(self.event, self.envelope_ref, self.policy, budget)
+        self.source_custody_ref = self.event['custody'].ref.as_dict()
+        self.historical_ref = self.event['message_history_ref'] if message else self.manifest['ref']
         controls = self.event['graph']['members'][0]['originals']; self.parent = controls['maintenance']; self.bootstrap = controls['bootstrap']
         self.intent = dict(kind='resource.copy_intent', allocation_id='synthetic_feed_copy', job_id='synthetic_feed_job',
             root_key=self.root, caller=s.target, target=self.target, target_storage_epoch=self.node['payload']['storage_epoch'],
-            purpose='feed_replica', scope=self.part.scope, historical_manifest_ref=self.manifest['ref'],
-            budget=dict(self.parent.payload['budget'], max_live_bytes=0), windows={k:self.until for k in self.parent.payload['windows']})
+            purpose='message_replica' if message else 'feed_replica', scope=self.event['message_scope'] if message else self.part.scope, historical_manifest_ref=self.historical_ref,
+            budget=dict(self.parent.payload['budget'], max_live_bytes=self.envelope_ref['size'] if message else 0), windows={k:self.until for k in self.parent.payload['windows']})
         digest = hashlib.sha256(canonical_bytes(self.intent)).hexdigest()
         self.reservations = {name:self.sign(RESERVATION_KIND, name, dict(consent_id='synthetic_'+name+'_reservation',
-            revision=1, variant=name, root_authority_ref=self.parent.ref.as_dict(), source_custody_ref=self.custody['ref'],
-            historical_manifest_ref=self.manifest['ref'], maintainer=self.dual(s.target), target=self.target,
+            revision=1, variant=name, root_authority_ref=self.parent.ref.as_dict(), source_custody_ref=self.source_custody_ref,
+            historical_manifest_ref=self.historical_ref, maintainer=self.dual(s.target), target=self.target,
             target_storage_epoch=self.intent['target_storage_epoch'], reservation_disclosure=dict(intent_sha256=digest, until=self.until)))
             for name in ('owner', 'sender')}
         self.allocation = self.sign('resource.allocate', 'maintainer', dict(request_id='synthetic_feed_allocate',
@@ -82,8 +95,8 @@ class FeedCopyFixture:
         for name in ('owner', 'source', 'sender'):
             originals, scopes = feed_disclosure_permissions(self.rows, self.signers[name].key_id, self.root, self.policy, budget)
             self.disclosures[name] = self.sign(DISCLOSURE_KIND, name, dict(consent_id='synthetic_'+name+'_disclosure', revision=1,
-                variant=name, root_key=self.root, assignment_ref=self.assignment['ref'], source_custody_ref=self.custody['ref'],
-                historical_manifest_ref=self.manifest['ref'], target=self.target, target_storage_epoch=self.intent['target_storage_epoch'],
+                variant=name, root_key=self.root, assignment_ref=self.assignment['ref'], source_custody_ref=self.source_custody_ref,
+                historical_manifest_ref=self.historical_ref, target=self.target, target_storage_epoch=self.intent['target_storage_epoch'],
                 disclosure=dict(originals=originals, status_scopes=scopes, until=self.until)))
         entries = {}; revisions = {}
         for row in self.rows:
@@ -111,7 +124,8 @@ class FeedCopyFixture:
         self.db = sqlite3.connect(path)
         self.state = RepairAckState(self.db,self.identity,self.node,encryption_identity=self.encryption,
             policy=self.policy,limit_policy=self.limits,clock=lambda:self.now)
-        self.store = MailboxFeedCopyState(self.state); self.store.initialize()
+        from memory_vault_open_repair_mailbox_message_copy_state import MailboxMessageCopyState
+        self.store = (MailboxMessageCopyState if self.message else MailboxFeedCopyState)(self.state); self.store.initialize()
 
     @staticmethod
     def dual(keys): return dict(signing_key_id=keys['signing_key']['key_id'],encryption_key_id=keys['encryption_key']['key_id'])
@@ -138,13 +152,16 @@ class FeedCopyFixture:
     def context(self):
         return dict(expected_slot=self.slot,expected_owner=self.owner,expected_sender=self.sender,
             expected_source=self.source.target,source_storage_epoch=self.source.node['payload']['storage_epoch'],
-            expected_maintainer=self.source.target,limit_policy=self.limits)
+            expected_maintainer=self.source.target,limit_policy=self.limits, **(dict(expected_envelope_ref=self.envelope_ref) if self.message else {}))
 
     def args(self):
         return (self.manifest,self.resolver(),self.custody,self.allocation,self.offer,self.assignment,
             self.reservations['owner'],self.reservations['sender'],self.disclosures['owner'],self.disclosures['source'],self.disclosures['sender'])
 
-    def commit(self): return self.store.commit_feed(*self.args(),**self.context(),current_statuses=self.statuses)
+    def commit(self):
+        if self.message:
+            return self.store.commit_message(*self.args(), **self.context(), current_statuses=self.statuses, envelope_entry=self.entry(wire.raw_ref(self.envelope_ref)))
+        return self.store.commit_feed(*self.args(),**self.context(),current_statuses=self.statuses)
 
     @staticmethod
     def encode(entry): return dict(raw_base64url=b64url(entry['raw']),ref=entry['ref'])
@@ -179,17 +196,19 @@ class FeedCopyFixture:
             raise AssertionError(stderr.getvalue())
         import stat
         self.test.assertEqual(stat.S_IMODE(output.stat().st_mode),0o600)
-        self.test.assertFalse(json.loads(stdout.getvalue())['recipient_saved'])
+        self.test.assertEqual(json.loads(stdout.getvalue())['recipient_saved'],name=='receive-replica-message')
         return json.loads(output.read_bytes())
 
     def read_permissions(self):
         from memory_vault_open_repair_mailbox_feed_copy import RETURN_KIND, feed_return_permissions
+        if self.message:
+            from memory_vault_open_repair_mailbox_message_copy import RETURN_KIND
         replica=self.store.restore_feed(self.rid,**self.context());plan=replica['authority']
         budget=wire.RepairBudget(self.policy);consents={}
         for name in ('owner','source','maintainer','sender'):
             originals,scopes=feed_return_permissions(plan,self.signers[name].key_id,self.policy,budget)
             consents[name]=self.sign(RETURN_KIND,name,dict(consent_id='synthetic_'+name+'_return',revision=1,variant=name,
-                root_key=self.root,source_custody_ref=self.custody['ref'],historical_manifest_ref=self.manifest['ref'],
+                root_key=self.root,source_custody_ref=self.source_custody_ref,historical_manifest_ref=self.historical_ref,
                 assignment_ref=self.assignment['ref'],subject=self.dual(self.owner),target=self.target,
                 target_storage_epoch=self.intent['target_storage_epoch'],bootstrap_grant_ref=self.bootstrap.ref.as_dict(),
                 return_permission=dict(originals=originals,status_scopes=scopes,until=self.until)))
@@ -274,12 +293,15 @@ class MailboxFeedCopyTests(unittest.TestCase):
     def test_commands_upload_configure_and_recover_with_existing_keys_after_restart(self):
         self.http_roundtrip(commands=True)
 
-    def http_roundtrip(self, commands=False):
+    def http_roundtrip(self, commands=False, message=False, upload_only=False, agent=False):
         from memory_vault import MemoryError
         from memory_vault_open_node import OpenParticipant, OpenHTTPServer
         from memory_vault_open_transport import OpenHTTPTransport
         from memory_vault_open_repair_mailbox_copy_prepare import MailboxFeedCopyPreparation
         from memory_vault_open_repair_mailbox_copy_client import MailboxFeedCopyUploadClient
+        if message:
+            from memory_vault_open_repair_mailbox_copy_prepare import MailboxMessageCopyPreparation as MailboxFeedCopyPreparation
+            from memory_vault_open_repair_mailbox_copy_client import MailboxMessageCopyUploadClient as MailboxFeedCopyUploadClient
         import threading
         def inspect(h):
             with patch('socket.getfqdn',return_value='localhost'):server=OpenHTTPServer(('127.0.0.1',0),None)
@@ -288,6 +310,7 @@ class MailboxFeedCopyTests(unittest.TestCase):
                 revision=2,issued_at=h.now,expires_at=h.now+300)
             if commands:
                 network=h.client_config('source',descriptor);owner_network=h.client_config('owner',descriptor)
+                if message:owner_network=h.recipient_agent.network_config
             participants=[];threads=[];errors=[]
             def start():
                 participant=OpenParticipant(h.identity,h.directory,seeds=[],descriptor=descriptor,encryption_identity=h.encryption,
@@ -316,6 +339,8 @@ class MailboxFeedCopyTests(unittest.TestCase):
                 try:
                     if commands:
                         from memory_vault_open_repair_mailbox_copy_admin import FEED_UPLOAD_SCHEMA
+                        if message:
+                            from memory_vault_open_repair_mailbox_copy_admin import MESSAGE_UPLOAD_SCHEMA as FEED_UPLOAD_SCHEMA
                         request=dict(schema_version=FEED_UPLOAD_SCHEMA,node=h.encode(h.wrap(canonical_bytes(descriptor))),
                             root_key=h.root,slot_key=h.slot,sender=h.sender,owner=h.owner,source=h.source.target,
                             source_storage_epoch=h.source.node['payload']['storage_epoch'],target=h.target,target_storage_epoch=h.intent['target_storage_epoch'],
@@ -324,17 +349,19 @@ class MailboxFeedCopyTests(unittest.TestCase):
                             **{name:h.encode(value) for name,value in dict(manifest=h.manifest,custody=h.custody,allocation=h.allocation,offer=h.offer,
                                 assignment=h.assignment,reservation=h.reservations['owner'],sender_reservation=h.reservations['sender'],
                                 owner_disclosure=h.disclosures['owner'],source_disclosure=h.disclosures['source'],sender_disclosure=h.disclosures['sender']).items()})
-                        saved=h.command('copy-upload-feed',request,network)
+                        if message:request['envelope']=h.encode(h.entry(wire.raw_ref(h.envelope_ref)))
+                        saved=h.command('copy-upload-message' if message else 'copy-upload-feed',request,network)
                         return dict(state=saved['state'],**{name:dict(raw=unb64url(saved[name]['raw_base64url'],maximum=524288),ref=saved[name]['ref']) for name in ('manifest','custody')})
                     return active.upload(base,*h.args(),**context,expected_target=h.target,target_storage_epoch=h.intent['target_storage_epoch'],
-                        target_node_entry=h.wrap(canonical_bytes(descriptor)),current_statuses=h.statuses,timeout=60)
+                        target_node_entry=h.wrap(canonical_bytes(descriptor)),current_statuses=h.statuses,timeout=60,
+                        **(dict(envelope_entry=h.entry(wire.raw_ref(h.envelope_ref))) if message else {}))
                 except MemoryError:
                     if errors:raise AssertionError(errors) from None
                     raise
             active,db=client();send=transport.request_repair;lost=[]
             def lose_reply(base,raw,**options):
                 result=send(base,raw,**options)
-                if json.loads(raw).get('payload',{}).get('kind')=='mailbox.feed_copy_commit' and not lost:
+                if json.loads(raw).get('payload',{}).get('kind')==('mailbox.message_copy_commit' if message else 'mailbox.feed_copy_commit') and not lost:
                     lost.append(raw);raise MemoryError('open_network_unavailable',retryable=True)
                 return result
             def lose_cli(client,base,raw,**options):return lose_reply(base,raw,**options)
@@ -351,9 +378,18 @@ class MailboxFeedCopyTests(unittest.TestCase):
             result=upload(active);self.assertEqual(result['state'],'replica_committed')
             self.assertEqual(upload(active),result)
             self.assertEqual(errors,[])
+            if upload_only:
+                h.source.db.close();h.db.close();h.connect()
+                recovered=h.store.restore_message(h.rid,**h.context())
+                self.assertEqual(recovered['custody'].raw,result['custody']['raw'])
+                self.assertEqual(h.store.read_local_original(h.rid,h.envelope_ref),h.snapshot.read(h.envelope_ref))
+                return
             from dataclasses import replace
             from memory_vault_open_repair_mailbox_copy_service import MailboxFeedReplicaReadService
             from memory_vault_open_repair_mailbox_copy_client import MailboxFeedReplicaRecoveryClient
+            if message:
+                from memory_vault_open_repair_mailbox_copy_service import MailboxMessageReplicaReadService as MailboxFeedReplicaReadService
+                from memory_vault_open_repair_mailbox_copy_client import MailboxMessageReplicaRecoveryClient as MailboxFeedReplicaRecoveryClient
             consents,current=h.read_permissions();context=h.context();context.pop('limit_policy')
             if commands:
                 from memory_vault_open_node import NODE_CONFIG
@@ -361,7 +397,7 @@ class MailboxFeedCopyTests(unittest.TestCase):
                 _write_new_private(config,canonical_bytes(dict(schema_version=NODE_CONFIG,identity_path=str(h.directory/'identity.json'),
                     encryption_key_path=str(h.directory/'encryption.json'),state_directory=str(h.directory),node=descriptor,seeds=[],allow_loopback=True,
                     index_policy=dict(enabled=False),repair_policy=dict(enabled=True,limit_policy=h.limits),listen_host='127.0.0.1',listen_port=server.server_port)))
-                configured=h.command('configure-replica-feed',dict(schema_version='memory-vault-open-mailbox-feed-replica-read-config/v1',
+                configured=h.command('configure-replica-message' if message else 'configure-replica-feed',dict(schema_version='memory-vault-open-mailbox-'+('message' if message else 'feed')+'-replica-read-config/v1',
                     resource_id=h.rid,context=context,consents={name:h.encode(e) for name,e in consents.items()},current_statuses=[h.encode(e) for e in current]),config,node=True)
                 self.assertEqual(configured['state'],'configured')
             else:
@@ -371,16 +407,51 @@ class MailboxFeedCopyTests(unittest.TestCase):
             h.source.db.close()
             stop();start()
             restored=h.store.restore_feed(h.rid,**h.context())
-            self.assertEqual(restored['source']['custody'].raw,h.custody['raw'])
+            self.assertEqual(restored['source']['custody'].ref.as_dict(),h.source_custody_ref)
             reader=MailboxFeedReplicaRecoveryClient(h.signers['owner'],h.owner_encryption,
                 policy=replace(h.policy,max_signature_checks=512),limit_policy=h.limits,transport=transport,allow_loopback=True,clock=lambda:h.now)
             setup=restored['source']['graph']['members'][0]['originals']
             if commands:
                 from memory_vault_open_repair_mailbox_copy_admin import FEED_RECOVER_SCHEMA
-                recovered=h.command('recover-replica-feed',dict(schema_version=FEED_RECOVER_SCHEMA,node=h.encode(h.wrap(canonical_bytes(descriptor))),
+                if message:
+                    from memory_vault_open_repair_mailbox_copy_admin import MESSAGE_RECOVER_SCHEMA as FEED_RECOVER_SCHEMA
+                if agent:
+                    from memory_vault_open_client import MAILBOX_CONNECT_SCHEMA
+                    encode=lambda entry:dict(raw=entry['raw'].decode('utf-8'),ref=entry['ref'])
+                    invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='receive_replica',base_url=base,repair_profile='mailbox',
+                        request=dict(expected_slot=h.slot,expected_sender=h.sender,expected_target=h.target,expected_source=h.source.target,
+                            source_storage_epoch=h.source.node['payload']['storage_epoch'],expected_maintainer=h.source.target,
+                            expected_envelope_ref=h.envelope_ref,target_node_entry=encode(h.wrap(canonical_bytes(descriptor))),
+                            slot_entries={name:encode(index._entry(setup[name])) for name in ('slot','read','maintenance','bootstrap')},
+                            known_statuses=[],archive_statuses=[]))
+                    try:received=h.call_agent(h.recipient_agent,op='connect',invitation=invitation)
+                    except AssertionError as error:raise AssertionError((str(error),errors)) from None
+                    self.assertEqual(received['body_transport'],'mailbox_message_replica')
+                    self.assertEqual(received['messages'][0]['share']['records_added'],1)
+                    self.assertTrue(received['network_accessed'])
+                    # Agent operations reopen the protected state, including
+                    # exact inbox evidence and retained status observations.
+                    repeated=h.call_agent(h.recipient_agent,op='connect',invitation=invitation)
+                    self.assertEqual(repeated['messages'],[])
+                    with h.recipient_agent._network() as network:
+                        with network.participant.state.db() as db:
+                            self.assertGreater(db.execute('SELECT count(*) FROM open_ack_replica_statuses').fetchone()[0],0)
+                    recalled=h.call_agent(h.recipient_agent,op='recall',query='Synthetic mailbox memory')
+                    self.assertTrue(any(hit['text']=='Synthetic mailbox memory: consult current evidence before reuse.' for hit in recalled['hits']))
+                    return
+                recovered=h.command('receive-replica-message' if message else 'recover-replica-feed',dict(schema_version=FEED_RECOVER_SCHEMA,node=h.encode(h.wrap(canonical_bytes(descriptor))),
                     root_key=h.root,slot_key=h.slot,sender=h.sender,target=h.target,source=h.source.target,
                     source_storage_epoch=h.source.node['payload']['storage_epoch'],maintainer=h.source.target,known_statuses=[],archive_statuses=[],
-                    slot_entries={name:h.encode(index._entry(setup[name])) for name in ('slot','read','maintenance','bootstrap')}),owner_network)
+                    slot_entries={name:h.encode(index._entry(setup[name])) for name in ('slot','read','maintenance','bootstrap')},
+                    **(dict(envelope_ref=h.envelope_ref) if message else {})),owner_network)
+                if message:
+                    self.assertEqual(recovered['state'],'mailbox_message_replica_received')
+                    self.assertTrue(recovered['recipient_saved']);self.assertTrue(recovered['vault_modified'])
+                    self.assertEqual(recovered['result']['share']['records_added'],1)
+                    self.assertEqual(recovered['replica_custody'],h.encode(result['custody']))
+                    recalled=h.call_agent(h.recipient_agent,op='recall',query='Synthetic mailbox memory')
+                    self.assertTrue(any(hit['text']=='Synthetic mailbox memory: consult current evidence before reuse.' for hit in recalled['hits']))
+                    return
                 self.assertEqual(len(recovered['members']),1)
                 self.assertEqual(recovered['state'],'mailbox_feed_replica_recovered')
                 self.assertEqual(recovered['replica_custody'],h.encode(result['custody']))
@@ -391,10 +462,18 @@ class MailboxFeedCopyTests(unittest.TestCase):
                 recovered=reader.recover(base,target_node_entry=h.wrap(canonical_bytes(descriptor)),expected_target=h.target,
                     expected_slot=h.slot,expected_sender=h.sender,expected_source=h.source.target,
                     source_storage_epoch=h.source.node['payload']['storage_epoch'],expected_maintainer=h.source.target,
-                    slot_entries={name:index._entry(setup[name]) for name in ('slot','read','maintenance','bootstrap')},timeout=30)
+                    slot_entries={name:index._entry(setup[name]) for name in ('slot','read','maintenance','bootstrap')},timeout=30,
+                    **(dict(expected_envelope_ref=h.envelope_ref) if message else {}))
             except MemoryError:raise AssertionError(errors) from None
             self.assertEqual(len(recovered.members),1)
-            self.assertEqual(recovered.replica['source']['custody'].raw,h.custody['raw'])
+            self.assertEqual(recovered.replica['source']['custody'].ref.as_dict(),h.source_custody_ref)
             self.assertEqual(recovered.replica['custody'].raw,result['custody']['raw'])
+            if message:
+                try:delivery=reader.read_message(base,recovered,timeout=30)
+                except MemoryError:raise AssertionError(errors) from None
+                self.assertEqual(delivery['envelope'],h.snapshot.read(h.envelope_ref))
+                self.assertEqual(delivery['core']['envelope_ref'],h.envelope_ref)
+                if hasattr(self,'verify_replica_delivery'):
+                    self.verify_replica_delivery(h,reader,recovered,delivery,descriptor)
             self.assertEqual(errors,[])
         self.run_fixture(inspect)

@@ -42,8 +42,9 @@ def feed_copy_histories(source, entry):
 def feed_copy_inventory(source, reservations, policy, budget):
     rows = {}
     values = [(row.role, row.original) for manifest in (source['manifest'], *source['manifest'].predecessors) for row in manifest.roles]
-    values.extend((('feed.custody', source['custody']), ('copy.reservation_consent', reservations['owner']),
+    values.extend((('feed.custody', source.get('feed_custody', source['custody'])), ('copy.reservation_consent', reservations['owner']),
         ('copy.sender_reservation_consent', reservations['sender'])))
+    if 'message_scope' in source: values.append(('message.custody',source['custody']))
     for role, item in values:
         parsed = wire.parse_new_wire(item.raw, policy, budget).value
         issuer = parsed['payload']['signing_key']['key_id'] if 'payload' in parsed else ''
@@ -59,11 +60,15 @@ def feed_disclosure_permissions(rows, issuer, root, policy, budget):
     return originals, [dict(scope_kind=k, scope_id=v) for k, v in sorted({(e['scope_kind'], e['scope_id']) for e in scopes})]
 
 
-def verify_mailbox_feed_copy(manifest_entry, resolver, custody_entry, allocation_entry, offer_entry,
+def verify_mailbox_feed_copy(*args, **options):
+    return _verify_mailbox_copy(*args, **options, message_ref=None)
+
+
+def _verify_mailbox_copy(manifest_entry, resolver, custody_entry, allocation_entry, offer_entry,
         assignment_entry, reservation_entry, sender_reservation_entry, owner_disclosure_entry,
         source_disclosure_entry, sender_disclosure_entry, *, expected_slot, expected_owner, expected_sender,
         expected_source, source_storage_epoch, expected_maintainer, expected_target, target_storage_epoch,
-        current_statuses, at, limit_policy, policy, budget, on_observed=None):
+        current_statuses, at, limit_policy, policy, budget, message_ref, on_observed=None):
     wire._context(policy, budget); wire.u53(at)
     parties = wire.build_new_wire(dict(owner=expected_owner, sender=expected_sender, source=expected_source,
         maintainer=expected_maintainer, target=expected_target), policy, budget).value
@@ -71,11 +76,19 @@ def verify_mailbox_feed_copy(manifest_entry, resolver, custody_entry, allocation
     source = verify_mailbox_feed_source_event(manifest_entry, resolver, custody_entry, expected_slot=expected_slot,
         expected_owner=parties['owner'], expected_sender=parties['sender'], expected_target=parties['source'],
         limit_policy=limit_policy, policy=policy, budget=budget)
-    scope = feed_copy_scope(source); slot_key = scope['slot_key']; root_key = slot_key['root_key']
+    if message_ref is not None:
+        from memory_vault_open_repair_mailbox_message_copy import select_message_source
+        source = select_message_source(source, message_ref, policy, budget)
+    message = message_ref is not None
+    scope = source['message_scope'] if message else feed_copy_scope(source)
+    historical_ref = source['message_history_ref'] if message else wire.raw_ref(manifest_entry['ref']).as_dict()
+    reservation_kind = 'mailbox.message_copy_reservation_consent' if message else RESERVATION_KIND
+    disclosure_kind = 'mailbox.message_copy_disclosure' if message else DISCLOSURE_KIND
+    slot_key = scope['slot_key']; root_key = slot_key['root_key']
     _same(slot_key['writer_storage_epoch'] == source_storage_epoch)
     setup = source['graph']['members'][0]
     parent, read, bootstrap, slot = (setup['originals'][name] for name in ('maintenance', 'read', 'bootstrap', 'slot'))
-    active = setup['resources']['metadata']['active']
+    active = setup['resources']['data' if message else 'metadata']['active']
     p = parent.payload
     _same(ids['maintainer'] in p['maintainers'] and p['operation_mask'] & 78 == 78
         and p['max_delegate_depth'] >= 2 and p['max_destinations_per_job'] > 0 and p['max_concurrent_jobs'] > 0
@@ -91,11 +104,12 @@ def verify_mailbox_feed_copy(manifest_entry, resolver, custody_entry, allocation
     mailbox_copy_scope(intent['scope'], intent['root_key'], intent['purpose']); history._resource(o['resource'])
     for name in ('allocation_id', 'job_id', 'target_storage_epoch'): resource._opaque(intent[name])
     digest = budget._hash(wire._canonical(intent, budget))
-    _same(intent['kind'] == 'resource.copy_intent' and intent['purpose'] == 'feed_replica'
-        and intent['budget']['max_live_bytes'] == 0 and intent['caller'] == parties['maintainer']
+    _same(intent['kind'] == 'resource.copy_intent' and intent['purpose'] == ('message_replica' if message else 'feed_replica')
+        and (intent['budget']['max_live_bytes'] >= wire.raw_ref(message_ref).size if message else intent['budget']['max_live_bytes'] == 0)
+        and intent['caller'] == parties['maintainer']
         and intent['target'] == parties['target'] and intent['target_storage_epoch'] == target_storage_epoch
         and intent['root_key'] == root_key and intent['scope'] == scope
-        and intent['historical_manifest_ref'] == wire.raw_ref(manifest_entry['ref']).as_dict()
+        and intent['historical_manifest_ref'] == historical_ref
         and o['intent'] == intent and a['intent_sha256'] == o['intent_sha256'] == digest
         and o['allocation_request_ref'] == allocation.ref.as_dict()
         and o['target_encryption_key'] == parties['target']['encryption_key']
@@ -130,13 +144,13 @@ def verify_mailbox_feed_copy(manifest_entry, resolver, custody_entry, allocation
         maximum = min(maximum, d['consent_until'], d['expires_at'])
     reservations = {}
     for variant, entry in (('owner', reservation_entry), ('sender', sender_reservation_entry)):
-        consent = index._signed(entry, parties[variant]['signing_key'], RESERVATION_KIND, CONSENT_FIELDS | {'variant'}, policy, budget)
+        consent = index._signed(entry, parties[variant]['signing_key'], reservation_kind, CONSENT_FIELDS | {'variant'}, policy, budget)
         c = consent.payload; index._timed(c, at); resource._opaque(c['consent_id']); wire.u53(c['revision'], 1)
         d = resource._fields(c['reservation_disclosure'], {'intent_sha256', 'until'})
         _same(c['variant'] == variant and c['root_authority_ref'] == parent.ref.as_dict()
             and c['source_custody_ref'] == source['custody'].ref.as_dict() and c['historical_manifest_ref'] == intent['historical_manifest_ref']
             and c['maintainer'] == ids['maintainer'] and c['target'] == parties['target'] and c['target_storage_epoch'] == target_storage_epoch
-            and source['custody'].payload['stored_at'] <= c['issued_at'] <= a['issued_at'] and d['intent_sha256'] == digest
+            and max(source['custody'].payload['stored_at'],source.get('feed_custody',source['custody']).payload['stored_at']) <= c['issued_at'] <= a['issued_at'] and d['intent_sha256'] == digest
             and at < wire.u53(d['until']) <= min(maximum, c['expires_at']))
         reservations[variant] = consent; maximum = min(maximum, d['until'])
     rows = feed_copy_inventory(source, reservations, policy, budget)
@@ -145,7 +159,7 @@ def verify_mailbox_feed_copy(manifest_entry, resolver, custody_entry, allocation
     variants = ('owner', 'source', 'sender')
     for variant, entry in zip(variants, (owner_disclosure_entry, source_disclosure_entry, sender_disclosure_entry)):
         signer = parties[variant]['signing_key']
-        consent = index._signed(entry, signer, DISCLOSURE_KIND, DISCLOSURE_FIELDS, policy, budget)
+        consent = index._signed(entry, signer, disclosure_kind, DISCLOSURE_FIELDS, policy, budget)
         c = consent.payload; index._timed(c, at); resource._opaque(c['consent_id']); wire.u53(c['revision'], 1)
         _same(c['variant'] == variant and c['root_key'] == root_key and c['assignment_ref'] == assignment.ref.as_dict()
             and c['source_custody_ref'] == source['custody'].ref.as_dict() and c['historical_manifest_ref'] == intent['historical_manifest_ref']
@@ -160,7 +174,7 @@ def verify_mailbox_feed_copy(manifest_entry, resolver, custody_entry, allocation
     for item in source['graph']['obligations']:
         # No current ADMIT requirement; COPY adds to the original feed's
         # READ/RETAIN/discovery obligations without reusing a contact lease.
-        bits = item['operation_mask'] | (4 if item['role'] in ('slot', 'maintenance', 'disclosure', 'metadata_resource') else 0)
+        bits = item['operation_mask'] | (4 if item['role'] in ('slot', 'maintenance', 'disclosure', 'metadata_resource', 'data_resource') else 0)
         obligations.append(index._obligation(item['signer'], item['scope_kind'], item['scope_id'], item['document_revision'], bits))
     for variant, consent in reservations.items():
         signer = parties[variant]['signing_key']; scope_id = index._authority(root_key, consent, policy, budget)
@@ -226,30 +240,38 @@ def feed_copy_edges(source, policy, budget):
         else:
             edge(ref.as_dict(), 'page-sealed', p['sealed_page_ref'])
             for child in p['entries']: edge(ref.as_dict(), 'page-link', child['admission_link_ref'])
+    if 'message_scope' in source:
+        edge(source['message_core_ref'], 'core-envelope', source['message_scope']['envelope_ref'])
     return tuple(edges)
 
 
-def verify_mailbox_feed_replica(manifest_entry, resolver, custody_entry, *, expected_slot, expected_owner,
+def verify_mailbox_feed_replica(*args, **options):
+    return _verify_mailbox_replica(*args, **options, message_ref=None)
+
+
+def _verify_mailbox_replica(manifest_entry, resolver, custody_entry, *, expected_slot, expected_owner,
         expected_sender, expected_source, source_storage_epoch, expected_maintainer, expected_target,
-        target_storage_epoch, limit_policy, policy, budget):
+        target_storage_epoch, limit_policy, policy, budget, message_ref):
     target, custody, value, entries = _replica_container(manifest_entry, resolver, custody_entry,
-        expected_target=expected_target, target_storage_epoch=target_storage_epoch, policy=policy, budget=budget)
+        expected_target=expected_target, target_storage_epoch=target_storage_epoch, policy=policy, budget=budget,
+        deferred_object=message_ref)
     def one(role):
         values = entries.get(role, ())
         if len(values) != 1: wire._fail('repair_copy_commit_mismatch')
         return values[0]
     source_manifest = one('history.mailbox_feed')
-    plan = verify_mailbox_feed_copy(source_manifest, resolver, one('feed.custody'), one('copy.allocation'),
+    plan = _verify_mailbox_copy(source_manifest, resolver, one('feed.custody'), one('copy.allocation'),
         one('copy.offer'), one('copy.assignment'), one('copy.reservation_consent'), one('copy.sender_reservation_consent'),
         one('copy.owner_disclosure'), one('copy.source_disclosure'), one('copy.sender_disclosure'), expected_slot=expected_slot,
         expected_owner=expected_owner, expected_sender=expected_sender, expected_source=expected_source,
         source_storage_epoch=source_storage_epoch, expected_maintainer=expected_maintainer, expected_target=target,
         target_storage_epoch=target_storage_epoch, current_statuses=entries.get('copy.current_status', ()),
-        at=custody.payload['stored_at'], limit_policy=limit_policy, policy=policy, budget=budget)
+        at=custody.payload['stored_at'], limit_policy=limit_policy, policy=policy, budget=budget, message_ref=message_ref)
     if plan.denial_code: wire._fail(plan.denial_code)
     _check_replica_closure(custody.payload, value, plan, source_custody=plan.source['custody'],
         source_histories=feed_copy_histories(plan.source, source_manifest),
-        additional=(('copy.sender_disclosure', plan.disclosures[2]),), extra_edges=feed_copy_edges(plan.source, policy, budget))
+        additional=(('copy.sender_disclosure', plan.disclosures[2]),), extra_edges=feed_copy_edges(plan.source, policy, budget),
+        extra_references=(('message.envelope', message_ref),) if message_ref is not None else ())
     return dict(state='historical_replica', custody=custody, source=plan.source, authority=plan,
         entries=MappingProxyType({role: tuple(values) for role, values in entries.items()}))
 
@@ -263,7 +285,8 @@ def feed_return_permissions(plan, issuer, policy, budget):
     root = plan.assignment.payload['root_key']
     for row in rows.values():
         payload = wire.parse_new_wire(row.original.raw, policy, budget).value['payload']
-        if payload['kind'] in (RESERVATION_KIND, DISCLOSURE_KIND):
+        if payload['kind'] in (RESERVATION_KIND, DISCLOSURE_KIND,
+                'mailbox.message_copy_reservation_consent', 'mailbox.message_copy_disclosure'):
             scopes.append(dict(scope_kind='authority', scope_id=index._authority(root, row.original, policy, budget)))
         elif payload['kind'] == 'maintenance.assignment':
             scopes.append(dict(scope_kind='assignment', scope_id=status.status_scope(root, 'assignment',
@@ -272,7 +295,8 @@ def feed_return_permissions(plan, issuer, policy, budget):
 
 
 def _check_mailbox_feed_return(replica, consent_entries, *, expected_owner, expected_sender, expected_source,
-        expected_maintainer, expected_target, target_storage_epoch, current_statuses, at, action, policy, budget, on_observed=None):
+        expected_maintainer, expected_target, target_storage_epoch, current_statuses, at, action, policy, budget, on_observed=None,
+        _message=False):
     """Fresh selected-slot READ and explicit A/B/S/M return disclosure to B."""
     from memory_vault_open_repair_copy_authority import RETURN_FIELDS
     wire._context(policy, budget); wire.u53(at)
@@ -293,7 +317,8 @@ def _check_mailbox_feed_return(replica, consent_entries, *, expected_owner, expe
         d = member['disclosure']; expires = min(expires, d['expires_at'], d['consent_until'], d['bootstrap_return']['until'])
     for variant in variants:
         signer = parties[variant]['signing_key']
-        consent = index._signed(consent_entries[variant], signer, RETURN_KIND, RETURN_FIELDS, policy, budget)
+        consent = index._signed(consent_entries[variant], signer,
+            'mailbox.message_replica_return_consent' if _message else RETURN_KIND, RETURN_FIELDS, policy, budget)
         p = consent.payload; resource._lifetime(p); resource._opaque(p['consent_id']); wire.u53(p['revision'], 1)
         if not p['issued_at'] <= at < p['expires_at']: denial = denial or 'repair_access_expired'
         _same(p['variant'] == variant and p['root_key'] == root and p['source_custody_ref'] == source['custody'].ref.as_dict()
@@ -311,7 +336,7 @@ def _check_mailbox_feed_return(replica, consent_entries, *, expected_owner, expe
         allowed[signer['key_id']].extend((*scopes, dict(scope_kind='authority', scope_id=scope)))
         obligations.append(index._obligation(signer, 'authority', scope, p['revision'], 2)); consents.append(consent)
     for item in source['graph']['obligations']:
-        if item['role'] == 'metadata_resource': continue
+        if item['role'] in ('metadata_resource', 'data_resource'): continue
         mask = 10 if item['role'] in ('slot', 'maintenance', 'bootstrap') else 2
         obligations.append(index._obligation(item['signer'], item['scope_kind'], item['scope_id'], item['document_revision'], mask))
     obligations.append(index._obligation(parties['maintainer']['signing_key'], 'assignment', status.status_scope(root, 'assignment',

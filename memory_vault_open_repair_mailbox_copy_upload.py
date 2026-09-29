@@ -53,10 +53,11 @@ class MailboxRootCopyUpload(RepairCopyUpload):
 class MailboxFeedCopyUpload(MailboxRootCopyUpload):
     consumers = {'mailbox_feed': 'mailbox_copy_feed'}
     commit_kinds = {'mailbox_feed': 'mailbox.feed_copy_commit'}
+    completed_kind = 'mailbox.feed_copy_committed'
 
     def _commit_response(self, manifest, custody):
         from memory_vault_open_repair_index_state import encode_entry
-        return dict(schema_version=stage.SCHEMA, kind='mailbox.feed_copy_committed',
+        return dict(schema_version=stage.SCHEMA, kind=self.completed_kind,
             manifest_ref=manifest['ref'], custody=encode_entry(custody))
 
     def __init__(self, state):
@@ -83,8 +84,32 @@ class MailboxFeedCopyUpload(MailboxRootCopyUpload):
         source = history.resolve_historical_inputs(one('history.mailbox_feed')['raw'], resolver, budget.policy, budget)
         required = {wire.raw_ref(row['pack_ref']) for manifest in (source, *source.predecessors) for row in manifest.manifest.value['roles']}
         if required != {wire.raw_ref(entry['ref']) for entry in roles['history.raw_pack']}: wire._fail('repair_copy_upload_mismatch')
+        return self._store_closed(roles, resolver, allocation, bound, expected_slot=expected_slot,
+            expected_owner=expected_owner, expected_source=expected_source, source_storage_epoch=source_storage_epoch,
+            expected_maintainer=expected_maintainer)
+
+    def _store_closed(self, roles, resolver, allocation, bound, **context):
+        one = lambda role: roles[role][0]
         return self.store.commit_feed(one('history.mailbox_feed'), resolver, one('feed.custody'), one('copy.allocation'),
             one('copy.offer'), one('copy.assignment'), one('copy.reservation_consent'), one('copy.sender_reservation_consent'),
-            one('copy.owner_disclosure'), one('copy.source_disclosure'), one('copy.sender_disclosure'), expected_slot=expected_slot,
-            expected_owner=expected_owner, expected_source=expected_source, source_storage_epoch=source_storage_epoch,
-            expected_maintainer=expected_maintainer, **bound, current_statuses=roles['copy.current_status'], limit_policy=self.state.limits)
+            one('copy.owner_disclosure'), one('copy.source_disclosure'), one('copy.sender_disclosure'),
+            **context, **bound, current_statuses=roles['copy.current_status'], limit_policy=self.state.limits)
+
+
+class MailboxMessageCopyUpload(MailboxFeedCopyUpload):
+    consumers = {'mailbox_member': 'mailbox_copy_message'}
+    commit_kinds = {'mailbox_member': 'mailbox.message_copy_commit'}
+    completed_kind = 'mailbox.message_copy_committed'
+
+    def __init__(self, state):
+        from memory_vault_open_repair_mailbox_message_copy_state import MailboxMessageCopyState
+        RepairCopyUpload.__init__(self, state)
+        self.store = MailboxMessageCopyState(state)
+
+    def _store_closed(self, roles, resolver, allocation, bound, **context):
+        one = lambda role: roles[role][0]
+        return self.store.commit_message(one('history.mailbox_feed'), resolver, one('feed.custody'), one('copy.allocation'),
+            one('copy.offer'), one('copy.assignment'), one('copy.reservation_consent'), one('copy.sender_reservation_consent'),
+            one('copy.owner_disclosure'), one('copy.source_disclosure'), one('copy.sender_disclosure'),
+            envelope_entry=one('message.envelope'), expected_envelope_ref=allocation['scope']['envelope_ref'],
+            **context, **bound, current_statuses=roles['copy.current_status'], limit_policy=self.state.limits)

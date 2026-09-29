@@ -148,6 +148,21 @@ class OpenRepairProofTypeScriptTests(unittest.TestCase):
         rejected=self.ts([self.make_call(manifest)])[0]
         self.assertFalse(rejected['ok']);self.assertEqual(rejected['code'],'repair_invalid_proof')
 
+    def test_message_replica_cannot_be_mistaken_for_metadata_only_feed_replica(self):
+        manifest,options=self.py.mailbox_feed_manifest()
+        reference=self.py.fixture['entries']['root']['ref']
+        packs=[v['ref'] for v in manifest['children'] if v['role']=='history.raw_pack']
+        rows=[dict(role=role,ref=packs[0] if role=='replica.read_pack' else reference)
+            for role in sorted(proof.MAILBOX_FEED_REPLICA_ROLES|{'message.custody'})]
+        rows.extend(dict(role='history.raw_pack',ref=ref) for ref in packs)
+        manifest['children']=[dict(index=i,**row) for i,row in enumerate(rows)]
+        raw=self.py.response(manifest).raw
+        self.py.verify(raw,**dict(options,expected_source_state='replica_message'))
+        call=self.call();call['raw']=base64.b64encode(raw).decode()
+        call['options'].update(consumer='mailbox_feed',expectedSourceState='replica_message',selector=options['selector'])
+        wrong=copy.deepcopy(call);wrong['options']['expectedSourceState']='replica_feed'
+        good,bad=self.ts([call,wrong]);self.assertTrue(good['ok'],good);self.assertFalse(bad['ok'])
+
     def test_native_mailbox_body_request_is_python_verifiable(self):
         manifest,options=self.py.mailbox_feed_manifest()
         response=self.py.response(manifest).raw

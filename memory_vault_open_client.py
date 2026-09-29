@@ -182,6 +182,8 @@ class OpenNetworkClient:
         from memory_vault_open_repair_resource import _dual_key
         value=document(invitation,maximum=65536)
         action=value.get('action')
+        if action=='receive_replica':
+            return self._mailbox_receive_replica(value)
         if action=='provision':
             object_fields(value,{'schema_version','action','base_url','target_node_entry','plan','sender','setup_until','read_until','retain_until'})
             from memory_vault_open_repair_client import MailboxSetupClient,MailboxSetupJournal,MailboxSetupBuilder
@@ -355,6 +357,52 @@ class OpenNetworkClient:
                 if db.execute('SELECT count(*) FROM open_mailbox_receivers').fetchone()[0]>=16:raise MemoryError('open_mailbox_receiver_capacity')
                 db.execute('INSERT INTO open_mailbox_receivers(receiver_id,body) VALUES(?,?)',(receiver_id,raw))
         return dict(state='registered',receiver_id=receiver_id,network_accessed=False,receipt_return='separate_authority_required')
+
+    def _mailbox_receive_replica(self, value):
+        """Use original mailbox authority and retain observations across retries."""
+        from dataclasses import replace
+        from memory_vault_open_repair_admin import _ReplicaStatusJournal
+        from memory_vault_open_repair_mailbox_copy_client import MailboxMessageReplicaRecoveryClient
+        from memory_vault_open_repair_state import DEFAULT_POLICY, MAILBOX_WORKFLOW_LIMITS
+        from memory_vault_open_repair_wire import RepairBudget, RepairWireError, build_new_wire
+        from memory_vault_open_repair_history import _slot
+        from memory_vault_open_repair_resource import _dual_key
+        object_fields(value,{'schema_version','action','base_url','repair_profile','request'})
+        if value['repair_profile']!='mailbox':raise MemoryError('open_invalid_repair_policy')
+        fields={'expected_slot','expected_sender','expected_target','expected_source','source_storage_epoch',
+            'expected_maintainer','expected_envelope_ref','target_node_entry','slot_entries','known_statuses','archive_statuses'}
+        request=dict(object_fields(value['request'],fields))
+        def decode(entry):
+            object_fields(entry,{'raw','ref'})
+            if not isinstance(entry['raw'],str):raise MemoryError('open_invalid_mailbox_receiver')
+            return dict(raw=entry['raw'].encode('utf-8'),ref=entry['ref'])
+        request['target_node_entry']=decode(request['target_node_entry'])
+        object_fields(request['slot_entries'],{'slot','read','maintenance','bootstrap'})
+        request['slot_entries']={name:decode(entry) for name,entry in request['slot_entries'].items()}
+        for name,maximum in (('known_statuses',16),('archive_statuses',32)):
+            if type(request[name]) is not list or len(request[name])>maximum:raise MemoryError('repair_status_history_capacity')
+            request[name]=[decode(entry) for entry in request[name]]
+        policy=replace(DEFAULT_POLICY,max_signature_checks=512);budget=RepairBudget(policy)
+        owner=dict(signing_key=self.identity.public_descriptor(),encryption_key=self.encryption.public_descriptor())
+        try:
+            slot=build_new_wire(request['expected_slot'],policy,budget).value
+            if not isinstance(slot,dict) or 'root_key' not in slot:raise MemoryError('open_invalid_mailbox_receiver')
+            _slot(slot,slot['root_key'])
+            parties=(owner,)+tuple(request[name] for name in ('expected_sender','expected_target','expected_source','expected_maintainer'))
+            for keys in parties:_dual_key(keys,budget)
+            with self.participant.state.db() as db:
+                journal=_ReplicaStatusJournal(db,slot['root_key'])
+                archive={canonical_bytes(item['ref']):item for item in (*journal.statuses(parties),*request['archive_statuses'])}
+                if len(archive)>32:raise MemoryError('repair_status_history_capacity')
+                request['archive_statuses']=list(archive.values())
+                reader=MailboxMessageReplicaRecoveryClient(self.identity,self.encryption,policy=policy,
+                    limit_policy=MAILBOX_WORKFLOW_LIMITS,transport=self.participant.transport,
+                    allow_loopback=self.participant.transport.allow_loopback,status_observer=journal.observe)
+                try:
+                    result=asyncio.run(self._delivery().receive_mailbox_replica(reader,value['base_url'],timeout=60,**request))
+                finally:reader.close()
+            return dict(result,network_accessed=True)
+        except RepairWireError as error:raise MemoryError(error.code) from error
 
     def receive_mailbox(self, base_url, *, limit_policy, status_observer=None, _network_observer=None, **arguments):
         """Receive an explicitly selected mailbox using retained original grants.

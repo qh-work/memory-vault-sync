@@ -152,7 +152,7 @@ class OpenRepairStatusTypeScriptTests(unittest.TestCase):
         slot=dict(root_key=root,slot_id='synthetic_mailbox_slot',writer=root['owner'],writer_storage_epoch='synthetic_epoch')
         cases=[dict(kind='catalog',subject=dict(root_key=root)),dict(kind='mailbox_slot',subject=slot)]
         cases += [dict(kind='authority',subject=dict(authority_kind=name,authority_sha256='ab'*32)) for name in
-            ('mailbox.root_authority','mailbox.root_read_grant','mailbox.maintenance_root','mailbox.read_grant','mailbox.copy_reservation_consent','mailbox.copy_disclosure', 'mailbox.replica_return_consent', 'mailbox.feed_copy_reservation_consent', 'mailbox.feed_copy_disclosure', 'mailbox.feed_replica_return_consent','delivery.destination','message.disclosure')]
+            ('mailbox.root_authority','mailbox.root_read_grant','mailbox.maintenance_root','mailbox.read_grant','mailbox.copy_reservation_consent','mailbox.copy_disclosure', 'mailbox.replica_return_consent', 'mailbox.feed_copy_reservation_consent', 'mailbox.feed_copy_disclosure', 'mailbox.feed_replica_return_consent', 'mailbox.message_copy_reservation_consent', 'mailbox.message_copy_disclosure', 'mailbox.message_replica_return_consent','delivery.destination','message.disclosure')]
         actual=self.ts([self.call(op='scope',root=root,cases=cases)])[0]
         self.assertTrue(actual['ok'],actual)
         policy=wire.RepairPolicy(**POLICY);budget=wire.RepairBudget(policy)

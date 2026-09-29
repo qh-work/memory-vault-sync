@@ -765,3 +765,82 @@ revocations survive denial and restart. The private output contains the exact
 originals and decrypted member references; it neither imports memories nor
 claims a saved-message receipt. Automatic target selection and partial-range
 replication remain separate work.
+
+## Receive messages and shared memories from a replica (development after alpha.0.25)
+
+The Python commands can copy one exact encrypted message and receive it after
+the original node stops. The complete original feed prefix and admission graph
+travel with that message; the recipient keeps its existing keys and trust rules.
+The destination retains ciphertext in separately reserved live storage and
+charges its proof metadata and upload journal separately. A feed reservation
+cannot pay for or authorize a message copy.
+
+```sh
+python -B memory_vault_open_repair_admin.py copy-upload-message \
+  --network-config /absolute/private/maintainer/open.json \
+  --request /absolute/private/message-copy.json \
+  --output /absolute/private/message-copy-result.json --repair-profile mailbox --timeout 60
+
+python -B memory_vault_open_repair_admin.py configure-replica-message \
+  --node-config /absolute/private/replica/node.json \
+  --request /absolute/private/message-return.json \
+  --output /absolute/private/message-return-result.json
+
+python -B memory_vault_open_repair_admin.py receive-replica-message \
+  --network-config /absolute/private/recipient/open.json \
+  --request /absolute/private/message-recovery.json \
+  --output /absolute/private/message-received.json --repair-profile mailbox --timeout 60
+```
+
+| Command | Private request |
+| --- | --- |
+| `copy-upload-message` | `memory-vault-open-mailbox-message-copy-request/v1`; the feed-copy fields plus `envelope`, an exact `{raw_base64url,ref}` entry. The separate allocation, offer, assignment, reservations and disclosures must all bind this message and its original `message.custody`. |
+| `configure-replica-message` | `memory-vault-open-mailbox-message-replica-read-config/v1`; the feed-return fields, with `context.expected_envelope_ref` and four independent message return consents. |
+| `receive-replica-message` | `memory-vault-open-mailbox-message-replica-recovery-request/v1`; the feed-recovery fields plus `envelope_ref`, matching the selected original message. |
+
+B and A sign `mailbox.message_copy_reservation_consent`; B, S and A sign
+`mailbox.message_copy_disclosure`. These bind the selected message, complete
+original graph, original message custody, independent resource and current
+status scopes. COPY, READ and RETAIN remain distinct. The four B/S/M/A
+`mailbox.message_replica_return_consent` originals independently authorize
+return to B. The proof profile is `replica_message`; it carries metadata, while
+protected body requests retrieve the exact ciphertext under the same finite
+bootstrap handle and current permissions.
+
+Successful reception verifies original signatures and custody, decrypts the
+message, and uses the normal durable inbox. A shared-memory payload is imported
+only under the recipient's existing import policy. Staged reception resumes
+after restart without another network read; repeated processing does not import
+the same memory twice. The result reports `mailbox_message_replica_received`,
+the actual saved result, and a recipient-signed receipt. That receipt is retained
+for the existing independent return workflow; this command does not claim it
+has reached the sender. A failed permission check retains authenticated status
+observations and cannot import a memory.
+
+Upload retries replay the same persisted requests and completion after either
+side restarts. The receipt is issued only after exact ciphertext and all
+required originals commit atomically. Existing original grants still bound the
+entire recovery; neither selecting the mailbox profile nor restarting renews
+them. Automatic destination selection, consent exchange and replacement remain
+separate work. Native TypeScript supports the proof/status wire profiles, but
+these mailbox copy and receive commands currently require Python.
+
+The existing Python Agent also accepts this recovery through `connect`:
+
+```python
+agent.handle({"op": "connect", "invitation": {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "receive_replica", "base_url": selected_replica_url,
+    "repair_profile": "mailbox", "request": recovery_request,
+}})
+```
+
+`recovery_request` contains `expected_slot`, `expected_sender`, `expected_target`
+(the replica), `expected_source`, `source_storage_epoch`, `expected_maintainer`,
+`expected_envelope_ref`, `target_node_entry`, `slot_entries`, `known_statuses`
+and `archive_statuses`. Entries here use `{raw,ref}`, where `raw` is the exact
+original UTF-8 string; `slot_entries` contains `slot`, `read`, `maintenance` and
+`bootstrap`. These are the same retained grants and selections as the command,
+without a private output file. The Agent returns the ordinary inbox result and
+retains authenticated status observations in its existing protected database.
+Repeated recovery preserves the saved receipt and does not import memory twice.

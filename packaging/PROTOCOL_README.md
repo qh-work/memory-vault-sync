@@ -1,4 +1,4 @@
-# Memory Vault v0.28.0-alpha.0.25 — independent protocol
+# Memory Vault v0.28.0-alpha.0.26 — independent protocol
 
 This candidate adds Python commands to reserve, copy and recover a message-bound
 empty ACK replica with the exact original recipient/message binding and both
@@ -57,7 +57,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.25;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.26;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility

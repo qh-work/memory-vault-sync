@@ -164,9 +164,11 @@ class RepairBootstrapService:
         return wire.parse_new_wire(bytes(source["active"]),budget.policy,budget).value["payload"]["budget"]
 
     def _run(self, entry, kind, current_statuses=None):
+        body=kind=='body'
+        if body and not getattr(self,'supports_mailbox_body',False):_fail('repair_copy_scope')
         budget = wire.RepairBudget(self.state.policy)
         parsed, reference, payload = self._preview(entry, budget)
-        payload = (proof._fields(payload, proof.CHILD_FIELDS-{"bootstrap_grant_sha256"}) if kind == "child"
+        payload = (proof._fields(payload, (proof.CHILD_FIELDS-{"bootstrap_grant_sha256"})|({'envelope_ref'} if body else set())) if kind in ('child','body')
                    else probe._fields(payload, probe._FIELDS[kind]))
         if kind == "probe":
             resource_id = self._lookup_probe(payload)
@@ -200,13 +202,13 @@ class RepairBootstrapService:
         source, grant, expected = self._context(resource_id, budget)
         active = self._active_budget(source, budget)
         subject, target = expected["expected_subject"], expected["expected_target"]
-        if (payload["schema_version"] != proof.SCHEMA or payload["kind"] != "bootstrap." + ("proof_child_request" if kind == "child" else kind)
-                or payload["purpose"] != ("bootstrap.service_proof_child" if kind == "child" else "bootstrap.service_proof")
+        if (payload["schema_version"] != proof.SCHEMA or payload["kind"] != ('mailbox.body_read' if body else "bootstrap." + ("proof_child_request" if kind == "child" else kind))
+                or payload["purpose"] != ('mailbox.message_body' if body else "bootstrap.service_proof_child" if kind == "child" else "bootstrap.service_proof")
                 or payload["consumer"] != self.consumer
                 or payload["subject"] != (subject if kind == "probe" else probe._dual(subject))
                 or payload["target"] != (target if kind == "probe" else probe._dual(target))
                 or payload["target_storage_epoch"] != expected["target_storage_epoch"]
-                or (kind != "child" and payload["bootstrap_grant_sha256"] != expected["bootstrap_grant_sha256"])):
+                or (kind not in ('child','body') and payload["bootstrap_grant_sha256"] != expected["bootstrap_grant_sha256"])):
             _fail("repair_probe_mismatch")
         probe._window(payload, expected["at"])
         probe.original._verify_control_signature(payload, parsed.value["proof"], subject["signing_key"], budget)
@@ -215,7 +217,7 @@ class RepairBootstrapService:
                 packet = dict(raw=parsed.raw, ref=reference.as_dict())
                 if kind == "probe":
                     return self._challenge(packet, current_statuses=current_statuses, budget=budget, capacity=active)
-                return self._answer(packet, budget=budget, capacity=active) if kind == "answer" else self._child(packet, budget=budget, capacity=active)
+                return self._answer(packet, budget=budget, capacity=active) if kind == "answer" else self._child(packet, budget=budget, capacity=active, **(dict(body=True) if body else {}))
         except wire.RepairWireError as exc:
             if exc.code == "repair_over_budget" and budget.snapshot()["signature_checks"] >= allowance:
                 _fail("repair_service_capacity")
@@ -264,7 +266,8 @@ class RepairBootstrapService:
         if not first_decision.allowed:
             _fail(first_decision.code)
         created = probe.issue_bootstrap_challenge(_entry(verified),signer=self.state.identity,
-            encryption_identity=self.state.encryption_identity,**expected,expires_at=verified.payload["expires_at"])
+            encryption_identity=self.state.encryption_identity,**expected,
+            expires_at=min(verified.payload["expires_at"],first_decision.expires_at))
         code, result, saved_result = None, created.original, None
         with self.state._transaction() as now:
             decision = self.access.check_locked(prepared)
@@ -278,7 +281,7 @@ class RepairBootstrapService:
                 if old is not None:
                     if old["probe_digest"] != reference.raw_sha256 or bytes(old["probe_ref"]) != canonical_bytes(reference.as_dict()):
                         code = "repair_probe_replay_conflict"
-                    elif old["generation"] != decision.generation or now >= old["expires_at"]:
+                    elif old["generation"] != decision.generation or not now < old["expires_at"] <= decision.expires_at:
                         code = "repair_access_generation"
                     else:
                         if self._charge_locked(decision,capacity=capacity,proof_bytes=0,metadata=0,replay=False):
@@ -410,9 +413,9 @@ class RepairBootstrapService:
             result = wire.parse_new_wire(saved_response,budget.policy,budget)
         return result
 
-    def _child(self, request_entry, *, budget, capacity):
+    def _child(self, request_entry, *, budget, capacity, body=False):
         parsed, reference, payload = self._preview(request_entry,budget)
-        payload = proof._fields(payload,proof.CHILD_FIELDS-{"bootstrap_grant_sha256"})
+        payload = proof._fields(payload,(proof.CHILD_FIELDS-{"bootstrap_grant_sha256"})|({'envelope_ref'} if body else set()))
         handle_ref = probe._ref(payload["handle_ref"])
         handle_row = self.state._one("SELECT * FROM open_repair_bootstrap_handles WHERE digest=?",(handle_ref.raw_sha256,))
         if handle_row is None:
@@ -422,7 +425,8 @@ class RepairBootstrapService:
         frozen = self._verify_response(bytes(handle_row["response"]),row,expected,budget)
         if frozen.handle.ref != handle_ref:
             _fail("repair_proof_mismatch")
-        request = proof.verify_bootstrap_child_request(dict(raw=parsed.raw,ref=reference.as_dict()),frozen,
+        verifier=proof.verify_mailbox_body_request if body else proof.verify_bootstrap_child_request
+        request = verifier(dict(raw=parsed.raw,ref=reference.as_dict()),frozen,
             expected_subject=expected["expected_subject"],expected_target=self.state.target,at=self.state._now(),policy=budget.policy,budget=budget)
         prepared = self.access.prepare(handle_row["resource_id"],action="child",expected_generation=handle_row["generation"],
                                        policy=budget.policy,budget=budget)
@@ -441,7 +445,8 @@ class RepairBootstrapService:
         candidates = [item for item in children if item["role"] == row_child["role"] and item["ref"] == expected_ref]
         if len(candidates) != 1:
             _fail("repair_access_generation")
-        selected = candidates[0]["raw"]
+        metadata = candidates[0]['raw']
+        selected = self._body_original(handle_row['resource_id'],metadata,p,budget) if body else metadata
         budget._bytes("output_bytes", p["requested_bytes"])
         result = selected[p["offset"]:p["offset"]+p["requested_bytes"]]
         code = None
@@ -453,7 +458,7 @@ class RepairBootstrapService:
                 code = decision.code
             elif now >= handle_row["expires_at"]:
                 code = "repair_access_expired"
-            elif not any(item["role"] == row_child["role"] and item["ref"] == expected_ref and item["raw"] == selected for item in current_children):
+            elif not any(item["role"] == row_child["role"] and item["ref"] == expected_ref and item["raw"] == metadata for item in current_children):
                 code = "repair_access_generation"
             else:
                 old = self.state._one("SELECT * FROM open_repair_bootstrap_requests WHERE subject=? AND request_id=?",(row["subject"],p["request_id"]))

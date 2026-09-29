@@ -1,10 +1,12 @@
-# Memory Vault v0.28.0-alpha.0.25 independent review kit
+# Memory Vault v0.28.0-alpha.0.26 independent review kit
 
-This candidate adds Python commands to reserve, copy and recover a message-bound
-empty ACK replica with the exact original recipient/message binding and both
-history generations. Independent return consents and current permissions remain
-required; COPY grants no first-receipt admission. See the ACK recovery guide and
-release notes for the command schemas and current acceptance record.
+This candidate adds independently reserved mailbox directory, feed and encrypted
+message replicas. Python recipients can receive a copied message after the
+original node stops, durably import its selected memory and retain their signed
+receipt for independent return. Existing keys, author trust, original grants and
+remembered revocations remain in force. Exact upload requests survive lost
+responses and restarts. See the mailbox replica guide and release notes for
+commands, authority requirements and source-bound acceptance.
 
 This alpha.0.10 candidate adds independent remote source preparation using
 only the sender's configuration and a selected public origin/key, plus durable
@@ -27,7 +29,7 @@ client archive. Ordinary clients need no public listener.
 
 Messages use the original approved delivery node. The separate, explicitly
 authorized ACK source retains original saved-message receipts for independent
-recovery. Replacement-node message repair remains unfinished. Both clients
+recovery. Automatic replacement-node selection remains unfinished. Both clients
 share the same wire protocol and existing Vault. The Python node hosts delivery
 and ACK recovery; the native TypeScript node hosts routing and first contact.
 Validation results and their exact source bindings are in the release record. Memory content never grants execution authority or automatically
