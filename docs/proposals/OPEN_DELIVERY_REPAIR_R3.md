@@ -2738,10 +2738,9 @@ lost reply cannot create a second commitment. The request ID is a correlation
 value; it does not renew the stage or grant access. Custody does not imply owner
 READ, recipient admission or completed receipt recovery.
 
-Remote allocation is not exposed. A remote-copy client still needs to verify
-advance disclosure and target dual possession, persist outbound retries, and
-coordinate current status. Automated orchestration and later occupied/empty
-variants remain unfinished.
+Remote allocation is not exposed. The explicit unbound upload client described
+below coordinates an already reserved destination. Automatic replacement
+selection, remote allocation and later occupied/empty variants remain unfinished.
 The immutable alpha.0.15 candidate does not contain this later receiver.
 
 The maintainer preparation journal now retains the exact outgoing unbound stage
@@ -2754,3 +2753,32 @@ operation and preserves interrupted charges. It does not transmit bytes or prove
 target possession. The network orchestrator must establish the destination's
 dual-key possession before sending this retained output. This sender preparation
 is also later than the immutable alpha.0.15 candidate.
+
+`AckCopyUploadClient` now runs that prepared unbound upload over actual HTTP.
+Construct it with the existing `AckCopyPreparation` journal and the maintainer's
+encryption identity. `upload(base, *original_args, target_node_entry=...,
+**context)` takes the preparation method's original arguments and context,
+except `at` (read from the current clock). Each invocation needs a fresh bounded
+resolver and the caller's current authenticated status originals. The destination
+must already hold the exact reservation and enable both provider and repair
+services. A directory entry alone does not satisfy these requirements.
+
+Before disclosing the stage or children, the client checks the destination node
+original, base URL, epoch and both keys using the existing target challenge. Its
+private journal retains the random challenge nonce and every exact outgoing
+request before transmission. Cached responses are verified again. Lost replies
+replay the same request while the original window remains valid. Upload close is
+followed by a separate signed commit; the returned full manifest and custody
+originals are verified against the original source/assignment/disclosure chain.
+The result `replica_committed` proves that bounded custody event, not owner READ
+or successful subsequent receipt recovery.
+
+The preparation result carries its exact authenticated status snapshot into the
+client. Every admitted request and saved response checks that snapshot and the
+retained denial state. Concurrent status changes stop the operation; retry must
+re-enter the full preparation checks. Work is finite: at most 256 verification
+attempts, 68 network attempts (also constrained by the original intent), and four
+times the original job-byte budget in request/response wire allowances. Lost or
+interrupted replies keep their reserved wire charge. Metadata remains within the
+original intent limit. Restart never extends the original at-most-60-second
+stage. These client changes are later than immutable alpha.0.15.

@@ -47,7 +47,7 @@ REQUIRED_MODULES = (
     "memory_vault_open_repair_status.py",
     "memory_vault_open_repair_ack.py",
     "memory_vault_open_repair_state.py",
-    "memory_vault_open_repair_mailbox_resources.py", "memory_vault_open_repair_copy_resources.py", "memory_vault_open_repair_copy_prepare.py", "memory_vault_open_repair_copy_authority.py", "memory_vault_open_repair_copy_state.py", "memory_vault_open_repair_copy_service.py", "memory_vault_open_repair_copy_upload.py",
+    "memory_vault_open_repair_mailbox_resources.py", "memory_vault_open_repair_copy_resources.py", "memory_vault_open_repair_copy_prepare.py", "memory_vault_open_repair_copy_authority.py", "memory_vault_open_repair_copy_state.py", "memory_vault_open_repair_copy_service.py", "memory_vault_open_repair_copy_upload.py", "memory_vault_open_repair_copy_client.py",
     "memory_vault_open_repair_mailbox_activation.py",
     "memory_vault_open_repair_mailbox_range.py",
     "memory_vault_open_repair_mailbox_root.py",

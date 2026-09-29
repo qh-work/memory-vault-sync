@@ -1,7 +1,7 @@
 """Private maintainer preparation of an explicitly authorized ACK reservation.
 
-This journal emits only the minimal allocation request. It neither uploads source
-originals nor grants replica custody, reading, discovery, or receipt admission.
+This journal retains allocation requests and authorized outgoing upload stages.
+It neither transmits originals nor grants custody, READ or receipt admission.
 The caller must prove the destination's dual keys before transmitting its output.
 """
 import hashlib
@@ -411,13 +411,13 @@ class AckCopyPreparation:
                     outgoing=decode_entry(held['intent'],policy,budget)
                     checked=stage.verify_stage_intent(outgoing,**options)
                     if checked.payload['manifest']!=manifest.value or checked.payload['expires_at']>until:wire._fail('repair_copy_upload_conflict')
-                    return dict(intent=outgoing,children=tuple(children),expires_at=checked.payload['expires_at'])
+                    return dict(intent=outgoing,children=tuple(children),expires_at=checked.payload['expires_at'],status_stamp=status_stamp)
                 outgoing=stage.make_stage_intent(self.identity,allocation_id=intent['allocation_id'],manifest=manifest.value,expires_at=until,**options)
                 raw=wire.build_new_wire(dict(semantic=semantic,intent=encode_entry(outgoing)),policy,budget).raw
                 count,size=self.db.execute('SELECT count(*),coalesce(sum(length(raw)),0) FROM ack_copy_prepare_uploads').fetchone()
                 if count>=16 or size+len(raw)>4194304 or len(raw)>intent['budget']['max_job_bytes']:wire._fail('repair_copy_journal_capacity')
                 self.db.execute('INSERT INTO ack_copy_prepare_uploads VALUES(?,?,?)',(job,digest,raw))
-                return dict(intent=index._entry(outgoing),children=tuple(children),expires_at=until)
+                return dict(intent=index._entry(outgoing),children=tuple(children),expires_at=until,status_stamp=status_stamp)
         finally:
             actual=budget.snapshot()['signature_checks']
             with self._upload_transaction():

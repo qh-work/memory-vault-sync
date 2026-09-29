@@ -187,7 +187,7 @@ class CopyUploadHTTPTests(unittest.TestCase):
         from memory_vault_open_node import OpenParticipant
         state=self.case.state
         self.participant=OpenParticipant(state.identity,self.directory,seeds=[],descriptor=self.descriptor,
-            encryption_identity=state.encryption_identity,allow_loopback=True,
+            encryption_identity=state.encryption_identity,allow_loopback=True,provider_policy=dict(enabled=True),
             repair_policy=dict(enabled=True,limit_policy=self.h.f['expected']['limit_policy']))
         for name in ('handle_repair','handle_blob'):
             original=getattr(self.participant,name)
@@ -286,5 +286,91 @@ class CopyUploadHTTPTests(unittest.TestCase):
     def test_http_upload_respects_operator_repair_switch(self):
         self.participant.repair_policy['enabled']=False
         with self.assertRaisesRegex(AssertionError,'open_repair_closed'):self.send(self.case.intent)
+        with self.participant.state.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_upload_sessions').fetchone()[0],0)
+
+    def client_upload(self,transport=None):
+        from memory_vault_open_repair_copy_client import AckCopyUploadClient
+        from memory_vault import canonical_bytes
+        h=self.h;c=self.case
+        client=AckCopyUploadClient(h.base.journal,encryption_identity=h.f['encryption']['maintainer'],transport=transport,allow_loopback=True)
+        self.addCleanup(client.close)
+        resolver,_,_=load_fixture(h.f,h.base.journal.policy)
+        node=dict(raw=canonical_bytes(self.descriptor))
+        import hashlib
+        digest=hashlib.sha256(node['raw']).hexdigest()
+        node['ref']=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(node['raw']))
+        return client.upload(self.base,h.f['manifest'],resolver,h.f['custody'],h.request,h.offer,h.assignment,
+            h.base.consent,h.disclosures['owner'],h.disclosures['source'],target_node_entry=node,
+            **{k:v for k,v in c.context.items() if k!='expected_maintainer'},expected_target=c.state.target,
+            target_storage_epoch=c.state.node['payload']['storage_epoch'],limit_policy=h.f['expected']['limit_policy'],
+            current_statuses=[signed_entry(p,s,'current_'+str(i)) for i,(p,s) in enumerate(zip(h.status_values,h.status_signers))])
+
+    def test_client_uploads_and_verifies_custody_over_actual_http(self):
+        result=self.client_upload()
+        self.assertEqual(result['state'],'replica_committed')
+        with self.participant.state.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_commits').fetchone()[0],1)
+        before=self.h.base.local.db.execute('SELECT sum(network) FROM ack_copy_client_work').fetchone()[0]
+        self.restart()
+        self.h.base.local.db.close();self.h.base.local.connect();self.h.base.open_journal()
+        self.assertEqual(self.client_upload(),result)
+        self.assertEqual(self.h.base.local.db.execute('SELECT sum(network) FROM ack_copy_client_work').fetchone()[0],before)
+
+    def test_client_retries_exact_commit_after_lost_reply_and_restart(self):
+        from memory_vault import MemoryError
+        host=self
+        class LostReply:
+            def __init__(self):self.dropped=False;self.calls=[]
+            def request(self,*args,**kwargs):return host.transport.request(*args,**kwargs)
+            def request_blob(self,*args,**kwargs):return host.transport.request_blob(*args,**kwargs)
+            def request_repair(self,base,raw,**kwargs):
+                self.calls.append(raw);result=host.transport.request_repair(base,raw,**kwargs)
+                if json.loads(raw)['payload']['kind']=='ack.copy_commit' and not self.dropped:
+                    self.dropped=True;raise MemoryError('open_network_unavailable')
+                return result
+        transport=LostReply()
+        with self.assertRaisesRegex(MemoryError,'open_network_unavailable'):self.client_upload(transport)
+        last=transport.calls[-1];count=len(transport.calls)
+        self.restart();self.h.base.local.db.close();self.h.base.local.connect();self.h.base.open_journal()
+        self.assertEqual(self.client_upload(transport)['state'],'replica_committed')
+        self.assertEqual(transport.calls[count:],[last])
+
+    def test_client_refuses_signed_wrong_target_nonce_before_disclosure(self):
+        from memory_vault import canonical_bytes
+        from memory_vault_open_transport import TransportReply
+        host=self
+        class WrongNonce:
+            def request(self,base,value,**kwargs):
+                reply=host.transport.request(base,value,**kwargs)
+                if value['payload']['action']=='target.answer':
+                    changed=json.loads(canonical_bytes(reply.response));p=changed['payload']
+                    answer=p['body']['answer']['payload'];answer['answer']='A'*43
+                    signer=host.case.state.identity
+                    p['body']['answer']=dict(payload=answer,proof=signer.sign_message(answer))
+                    changed=dict(payload=p,proof=signer.sign_message(p))
+                    return TransportReply(changed,reply.observed_address,len(canonical_bytes(changed)))
+                return reply
+            def request_repair(self,*args,**kwargs):raise AssertionError('disclosed originals')
+            def request_blob(self,*args,**kwargs):raise AssertionError('disclosed originals')
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_provider_proof_mismatch'):self.client_upload(WrongNonce())
+        with self.participant.state.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_upload_sessions').fetchone()[0],0)
+
+    def test_client_observed_revocation_during_preflight_stops_upload(self):
+        host=self
+        class RevokeDuringProof:
+            def request(self,*args,**kwargs):
+                reply=host.transport.request(*args,**kwargs)
+                h=host.h
+                statuses=[signed_entry(p,s,'current_'+str(i)) for i,(p,s) in enumerate(zip(h.status_values,h.status_signers))]
+                revoked=json.loads(statuses[0]['raw'])['payload'];revoked['revision']+=1
+                for item in revoked['entries']:item['status']='revoked'
+                statuses[0]=signed_entry(revoked,h.f['signers']['owner'],'synthetic_midflight_revocation')
+                with host.assertRaisesRegex(wire.RepairWireError,'repair_authority_revoked'):host.case.prepare_upload(statuses)
+                return reply
+            def request_repair(self,*args,**kwargs):raise AssertionError('disclosed revoked originals')
+            def request_blob(self,*args,**kwargs):raise AssertionError('disclosed revoked originals')
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_status_changed'):self.client_upload(RevokeDuringProof())
         with self.participant.state.db() as db:
             self.assertEqual(db.execute('SELECT count(*) FROM open_repair_copy_upload_sessions').fetchone()[0],0)
