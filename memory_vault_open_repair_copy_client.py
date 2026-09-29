@@ -142,26 +142,72 @@ class AckCopyUploadClient:
             allocation=wire.parse_new_wire(allocation_entry['raw'],self.policy,budget).value['payload']
             self.plan=SimpleNamespace(intent=allocation['intent']);self.job=self.plan.intent['job_id']
             self.until=prepared['expires_at'];self.children=prepared['children'];self.intent=prepared['intent']
-            node,node_entry=_node(target_node_entry,self.plan.intent['target'],self.plan.intent['target_storage_epoch'],self._now(),self.policy,budget)
-            if endpoint(base,allow_loopback=self.allow_loopback)!=endpoint(node.payload['base_url'],allow_loopback=self.allow_loopback):wire._fail('repair_provider_proof_mismatch')
-            self.base=node.payload['base_url']
-            self.root_digest=budget._hash(wire._canonical(self.plan.intent['root_key'],budget))
             self.status_stamp=prepared['status_stamp']
-            binding=dict(base=self.base,target=self.plan.intent['target'],epoch=self.plan.intent['target_storage_epoch'],intent_ref=self.intent['ref'],until=self.until)
-            with self.journal._upload_transaction():
-                self._guard()
-                held=self.db.execute('SELECT raw FROM ack_copy_client_sessions WHERE job_id=?',(self.job,)).fetchone()
-                if held is None:
-                    raw=wire.build_new_wire(dict(binding=binding,nonce=secrets.token_hex(32)),self.policy,budget).raw
-                    self.db.execute('INSERT INTO ack_copy_client_sessions VALUES(?,?)',(self.job,raw))
-                else:raw=bytes(held[0])
-                session=wire.parse_new_wire(raw,self.policy,budget).value
-                if session['binding']!=binding:wire._fail('repair_copy_upload_conflict')
-            nonce=bytes.fromhex(session['nonce'])
-            if len(nonce)!=32:wire._fail('repair_storage_corrupt')
-            self._prove_directory(nonce)
+            self._open_network(base,target_node_entry,budget)
             result,step=self._stage()
             return self._commit(result,step)
+
+    def _open_network(self,base,target_node_entry,budget):
+        node,node_entry=_node(target_node_entry,self.plan.intent['target'],self.plan.intent['target_storage_epoch'],self._now(),self.policy,budget)
+        if endpoint(base,allow_loopback=self.allow_loopback)!=endpoint(node.payload['base_url'],allow_loopback=self.allow_loopback):wire._fail('repair_provider_proof_mismatch')
+        self.base=node.payload['base_url']
+        self.root_digest=budget._hash(wire._canonical(self.plan.intent['root_key'],budget))
+        binding=dict(base=self.base,target=self.plan.intent['target'],epoch=self.plan.intent['target_storage_epoch'],intent_ref=self.intent['ref'],until=self.until)
+        with self.journal._upload_transaction():
+            self._guard()
+            held=self.db.execute('SELECT raw FROM ack_copy_client_sessions WHERE job_id=?',(self.job,)).fetchone()
+            if held is None:
+                raw=wire.build_new_wire(dict(binding=binding,nonce=secrets.token_hex(32)),self.policy,budget).raw
+                self.db.execute('INSERT INTO ack_copy_client_sessions VALUES(?,?)',(self.job,raw))
+            else:raw=bytes(held[0])
+            session=wire.parse_new_wire(raw,self.policy,budget).value
+            if session['binding']!=binding:wire._fail('repair_copy_upload_conflict')
+        nonce=bytes.fromhex(session['nonce'])
+        if len(nonce)!=32:wire._fail('repair_storage_corrupt')
+        self._prove_directory(nonce)
+
+    def reserve(self,base,manifest_entry,resolver,custody_entry,consent_entry,intent,*,target_node_entry,timeout=60,**context):
+        """Obtain a remote offer after original reservation-disclosure checks.
+
+        The result is capacity only. Call assign_unbound with fresh original
+        authority, then obtain owner/source upload disclosures before upload.
+        """
+        import memory_vault_open_repair_index as index
+        import memory_vault_open_repair_resource as resource
+        import memory_vault_open_repair_history as history
+        from memory_vault_open_repair_index_state import encode_entry
+        if type(timeout) not in (int,float) or not 0<timeout<=60:wire._fail('repair_invalid_context')
+        with self.lock:
+            self.deadline=time.monotonic()+timeout
+            prepared=self.journal.prepare_reservation_unbound(manifest_entry,resolver,custody_entry,consent_entry,intent,
+                at=self._now(),budget=resolver.budget,**context)
+            self.intent=allocation=prepared['allocation'];self.status_stamp=prepared['status_stamp']
+            budget=self._budget();p=wire.parse_new_wire(allocation['raw'],self.policy,budget).value['payload']
+            self.plan=SimpleNamespace(intent=p['intent']);self.until=p['expires_at']
+            # NUL is forbidden in public opaque job IDs, so this private phase
+            # namespace cannot collide with an upload's original job ID.
+            self.job='\0reservation:'+self.plan.intent['job_id']
+            self._open_network(base,target_node_entry,budget)
+            request=wire.build_new_wire(dict(schema_version=resource.SCHEMA,kind='ack.copy_allocate',
+                caller=self.journal.keys,allocation=encode_entry(allocation)),self.policy,budget).raw
+            def check(raw,b):
+                if raw!=request:wire._fail('repair_copy_upload_conflict')
+            def verify(raw,q,b):
+                value=wire.parse_new_wire(raw,self.policy,b).value
+                wire.object_fields(value,{'schema_version','kind','offer'})
+                if value['schema_version']!=resource.SCHEMA or value['kind']!='ack.copy_allocation':wire._fail('repair_invalid_response')
+                offered=decode_entry(value['offer'],self.policy,b)
+                offer=index._signed(offered,self.plan.intent['target']['signing_key'],'resource.offer',index.OFFER_FIELDS,self.policy,b)
+                o=offer.payload;i=self.plan.intent
+                resource._budget(o['budget']);resource._windows(o['windows']);history._resource(o['resource']);resource._opaque(o['offer_id'])
+                if (o['intent']!=i or o['intent_sha256']!=p['intent_sha256'] or o['allocation_request_ref']!=allocation['ref']
+                        or o['target_encryption_key']!=i['target']['encryption_key']
+                        or o['resource']['node_key_id']!=i['target']['signing_key']['key_id'] or o['resource']['storage_epoch']!=i['target_storage_epoch']
+                        or o['budget']!=i['budget'] or o['windows']!=i['windows'] or wire.u53(o['reservation_generation'],1)!=1
+                        or not p['issued_at']<=wire.u53(o['issued_at'])<=self._now()<wire.u53(o['reservation_until'])<=p['expires_at']):
+                    wire._fail('repair_copy_offer_mismatch')
+                return dict(state='capacity_reserved',allocation=allocation,offer=offered)
+            return self._step(2,lambda b:request,check,verify,response_allowance=65536)[2]
 
     def _stage(self):
         intent=self.intent

@@ -2738,9 +2738,9 @@ lost reply cannot create a second commitment. The request ID is a correlation
 value; it does not renew the stage or grant access. Custody does not imply owner
 READ, recipient admission or completed receipt recovery.
 
-Remote allocation is not exposed. The explicit unbound upload client described
-below coordinates an already reserved destination. Automatic replacement
-selection, remote allocation and later occupied/empty variants remain unfinished.
+Remote allocation requires the explicit operator policy described below. The
+unbound upload client coordinates an already reserved destination. Automatic
+replacement selection and later occupied/empty variants remain unfinished.
 The immutable alpha.0.15 candidate does not contain this later receiver.
 
 The maintainer preparation journal now retains the exact outgoing unbound stage
@@ -2782,3 +2782,33 @@ times the original job-byte budget in request/response wire allowances. Lost or
 interrupted replies keep their reserved wire charge. Metadata remains within the
 original intent limit. Restart never extends the original at-most-60-second
 stage. These client changes are later than immutable alpha.0.15.
+
+Operators may now set `repair_policy.remote_copy.enabled=true` alongside enabled
+repair/provider services. The default remains closed. The finite policy permits
+at most 16 callers, four copy resources per caller, 64 allocation attempts, 4096
+signature checks, 8 MiB of wire allowances, 64 KiB of admission journal storage
+and a 24-hour admission lifetime; operators may lower these ceilings. Admission
+policy limits are persisted and cannot be reset by restarting or toggling the
+service. Each caller's journal reserves actual shared capacity separately from
+their copy resources. Missing reservations are refused, not recreated.
+
+`ack.copy_allocate` has only `schema_version`, `kind`, `caller:DualKey` and
+`allocation:{raw_base64url,ref}`. The original signed `resource.allocate` must name
+that caller, destination and current epoch. The response `ack.copy_allocation`
+contains the original signed `offer` entry. Authentication, current node/request
+time and operator limits precede allocation. Every admitted attempt is durable,
+including denied work; successful reservations and retries also charge the
+copy resource's existing request budget. Requests expire without renewal.
+The resulting capacity promise grants no COPY/READ/discovery or receipt authority.
+
+`AckCopyUploadClient.reserve` takes the same original source, owner reservation
+consent and intent as `prepare_unbound`, plus the independently held target node
+original. It verifies local source/disclosure authority, then target dual-key
+possession, and journals the exact remote allocation request before sending it.
+Lost offer replies replay the original request after both sides restart. Returned
+offers are signature-checked and matched to the complete original allocation,
+target, epoch, budget and windows. The result `capacity_reserved` includes the
+allocation and offer. The maintainer then calls `assign_unbound` with current
+authority; owner/source upload disclosures are still separate original inputs to
+`upload`. The private reservation and upload journals have separate phase keys
+and finite work/metadata budgets; neither phase can overwrite the other.

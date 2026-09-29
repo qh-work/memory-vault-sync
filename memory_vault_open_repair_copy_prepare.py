@@ -57,6 +57,10 @@ class AckCopyPreparation:
     def prepare_unbound(self, *args, **kwargs):
         return self._prepare_unbound(*args, **kwargs, offer_entry=None)
 
+    def prepare_reservation_unbound(self,*args,**kwargs):
+        """Return the allocation and its atomically checked observation snapshot."""
+        return self._prepare_unbound(*args,**kwargs,offer_entry=None,with_status_snapshot=True)
+
     def assign_unbound(self, *args, offer_entry, **kwargs):
         """Bind the verified real offer to one durable COPY/READ/RETAIN assignment.
 
@@ -67,7 +71,7 @@ class AckCopyPreparation:
 
     def _prepare_unbound(self, manifest_entry, resolver, custody_entry, consent_entry, intent, *,
                         expected_ack_slot, expected_owner, expected_source, source_storage_epoch,
-                        current_statuses, at, limit_policy, budget, offer_entry):
+                        current_statuses, at, limit_policy, budget, offer_entry,with_status_snapshot=False):
         _require(not self.db.in_transaction)
         policy = self.policy
         wire._context(policy, budget)
@@ -231,6 +235,9 @@ class AckCopyPreparation:
                         (value['job_id'],root_digest,digest,canonical_bytes(consent.ref.as_dict()),raw,canonical_bytes(result['ref'])))
             if result is not None and offer_entry is not None:
                 result = self._assign_locked(result, offer_entry, source, value, digest, at, budget)
+            if result is not None and with_status_snapshot:
+                stamp=tuple((bytes(r[0]),bytes(r[1])) for r in self.db.execute('SELECT raw,ref FROM ack_copy_prepare_status WHERE root_digest=? ORDER BY raw_digest',(root_digest,)))
+                result=dict(allocation=result,status_stamp=stamp)
             self.db.commit()
         except wire.RepairWireError:
             self.db.commit(); raise

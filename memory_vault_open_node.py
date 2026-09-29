@@ -167,13 +167,18 @@ class OpenParticipant:
         if repair_policy is not None and type(repair_policy) is not dict:
             raise MemoryError("open_invalid_repair_policy")
         self.repair_policy = dict(repair_policy or {})
-        if (set(self.repair_policy) - {"enabled", "limit_policy", "capacity_policy", "remote_setup"}
+        if (set(self.repair_policy) - {"enabled", "limit_policy", "capacity_policy", "remote_setup", "remote_copy"}
                 or type(self.repair_policy.get("enabled", False)) is not bool):
             raise MemoryError("open_invalid_repair_policy")
         if "remote_setup" in self.repair_policy:
             from memory_vault_open_repair_remote_setup import remote_policy
             self.repair_policy["remote_setup"] = remote_policy(self.repair_policy["remote_setup"])
             if self.repair_policy["remote_setup"]["enabled"] and not self.repair_policy.get("enabled", False):
+                raise MemoryError("open_invalid_repair_policy")
+        if "remote_copy" in self.repair_policy:
+            from memory_vault_open_repair_copy_resources import remote_copy_policy
+            self.repair_policy["remote_copy"] = remote_copy_policy(self.repair_policy["remote_copy"])
+            if self.repair_policy["remote_copy"]["enabled"] and not self.repair_policy.get("enabled", False):
                 raise MemoryError("open_invalid_repair_policy")
         if self.repair_policy.get("limit_policy") is not None:
             from memory_vault_open_repair_bootstrap import _limits
@@ -233,6 +238,9 @@ class OpenParticipant:
                     self._repair_index_service(db).initialize()
                     if self.repair_policy.get("remote_setup", {}).get("enabled", False):
                         self._repair_remote_setup_service(db).initialize()
+                    if self.repair_policy.get("remote_copy", {}).get("enabled", False):
+                        from memory_vault_open_repair_copy_resources import RepairRemoteCopyAllocation
+                        RepairRemoteCopyAllocation(self._repair_service(db).state,policy=self.repair_policy['remote_copy']).initialize()
 
     def _repair_remote_setup_service(self, db):
         from memory_vault_open_repair_remote_setup import RepairRemoteSetupService
@@ -305,6 +313,12 @@ class OpenParticipant:
         from memory_vault_open_repair_state import DEFAULT_POLICY
         meter = repair_wire.RepairBudget(DEFAULT_POLICY)
         parsed = repair_wire.parse_new_wire(raw, DEFAULT_POLICY, meter)
+        if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "ack.copy_allocate":
+            from memory_vault_open_repair_copy_resources import RepairRemoteCopyAllocation
+            with self.state.db() as db:
+                service=RepairRemoteCopyAllocation(self._repair_service(db).state,policy=self.repair_policy.get('remote_copy'))
+                service.initialize()
+                return service.handle(parsed.raw),False
         if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "mailbox.source_allocate":
             from memory_vault_open_repair_remote_setup import MailboxRemoteSetupService
             with self.state.db() as db:

@@ -1,15 +1,22 @@
 # Memory Vault development status
 
-The source checkout targets **alpha.0.15 (candidate, not yet published)**.
-It fixes duplicate mailbox-proof downloads and the strict installed-runtime
-inventory, and adds explicit unbound replica READ service/client support and a
-per-read nonce in the continuation trial. Full cloud regression passed the
-preceding fix commit `fed27adc38e7eeacd1f1ba15546b778c364ae231`
-([run 36531179438](https://github.com/qh-work/memory-vault-sync/actions/runs/36531179438));
-that result does not cover later replica changes or establish candidate acceptance.
-The candidate needs its own exact-source and extracted-package results.
-Remote copy upload, automatic repair, full native TypeScript mailbox parity and
-global scale remain unfinished.
+The immutable **alpha.0.15 candidate remains unpublished**. Its full cloud run
+[36536522221](https://github.com/qh-work/memory-vault-sync/actions/runs/36536522221)
+failed nine fixture setup cases and twelve later service-start cases. Seven
+extracted-runtime HTTP checks and archive/privacy checks passed, but do not
+replace full acceptance. A fixture wrapper did not forward newly added options;
+its failed setup also missed cleanup registration. Later source corrects both.
+The earlier full pass at `fed27adc38e7eeacd1f1ba15546b778c364ae231`
+([36531179438](https://github.com/qh-work/memory-vault-sync/actions/runs/36531179438))
+does not cover the replica changes.
+
+The current branch additionally implements explicit remote unbound replica
+capacity reservation, durable upload/commit retries, and independent signed
+custody verification. Operators opt into finite remote copy admission; a capacity
+offer never substitutes for owner/source disclosure or READ permission. These
+changes are not in the immutable alpha.0.15 candidate. Automatic replacement
+selection, occupied/empty replica transfer, full native TypeScript mailbox
+parity and global scale remain unfinished.
 
 Published [alpha.0.14](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.14), source `0eaf504e953be31b1844d6abfe57cd6f3c06aa29`, connects ACK-bearing mailbox retention to explicit receipt return after cold selected-memory delivery. A lost successful receipt response resumes from the original durable request; A then recovers the original receipt while the delivery node is offline. Four real-HTTP workflows passed using the extracted client runtime and child nodes. All eight public assets were anonymously downloaded and matched the reviewed candidate. [Exact-source full cloud regression](https://github.com/qh-work/memory-vault-sync/actions/runs/36523208918) failed two cases; scale and external adoption remain unverified.
 
