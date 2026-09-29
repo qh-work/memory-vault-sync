@@ -1214,6 +1214,111 @@ class MailboxMessageDraftStore:
             attempt=decode_entry(value['attempt'],self.policy,wire.RepairBudget(self.policy)),
             disclosure=decode_entry(value['disclosure'],self.policy,wire.RepairBudget(self.policy)))
 
+    def admission_request(self, message_id, *, target, owner_status_entry, at, expires_at, object_until, enum_until):
+        """Freeze one exact network admission request for an existing draft."""
+        from memory_vault_open_repair_bind import encode_entry,decode_entry
+        budget=wire.RepairBudget(self.policy)
+        row=self.db.execute('SELECT originals FROM open_mailbox_message_drafts WHERE sender=? AND message_id=?',
+            (self.identity.key_id,message_id)).fetchone()
+        if row is None:_fail('repair_message_delivery_missing')
+        raw=bytes(row[0]);draft=wire.parse_new_wire(raw,self.policy,budget).value
+        slot=decode_entry(draft['slot']['slot'],self.policy,budget)
+        key=wire.parse_new_wire(slot['raw'],self.policy,budget).value['payload']['slot_key']
+        subject=dict(signing_key=self.identity.public_descriptor(),encryption_key=self.encryption_identity.public_descriptor())
+        import memory_vault_open_repair_resource as resource
+        target=wire.build_new_wire(target,self.policy,budget).value
+        if resource._dual_key(target,budget)!=key['writer']:_fail('repair_probe_mismatch')
+        digest=budget._hash(raw)
+        payload=dict(schema_version=proof.SCHEMA,kind='mailbox.source_message',signing_key=subject['signing_key'],
+            subject=subject,target=target,target_storage_epoch=key['writer_storage_epoch'],slot_key=key,message_id=message_id,
+            draft=dict(raw=raw.decode('utf-8'),ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw))),
+            owner_status=encode_entry(owner_status_entry,self.policy,budget),object_until=object_until,enum_until=enum_until)
+        binding=budget._hash(wire.build_new_wire(payload,self.policy,budget).raw)
+        journal=MailboxSetupJournal(self.db)
+        def save():
+            self.db.execute('CREATE TABLE IF NOT EXISTS open_mailbox_message_requests(sender TEXT NOT NULL,message_id TEXT NOT NULL,binding TEXT NOT NULL,raw BLOB NOT NULL,PRIMARY KEY(sender,message_id))')
+            previous=self.db.execute('SELECT binding,raw FROM open_mailbox_message_requests WHERE sender=? AND message_id=?',(self.identity.key_id,message_id)).fetchone()
+            if previous is not None:
+                if previous[0]!=binding:_fail('repair_message_conflict')
+                return bytes(previous[1])
+            wire.u53(at);wire.u53(expires_at);wire.u53(object_until);wire.u53(enum_until)
+            if not at<expires_at or not at<object_until<=enum_until:_fail('repair_resource_expired')
+            signed=probe._sign(wire.build_new_wire(dict(payload,issued_at=at,expires_at=expires_at),self.policy,budget).value,
+                self.identity,self.policy,budget)
+            if len(signed.raw)>65536:_fail('repair_remote_setup_too_large')
+            self.db.execute('INSERT INTO open_mailbox_message_requests VALUES(?,?,?,?)',(self.identity.key_id,message_id,binding,signed.raw))
+            return signed.raw
+        raw=journal._transaction(save);digest=budget._hash(raw)
+        return dict(raw=raw,ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw)))
+
+
+    def verify_admission_response(self, request_raw, response_raw):
+        """Verify R's storage assertion, without claiming recipient delivery."""
+        import memory_vault_open_repair_resource as resource
+        from memory_vault_open_repair_bind import decode_entry
+        budget=wire.RepairBudget(self.policy)
+        if type(response_raw) is not bytes or not 0<len(response_raw)<=65536:_fail('repair_remote_setup_too_large')
+        request=wire.parse_new_wire(request_raw,self.policy,budget).value['payload']
+        signed=resource._fields(wire.parse_new_wire(response_raw,self.policy,budget).value,{'payload','proof'})
+        p=resource._fields(signed['payload'],resource.COMMON|{'request_sha256','slot_key','message_id','stored_at','originals'})
+        if (p['schema_version']!=proof.SCHEMA or p['kind']!='mailbox.source_message_stored'
+                or p['request_sha256']!=budget._hash(request_raw) or p['slot_key']!=request['slot_key']
+                or p['message_id']!=request['message_id'] or p['signing_key']!=request['target']['signing_key']):
+            _fail('repair_message_mismatch')
+        wire.u53(p['stored_at'])
+        original._verify_control_signature(p,signed['proof'],request['target']['signing_key'],budget)
+        kinds=dict(core='admission.core',link='admission.link',custody='message.custody',head='mailbox.feed_head',feed_custody='feed.custody')
+        resource._fields(p['originals'],set(kinds))
+        entries={};payloads={}
+        for name,kind in kinds.items():
+            entry=decode_entry(p['originals'][name],self.policy,budget)
+            value=resource._fields(wire.parse_new_wire(entry['raw'],self.policy,budget).value,{'payload','proof'})
+            item=value['payload']
+            if item['schema_version']!=proof.SCHEMA or item['kind']!=kind or item['slot_key']!=request['slot_key']:
+                _fail('repair_message_mismatch')
+            original._verify_control_signature(item,value['proof'],request['target']['signing_key'],budget)
+            entries[name]=entry;payloads[name]=item
+        core=payloads['core'];custody=payloads['custody']
+        draft=wire.parse_new_wire(request['draft']['raw'].encode('utf-8'),self.policy,budget).value
+        attempt=decode_entry(draft['attempt'],self.policy,budget)
+        attempt_payload=wire.parse_new_wire(attempt['raw'],self.policy,budget).value['payload']
+        if (core['message_id']!=request['message_id'] or custody['message_id']!=request['message_id']
+                or core['object_until']!=request['object_until'] or core['enum_until']!=request['enum_until']
+                or core['attempt_ref']!=attempt['ref'] or core['envelope_ref']!=attempt_payload['envelope_ref']
+                or custody['envelope_ref']!=core['envelope_ref'] or payloads['link']['envelope_ref']!=core['envelope_ref']
+                or payloads['link']['message_id']!=request['message_id']
+                or payloads['feed_custody']['feed_head_ref']!=entries['head']['ref']
+                or custody['admission_link_ref']!=entries['link']['ref'] or custody['feed_head_ref']!=entries['head']['ref']):
+            _fail('repair_message_mismatch')
+        return dict(message_id=p['message_id'],stored_at=p['stored_at'],originals=entries)
+
+    def admit(self, base_url, message_id, *, target_node_entry, timeout=30, transport=None, allow_loopback=False, **options):
+        """Submit a frozen draft to its authenticated node and retain the result."""
+        if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=60:_fail('repair_invalid_context')
+        budget=wire.RepairBudget(self.policy);now=int(time.time())
+        node=original.verify_original_control(target_node_entry['raw'],expected_signing_key=options['target']['signing_key'],
+            expected_schema='memory-vault-open-control/v1',expected_kind='node',at=now,policy=self.policy,budget=budget)
+        original._node_shape(node,now,budget)
+        ref=wire.raw_ref(target_node_entry['ref'])
+        if (ref.namespace!='meta' or ref.size!=len(target_node_entry['raw']) or ref.raw_sha256!=node.raw_sha256
+                or endpoint(base_url,allow_loopback=allow_loopback)!=endpoint(node.payload['base_url'],allow_loopback=allow_loopback)):
+            _fail('repair_probe_mismatch')
+        request=self.admission_request(message_id,**options)
+        payload=wire.parse_new_wire(request['raw'],self.policy,budget).value['payload']
+        if node.payload['storage_epoch']!=payload['target_storage_epoch']:_fail('repair_probe_mismatch')
+        owned=transport is None;transport=transport or OpenHTTPTransport(allow_loopback=allow_loopback)
+        try:response=transport.request_repair(base_url,request['raw'],deadline=time.monotonic()+timeout)
+        finally:
+            if owned:transport.close()
+        result=self.verify_admission_response(request['raw'],response)
+        def save():
+            self.db.execute('CREATE TABLE IF NOT EXISTS open_mailbox_message_results(sender TEXT NOT NULL,message_id TEXT NOT NULL,raw BLOB NOT NULL,PRIMARY KEY(sender,message_id))')
+            previous=self.db.execute('SELECT raw FROM open_mailbox_message_results WHERE sender=? AND message_id=?',(self.identity.key_id,message_id)).fetchone()
+            if previous is not None and bytes(previous[0])!=response:_fail('repair_message_conflict')
+            self.db.execute('INSERT OR IGNORE INTO open_mailbox_message_results VALUES(?,?,?)',(self.identity.key_id,message_id,response))
+        MailboxSetupJournal(self.db)._transaction(save)
+        return result
+
 
 def read_mailbox_index(head_entry, checkpoint_entry, *, expected_slot, expected_signing_key,
                        encryption_identity, read_original, at, max_messages,
@@ -1328,7 +1433,7 @@ def verify_mailbox_admission(member, *, expected_slot, expected_signing_key,
                            expected_owner, expected_sender, expected_target,
                            encryption_identity, read_original, at, current_statuses, known_statuses=(),
                            on_status_authenticated=None, limit_policy=DEFAULT_LIMITS,
-                           policy=DEFAULT_POLICY, budget=None):
+                           status_obligations=(), policy=DEFAULT_POLICY, budget=None):
     """Verify admission metadata and current READ authority without fetching E.
 
     The enclosing feed custody must be checked by the caller. Splitting this
@@ -1414,13 +1519,13 @@ def verify_mailbox_admission(member, *, expected_slot, expected_signing_key,
         deadlines.extend(p['windows'][field] for field in ('read_until','retain_until'))
     if core['enum_until']>min(deadlines):_fail('repair_mailbox_member_mismatch')
     current=verify_mailbox_member_current(setup,current_statuses,known_entries=known_statuses,at=at,
-        policy=policy,budget=budget,on_authenticated=on_status_authenticated)
+        policy=policy,budget=budget,on_authenticated=on_status_authenticated,additional_obligations=status_obligations)
     return dict(core=core,link=link,checkpoint=checkpoint,history=resolved,setup=setup,
         current_statuses=current,originals=MappingProxyType(originals))
 
 
 def verify_mailbox_member_current(setup, entries, *, known_entries=(), at,
-                                  policy=DEFAULT_POLICY, budget=None, on_authenticated=None):
+                                  policy=DEFAULT_POLICY, budget=None, on_authenticated=None, additional_obligations=()):
     """Check current READ evidence against the authenticated original member.
 
     on_authenticated lets the caller persist whole observations before any
@@ -1440,14 +1545,18 @@ def verify_mailbox_member_current(setup, entries, *, known_entries=(), at,
         if p['operation_mask']&2!=2:_fail('repair_authority_revoked')
     if setup['disclosure']['operation_mask']&2!=2:_fail('repair_authority_revoked')
     required={(v['signer']['key_id'],v['scope_kind'],v['scope_id']):v for v in obligations}
+    # The enclosing verified feed authorizes disclosure of whole statuses for
+    # other members. Those scopes never satisfy this member's READ obligations.
+    if type(additional_obligations) not in (tuple,list) or len(additional_obligations)>80:_fail('repair_invalid_status')
+    disclosed=[*obligations,*additional_obligations]
     def authenticate(entry,current):
         raw,ref=ack._entry(entry)
         p=status._fields(status._fields(original.parse_original_control(raw,policy,budget).value,{'payload','proof'})['payload'],status._PAYLOAD)
-        issuer=p['scope_key']['issuer_key_id'];permitted=[v for v in obligations if v['signer']['key_id']==issuer]
+        issuer=p['scope_key']['issuer_key_id'];permitted=[v for v in disclosed if v['signer']['key_id']==issuer]
         if not permitted or wire.u53(p['issued_at'])>at:_fail('repair_status_mismatch')
         return status.authenticate_status_original(dict(raw=raw,ref=ref.as_dict()),expected_root=root,
             expected_signing_key=permitted[0]['signer'],at=at if current else p['issued_at'],
-            allowed_scopes=[dict(scope_kind=v['scope_kind'],scope_id=v['scope_id']) for v in permitted],
+            allowed_scopes=[dict(scope_kind=kind,scope_id=scope) for kind,scope in sorted({(v['scope_kind'],v['scope_id']) for v in permitted})],
             policy=policy,budget=budget,on_authenticated=on_authenticated)
     retained=[*setup['statuses'],*(authenticate(entry,False) for entry in known_entries)]
     current=[authenticate(entry,True) for entry in entries]
@@ -1457,7 +1566,9 @@ def verify_mailbox_member_current(setup, entries, *, known_entries=(), at,
         if identity in seen and seen[identity]!=observed.canonical_sha256:_fail('repair_status_conflict')
         seen[identity]=observed.canonical_sha256
         for value in observed.payload['entries']:
-            key=(issuer,value['scope_kind'],value['scope_id']);wanted=required[key];mask=wanted['operation_mask']
+            key=(issuer,value['scope_kind'],value['scope_id'])
+            if key not in required:continue
+            wanted=required[key];mask=wanted['operation_mask']
             if value['status']=='revoked' and value['operation_mask']&mask:_fail('repair_authority_revoked')
             if mask and value['minimum_document_revision']>wanted['document_revision']:_fail('repair_status_revision')
             floors.setdefault(key,[]).append((revision,value['minimum_document_revision']))
@@ -1469,7 +1580,9 @@ def verify_mailbox_member_current(setup, entries, *, known_entries=(), at,
     for observed in current:
         issuer=observed.payload['scope_key']['issuer_key_id'];revision=observed.payload['revision']
         for value in observed.payload['entries']:
-            key=(issuer,value['scope_kind'],value['scope_id']);wanted=required[key];mask=wanted['operation_mask']
+            key=(issuer,value['scope_kind'],value['scope_id'])
+            if key not in required:continue
+            wanted=required[key];mask=wanted['operation_mask']
             if revision<max(v[0] for v in floors[key]):_fail('repair_status_rollback')
             if mask and value['status']=='active' and value['operation_mask']&mask==mask:covered.add(key)
     if covered!={key for key,value in required.items() if value['operation_mask']}:_fail('repair_status_missing')
@@ -1552,7 +1665,7 @@ def verify_mailbox_inbox_evidence(evidence, envelope, *, owner, encryption_ident
     return read_mailbox_admission(value['member'],expected_slot=value['slot'],expected_signing_key=value['target']['signing_key'],
         expected_owner=owner,expected_sender=value['sender'],expected_target=value['target'],encryption_identity=encryption_identity,
         read_original=read_original,at=at,current_statuses=[entry(ref) for ref in value['status_refs']],
-        limit_policy=limits,policy=policy,budget=budget)
+        limit_policy=limits,status_obligations=source['graph']['obligations'],policy=policy,budget=budget)
 
 
 class MailboxFeedRecoveryClient(MailboxRootRecoveryClient):
@@ -1573,7 +1686,7 @@ class MailboxFeedRecoveryClient(MailboxRootRecoveryClient):
         options=dict(expected_slot=expected_slot,expected_signing_key=expected_target['signing_key'],
             expected_owner=self.subject,expected_sender=expected_sender,expected_target=expected_target,
             encryption_identity=self.encryption_identity,current_statuses=current,known_statuses=known_statuses,
-            limit_policy=self.limits,policy=self.policy,budget=budget)
+            limit_policy=self.limits,status_obligations=feed.source['graph']['obligations'],policy=self.policy,budget=budget)
         def metadata(reference):
             ref=wire.raw_ref(reference)
             if ref not in feed.originals:_fail('repair_original_missing')

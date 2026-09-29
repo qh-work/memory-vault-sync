@@ -40,7 +40,7 @@ class MailboxStatusLedger:
         if row is None or row["status"] != "active":
             wire._fail("repair_resource_inactive")
         offer = s._saved(row,"offer")
-        p = wire.parse_new_wire(offer["raw"],s.policy,budget).value["payload"]
+        p = wire.parse_new_wire(offer["raw"],s._budget_policy(budget),budget).value["payload"]
         root = p["intent"]["root_key"]
         return row,p,root,budget._hash(wire._canonical(root,budget))
 
@@ -90,7 +90,7 @@ class MailboxStatusLedger:
                 return self._latch(root_digest,"repair_mailbox_status_ledger_missing")
             held = dict(generation=0,documents=0,floors=0)
         p = observed.payload; issuer = p["scope_key"]["issuer_key_id"]
-        ref = wire.build_new_wire(observed.ref.as_dict(),s.policy,budget).raw
+        ref = wire.build_new_wire(observed.ref.as_dict(),s._budget_policy(budget),budget).raw
         ref_digest = budget._hash(ref)
         old = s._one("SELECT 1 FROM open_repair_mailbox_status_documents WHERE resource_id=? AND issuer=? AND digest=? AND ref_digest=?",
                      (resource_id,issuer,observed.canonical_sha256,ref_digest))
@@ -139,16 +139,16 @@ class MailboxStatusLedger:
         s = self.source; error = None; recorded_code = []; observed = None
         with s._transaction() as now:
             budget = _budget if _budget is not None else wire.RepairBudget(s.policy)
-            wire._context(s.policy,budget)
+            wire._context(s._budget_policy(budget),budget)
             row,offer,root,root_digest = self._context(resource_id,budget)
-            expected_signing_key = wire.build_new_wire(expected_signing_key,s.policy,budget).value
+            expected_signing_key = wire.build_new_wire(expected_signing_key,s._budget_policy(budget),budget).value
             if expected_signing_key not in (offer["intent"]["owner"]["signing_key"],s.identity.public_descriptor()):
                 wire._fail("repair_wrong_issuer")
             def retain(value):
                 recorded_code.append(self._record(row,offer,root_digest,value,budget))
             try:
                 observed = status.authenticate_status_original(entry,expected_root=root,expected_signing_key=expected_signing_key,
-                    at=now,allowed_scopes=allowed_scopes,policy=s.policy,budget=budget,on_authenticated=retain)
+                    at=now,allowed_scopes=allowed_scopes,policy=s._budget_policy(budget),budget=budget,on_authenticated=retain)
             except wire.RepairWireError as caught:
                 error = caught
         if any(recorded_code):
@@ -166,15 +166,15 @@ class MailboxStatusLedger:
         import memory_vault_open_repair_resource as resource
         import memory_vault_open_repair_history as history
         s=self.source;budget=_budget if _budget is not None else wire.RepairBudget(s.policy)
-        wire._context(s.policy,budget);error=None;recorded=[];observed=None
+        wire._context(s._budget_policy(budget),budget);error=None;recorded=[];observed=None
         with s._transaction() as now:
             row,offer,root,root_digest=self._context(resource_id,budget)
             slot_row=s._one("SELECT inputs FROM open_repair_mailbox_slot_activations WHERE data_resource_id=? OR metadata_resource_id=?",
                 (resource_id,resource_id))
             if slot_row is None:wire._fail("repair_unknown_resource")
-            entries=wire.parse_new_wire(bytes(slot_row['inputs']),s.policy,budget).value
-            slot=wire.parse_new_wire(entries['slot']['raw'].encode(),s.policy,budget).value['payload']
-            maintenance=wire.parse_new_wire(entries['maintenance']['raw'].encode(),s.policy,budget).value['payload']
+            entries=wire.parse_new_wire(bytes(slot_row['inputs']),s._budget_policy(budget),budget).value
+            slot=wire.parse_new_wire(entries['slot']['raw'].encode(),s._budget_policy(budget),budget).value['payload']
+            maintenance=wire.parse_new_wire(entries['maintenance']['raw'].encode(),s._budget_policy(budget),budget).value['payload']
             parsed,ref=s._entry(consent_entry,budget)
             signed=resource._fields(parsed.value,{'payload','proof'})
             p=resource._fields(signed['payload'],resource.COMMON|set('issued_at expires_at consent_id root_key slot_key sender recipient envelope_ref maintenance_root_ref allowed_roles operation_mask consent_until bootstrap_return revision'.split()))
@@ -199,11 +199,11 @@ class MailboxStatusLedger:
                     or not p['issued_at']<wire.u53(returned['until'])<=p['consent_until']):
                 wire._fail('repair_status_disclosure')
             status.original._verify_control_signature(p,signed['proof'],slot['sender']['signing_key_id'],budget)
-            scope=status.status_scope(root,'authority',dict(authority_kind='message.disclosure',authority_sha256=ref.raw_sha256),s.policy,budget)
+            scope=status.status_scope(root,'authority',dict(authority_kind='message.disclosure',authority_sha256=ref.raw_sha256),s._budget_policy(budget),budget)
             def retain(value):recorded.append(self._record(row,offer,root_digest,value,budget))
             try:
                 observed=status.authenticate_status_original(status_entry,expected_root=root,expected_signing_key=p['signing_key'],at=now,
-                    allowed_scopes=[dict(scope_kind='authority',scope_id=scope)],policy=s.policy,budget=budget,on_authenticated=retain)
+                    allowed_scopes=[dict(scope_kind='authority',scope_id=scope)],policy=s._budget_policy(budget),budget=budget,on_authenticated=retain)
             except wire.RepairWireError as caught:error=caught
         if any(recorded):wire._fail(next(code for code in recorded if code))
         if error is not None:raise error
@@ -216,9 +216,9 @@ class MailboxStatusLedger:
             wire._fail("repair_storage_transaction")
         s._binding(); s.capacity.check_policy()
         budget = _budget if _budget is not None else wire.RepairBudget(s.policy)
-        wire._context(s.policy,budget)
+        wire._context(s._budget_policy(budget),budget)
         _,offer,_,root_digest = self._context(resource_id,budget)
-        requirements = wire.build_new_wire(required,s.policy,budget).value
+        requirements = wire.build_new_wire(required,s._budget_policy(budget),budget).value
         if type(requirements) is not wire._DraftList or not 1 <= len(requirements) <= 80:
             wire._fail("repair_invalid_status")
         code = self._integrity(root_digest)

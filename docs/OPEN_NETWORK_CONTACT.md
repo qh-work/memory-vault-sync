@@ -188,3 +188,55 @@ also how to replace an expired source descriptor with a newly authenticated one.
 Memory shares continue through the normal trust/admission checks. A receipt
 saved by mailbox reception remains available for the independently authorized
 ACK return; a successful receive does not claim that the sender received it.
+
+### Retain an already sent message in its authorized mailbox
+
+After mailbox setup, the sender can use the same Agent `connect` operation to
+prepare and submit an existing outgoing message. The receiver supplies its
+signed destination and slot controls; the sender reuses its own frozen outbox
+ciphertext and contact originals. Preparation never invents permission or sends
+plaintext to the mailbox node.
+
+```python
+prepared = agent.handle({"op": "connect", "invitation": {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "prepare", "message_id": sent_message_id,
+    "slot_entries": {name: json_entry(slot_entries[name])
+                     for name in ("slot", "read", "maintenance")},
+    "destination_entry": json_entry(destination_entry),
+    "attempt_until": attempt_until, "consent_until": consent_until,
+}})
+retained = agent.handle({"op": "connect", "invitation": {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "admit", "message_id": sent_message_id,
+    "base_url": source_url, "target": source_descriptor,
+    "target_node_entry": json_entry(current_node_entry),
+    "owner_status_entry": json_entry(current_owner_status),
+    "expires_at": request_expires_at,
+    "object_until": object_until, "enum_until": enum_until,
+}})
+```
+
+Check each operation's success before continuing. All deadlines must fit the
+original grants and allocated resources. The source must explicitly enable
+repair remote setup and delivery, and the ciphertext must already be committed
+at that source. Requests are limited to 64 KiB and the configured finite source
+budgets; this endpoint does not upload a new ciphertext body. Oversized original
+bundles fail explicitly.
+
+The sender saves the exact signed admission request before network access and
+verifies the source's signed result against that request, message and ciphertext.
+Retries reuse the request and resume durable source stages; changed parameters
+for the same message are rejected. The source publishes the encrypted mailbox
+index and feed custody before reporting success. `retained_at_mailbox` means a
+storage assertion from the source, with `recipient_acknowledged: false`. The
+receiver independently checks current authority and the full original history
+when receiving. Independent receipt return still needs its separate ACK grants.
+
+A full feed proof contains the original history of every covered message.
+Provision proof-item, proof-byte, signature and metadata budgets for that
+history before signing the slot; the single-message example's ceilings are not
+multi-message capacity promises. The HTTP mailbox workflow bounds its local
+aggregate verification to 512 signatures and its persisted proof encoding to
+2 MiB, further constrained by the configured node limits and signed resources.
+No grant or resource ceiling is enlarged when a request runs out of budget.

@@ -1455,7 +1455,7 @@ class MailboxMessageStaging:
             self.db.execute('UPDATE open_repair_mailbox_resources SET metadata_bytes=metadata_bytes+? WHERE resource_id=?',(charge,job['metadata_id']))
             return artifacts
 
-    def prepare_feed_history(self, slot_key):
+    def prepare_feed_history(self, slot_key, *, head_ref=None):
         """Pin a complete local nonempty prefix before a feed custody event.
 
         This is an internal producer stage; it grants no remote read and signs
@@ -1483,7 +1483,7 @@ class MailboxMessageStaging:
                     or marker is None or marker['value']!=s._expected_binding()+'|'+str(feed['count'])+'|'+head['ref']['raw_sha256']):
                 wire._fail('repair_storage_corrupt')
             old=s._one('SELECT * FROM open_mailbox_feed_history WHERE slot_digest=? AND head_digest=?',(digest,head['ref']['raw_sha256']))
-            if old is not None:return dict(manifest=s._saved(old,'manifest'),pack=s._saved(old,'pack'))
+            if old is not None and (head_ref is None or head_ref==head['ref']):return dict(manifest=s._saved(old,'manifest'),pack=s._saved(old,'pack'))
             resource_id=slot_row['metadata_resource_id'];roles={};member_packs=[];members=[];expected_links={};status_roles={}
             def add(role,entry):
                 ref=wire.raw_ref(entry['ref']);raw=entry['raw']
@@ -1495,7 +1495,19 @@ class MailboxMessageStaging:
                 raw=bytes(row['raw'])
                 if ref.namespace!='meta' or len(raw)!=ref.size or budget._hash(raw)!=ref.raw_sha256:wire._fail('repair_ref_mismatch')
                 return dict(raw=raw,ref=ref.as_dict())
-            rows=self.db.execute('SELECT * FROM open_mailbox_admissions WHERE slot_digest=? ORDER BY sequence',(digest,)).fetchall()
+            if head_ref is not None and head_ref!=head['ref']:
+                selected=load(head_ref)
+                selected_payload=wire.parse_new_wire(selected['raw'],s.policy,budget).value['payload']
+                if (selected_payload['kind']!='mailbox.feed_head' or selected_payload['slot_key']!=key
+                        or not 0<wire.u53(selected_payload['count'])<=feed['count']):wire._fail('repair_message_mismatch')
+                head=selected;hp=selected_payload;checkpoint=load(hp['checkpoint_ref'])
+                feed=dict(feed,count=hp['count'])
+                held=s._one('SELECT result FROM open_mailbox_admissions WHERE slot_digest=? AND sequence=?',(digest,feed['count']-1))
+                if held is None or wire.parse_new_wire(bytes(held['result']),s.policy,budget).value['head']['ref']!=head['ref']:
+                    wire._fail('repair_storage_corrupt')
+                old=s._one('SELECT * FROM open_mailbox_feed_history WHERE slot_digest=? AND head_digest=?',(digest,head['ref']['raw_sha256']))
+                if old is not None:return dict(manifest=s._saved(old,'manifest'),pack=s._saved(old,'pack'))
+            rows=self.db.execute('SELECT * FROM open_mailbox_admissions WHERE slot_digest=? AND sequence<? ORDER BY sequence',(digest,feed['count'])).fetchall()
             if len(rows)!=feed['count']:wire._fail('repair_storage_corrupt')
             for sequence,row in enumerate(rows):
                 if row['sequence']!=sequence:wire._fail('repair_storage_corrupt')

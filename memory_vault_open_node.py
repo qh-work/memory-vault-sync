@@ -248,11 +248,20 @@ class OpenParticipant:
             capacity_policy=self.repair_policy.get("capacity_policy"))
         return RepairIndexService(state)
 
-    def _repair_service(self, db, packet_payload=None):
-        from memory_vault_open_repair_state import RepairAckState
+    def _repair_service(self, db, packet_payload=None, *, mailbox_workflow=False):
+        from dataclasses import replace
+        from memory_vault_open_repair_state import RepairAckState, DEFAULT_POLICY, DEFAULT_LIMITS
         from memory_vault_open_repair_service import RepairBootstrapService
+        policy=DEFAULT_POLICY
+        if mailbox_workflow or (packet_payload is not None and packet_payload.get('consumer')=='mailbox_feed'):
+            # Full-prefix verification covers several separately authorized
+            # members. Keep a finite aggregate ceiling within node limits.
+            limits=self.repair_policy.get('limit_policy') or DEFAULT_LIMITS
+            policy=replace(policy,max_signature_checks=min(512,limits['max_signature_checks']),
+                max_document_bytes=max(policy.max_document_bytes,min(2097152,2*limits['max_proof_bytes'])),
+                max_string_bytes=max(policy.max_string_bytes,min(1048576,limits['max_proof_bytes'])))
         state = RepairAckState(db, self.identity, self.descriptor,
-            encryption_identity=self.encryption_identity,
+            encryption_identity=self.encryption_identity,policy=policy,
             limit_policy=self.repair_policy.get("limit_policy"),
             capacity_policy=self.repair_policy.get("capacity_policy"))
         state.initialize()
@@ -312,6 +321,15 @@ class OpenParticipant:
         if type(payload) is not repair_wire._DraftDict:
             raise MemoryError("open_invalid_repair_request")
         kind = payload.get("kind")
+        if kind == 'mailbox.source_message':
+            from memory_vault_open_repair_remote_setup import MailboxRemoteMessageService
+            from memory_vault_open_delivery_state import DeliveryState
+            with self.state.db() as db:
+                service=MailboxRemoteMessageService(self._repair_service(db,mailbox_workflow=True).state,
+                    DeliveryState(db,self.identity,self.descriptor,**self.delivery_policy),
+                    policy=self.repair_policy.get('remote_setup'))
+                service.initialize()
+                return service.handle(parsed.raw),False
         if kind in ("mailbox.source_slot", "mailbox.source_root", "mailbox.source_ready"):
             from memory_vault_open_repair_remote_setup import MailboxRemoteSetupService
             with self.state.db() as db:

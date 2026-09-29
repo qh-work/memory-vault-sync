@@ -150,6 +150,47 @@ class OpenNetworkClient:
         from memory_vault_open_repair_resource import _dual_key
         value=document(invitation,maximum=65536)
         action=value.get('action')
+        if action=='prepare':
+            object_fields(value,{'schema_version','action','message_id','slot_entries','destination_entry','attempt_until','consent_until'})
+            from memory_vault_open_repair_client import MailboxMessageDraftStore
+            def entry(item):
+                object_fields(item,{'raw','ref'})
+                if not isinstance(item['raw'],str):raise MemoryError('open_invalid_mailbox_request')
+                return dict(raw=item['raw'].encode('utf-8'),ref=item['ref'])
+            delivery=self._delivery()
+            object_fields(value['slot_entries'],{'slot','read','maintenance'})
+            try:
+                with self.participant.state.db() as db:
+                    row=db.execute('SELECT envelope,session FROM open_delivery_outbox WHERE message_id=?',(value['message_id'],)).fetchone()
+                    if row is None or row['envelope'] is None or row['session'] is None:raise MemoryError('open_delivery_outbox_missing')
+                    session=document(bytes(row['session']),maximum=65536);keys=delivery._keys(session)
+                    recipient=dict(signing_key=keys['recipient_signing_key'],encryption_key=keys['recipient_encryption_key'])
+                    docs={name:session[name] for name in ('node','policy','request','decision')}
+                    grant=session['decision']['payload']['grant']
+                    docs.update(knock_lease=session['lease'],grant=grant,delivery_lease=grant['payload']['resource_lease'])
+                    result=MailboxMessageDraftStore(db,self.identity,self.encryption).prepare(bytes(row['envelope']),recipient=recipient,
+                        slot_entries={name:entry(item) for name,item in value['slot_entries'].items()},destination_entry=entry(value['destination_entry']),
+                        contact_originals={name:canonical_bytes(item) for name,item in docs.items()},at=int(time.time()),
+                        attempt_until=value['attempt_until'],consent_until=value['consent_until'])
+            except RepairWireError as error:raise MemoryError(error.code) from error
+            return dict(state='mailbox_draft_saved',message_id=value['message_id'],attempt_ref=result['attempt']['ref'],
+                disclosure_ref=result['disclosure']['ref'],network_accessed=False)
+        if action=='admit':
+            object_fields(value,{'schema_version','action','base_url','message_id','target','target_node_entry','owner_status_entry','expires_at','object_until','enum_until'})
+            from memory_vault_open_repair_client import MailboxMessageDraftStore
+            def entry(item):
+                object_fields(item,{'raw','ref'})
+                if not isinstance(item['raw'],str):raise MemoryError('open_invalid_mailbox_request')
+                return dict(raw=item['raw'].encode('utf-8'),ref=item['ref'])
+            try:
+                with self.participant.state.db() as db:
+                    result=MailboxMessageDraftStore(db,self.identity,self.encryption).admit(value['base_url'],value['message_id'],
+                        target_node_entry=entry(value['target_node_entry']),target=value['target'],owner_status_entry=entry(value['owner_status_entry']),
+                        at=int(time.time()),expires_at=value['expires_at'],object_until=value['object_until'],enum_until=value['enum_until'],
+                        transport=self.participant.transport,allow_loopback=self.participant.transport.allow_loopback)
+            except RepairWireError as error:raise MemoryError(error.code) from error
+            return dict(state='retained_at_mailbox',message_id=result['message_id'],stored_at=result['stored_at'],network_accessed=True,
+                custody_ref=result['originals']['custody']['ref'],feed_custody_ref=result['originals']['feed_custody']['ref'],recipient_acknowledged=False)
         self._mailbox_receivers_initialize()
         if action=='list':
             object_fields(value,{'schema_version','action'})
