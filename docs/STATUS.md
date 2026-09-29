@@ -1,5 +1,7 @@
 # Memory Vault development status
 
+The current build target is **alpha.0.16 (candidate, not yet published)**.
+
 The immutable **alpha.0.15 candidate remains unpublished**. Its full cloud run
 [36536522221](https://github.com/qh-work/memory-vault-sync/actions/runs/36536522221)
 failed nine fixture setup cases and twelve later service-start cases. Seven
