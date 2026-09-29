@@ -1,7 +1,7 @@
 # Memory Vault
 
 Model-neutral encrypted agent communication and persistent original memories.
-Published prerelease: v0.28.0-alpha.0.14. Check the published release record for exact
+Published prerelease: v0.28.0-alpha.0.20. Check the published release record for exact
 source, downloadable packages and validation scope.
 
 Start with docs/OPEN_NETWORK_QUICKSTART.md and AI_START_HERE.md. A participant

@@ -1,6 +1,6 @@
 # Distribution scope and publication gates
 
-Alpha.0.20 is an unpublished candidate. It includes native Node commands for
+Alpha.0.20 is now a published prerelease. It includes native Node commands for
 unbound, empty and occupied ACK recovery, sharing authenticated status retention
 with Python across failures and restarts. These commands export private evidence
 through an existing identity and never open the content Vault.
@@ -11,7 +11,7 @@ skips. The same failure was reproduced by delaying proof-child downloads:
 the exhaustive non-ACK fixture had not funded its possession renewals and final
 revocation check. Both exhaustive fixtures now request finite matching capacity
 before signing their original grants; product limits and deadlines are unchanged.
-This candidate requires its own source-bound and extracted-package acceptance.
+This release passed its own source-bound and extracted-package acceptance as recorded below.
 
 Alpha.0.18 remains unpublished: its complete cloud run executed 1,059 tests
 with one ACK-bearing mailbox custody failure and no errors or skips. A slow
@@ -19,18 +19,26 @@ local download reproduced a possession handle expiring between child reads.
 The exhaustive fixture now reads current-status originals first and renews
 possession before expiry for the same exact historical references. Renewals
 are bounded and charged; sufficient finite capacity is signed before setup.
-Product permission windows and budgets are unchanged. Alpha.0.20 requires
-separate package/privacy and exact-source full acceptance. It also includes
+Product permission windows and budgets are unchanged. Alpha.0.20 passed
+separate package/privacy and exact-source full acceptance as recorded above. It also includes
 packed-original reuse and persistent original-source recovery observations
 from subsequent development; neither change is in alpha.0.18 archives.
 
-The source checkout targets **alpha.0.20 (candidate, not yet published)**.
+Published **[alpha.0.20](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.20)** is fixed at `24f93b04f78926d39e073ff5b3463cfc77ea64a6`.
+
+Seventeen synthetic native-command, mailbox, receipt, restart and replica checks passed using the extracted alpha.0.20 runtime. Its exact-source full cloud regression passed 1072 tests across 114 modules, with all 256 reported source hashes matching `24f93b04f78926d39e073ff5b3463cfc77ea64a6`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish external adoption, global reliability or thousand-agent capacity.
+
+This release includes packed replica original reuse and persistent original-source
+recovery status across command restarts, including native TypeScript original-source
+recovery commands in the installable client archive.
+
+The release candidate below has now passed its own acceptance.
 It includes the explicit remote unbound replica reservation/upload client,
 independent custody verification, persistent work/status/retry state and
 separately authorized replica READ recovery. Exact-source full cloud and
-extracted-package acceptance remain required.
+extracted-package acceptance passed as recorded above.
 
-This candidate adds explicit `copy-reserve`, `copy-upload`, `configure-replica`,
+This release adds explicit `copy-reserve`, `copy-upload`, `configure-replica`,
 and `recover-replica` commands. They use existing local identities and protected
 transport state, preserve exact retry requests, and keep return permissions
 separate from copy custody. Owner recovery remembers authenticated status facts
@@ -49,7 +57,7 @@ revocation check and reports only the current request's server errors. CI allows
 55 minutes inside a 60-minute job; protocol deadlines and grants are unchanged.
 Alpha.0.17 did pass 14 extracted-runtime workflows and supported Python 3.10.
 Those results do not relabel either older candidate as a full-suite pass. This
-alpha.0.20 candidate requires separate exact-source acceptance.
+alpha.0.20 release passed separate exact-source acceptance as recorded above.
 
 The immutable alpha.0.15 candidate remains unpublished: full run
 [36536522221](https://github.com/qh-work/memory-vault-sync/actions/runs/36536522221)
