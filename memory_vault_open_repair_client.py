@@ -726,6 +726,36 @@ class MailboxSetupBuilder:
         return self._sign("delivery.destination",dict(destination_id=self._id("destination"),sender=p["sender"],recipient=probe._dual(self.owner),
             slot_key=p["slot_key"],slot_ref=slot_entries["slot"]["ref"],**refs,**fields),at,expires_at,budget)
 
+    def destination_bundle(self, slot_entries, contact_originals, *, at, expires_at, status_revision, status_until):
+        """Build B's exact destination and complete admission status originals.
+
+        The caller must persist this bundle before sending and coordinate the
+        explicit status revision with its other documents for this owner/root.
+        This signs no ACK authority and makes no claim about source liveness.
+        """
+        from memory_vault_open_provider import issue_status
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_bootstrap
+        budget=wire.RepairBudget(self.policy);p=self.plan
+        wire.u53(status_revision,1);wire.u53(status_until)
+        setup=verify_mailbox_feed_bootstrap({name:slot_entries[name] for name in ('slot','read','maintenance','bootstrap')},expected_slot=p['slot_key'],expected_owner=self.owner,
+            expected_target=p['target'],target_storage_epoch=p['slot_key']['writer_storage_epoch'],
+            limit_policy=p['limits'],at=at,policy=self.policy,budget=budget)
+        if not at<status_until<=min(value.payload['expires_at'] for value in setup.values()):
+            _fail('repair_resource_expired')
+        destination=self.destination_document(slot_entries,contact_originals,at=at,expires_at=expires_at)
+        entries=[('destination',destination)]+[(name,slot_entries[name]) for name in ('slot','read','maintenance','bootstrap')]
+        scopes=[]
+        for name,entry in entries:
+            value=wire.parse_new_wire(entry['raw'],self.policy,budget).value['payload']
+            kind='mailbox_slot' if name=='slot' else 'authority'
+            subject=p['slot_key'] if name=='slot' else dict(authority_kind=value['kind'],authority_sha256=entry['ref']['raw_sha256'])
+            scopes.append(dict(scope_kind=kind,scope_id=status.status_scope(p['root_key'],kind,subject,self.policy,budget),
+                minimum_document_revision=value.get('revision',1),status='active',operation_mask=127))
+        scopes.sort(key=lambda value:(value['scope_kind'],value['scope_id']))
+        signed=issue_status(self.identity,root=p['root_key'],revision=status_revision,entries=scopes,issued_at=at,valid_until=status_until)
+        raw=wire.build_new_wire(signed,self.policy,budget).raw;digest=budget._hash(raw)
+        return dict(destination=destination,owner_status=dict(raw=raw,ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw))))
+
     def readiness_packet(self, owner_status, *, at, expires_at, read_until, retain_until):
         from memory_vault_open_repair_bind import encode_entry
         budget=wire.RepairBudget(self.policy)
@@ -1081,6 +1111,60 @@ class MailboxSetupClient(MailboxRootRecoveryClient):
         if result.source['custody'].raw!=custody['raw'] or result.source['custody'].ref.as_dict()!=custody['ref']:
             _fail('repair_proof_mismatch')
         return result
+
+
+class MailboxDestinationStore:
+    """Retain exact receiver-issued admission originals in the caller's DB.
+
+    Revisions are explicit and coordinated by the owner. This journal prevents
+    local reuse with different inputs; it cannot observe another device's
+    signatures or override remote revision floors and revocations.
+    """
+    def __init__(self, db, identity, encryption_identity, *, policy=DEFAULT_POLICY):
+        self.db,self.identity,self.encryption_identity,self.policy=db,identity,encryption_identity,policy
+
+    def prepare(self, plan, slot_entries, contact_originals, *, at, expires_at, status_revision, status_until):
+        from memory_vault_open_repair_bind import encode_entry,decode_entry
+        import memory_vault_open_repair_resource as resource
+        budget=wire.RepairBudget(self.policy)
+        builder=MailboxSetupBuilder(self.identity,self.encryption_identity,plan,policy=self.policy)
+        wire.u53(at);wire.u53(status_revision,1)
+        slots={name:slot_entries[name] for name in ('slot','read','maintenance','bootstrap')}
+        # Hash the complete original inputs, not parsed projections. The time
+        # of a retry is excluded so the first signed issuance stays frozen.
+        binding=budget._hash(wire.build_new_wire(dict(plan=plan,
+            slots={name:encode_entry(value,self.policy,budget) for name,value in slots.items()},
+            contact={name:budget._hash(raw) for name,raw in contact_originals.items()},
+            expires_at=expires_at,status_revision=status_revision,status_until=status_until),self.policy,budget).raw)
+        root=budget._hash(wire.build_new_wire(builder.plan['root_key'],self.policy,budget).raw)
+        if self.db.in_transaction:_fail('repair_destination_transaction_active')
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            self.db.execute('CREATE TABLE IF NOT EXISTS open_mailbox_destinations(root_digest TEXT NOT NULL,revision INTEGER NOT NULL,binding TEXT NOT NULL,bundle BLOB NOT NULL,bundle_sha256 TEXT NOT NULL,PRIMARY KEY(root_digest,revision))')
+            row=self.db.execute('SELECT binding,bundle,bundle_sha256 FROM open_mailbox_destinations WHERE root_digest=? AND revision=?',(root,status_revision)).fetchone()
+            if row is not None:
+                if row[0]!=binding:_fail('repair_destination_conflict')
+                raw=bytes(row[1])
+                if len(raw)>65536 or budget._hash(raw)!=row[2]:_fail('repair_destination_journal_corrupt')
+                saved=resource._fields(wire.parse_new_wire(raw,self.policy,budget).value,{'destination','owner_status'})
+                result={name:decode_entry(value,self.policy,budget) for name,value in saved.items()}
+                for entry in result.values():
+                    signed=resource._fields(wire.parse_new_wire(entry['raw'],self.policy,budget).value,{'payload','proof'})
+                    original._verify_control_signature(signed['payload'],signed['proof'],builder.owner['signing_key'],budget)
+            else:
+                latest=self.db.execute('SELECT max(revision) FROM open_mailbox_destinations WHERE root_digest=?',(root,)).fetchone()[0]
+                if latest is not None and status_revision<=latest:_fail('repair_destination_revision_rollback')
+                if self.db.execute('SELECT count(*) FROM open_mailbox_destinations').fetchone()[0]>=128:_fail('repair_destination_capacity')
+                result=builder.destination_bundle(slots,contact_originals,at=at,expires_at=expires_at,
+                    status_revision=status_revision,status_until=status_until)
+                raw=wire.build_new_wire({name:encode_entry(value,self.policy,budget) for name,value in result.items()},self.policy,budget).raw
+                if len(raw)>65536:_fail('repair_destination_capacity')
+                self.db.execute('INSERT INTO open_mailbox_destinations VALUES(?,?,?,?,?)',(root,status_revision,binding,raw,budget._hash(raw)))
+            self.db.commit()
+            return result
+        except BaseException:
+            self.db.rollback()
+            raise
 
 
 class MailboxMessageDraftStore:

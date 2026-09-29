@@ -1,20 +1,20 @@
 {
   "schema_version": "memory-vault-discovery/v1",
   "name": "Memory Vault",
-  "implementation_version": "0.28.0-alpha.0.11",
+  "implementation_version": "0.28.0-alpha.0.12",
   "implementation_status": "alpha_preview",
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
-  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.11",
+  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.12",
   "release_publication_verified": true,
   "release_assets": {
-    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.11/memory-vault-client-v0.28.0-alpha.0.11.zip",
-    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.11/memory-vault-protocol-v0.28.0-alpha.0.11.zip",
-    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.11/memory-vault-review-v0.28.0-alpha.0.11.zip",
-    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.11/memory-vault-network-test-v0.28.0-alpha.0.11.zip",
-    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.11/SHA256SUMS"
+    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.12/memory-vault-client-v0.28.0-alpha.0.12.zip",
+    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.12/memory-vault-protocol-v0.28.0-alpha.0.12.zip",
+    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.12/memory-vault-review-v0.28.0-alpha.0.12.zip",
+    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.12/memory-vault-network-test-v0.28.0-alpha.0.12.zip",
+    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.12/SHA256SUMS"
   },
-  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.10",
+  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.11",
   "relative_links_base": "this discovery document",
   "start_here": "../AI_START_HERE.md",
   "specification": "../PROTOCOL.md",
@@ -46,7 +46,7 @@
   "automatic_sync_default": false,
   "readme_is_installation": false,
   "runtime_tests_run_for_release": true,
-  "runtime_test_scope": "Focused synthetic Python and native TypeScript recovery tests use real cryptography and loopback HTTP, including restart, revocation, original bytes and framing. Exact source, cloud run and archive bindings belong to the release record; no full global reliability or independent adoption claim.",
+  "runtime_test_scope": "Four targeted synthetic workflows passed using the extracted alpha.0.12 Python client runtime and actual HTTP nodes: mailbox provisioning/configuration recovery, persisted receiver authorization with interrupted two-message admission, cold selected-memory import/resume, and independent receipt return/recovery. Exact-source full cloud regression remains pending; no external adoption or global reliability claim.",
   "runtime_test_report": "../docs/RELEASE.md",
   "full_runtime_test_suite_run": false,
   "runtime_parity_verified": false,
@@ -83,7 +83,9 @@
     "contact_directory_maintenance_scope": "Python B explicitly authorizes its selected Python node to renew unchanged public contact registration within original permissions and finite work; ordinary native discovery remains compatible",
     "remote_ack_source_provisioning": true,
     "configured_node_contact_enable": true,
-    "remote_ack_source_provisioning_scope": "explicit finite Python source opt-in; sender uses only own config and selected public origin/key, with live unbound recovery before ciphertext and durable exact-request retry"
+    "remote_ack_source_provisioning_scope": "explicit finite Python source opt-in; sender uses only own config and selected public origin/key, with live unbound recovery before ciphertext and durable exact-request retry",
+    "python_mailbox_authorization_exchange": true,
+    "mailbox_authorization_scope": "Receiver-local approved contact and registered mailbox; durable exact destination/status originals and bounded paged export; explicit owner status revision coordination; no fresh remote permission claim."
   },
   "continuation_trial": {
     "guide": "../docs/CONTINUATION_TRIAL.md",

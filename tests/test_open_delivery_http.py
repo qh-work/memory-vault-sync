@@ -204,9 +204,49 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         docs={name:session[name] for name in ('node','policy','request','decision')}
         docs.update(knock_lease=session['lease'],grant=session['decision']['payload']['grant'],delivery_lease=session['decision']['payload']['grant']['payload']['resource_lease'])
         contact={name:canonical_bytes(value) for name,value in docs.items()}
-        destination=builder.destination_document(slot_entries,contact,at=now,expires_at=now+60)
+        from memory_vault_open_repair_client import MailboxDestinationStore
+        with self.b._network() as owner_network:
+            with owner_network.participant.state.db() as owner_db:
+                destination_bundle=MailboxDestinationStore(owner_db,self.bi,owner_encryption).prepare(plan,slot_entries,contact,
+                    at=now,expires_at=now+60,status_revision=2,status_until=now+100)
+        # A restarted client must return the original signed issuance, even
+        # when the retry clock differs. Reusing its revision cannot resign.
+        with self.b._network() as owner_network:
+            with owner_network.participant.state.db() as owner_db:
+                store=MailboxDestinationStore(owner_db,self.bi,owner_encryption)
+                self.assertEqual(store.prepare(plan,slot_entries,contact,at=now+1,expires_at=now+60,status_revision=2,status_until=now+100),destination_bundle)
+                with self.assertRaisesRegex(RepairWireError,'repair_destination_conflict'):
+                    store.prepare(plan,slot_entries,contact,at=now+1,expires_at=now+59,status_revision=2,status_until=now+100)
+                with self.assertRaisesRegex(RepairWireError,'repair_destination_revision_rollback'):
+                    store.prepare(plan,slot_entries,contact,at=now+1,expires_at=now+60,status_revision=1,status_until=now+100)
+        destination=destination_bundle['destination']
         if self._testMethodName=='test_sender_admits_message_over_http':
             from memory_vault_open_client import MAILBOX_CONNECT_SCHEMA
+            import base64
+            from unittest.mock import patch
+            node_raw=canonical_bytes(source.node);node_digest=hashlib.sha256(node_raw).hexdigest()
+            registered=self.call(self.b,op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='register',
+                base_url=source.node['payload']['base_url'],limit_policy=limits,expected_slot=slot,
+                expected_sender=dict(signing_key=self.ai.public_descriptor(),encryption_key=sender_encryption.public_descriptor()),
+                expected_target=source.target,target_node_entry=dict(raw=node_raw.decode(),ref=dict(namespace='meta',key=node_digest,raw_sha256=node_digest,size=len(node_raw))),
+                slot_entries={name:dict(raw=slot_entries[name]['raw'].decode(),ref=slot_entries[name]['ref']) for name in ('slot','read','maintenance','bootstrap')}))
+            authorize=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='authorize',receiver_id=registered['receiver_id'],
+                contact_request_ref=reference,expires_at=now+60,status_revision=3,status_until=now+100)
+            chunks=[]
+            with patch('memory_vault_open_transport.OpenHTTPTransport.request_repair',side_effect=AssertionError('authorization used network')):
+                while True:
+                    page=self.call(self.b,op='connect',invitation=authorize)
+                    self.assertFalse(page['network_accessed']);self.assertFalse(page['source_rechecked'])
+                    chunks.append(base64.b64decode(page['authorization_chunk'],validate=True))
+                    if page['next_cursor'] is None:break
+                    authorize['cursor']=page['next_cursor']
+            exported=b''.join(chunks)
+            self.assertEqual(hashlib.sha256(exported).hexdigest(),page['authorization_sha256'])
+            authorized=json.loads(exported)
+            destination=dict(raw=authorized['destination_entry']['raw'].encode(),ref=authorized['destination_entry']['ref'])
+            owner_original=dict(raw=authorized['owner_status_entry']['raw'].encode(),ref=authorized['owner_status_entry']['ref'])
+            self.assertEqual(json.loads(owner_original['raw'])['payload']['revision'],3)
+            destination_bundle=dict(destination=destination,owner_status=owner_original)
             prepared=self.call(self.a,op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='prepare',
                 message_id=sent['message_id'],slot_entries={name:dict(raw=slot_entries[name]['raw'].decode(),ref=slot_entries[name]['ref']) for name in ('slot','read','maintenance')},
                 destination_entry=dict(raw=destination['raw'].decode(),ref=destination['ref']),attempt_until=now+60,consent_until=now+100))
@@ -217,14 +257,8 @@ class MailboxStagingHTTPTests(unittest.TestCase):
                 draft=MailboxMessageDraftStore(sender_db,self.ai,sender_encryption).prepare(envelope,recipient=owner,
                     slot_entries={name:slot_entries[name] for name in ('slot','read','maintenance')},destination_entry=destination,
                     contact_originals=contact,at=now,attempt_until=now+60,consent_until=now+100)
-        scoped=[]
-        for name,value in [('destination',destination),*[(name,slot_entries[name]) for name in ('slot','read','maintenance','bootstrap')]]:
-            payload=json.loads(value['raw'])['payload'];kind='mailbox_slot' if name=='slot' else 'authority'
-            subject=slot if name=='slot' else dict(authority_kind=payload['kind'],authority_sha256=value['ref']['raw_sha256'])
-            scope=status.status_scope(root,kind,subject,DEFAULT_POLICY,RepairBudget(DEFAULT_POLICY))
-            scoped.append(dict(scope_kind=kind,scope_id=scope,minimum_document_revision=1,status='active',operation_mask=127))
-        scoped.sort(key=lambda value:(value['scope_kind'],value['scope_id']))
-        owner_status=status_entry(issue_status(self.bi,root=root,revision=2,entries=scoped,issued_at=now,valid_until=now+100))
+        owner_status=destination_bundle['owner_status']
+        scoped=json.loads(owner_status['raw'])['payload']['entries']
         delivery=DeliveryState(db,self.host.identities[0],self.host.nodes[0],enabled=True)
         staging=MailboxMessageStaging(resources,delivery);staging.initialize()
         raw=wire.build_new_wire(draft['originals'],DEFAULT_POLICY,RepairBudget(DEFAULT_POLICY)).raw

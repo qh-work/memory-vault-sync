@@ -197,6 +197,79 @@ signed destination and slot controls; the sender reuses its own frozen outbox
 ciphertext and contact originals. Preparation never invents permission or sends
 plaintext to the mailbox node.
 
+A receiver using the Agent interface can authorize from an existing registered
+mailbox and its locally approved contact, without opening a database or loading
+private key objects in the calling program:
+
+```python
+invitation = {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "authorize", "receiver_id": receiver_id,
+    "contact_request_ref": approved_request_ref,
+    "expires_at": destination_until,
+    "status_revision": next_owner_status_revision, "status_until": status_until,
+}
+```
+
+Call `receiver.handle({"op": "connect", "invitation": invitation})`. The response
+pages use `authorization_chunk` (base64), `authorization_sha256`, `total_bytes`
+and `next_cursor`. Assemble and check them as in the configuration inspection
+example below, adding each `next_cursor` to the same invitation. The resulting
+JSON contains `destination_entry`, `owner_status_entry`, the sender's three
+`slot_entries`, `target`, `target_node_entry` and `base_url`, ready for the
+sender's preparation and admission calls. Hand it only to the selected sender
+through your existing authorized channel. No message is sent by this operation.
+
+The contact must already have an approved decision in this receiver's local
+state. Each call verifies the currently usable saved controls; it cannot approve
+an unknown contact. The exact signed bundle is persisted before the first page
+is returned, and retries reuse it. Status revision coordination remains explicit.
+Every page reports `network_accessed: false` and `source_rechecked: false`.
+
+The receiver's `MailboxSetupBuilder.destination_bundle` builds both originals
+from the exact configured slot and the approved contact documents. Supply an
+explicit owner/root status revision, coordinated with any other status issuer
+using that identity. Persist the returned bytes before sharing or retrying;
+regenerating the same revision with different contents is a conflict.
+
+```python
+bundle = builder.destination_bundle(
+    slot_entries, approved_contact_originals,
+    at=now, expires_at=destination_until,
+    status_revision=next_owner_status_revision, status_until=status_until,
+)
+destination_entry = bundle["destination"]
+current_owner_status = bundle["owner_status"]
+```
+
+For restart-safe issuance, use `MailboxDestinationStore` with the receiver's
+existing protected transport database instead of calling the builder directly:
+
+```python
+store = MailboxDestinationStore(receiver_db, receiver_identity, receiver_encryption)
+bundle = store.prepare(
+    mailbox_plan, slot_entries, approved_contact_originals,
+    at=now, expires_at=destination_until,
+    status_revision=next_owner_status_revision, status_until=status_until,
+)
+```
+
+The store commits the original destination and status together before returning.
+An identical retry, including after reopening the database, returns those exact
+bytes regardless of its new call time. Changed inputs under the same root and
+revision are rejected, as is a new issuance below the last locally stored
+revision. Explicit revision coordination across other devices remains required.
+A cached bundle is historical issuance, not a fresh availability or permission
+check. The journal is bounded to 128 bundles, retains its originals and refuses
+further issuance when full; it does not silently evict revision history.
+
+This authenticates all four slot controls and the original approved contact,
+then signs the five exact scopes required for message admission. It does not
+supply ACK permission, clear revocations, or claim that a remote source accepts
+the new status. The source still enforces its retained revision floors and
+revocations. The builder requires the receiver's existing identities; never
+send those private keys to the sender or source.
+
 ```python
 prepared = agent.handle({"op": "connect", "invitation": {
     "schema_version": "memory-vault-open-mailbox-connect/v1",
@@ -272,3 +345,45 @@ another remote proof budget: it returns `mailbox_configured`,
 not claim the source is still online or currently authorizes reads. Every
 receive independently checks current authority. Changed inputs for the same
 setup are rejected. Independent ACK return still needs its separate grants.
+
+
+### Inspect or restore a configured receiver
+
+After provisioning, use the returned receiver ID to retrieve the exact signed
+configuration through the Agent interface:
+
+```python
+import base64, hashlib, json
+invitation = {"schema_version": "memory-vault-open-mailbox-connect/v1",
+              "action": "inspect", "receiver_id": receiver_id}
+chunks = []
+while True:
+    response = receiver.handle({"op": "connect", "invitation": invitation})
+    if not response["ok"]:
+        raise RuntimeError(response["error"]["code"])
+    page = response["result"]
+    chunks.append(base64.b64decode(page["configuration_chunk"], validate=True))
+    if page["next_cursor"] is None:
+        break
+    invitation["cursor"] = page["next_cursor"]
+raw = b"".join(chunks)
+assert len(raw) == page["total_bytes"]
+assert hashlib.sha256(raw).hexdigest() == page["configuration_sha256"]
+registration = json.loads(raw)
+```
+
+Each page stays within the Agent result budget. Its continuation cursor binds
+the exact configuration digest; replacement configuration cannot silently mix
+with earlier pages. The assembled result includes the selected source descriptor, sender descriptor and original
+slot/read/maintenance/bootstrap documents. It contains no private keys, Vault
+records or message bodies. Keep this configuration private unless explicitly
+sharing its metadata with a participant; its grants remain bound to the named
+identities. The original receiver identity can restore a removed registration by
+passing `registration` as a `connect` invitation. This does not create a new
+mailbox or new authority.
+
+Inspection verifies the saved signatures, identity bindings and grant expiry
+locally. It performs no network request and reports `source_rechecked: false`;
+it does not establish current remote availability or revocation status. Expired
+or altered configuration is rejected. Sender preparation still requires the
+receiver's separate signed destination and current owner status described above.

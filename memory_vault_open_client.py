@@ -140,6 +140,38 @@ class OpenNetworkClient:
         options['slot_entries']={name:decode(entry) for name,entry in config['slot_entries'].items()}
         return options
 
+    def _mailbox_saved_receiver(self, receiver_id):
+        from memory_vault_network_crypto import opaque
+        opaque(receiver_id)
+        with self.participant.state.db() as db:
+            row=db.execute('SELECT body FROM open_mailbox_receivers WHERE receiver_id=?',(receiver_id,)).fetchone()
+        if row is None:raise MemoryError('open_mailbox_receiver_missing')
+        config=document(bytes(row['body']),maximum=65536)
+        if (config.get('schema_version')!=MAILBOX_CONNECT_SCHEMA or config.get('action')!='register'
+                or 'mailbox_'+hashlib.sha256(canonical_bytes(config.get('expected_slot'))).hexdigest()!=receiver_id):
+            raise MemoryError('open_invalid_mailbox_receiver')
+        # Recheck the original signatures, identity binding and finite
+        # grant windows before exposing reusable configuration. This is
+        # local verification, not an observation of the remote source.
+        registered=self._mailbox_connect(config)
+        if registered['receiver_id']!=receiver_id:raise MemoryError('open_invalid_mailbox_receiver')
+        return config
+
+    @staticmethod
+    def _mailbox_page(raw, receiver_id, cursor, kind):
+        import base64
+        digest=hashlib.sha256(raw).hexdigest();offset=0
+        if cursor is not None:
+            object_fields(cursor,{'sha256','offset'})
+            offset=cursor['offset']
+            if (cursor['sha256']!=digest or type(offset) is not int or not 0<offset<len(raw) or offset%3072):
+                raise MemoryError('open_invalid_mailbox_cursor')
+        end=min(offset+3072,len(raw))
+        return dict(state='mailbox_'+kind,receiver_id=receiver_id,**{kind+'_sha256':digest},
+            total_bytes=len(raw),offset=offset,**{kind+'_chunk':base64.b64encode(raw[offset:end]).decode('ascii')},
+            next_cursor=None if end==len(raw) else dict(sha256=digest,offset=end),
+            network_accessed=False,source_rechecked=False,receipt_return='separate_authority_required')
+
     def _mailbox_connect(self, invitation):
         from dataclasses import replace
         from memory_vault_open_transport import endpoint
@@ -240,6 +272,38 @@ class OpenNetworkClient:
             with self.participant.state.db() as db:
                 ids=[v[0] for v in db.execute('SELECT receiver_id FROM open_mailbox_receivers ORDER BY receiver_id')]
             return dict(state='configured',mailboxes=ids,network_accessed=False)
+        if action=='authorize':
+            object_fields(value,{'schema_version','action','receiver_id','contact_request_ref','expires_at','status_revision','status_until'}|({'cursor'} if 'cursor' in value else set()))
+            from memory_vault_open_contact_client import OpenContactClient
+            from memory_vault_open_repair_client import MailboxDestinationStore
+            config=self._mailbox_saved_receiver(value['receiver_id'])
+            options=self._mailbox_receiver_options(config)
+            contact=OpenContactClient(self.participant,self.encryption)
+            incoming=contact._load('incoming',value['contact_request_ref'])
+            decision=contact._load('decision',value['contact_request_ref'])['decision']
+            if decision['payload']['decision']!='approved':raise MemoryError('open_delivery_not_authorized')
+            grant=decision['payload']['grant']
+            docs={name:incoming[name] for name in ('node','policy','request')}
+            docs.update(decision=decision,knock_lease=incoming['lease'],grant=grant,delivery_lease=grant['payload']['resource_lease'])
+            slot=document(options['slot_entries']['slot']['raw'],maximum=65536)['payload']
+            plan=dict(root_key=slot['slot_key']['root_key'],slot_key=slot['slot_key'],sender=slot['sender'],
+                target=config['expected_target'],limits=config['limit_policy'],
+                **{name:slot[name] for name in ('budget','windows','max_appends','max_live_items')})
+            try:
+                with self.participant.state.db() as db:
+                    bundle=MailboxDestinationStore(db,self.identity,self.encryption).prepare(plan,options['slot_entries'],
+                        {name:canonical_bytes(item) for name,item in docs.items()},at=int(time.time()),expires_at=value['expires_at'],
+                        status_revision=value['status_revision'],status_until=value['status_until'])
+            except RepairWireError as error:raise MemoryError(error.code) from error
+            payload=dict(destination_entry=dict(raw=bundle['destination']['raw'].decode('utf-8'),ref=bundle['destination']['ref']),
+                owner_status_entry=dict(raw=bundle['owner_status']['raw'].decode('utf-8'),ref=bundle['owner_status']['ref']),
+                slot_entries={name:config['slot_entries'][name] for name in ('slot','read','maintenance')},
+                target=config['expected_target'],target_node_entry=config['target_node_entry'],base_url=config['base_url'])
+            return self._mailbox_page(canonical_bytes(payload),value['receiver_id'],value.get('cursor'),'authorization')
+        if action=='inspect':
+            object_fields(value,{'schema_version','action','receiver_id'}|({'cursor'} if 'cursor' in value else set()))
+            config=self._mailbox_saved_receiver(value['receiver_id'])
+            return self._mailbox_page(canonical_bytes(config),value['receiver_id'],value.get('cursor'),'configuration')
         if action=='remove':
             object_fields(value,{'schema_version','action','receiver_id'})
             from memory_vault_network_crypto import opaque

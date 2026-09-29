@@ -1,6 +1,8 @@
 # Memory Vault development status
 
-Published [alpha.0.11](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.11) adds Python Agent mailbox provisioning, durable remote admission, cold message/memory recovery and independent receipt operations. Its eight public assets match the reviewed packages, and four targeted packaged workflows passed. Full exact-source cloud regression is still pending; publication does not complete the global network objective. Replacement-node repair, scalable partial feeds, ACK-bound mailbox attempts and full native mailbox-client parity remain open.
+Published [alpha.0.12](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.12) adds bounded mailbox configuration inspection/restoration, durable receiver authorization from an already approved contact, and corrected completed-retry signature accounting. Four targeted workflows passed using the extracted client; all eight assets were anonymously downloaded and byte-matched. [Exact-source full cloud regression](https://github.com/qh-work/memory-vault-sync/actions/runs/36514556101) remains pending. The broader network gaps below remain open.
+
+Published [alpha.0.11](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.11) adds Python Agent mailbox provisioning, durable remote admission, cold message/memory recovery and independent receipt operations. Its eight public assets match the reviewed packages, and four targeted packaged workflows passed. Its full cloud run later reported two HTTP fixture deadline failures, corrected in alpha.0.12; publication does not complete the global network objective. Replacement-node repair, scalable partial feeds, ACK-bound mailbox attempts and full native mailbox-client parity remain open.
 
 The preceding alpha.0.10 release added independent remote source preparation using
 only the sender's configuration and a selected public origin/key, plus durable
