@@ -264,3 +264,128 @@ def verify_unbound_copy(manifest_entry,resolver,custody_entry,allocation_entry,o
     if checked:read_until=min(read_until,*(item.payload['valid_until'] for item in checked))
     if at>=min(read_until,retain_until):denial=denial or 'repair_resource_expired'
     return UnboundCopyAuthority(source,allocation,offer,assignment,reservation,tuple(consents),rows,tuple(checked),tuple(obligations),read_until,retain_until,denial)
+
+
+RETURN_FIELDS = resource.COMMON | frozenset('issued_at expires_at consent_id revision variant root_key source_custody_ref historical_manifest_ref assignment_ref subject target target_storage_epoch bootstrap_grant_ref return_permission'.split())
+
+
+def copy_return_permissions(plan, issuer, policy, budget):
+    """Exact return-consent signing inputs, available before the copy commit.
+
+    The caller must independently verify the full copy plan. This helper grants
+    no authority. Future whole status documents are bounded by explicit scopes.
+    """
+    rows={}
+    candidates=[(row.role,row.original) for row in plan.originals]
+    candidates.extend((('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
+        ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])))
+    for role,item in candidates:
+        payload=wire.parse_new_wire(item.raw,policy,budget).value['payload']
+        if payload['signing_key']['key_id']==issuer:
+            rows[index._pair(role,item.ref)]=index.IndexOriginal(role,item,issuer)
+    originals,scopes=index._permissions(tuple(rows[key] for key in sorted(rows)),issuer,policy,budget)
+    root=plan.assignment.payload['root_key']
+    for row in rows.values():
+        item=row.original;kind=wire.parse_new_wire(item.raw,policy,budget).value['payload']['kind']
+        if kind in ('ack.copy_reservation_consent','ack.copy_disclosure'):
+            scopes.append(dict(scope_kind='authority',scope_id=index._authority(root,item,policy,budget)))
+        elif kind=='maintenance.assignment':
+            scopes.append(dict(scope_kind='assignment',scope_id=status.status_scope(root,'assignment',
+                dict(assignment_kind=kind,assignment_sha256=item.ref.raw_sha256),policy,budget)))
+    scopes=[dict(scope_kind=k,scope_id=v) for k,v in sorted({(e['scope_kind'],e['scope_id']) for e in scopes})]
+    return originals,scopes
+
+
+def replica_return_permissions(replica, issuer, policy, budget):
+    return copy_return_permissions(replica['authority'],issuer,policy,budget)
+
+
+def _check_unbound_owner_return(replica,consent_entries,*,expected_owner,expected_source,expected_maintainer,
+        expected_target,target_storage_epoch,current_statuses,at,action,policy,budget,on_observed=None):
+    """Internal: replica must come from full original reconstruction in this call.
+
+    Return consent adds no COPY/ADMIT authority, recipient permission or key
+    possession. The storage/service caller must retain authenticated observations
+    before acting on denial_code and check its live physical resource separately.
+    """
+    wire._context(policy,budget);at=wire.u53(at)
+    if action not in ('challenge','proof','child'):wire._fail('repair_access_action')
+    source=replica['source'];plan=replica['authority'];custody=replica['custody']
+    root=plan.assignment.payload['root_key'];bootstrap=source.bootstrap.originals['bootstrap']
+    parties=dict(owner=expected_owner,source=expected_source,maintainer=expected_maintainer,target=expected_target)
+    parties=wire.build_new_wire(parties,policy,budget).value
+    owner_id=resource._dual_key(parties['owner'],budget)
+    signers={p['signing_key']['key_id']:p['signing_key'] for p in parties.values()}
+    if len(signers)!=4:wire._fail('repair_replica_read_distinct_parties_required')
+    wire.object_fields(consent_entries,{'owner','source','maintainer'})
+    obligations=[];allowed={key:[] for key in signers};consents=[];denial=None
+    expires=min(custody.payload['read_until'],custody.payload['retain_until'],bootstrap.payload['expires_at'],
+        bootstrap.payload['probe_until'] if action=='challenge' else bootstrap.payload['proof_until'])
+    for variant in ('owner','source','maintainer'):
+        signer=parties[variant]['signing_key']
+        item=index._signed(consent_entries[variant],signer,'ack.replica_return_consent',RETURN_FIELDS,policy,budget)
+        p=item.payload;resource._opaque(p['consent_id']);wire.u53(p['revision'],1)
+        resource._lifetime(p)
+        if not p['issued_at']<=at<p['expires_at']:denial=denial or 'repair_access_expired'
+        _same(p['variant']==variant and p['root_key']==root and p['source_custody_ref']==source.custody.ref.as_dict()
+            and p['historical_manifest_ref']==plan.allocation.payload['intent']['historical_manifest_ref']
+            and p['assignment_ref']==plan.assignment.ref.as_dict() and p['subject']==owner_id
+            and p['target']==parties['target'] and p['target_storage_epoch']==target_storage_epoch
+            and p['bootstrap_grant_ref']==bootstrap.ref.as_dict() and p['issued_at']>=plan.assignment.payload['issued_at'])
+        permission=wire.object_fields(p['return_permission'],{'originals','status_scopes','until'})
+        originals,scopes=replica_return_permissions(replica,signer['key_id'],policy,budget)
+        _same(permission['originals']==originals and permission['status_scopes']==scopes
+            and p['issued_at']<wire.u53(permission['until'])<=min(p['expires_at'],plan.assignment.payload['windows']['read_until'],source.read_until,bootstrap.payload['proof_until']))
+        expires=min(expires,permission['until'],p['expires_at'])
+        own_scope=index._authority(root,item,policy,budget)
+        allowed[signer['key_id']]=scopes+[dict(scope_kind='authority',scope_id=own_scope)]
+        obligations.append(index._obligation(signer,'authority',own_scope,p['revision'],2))
+        consents.append(item)
+    # Commit-time status documents are returned whole too. Their future bytes
+    # need not be predicted by a pre-copy consent, but every contained scope
+    # must be expressly returnable by that original issuer.
+    for item in plan.statuses:
+        permitted={(e['scope_kind'],e['scope_id']) for e in allowed[item.payload['signing_key']['key_id']]}
+        if any((e['scope_kind'],e['scope_id']) not in permitted for e in item.payload['entries']):
+            wire._fail('repair_status_disclosure')
+    root_original=source.resources.originals['root'];read=source.resources.originals['read']
+    for item,mask in ((root_original,10 if action=='challenge' else 2),(read,2),(bootstrap,10 if action=='challenge' else 2)):
+        obligations.append(index._obligation(parties['owner']['signing_key'],'authority',
+            index._authority(root,item,policy,budget),item.payload['revision'],mask))
+        expires=min(expires,item.payload['expires_at'])
+    obligations.append(index._obligation(parties['owner']['signing_key'],'ack_slot',
+        status.status_scope(root,'ack_slot',root_original.payload['ack_slot'],policy,budget),root_original.payload['revision'],2))
+    obligations.append(index._obligation(parties['maintainer']['signing_key'],'assignment',
+        status.status_scope(root,'assignment',dict(assignment_kind='maintenance.assignment',assignment_sha256=plan.assignment.ref.raw_sha256),policy,budget),0,2))
+    target_scope=status.status_scope(root,'resource',custody.payload['resource'],policy,budget)
+    allowed[parties['target']['signing_key']['key_id']]=[dict(scope_kind='resource',scope_id=target_scope)]
+    obligations.append(index._obligation(parties['target']['signing_key'],'resource',target_scope,custody.payload['reservation_generation'],2))
+    if type(current_statuses) not in (list,tuple) or not 1<=len(current_statuses)<=16:wire._fail('repair_status_missing')
+    checked=[]
+    def observe(item):
+        checked.append(item)
+        if on_observed is not None:on_observed(item)
+    for entry in current_statuses:
+        try:
+            payload=wire.parse_new_wire(entry['raw'],policy,budget).value['payload'];issuer=payload['signing_key']['key_id']
+            if issuer not in signers:wire._fail('repair_status_disclosure')
+            status.authenticate_status_original(entry,expected_root=root,expected_signing_key=signers[issuer],at=at,
+                allowed_scopes=allowed[issuer],policy=policy,budget=budget,on_authenticated=observe)
+        except (KeyError,TypeError):denial=denial or 'repair_invalid_status'
+        except wire.RepairWireError as error:denial=denial or error.code
+    if len({s.ref for s in checked})!=len(checked):denial=denial or 'repair_duplicate_status'
+    previous=(*source.statuses,*plan.statuses)
+    try:empty._history_floors((*previous,*checked),previous=previous,current=checked)
+    except wire.RepairWireError as error:denial=denial or error.code
+    for need in obligations:
+        rows=[e for item in checked if item.payload['signing_key']==need['signer'] for e in item.payload['entries']
+            if (e['scope_kind'],e['scope_id'])==(need['scope_kind'],need['scope_id'])]
+        if not rows:denial=denial or 'repair_status_missing'
+        for entry in rows:
+            if entry['status']=='revoked':denial=denial or 'repair_authority_revoked'
+            elif entry['minimum_document_revision']>need['revision']:denial=denial or 'repair_status_revision'
+            elif entry['operation_mask']&need['mask']!=need['mask']:denial=denial or 'repair_status_operation'
+    if checked:expires=min(expires,*(item.payload['valid_until'] for item in checked))
+    if at>=expires:denial=denial or 'repair_access_expired'
+    return dict(expires_at=expires,consents=tuple(consents),statuses=tuple(checked),obligations=tuple(obligations),
+        subject=owner_id,bootstrap=bootstrap,denial_code=denial)

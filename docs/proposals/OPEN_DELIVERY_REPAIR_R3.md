@@ -2616,3 +2616,41 @@ child. Reads require the real shared capacity ledger and intact stored inventory
 Both this method and restart reconstruction accept a caller's existing bounded
 work meter; they cannot reset or enlarge it. This is an operator-local primitive,
 not an HTTP route or a substitute for current READ/disclosure/possession checks.
+
+### Explicit owner return from an unbound replica
+
+`RepairCopyState.prepare_unbound_read` now checks current permission against
+actual committed storage. A, original R and maintainer M each sign an
+`ack.replica_return_consent` for this exact source custody/history, assignment,
+P descriptor/epoch, original owner bootstrap grant and owner subject. Each
+consent enumerates the complete role/RawRef pairs belonging to its own signer,
+plus explicit scopes for returning whole status originals. The consent itself
+and its own status scope are returnable to the named owner. P's own originals
+remain tied to the verified P offer/custody/resource.
+
+`copy_return_permissions` derives these signing inputs from a verified copy
+plan before P commits. No consent depends on a future P custody hash or future
+status bytes. Whole commit-time and current status documents must remain within
+the issuer's explicitly permitted scopes. A/R/M may therefore prepare the return
+consents and separately coordinated status revisions before copying, then be
+offline during P's commit and subsequent permission check. This does not issue
+new status revisions automatically or extend their finite validity.
+
+Current checks require owner root/read/bootstrap/slot READ, M assignment READ,
+all three return-consent READ scopes, and P's current resource generation/status.
+Challenge preparation also requires DISCOVER from the root/bootstrap. COPY-only
+permission does not suffice. The admission reservation may have expired after a
+successful commit, but actual read/retention, consent, status and node deadlines
+must all remain live. Exact original reconstruction occurs with the same bounded
+work meter; each preparation consumes a real shared request allowance. Authenticated
+observations survive malformed siblings, refusal and restart. Old active replay
+cannot erase a retained revocation; metadata exhaustion blocks the root rather
+than forgetting evidence. New read workflows need enough explicitly signed and
+reserved metadata capacity for their planned status updates. Existing capacity
+is never enlarged implicitly.
+
+The current implementation supports distinct A/R/M/P signing identities and
+unbound replicas only. Its local `permission_checked` result does not establish
+caller key possession, publish bytes or expose a remote endpoint. The actual
+possession exchange, proof transport, independent live-client checks, discovery
+and automatic repair remain required integrations.

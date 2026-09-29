@@ -15,7 +15,9 @@ from tests.open_repair_ack_fixtures import load_fixture, signed_entry, policy
 
 class CopyPreparationTests(unittest.TestCase):
     def setUp(self):
-        self.local = state_fixture.RepairStateTests(); self.local.setUp(); self.addCleanup(self.local.tearDown)
+        self.local = state_fixture.RepairStateTests()
+        self.local.capacity_overrides=getattr(self,"source_capacity",None)
+        self.local.setUp(); self.addCleanup(self.local.tearDown)
         self.destination = state_fixture.RepairStateTests(); self.destination.setUp(); self.addCleanup(self.destination.tearDown)
         self.f = self.local.fixture; self.p = policy()
         self.now = 2_000_000_010

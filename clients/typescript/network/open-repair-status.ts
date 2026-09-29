@@ -10,7 +10,7 @@ type Obj = Record<string, any>;
 const SCHEMA = 'memory-vault-open-authority/v1';
 const MAX_BYTES = 16384, MAX_SECONDS = 604800;
 const AUTHORITY_KINDS = new Set(['ack.root_authority','ack.read_grant','ack.write_grant','ack.disclosure','bootstrap.grant',
-  'ack.index_consent','ack.copy_reservation_consent','ack.copy_disclosure','mailbox.root_authority','mailbox.root_read_grant','mailbox.maintenance_root','mailbox.read_grant',
+  'ack.index_consent','ack.copy_reservation_consent','ack.copy_disclosure','ack.replica_return_consent','mailbox.root_authority','mailbox.root_read_grant','mailbox.maintenance_root','mailbox.read_grant',
   'delivery.destination','message.disclosure']);
 const SCOPE_KINDS = new Set(['catalog','mailbox_slot','ack_slot','authority','resource','assignment','contact_policy']);
 const PAYLOAD = ['schema_version','kind','signing_key','scope_key','revision','issued_at','valid_until','entries'];

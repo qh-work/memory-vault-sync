@@ -278,3 +278,54 @@ class RepairCopyState(RepairCopyResources):
             source_storage_epoch=source_storage_epoch,expected_maintainer=expected_maintainer,
             expected_target=s.target,target_storage_epoch=s.node['payload']['storage_epoch'],
             limit_policy=limit_policy,policy=policy,budget=budget)
+
+    def prepare_unbound_read(self,resource_id,consents,*,expected_ack_slot,expected_owner,expected_source,
+            source_storage_epoch,expected_maintainer,current_statuses,limit_policy,action='proof',_budget=None):
+        """Durable current permission check for a future possession/read service.
+
+        This is operator-local. It never claims caller key possession or publishes
+        reconstructed bytes. Refused requests retain authentic status observations.
+        """
+        s=self.source;budget=wire.RepairBudget(s.policy) if _budget is None else _budget
+        policy=s._budget_policy(budget)
+        with s._transaction():
+            row,held=self._committed(resource_id)
+            offer=wire.parse_new_wire(s._saved(row,'offer')['raw'],policy,budget).value['payload']
+            caps=offer['budget'];resource._budget(caps)
+            work=s._one('SELECT requests FROM open_repair_copy_work WHERE resource_id=?',(resource_id,))
+            count=work['requests'] if work else 0
+            if count>=min(64,caps['max_requests'],caps['max_replay_records']):wire._fail('repair_copy_work_capacity')
+            self.db.execute('INSERT OR REPLACE INTO open_repair_copy_work VALUES(?,?)',(resource_id,count+1))
+        replica=self.restore_unbound(resource_id,expected_ack_slot=expected_ack_slot,expected_owner=expected_owner,
+            expected_source=expected_source,source_storage_epoch=source_storage_epoch,expected_maintainer=expected_maintainer,
+            limit_policy=limit_policy,_budget=budget)
+        root=replica['custody'].payload['root_key'];root_digest=budget._hash(wire._canonical(root,budget))
+        plan=authority._check_unbound_owner_return(replica,consents,expected_owner=expected_owner,
+            expected_source=expected_source,expected_maintainer=expected_maintainer,expected_target=s.target,
+            target_storage_epoch=s.node['payload']['storage_epoch'],current_statuses=current_statuses,at=s._now(),
+            action=action,policy=policy,budget=budget,on_observed=lambda item:self._observe_single(row,caps,root_digest,item))
+        denial=plan['denial_code']
+        with s._transaction() as now:
+            row,current=self._committed(resource_id)
+            if s._saved(current,'custody')['raw']!=replica['custody'].raw:wire._fail('repair_copy_commit_mismatch')
+            self._load_inventory(row,current,budget)
+            blocked=s._one('SELECT reason FROM open_repair_copy_blocks WHERE root_digest=?',(root_digest,))
+            if blocked:denial=denial or blocked['reason']
+            previous=[]
+            for raw,ref in self.db.execute('SELECT raw,ref FROM open_repair_copy_observations WHERE root_digest=?',(root_digest,)):
+                payload=wire.parse_new_wire(bytes(raw),policy,budget).value['payload']
+                previous.append(status.authenticate_status_original(dict(raw=bytes(raw),ref=json.loads(bytes(ref))),
+                    expected_root=root,expected_signing_key=payload['signing_key'],at=payload['issued_at'],
+                    allowed_scopes=[dict(scope_kind=e['scope_kind'],scope_id=e['scope_id']) for e in payload['entries']],policy=policy,budget=budget))
+            try:empty._history_floors((*previous,*plan['statuses']),previous=previous,current=plan['statuses'])
+            except wire.RepairWireError as error:denial=denial or error.code
+            for item in previous:
+                for entry in item.payload['entries']:
+                    if entry['status']=='revoked' and any(item.payload['signing_key']==need['signer'] and
+                            (entry['scope_kind'],entry['scope_id'])==(need['scope_kind'],need['scope_id']) for need in plan['obligations']):
+                        denial=denial or 'repair_authority_revoked'
+            if (now>=plan['expires_at'] or not s.node['payload']['issued_at']<=now<s.node['payload']['expires_at']
+                    or s.node['payload']['status']!='active'):denial=denial or 'repair_access_expired'
+        if denial:wire._fail(denial)
+        return dict(state='permission_checked',resource_id=resource_id,action=action,
+            replica_custody_ref=replica['custody'].ref.as_dict(),**plan)

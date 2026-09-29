@@ -18,7 +18,9 @@ from tests.open_repair_ack_fixtures import load_fixture,signed_entry,reference
 
 class CopyStateTests(unittest.TestCase):
     def setUp(self):
-        self.base=preparation.CopyPreparationTests();self.base.setUp();self.addCleanup(self.base.doCleanups)
+        self.base=preparation.CopyPreparationTests()
+        self.base.source_capacity=getattr(self,"source_capacity",None)
+        self.base.setUp();self.addCleanup(self.base.doCleanups)
         self.f=self.base.f;self.destination=self.base.destination
         if getattr(self,'extra_pack',False):
             p=self.destination.state.policy
@@ -284,3 +286,141 @@ class CopyStateTests(unittest.TestCase):
         self.destination.db.execute('UPDATE open_repair_copy_commits SET manifest=?,manifest_ref=?,custody=?,custody_ref=? WHERE resource_id=?',
             (raw,canonical_bytes(ref),changed['raw'],canonical_bytes(changed['ref']),rid));self.destination.db.commit()
         with self.assertRaisesRegex(wire.RepairWireError,'repair_copy_commit_mismatch'):self.restore(rid)
+
+
+
+class CopyReadTests(unittest.TestCase):
+    # New signed resources reserve room for multiple current-status generations.
+    # Existing copy commitments and their capacity limits are never enlarged.
+    source_capacity=dict(max_meta_bytes=524288)
+    setUp=CopyStateTests.setUp
+    commit=CopyStateTests.commit
+    restore=CopyStateTests.restore
+
+    def read_configuration(self):
+        policy=self.destination.state.policy
+        resolver,_,_=load_fixture(self.f,policy)
+        copy_statuses=[signed_entry(p,s,'copy_status_'+str(i)) for i,(p,s) in enumerate(zip(self.status_values,self.status_signers))]
+        plan=authority.verify_unbound_copy(self.f['manifest'],resolver,self.f['custody'],self.request,self.offer,self.assignment,
+            self.base.consent,self.disclosures['owner'],self.disclosures['source'],
+            expected_ack_slot=self.f['expected']['expected_ack_slot'],expected_owner=self.f['expected']['expected_owner'],
+            expected_source=self.f['expected']['expected_target'],source_storage_epoch=self.f['expected']['target_storage_epoch'],
+            expected_maintainer=self.base.keys,expected_target=self.destination.state.target,
+            target_storage_epoch=self.base.intent['target_storage_epoch'],current_statuses=copy_statuses,
+            at=self.destination.now[0],limit_policy=self.f['expected']['limit_policy'],policy=policy,budget=resolver.budget)
+        self.assertIsNone(plan.denial_code)
+        consents={};current=[];root=self.base.intent['root_key'];now=self.destination.now[0]
+        for i,(variant,name) in enumerate((('owner','owner'),('source','target'),('maintainer','maintainer'))):
+            signer=self.f['signers'][name];budget=wire.RepairBudget(policy)
+            originals,scopes=authority.copy_return_permissions(plan,signer.key_id,policy,budget)
+            p=dict(schema_version=authority.resource.SCHEMA,kind='ack.replica_return_consent',signing_key=signer.public_descriptor(),
+                issued_at=self.base.now,expires_at=2_000_000_100,consent_id='synthetic_return_'+variant,revision=1,variant=variant,
+                root_key=root,source_custody_ref=self.f['custody']['ref'],historical_manifest_ref=self.f['manifest']['ref'],
+                assignment_ref=self.assignment['ref'],subject=root['owner'],
+                target=self.destination.state.target,target_storage_epoch=self.base.intent['target_storage_epoch'],
+                bootstrap_grant_ref=plan.source.bootstrap.originals['bootstrap'].ref.as_dict(),
+                return_permission=dict(originals=originals,status_scopes=scopes,until=2_000_000_100))
+            entry=signed_entry(p,signer,'return_'+variant);consents[variant]=entry
+            scope=status.status_scope(root,'authority',dict(authority_kind=p['kind'],authority_sha256=entry['ref']['raw_sha256']),policy,budget)
+            value=copy.deepcopy(self.status_values[i]);value['revision']+=1
+            value['entries'].append(dict(scope_kind='authority',scope_id=scope,minimum_document_revision=0,status='active',operation_mask=2))
+            value['entries'].sort(key=lambda e:(e['scope_kind'],e['scope_id']))
+            current.append(signed_entry(value,signer,'return_status_'+variant))
+        # A/R/M have signed both return permissions and current observations
+        # before P commits; no additional contact with them is required below.
+        custody=self.commit(current=copy_statuses);rid=json.loads(custody['raw'])['payload']['resource']['resource_id']
+        target=self.destination.state.identity
+        scope=status.status_scope(root,'resource',json.loads(custody['raw'])['payload']['resource'],policy,wire.RepairBudget(policy))
+        value=dict(schema_version=status.SCHEMA,kind='authority.status',signing_key=target.public_descriptor(),
+            scope_key=dict(root_key=root,issuer_key_id=target.key_id),revision=1,issued_at=now,valid_until=2_000_000_100,
+            entries=[dict(scope_kind='resource',scope_id=scope,minimum_document_revision=0,status='active',operation_mask=2)])
+        current.append(signed_entry(value,target,'return_target_status'))
+        return rid,consents,current
+
+    def prepare_read(self,configuration):
+        rid,consents,current=configuration
+        return self.store.prepare_unbound_read(rid,consents,expected_ack_slot=self.f['expected']['expected_ack_slot'],
+            expected_owner=self.f['expected']['expected_owner'],expected_source=self.f['expected']['expected_target'],
+            source_storage_epoch=self.f['expected']['target_storage_epoch'],expected_maintainer=self.base.keys,
+            current_statuses=current,limit_policy=self.f['expected']['limit_policy'])
+
+    def test_current_return_permission_survives_restart_and_closed_upload_reservation(self):
+        config=self.read_configuration();self.destination.now[0]+=61
+        self.destination.db.close();self.destination.connect();self.store=RepairCopyState(self.destination.state);self.store.initialize()
+        result=self.prepare_read(config)
+        self.assertEqual(result['state'],'permission_checked')
+        self.assertEqual(result['subject'],self.base.intent['root_key']['owner'])
+        self.assertGreater(result['expires_at'],self.destination.now[0])
+        self.assertNotIn('object_readable',result)
+        self.assertNotIn('entries',result)
+
+    def test_copy_disclosure_does_not_substitute_for_explicit_owner_return(self):
+        config=self.read_configuration();config[1]['source']=self.disclosures['source']
+        with self.assertRaises(wire.RepairWireError):self.prepare_read(config)
+
+    def test_return_permission_cannot_authorize_another_reader(self):
+        config=self.read_configuration();payload=json.loads(config[1]['source']['raw'])['payload']
+        payload['subject']=self.base.keys
+        config[1]['source']=signed_entry(payload,self.f['signers']['target'],'wrong_reader')
+        with self.assertRaises(wire.RepairWireError):self.prepare_read(config)
+
+    def test_read_assignment_revocation_is_retained_across_restart_and_old_replay(self):
+        config=self.read_configuration();old=copy.deepcopy(config[2])
+        payload=json.loads(config[2][2]['raw'])['payload'];payload['revision']+=1
+        for entry in payload['entries']:
+            if entry['scope_kind']=='assignment':entry['status']='revoked'
+        config[2][2]=signed_entry(payload,self.f['signers']['maintainer'],'return_revoked_assignment')
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_authority_revoked'):self.prepare_read(config)
+        self.destination.db.close();self.destination.connect();self.store=RepairCopyState(self.destination.state);self.store.initialize()
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_status_rollback|repair_authority_revoked'):
+            self.prepare_read((config[0],config[1],old))
+
+    def test_malformed_later_read_status_cannot_erase_valid_revocation(self):
+        config=self.read_configuration();old=copy.deepcopy(config[2])
+        payload=json.loads(config[2][0]['raw'])['payload'];payload['revision']+=1
+        for entry in payload['entries']:entry['status']='revoked'
+        config[2][0]=signed_entry(payload,self.f['signers']['owner'],'revoked_return_owner')
+        config[2][1]=dict(raw=b'{}',ref=config[2][1]['ref'])
+        with self.assertRaises(wire.RepairWireError):self.prepare_read(config)
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_status_rollback|repair_authority_revoked'):
+            self.prepare_read((config[0],config[1],old))
+
+    def test_missing_current_target_resource_status_refuses_read(self):
+        config=self.read_configuration();config[2].pop()
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_status_missing'):self.prepare_read(config)
+
+    def test_copy_only_current_owner_authority_cannot_serve_reads(self):
+        config=self.read_configuration();payload=json.loads(config[2][0]['raw'])['payload']
+        scope=status.status_scope(self.base.intent['root_key'],'authority',dict(authority_kind='ack.root_authority',
+            authority_sha256=self.f['entries']['root']['ref']['raw_sha256']),self.destination.state.policy,wire.RepairBudget(self.destination.state.policy))
+        for entry in payload['entries']:
+            if entry['scope_id']==scope:entry['operation_mask']=4
+        config[2][0]=signed_entry(payload,self.f['signers']['owner'],'copy_only_current_owner')
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_status_operation'):self.prepare_read(config)
+
+    def test_read_metadata_exhaustion_blocks_instead_of_forgetting_status(self):
+        other=CopyReadTests();other.source_capacity=None;other.setUp();self.addCleanup(other.doCleanups)
+        config=other.read_configuration();other.prepare_read(config)
+        payload=json.loads(config[2][3]['raw'])['payload'];payload['revision']+=1
+        config[2][3]=signed_entry(payload,other.destination.state.identity,'new_target_status')
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_copy_status_capacity'):other.prepare_read(config)
+        self.assertEqual(other.destination.db.execute('SELECT count(*) FROM open_repair_copy_blocks').fetchone()[0],1)
+        other.destination.db.close();other.destination.connect();other.store=RepairCopyState(other.destination.state);other.store.initialize()
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_copy_status_capacity'):other.prepare_read(config)
+
+    def test_return_grants_can_be_signed_before_copy_without_later_signer_contact(self):
+        from contextlib import ExitStack
+        from unittest.mock import patch
+        original_commit=self.commit
+        identity_type=type(self.f['signers']['owner']);sign=identity_type.sign_message
+        unavailable={self.f['signers'][name].key_id for name in ('owner','target','maintainer')}
+        def offline_signer(identity,*args,**kwargs):
+            if identity.key_id in unavailable:raise AssertionError('original signer unavailable after copy starts')
+            return sign(identity,*args,**kwargs)
+        with ExitStack() as closed:
+            def commit_with_signers_offline(*args,**kwargs):
+                closed.enter_context(patch.object(identity_type,'sign_message',offline_signer))
+                return original_commit(*args,**kwargs)
+            self.commit=commit_with_signers_offline
+            configuration=self.read_configuration()
+            self.assertEqual(self.prepare_read(configuration)['state'],'permission_checked')

@@ -70,7 +70,7 @@ def repack_fixture(fixture, *, roles=None, manifest_changes=None, custody_change
     return fixture
 
 
-def ack_unbound_fixture(*, changes=None):
+def ack_unbound_fixture(*, changes=None, capacity_overrides=None):
     """changes[role] replaces payload fields before topological re-signing."""
     docs, _, expected, signers, encryption = ack_resource_fixture(include_encryption=True)
     changes = changes or {}
@@ -79,6 +79,7 @@ def ack_unbound_fixture(*, changes=None):
     capacity = dict(max_live_bytes=131072, max_meta_bytes=262144, max_items=64,
                     max_requests=256, max_pending=16, max_replay_records=256,
                     max_jobs=16, max_job_bytes=262144)
+    capacity.update(capacity_overrides or {})
     for role in docs:
         payload = docs[role]["payload"]
         if "budget" in payload:
