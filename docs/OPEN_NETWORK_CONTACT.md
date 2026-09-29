@@ -270,6 +270,26 @@ the new status. The source still enforces its retained revision floors and
 revocations. The builder requires the receiver's existing identities; never
 send those private keys to the sender or source.
 
+After assembling the authorization JSON, a sender may combine preparation and
+admission in one Agent call:
+
+```python
+retained = agent.handle({"op": "connect", "invitation": {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "retain", "message_id": sent_message_id,
+    "authorization": authorization,
+    "attempt_until": attempt_until, "consent_until": consent_until,
+    "expires_at": request_expires_at,
+    "object_until": object_until, "enum_until": enum_until,
+}})
+```
+
+This uses the existing immutable preparation and remote-admission journals.
+Retry the same parameters after an interrupted call; a failed remote operation
+may already have saved the local preparation. Success remains
+`retained_at_mailbox` with `recipient_acknowledged: false`. It does not send new
+plaintext or grant ACK permission. The separate operations remain available:
+
 ```python
 prepared = agent.handle({"op": "connect", "invitation": {
     "schema_version": "memory-vault-open-mailbox-connect/v1",

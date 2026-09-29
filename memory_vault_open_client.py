@@ -225,6 +225,18 @@ class OpenNetworkClient:
                     db.execute('INSERT OR IGNORE INTO open_mailbox_setup_completions VALUES(?,?,?,?)',(key,binding,canonical_bytes(config),canonical_bytes(ready)))
             except RepairWireError as error:raise MemoryError(error.code) from error
             return ready
+        if action=='retain':
+            object_fields(value,{'schema_version','action','message_id','authorization','attempt_until','consent_until','expires_at','object_until','enum_until'})
+            authorization=object_fields(value['authorization'],{'destination_entry','owner_status_entry','slot_entries','target','target_node_entry','base_url'})
+            # The same durable stages back both the individual operations and
+            # this combined call. A failed remote admission leaves the exact
+            # local preparation available to the next identical retry.
+            self._mailbox_connect(dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='prepare',message_id=value['message_id'],
+                slot_entries=authorization['slot_entries'],destination_entry=authorization['destination_entry'],
+                attempt_until=value['attempt_until'],consent_until=value['consent_until']))
+            return self._mailbox_connect(dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='admit',message_id=value['message_id'],
+                **{name:authorization[name] for name in ('base_url','target','target_node_entry','owner_status_entry')},
+                **{name:value[name] for name in ('expires_at','object_until','enum_until')}))
         if action=='prepare':
             object_fields(value,{'schema_version','action','message_id','slot_entries','destination_entry','attempt_until','consent_until'})
             from memory_vault_open_repair_client import MailboxMessageDraftStore

@@ -243,6 +243,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             exported=b''.join(chunks)
             self.assertEqual(hashlib.sha256(exported).hexdigest(),page['authorization_sha256'])
             authorized=json.loads(exported)
+            self.sender_authorization=authorized
             destination=dict(raw=authorized['destination_entry']['raw'].encode(),ref=authorized['destination_entry']['ref'])
             owner_original=dict(raw=authorized['owner_status_entry']['raw'].encode(),ref=authorized['owner_status_entry']['ref'])
             self.assertEqual(json.loads(owner_original['raw'])['payload']['revision'],3)
@@ -734,19 +735,26 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         # A later message can advance the index while the first request is
         # interrupted after commit. Resuming must finalize the first prefix.
         second=self.second_mailbox_message
-        draft=json.loads(json.loads(packet['raw'])['payload']['draft']['raw'])
         from memory_vault_open_client import MAILBOX_CONNECT_SCHEMA
-        def text_entry(encoded):
-            value=decode_entry(encoded,DEFAULT_POLICY,wire.RepairBudget(DEFAULT_POLICY))
-            return dict(raw=value['raw'].decode(),ref=value['ref'])
-        prepared=self.call(self.a,op='connect',invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='prepare',message_id=second['message_id'],
-            slot_entries={name:text_entry(value) for name,value in draft['slot'].items()},destination_entry=text_entry(draft['destination']),
-            attempt_until=now+60,consent_until=now+100))
-        self.assertEqual(prepared['state'],'mailbox_draft_saved')
-        with self.a._network() as network:
-            with network.participant.state.db() as db:
-                second_packet=MailboxMessageDraftStore(db,self.ai,sender_encryption).admission_request(second['message_id'],**options)
-        request(second_packet['raw'])
+        node=signed_entry(dict(source.node['payload'],base_url=base,revision=source.node['payload']['revision']+1),source.identity,'synthetic_admission_node')
+        # Use B's Agent-exported bundle. The source's signed current descriptor
+        # supplies the actual restarted HTTP endpoint without changing grants.
+        authorization=dict(self.sender_authorization,base_url=base,target_node_entry=dict(raw=node['raw'].decode(),ref=node['ref']))
+        retain=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='retain',message_id=second['message_id'],authorization=authorization,
+            attempt_until=now+60,consent_until=now+100,expires_at=now+60,object_until=now+80,enum_until=now+80)
+        from memory_vault import MemoryError as VaultError
+        real_request=OpenHTTPTransport.request_repair
+        def lose_reply(client,*args,**kwargs):
+            real_request(client,*args,**kwargs)
+            raise VaultError('open_network_unavailable')
+        with patch.object(OpenHTTPTransport,'request_repair',new=lose_reply):
+            lost=self.a.handle(dict(op='connect',invitation=retain))
+        self.assertFalse(lost['ok'])
+        self.assertEqual(lost['error']['code'],'open_network_unavailable')
+        retained=self.call(self.a,op='connect',invitation=retain)
+        self.assertEqual(retained['state'],'retained_at_mailbox')
+        self.assertFalse(retained['recipient_acknowledged'])
+        self.assertEqual(self.call(self.a,op='connect',invitation=retain),retained)
         response=request(packet['raw'])
         usage_before=source.db.execute('SELECT requests,signatures,bytes FROM open_mailbox_remote_message_usage').fetchone()
         self.assertEqual(request(packet['raw']),response)
@@ -773,7 +781,6 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         self.assertEqual(source.db.execute('SELECT count(*) FROM open_mailbox_feed_custody').fetchone()[0],2)
         # A complete remote admission is immediately usable by B's independent
         # possession exchange and full feed/member consumer, not just a flag.
-        node=signed_entry(dict(source.node['payload'],base_url=base,revision=source.node['payload']['revision']+1),source.identity,'synthetic_admission_node')
         from memory_vault_open_client import MAILBOX_CONNECT_SCHEMA
         invitation=dict(schema_version=MAILBOX_CONNECT_SCHEMA,action='admit',base_url=base,message_id=sent['message_id'],target=source.target,
             target_node_entry=dict(raw=node['raw'].decode(),ref=node['ref']),
