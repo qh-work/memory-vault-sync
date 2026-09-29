@@ -181,14 +181,14 @@ class RepairCopyState(RepairCopyResources):
 
     def _load_inventory(self,row,held,budget):
         """Check the complete immutable storage snapshot, not live READ rights."""
-        s=self.source;rid=row['resource_id']
+        s=self.source;rid=row['resource_id'];policy=s._budget_policy(budget)
         manifest=s._saved(held,'manifest');custody=s._saved(held,'custody')
         fields=resource.COMMON|set('root_key scope original_custody_ref replica_manifest_ref assignment_ref resource_offer_ref resource reservation_generation stored_at read_until retain_until'.split())
-        event=index._signed(custody,s.identity.public_descriptor(),'replica.custody',fields,s.policy,budget)
+        event=index._signed(custody,s.identity.public_descriptor(),'replica.custody',fields,policy,budget)
         history._resource(event.payload['resource'])
         wire.u53(event.payload['stored_at']);wire.u53(event.payload['read_until']);wire.u53(event.payload['retain_until'])
         wire.u53(event.payload['reservation_generation'],1)
-        value=wire.parse_new_wire(manifest['raw'],s.policy,budget).value
+        value=wire.parse_new_wire(manifest['raw'],policy,budget).value
         wire.object_fields(value,{'schema_version','kind','root_key','scope','original_roles','physical_objects','edges'})
         if (value['schema_version']!=resource.SCHEMA or value['kind']!='replica.manifest'
                 or event.payload['replica_manifest_ref']!=manifest['ref'] or event.payload['root_key']!=value['root_key']
@@ -196,7 +196,7 @@ class RepairCopyState(RepairCopyResources):
                 or event.payload['resource']['node_key_id']!=s.identity.key_id
                 or event.payload['resource']['storage_epoch']!=s.node['payload']['storage_epoch']
                 or event.payload['reservation_generation']!=1):wire._fail('repair_copy_commit_mismatch')
-        offer=s._saved(row,'offer');p=wire.parse_new_wire(offer['raw'],s.policy,budget).value['payload']
+        offer=s._saved(row,'offer');p=wire.parse_new_wire(offer['raw'],policy,budget).value['payload']
         if (event.payload['resource_offer_ref']!=offer['ref'] or event.payload['resource']!=p['resource']
                 or value['root_key']!=p['intent']['root_key'] or value['scope']!=p['intent']['scope']
                 or value['physical_objects']!=value['original_roles']):wire._fail('repair_copy_commit_mismatch')
@@ -224,24 +224,51 @@ class RepairCopyState(RepairCopyResources):
             wire._fail('repair_copy_commit_mismatch')
         return value,event,entries
 
+    def _committed(self,resource_id):
+        """Caller holds the storage transaction; never rebuild missing capacity."""
+        resource._opaque(resource_id);s=self.source
+        row=s._one('SELECT * FROM open_repair_copy_resources WHERE resource_id=?',(resource_id,))
+        held=s._one('SELECT * FROM open_repair_copy_commits WHERE resource_id=?',(resource_id,))
+        if row is None or held is None:wire._fail('repair_copy_commit_missing')
+        reserved=s._one("SELECT * FROM open_capacity_reservations WHERE service='repair_copy' AND reservation_id=?",(resource_id,))
+        if (reserved is None or reserved['digest']!=row['request_digest'] or reserved['charge_bytes']!=row['charge_bytes']
+                or reserved['retain_until']!=row['retain_until'] or reserved['owner']!=row['caller']
+                or reserved['operation_id']!=row['allocation_id']):wire._fail('repair_copy_ledger_missing')
+        return row,held
+
+    def read_local_original(self,resource_id,reference,*,_budget=None):
+        """Read only an exact committed original for the local service adapter.
+
+        This grants no remote READ right. A service must check current authority,
+        disclosure and possession before releasing any bytes. Later observations
+        outside the immutable manifest cannot be fetched through this method.
+        """
+        s=self.source;budget=wire.RepairBudget(s.policy) if _budget is None else _budget
+        s._budget_policy(budget);ref=wire.raw_ref(reference)
+        with s._transaction():
+            row,held=self._committed(resource_id)
+            _,_,entries=self._load_inventory(row,held,budget)
+            candidates=[s._saved(held,'manifest'),s._saved(held,'custody')]
+            candidates.extend(entry for values in entries.values() for entry in values)
+            for entry in candidates:
+                if wire.raw_ref(entry['ref'])==ref:
+                    budget._bytes('output_bytes',len(entry['raw']))
+                    return entry['raw']
+            wire._fail('repair_ref_missing')
+
     def restore_unbound(self,resource_id,*,expected_ack_slot,expected_owner,expected_source,
-            source_storage_epoch,expected_maintainer,limit_policy):
+            source_storage_epoch,expected_maintainer,limit_policy,_budget=None):
         """Operator-local historical reconstruction after restart, never READ.
 
         Only committed storage is used. Current remote serving rights and dual
         possession must be checked separately before exposing any returned bytes.
         """
-        resource._opaque(resource_id);s=self.source;budget=wire.RepairBudget(s.policy)
+        resource._opaque(resource_id);s=self.source
+        budget=wire.RepairBudget(s.policy) if _budget is None else _budget;policy=s._budget_policy(budget)
         with s._transaction():
-            row=s._one('SELECT * FROM open_repair_copy_resources WHERE resource_id=?',(resource_id,))
-            held=s._one('SELECT * FROM open_repair_copy_commits WHERE resource_id=?',(resource_id,))
-            if row is None or held is None:wire._fail('repair_copy_commit_missing')
-            reserved=s._one("SELECT * FROM open_capacity_reservations WHERE service='repair_copy' AND reservation_id=?",(resource_id,))
-            if (reserved is None or reserved['digest']!=row['request_digest'] or reserved['charge_bytes']!=row['charge_bytes']
-                    or reserved['retain_until']!=row['retain_until'] or reserved['owner']!=row['caller']
-                    or reserved['operation_id']!=row['allocation_id']):wire._fail('repair_copy_ledger_missing')
+            row,held=self._committed(resource_id)
             _,_,entries=self._load_inventory(row,held,budget)
-        resolver=wire.LocalRawResolver(s.policy,budget)
+        resolver=wire.LocalRawResolver(policy,budget)
         for values in entries.values():
             for entry in values:
                 ref=wire.raw_ref(entry['ref'])
@@ -250,4 +277,4 @@ class RepairCopyState(RepairCopyResources):
             expected_ack_slot=expected_ack_slot,expected_owner=expected_owner,expected_source=expected_source,
             source_storage_epoch=source_storage_epoch,expected_maintainer=expected_maintainer,
             expected_target=s.target,target_storage_epoch=s.node['payload']['storage_epoch'],
-            limit_policy=limit_policy,policy=s.policy,budget=budget)
+            limit_policy=limit_policy,policy=policy,budget=budget)

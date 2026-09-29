@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import unittest
+from dataclasses import replace
 
 from memory_vault import canonical_bytes
 from memory_vault_open_repair_copy_state import RepairCopyState
@@ -206,6 +207,36 @@ class CopyStateTests(unittest.TestCase):
         bundle=self.portable();value=json.loads(bundle[0]['raw']);value['kind']='replica.changed'
         bundle[0]['raw']=canonical_bytes(value)
         with self.assertRaisesRegex(wire.RepairWireError,'repair_ref_mismatch'):self.verify_portable(bundle)
+
+    def test_local_service_reads_exact_committed_originals_after_restart(self):
+        custody=self.commit();rid=json.loads(custody['raw'])['payload']['resource']['resource_id']
+        status_ref=self.restore(rid)['entries']['copy.current_status'][0]
+        self.destination.db.close();self.destination.connect();self.store=RepairCopyState(self.destination.state);self.store.initialize()
+        for entry in (custody,self.f['custody'],status_ref):
+            self.assertEqual(self.store.read_local_original(rid,entry['ref']),entry['raw'])
+        alias=dict(self.f['custody']['ref'],key='f'*64)
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_ref_missing'):self.store.read_local_original(rid,alias)
+
+    def test_later_observations_are_not_exposed_as_committed_children(self):
+        custody=self.commit();rid=json.loads(custody['raw'])['payload']['resource']['resource_id']
+        self.status_values[0]['revision']+=1
+        current=[signed_entry(p,s,'later_'+str(i)) for i,(p,s) in enumerate(zip(self.status_values,self.status_signers))]
+        self.assertEqual(self.commit(current=current),custody)
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_ref_missing'):
+            self.store.read_local_original(rid,current[0]['ref'])
+
+    def test_local_read_does_not_reset_the_service_work_budget(self):
+        custody=self.commit();rid=json.loads(custody['raw'])['payload']['resource']['resource_id']
+        budget=wire.RepairBudget(replace(self.destination.state.policy,max_signature_checks=1))
+        self.assertEqual(self.store.read_local_original(rid,custody['ref'],_budget=budget),custody['raw'])
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_over_budget'):
+            self.store.read_local_original(rid,custody['ref'],_budget=budget)
+
+    def test_local_read_refuses_missing_shared_capacity(self):
+        custody=self.commit();rid=json.loads(custody['raw'])['payload']['resource']['resource_id']
+        self.destination.db.execute("DELETE FROM open_capacity_reservations WHERE service='repair_copy'");self.destination.db.commit()
+        with self.assertRaisesRegex(wire.RepairWireError,'repair_copy_ledger_missing'):
+            self.store.read_local_original(rid,custody['ref'])
 
     def test_reconstructs_history_from_destination_only_after_expiry_and_restart(self):
         custody=self.commit();rid=json.loads(custody['raw'])['payload']['resource']['resource_id']

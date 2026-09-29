@@ -2607,3 +2607,12 @@ resource, delegation or history edge. It needs no destination database or privat
 key. Local restart reconstruction uses this same verifier after checking physical
 storage and the shared capacity ledger. Its result remains historical evidence,
 not current READ or permission to forward the copied signers' originals.
+
+`RepairCopyState.read_local_original` supplies the local service adapter with
+exact committed bytes, including manifest/custody and commit-time status originals
+that share physical storage with the status journal. A full reference must match
+the immutable inventory; a later journal observation is not implicitly a proof
+child. Reads require the real shared capacity ledger and intact stored inventory.
+Both this method and restart reconstruction accept a caller's existing bounded
+work meter; they cannot reset or enlarge it. This is an operator-local primitive,
+not an HTTP route or a substitute for current READ/disclosure/possession checks.
