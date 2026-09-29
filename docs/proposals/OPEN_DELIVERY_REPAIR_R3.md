@@ -2472,3 +2472,45 @@ ACK repair with A/B and every original holder stopped; all cold inputs frozen
 before the unknown refs existed; and crashes around every commit/publication/
 unlink boundary. Correct failures remain part of the results. No receipt,
 syntax parse, construction DAG or release archive alone proves those outcomes.
+
+### Implemented ACK-unbound reservation preparation
+
+`memory_vault_open_repair_copy_prepare.py` provides a bounded, local maintainer
+journal for the step **before** sending a copy allocation request. The operator
+must use a private local database and independently prove the destination's two
+keys before transmitting the emitted request. This is not a public endpoint.
+
+A new owner-signed `ack.copy_reservation_consent` has the repair schema/common
+signature fields and exactly these payload fields:
+
+```
+issued_at, expires_at, consent_id, revision, root_authority_ref,
+source_custody_ref, historical_manifest_ref, maintainer:DualID,
+target:DualKey, target_storage_epoch,
+reservation_disclosure:{intent_sha256,until}
+```
+
+This consent permits disclosure of only the exact minimal copy intent to that
+specific destination. Its authority-status scope uses its kind and original raw
+hash. It does not replace root COPY authority or permit uploading original
+proofs. The source event must verify as ACK-unbound, the maintainer must already
+be named by the root, and current owner root/slot/consent and original-source
+resource observations must permit COPY. Existing receipt and receipt-index roots
+without COPY cannot be upgraded by this consent. Old preparations stay unchanged.
+The intent's windows/budgets stay within the original root, and request expiry
+also respects original-source availability and the consent's finite deadline.
+
+The caller-owned journal retains authenticated status observations even when a
+later input is malformed or live use is denied. Old status replay, observed
+revocation, conflicting job reuse, identity changes and expired retries refuse
+request emission. Exact retries return the same signed allocation bytes. The
+journal retains at most 16 jobs and 64 status documents (at most 1 MiB of status
+bytes and references); capacity exhaustion does not evict revocations or jobs.
+The root's finite concurrent-job limit further bounds retained preparations.
+
+The emitted allocation connects to `RepairCopyResources.allocate`, which makes
+a real shared-capacity reservation. Neither this preparation nor that offer is
+replica custody. Post-assignment original disclosure, application copy commit,
+replica read service, HTTP orchestration, and native TypeScript preparation are
+not implemented by this step. No future empty/occupied ACK state is included in
+an unbound preparation.

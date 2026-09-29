@@ -122,6 +122,7 @@ class OpenRepairStatusTypeScriptTests(unittest.TestCase):
         cases = [("authority", self.subjects["root"]), ("authority", self.subjects["read"]),
                  ("authority", {"authority_kind": "bootstrap.grant", "authority_sha256": "ab" * 32}),
                  ("authority", {"authority_kind": "ack.disclosure", "authority_sha256": "ac" * 32}),
+                 ("authority", {"authority_kind": "ack.copy_reservation_consent", "authority_sha256": "ad" * 32}),
                  ("ack_slot", self.expected["expected_ack_slot"]),
                  ("resource", self.docs["active"]["payload"]["resource"])]
         call = self.call(op="scope", root=root, cases=[dict(kind=k, subject=s) for k, s in cases])
