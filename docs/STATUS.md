@@ -1,6 +1,10 @@
 # Memory Vault development status
 
-Current source candidate: **alpha.0.24 (unpublished)**. Python maintainers can now
+Published **[alpha.0.24](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.24)** is fixed at `b1a4e78bc8b7e8ac971d997a997bc6d5ced5904a`.
+
+Fourteen synthetic bound-replica, restart, command and real-HTTP checks passed using the extracted alpha.0.24 runtime. Its exact-source full cloud regression passed 1099 tests across 115 modules, with all 258 reported source hashes matching `b1a4e78bc8b7e8ac971d997a997bc6d5ced5904a`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
+Python maintainers can now
 reserve and copy a message-bound empty ACK slot to an explicitly selected
 replacement, retaining both original history generations. Lost allocation or
 commit replies resume exact durable requests after restart. Independently signed
@@ -13,10 +17,8 @@ The explicit `replica_empty` proof cannot be accepted as an original source or
 unbound replica. A bounded metadata pack reduces network requests while every
 original still counts toward the logical proof-byte ceiling. The assignment
 remains COPY/READ/RETAIN only; the replacement gains no first-receipt admission.
-Twelve focused synthetic state, real-HTTP, command and native proof-profile cases
-passed during development. Final source and extracted-package acceptance are
-still required. No global availability, independent adoption or thousand-agent
-capacity is claimed.
+The source and extracted-package acceptance above passed for this fixed release.
+Occupied-receipt copying and automatic replacement selection remain unfinished.
 
 Published **[alpha.0.23](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.23)** is fixed at `d15be3af98e280938072113b62d620f99cc5921b`.
 
