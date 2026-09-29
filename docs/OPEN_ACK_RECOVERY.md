@@ -186,9 +186,18 @@ The finite input limits are 16 known entries and 32 archive entries, with at
 most 32 distinct originals in their union. Output exceeding either retained
 limit reports `repair_status_history_capacity` without writing an output. Keep
 previous evidence files; expiration alone does not permit deleting conflict
-witnesses. This development client does not maintain
-a separate persistent recipient-side status database automatically. Source-side
-floors are durable in the existing protected transport database.
+witnesses. Development after alpha.0.18 also persists authenticated owner/source
+status originals for `recover-ack`, `recover-empty`, and `recover-occupied` in
+the existing protected transport database. These commands share one original-source
+journal per root; the replica journal remains separate because its typed disclosure
+scopes differ. A failed command retains authenticated revocations before refusing
+access, and a subsequent command loads them even when its request omits the prior
+arrays. Existing whole-document scope checks remain in force; retained originals
+with incompatible scopes cause refusal rather than being silently projected or
+discarded. The shared journal capacity is 16 root/domain records, 32 originals and
+256 KiB per record; exhaustion refuses further recovery. Programmatic Python and
+TypeScript callers must still retain and supply both arrays themselves. Source-side
+floors are also durable in the existing protected transport database.
 
 ## Maintainer copy commands (alpha.0.18 candidate)
 
@@ -309,7 +318,7 @@ status archives. `ack_replica_unbound_source_recovered` has
 `recipient_saved:false`: an unbound replacement is not a received message.
 Existing files are never overwritten, and the content Vault is not opened.
 
-For this command, authenticated status observations also persist in the existing
+For this command, authenticated status observations persist in the existing
 protected transport database, including observations from rejected recoveries.
 The journal is keyed by the owner's root, not the output filename or replacement
 URL. Subsequent commands reuse relevant A/R/M/P observations and verify them

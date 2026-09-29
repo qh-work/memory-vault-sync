@@ -67,6 +67,26 @@ class _AdminFixture:
         return code, stdout.getvalue(), stderr.getvalue()
 
 
+    def assert_revocation_survives_restart(self, command):
+        from tests.open_repair_ack_fixtures import signed_entry
+        from unittest.mock import patch
+        f=self.host.source.fixture
+        payload=json.loads(f['entries']['owner_status']['raw'])['payload']
+        payload['revision']+=1
+        for item in payload['entries']:item['status']='revoked'
+        revoked=signed_entry(payload,f['signers']['owner'],'synthetic_original_admin_revocation')
+        self.request['known_statuses']=[dict(raw_base64url=b64url(revoked['raw']),ref=revoked['ref'])]
+        for attempt in range(2):
+            with patch('memory_vault_open_transport.OpenHTTPTransport.request_repair',side_effect=AssertionError('must retain revocation before sending')):
+                code,output,error=self.call(command)
+            self.assertEqual((code,output),(1,''))
+            self.assertEqual(json.loads(error)['error'],'repair_authority_revoked')
+            self.assertFalse(self.output.exists())
+            self.request['known_statuses']=[]
+            self.request_path=self.directory/'retry-request.json'
+        self.assertFalse(self.vault.exists())
+
+
 class RepairAdminTests(_AdminFixture, unittest.TestCase):
     def setUp(self):
         self.host = http_fixture.RepairHTTPTests()
@@ -96,6 +116,28 @@ class RepairAdminTests(_AdminFixture, unittest.TestCase):
         self.assertEqual({path: path.read_bytes() for path in self.originals}, self.originals)
         self.assertNotIn(b'"private_key"', saved)
 
+    def test_unauthenticated_status_does_not_poison_persistent_recovery(self):
+        from tests.open_repair_ack_fixtures import signed_entry
+        f=self.host.source.fixture
+        payload=json.loads(f['entries']['owner_status']['raw'])['payload']
+        payload['revision']+=1
+        for item in payload['entries']:item['status']='revoked'
+        forged=signed_entry(payload,f['signers']['target'],'synthetic_wrong_signer_status')
+        self.request['known_statuses']=[dict(raw_base64url=b64url(forged['raw']),ref=forged['ref'])]
+        code,output,error=self.call()
+        self.assertEqual((code,output),(1,''))
+        self.assertFalse(self.output.exists())
+        from memory_vault_open_client import OpenNetworkClient
+        with OpenNetworkClient(self.network) as network,network.participant.state.db() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM open_ack_replica_statuses').fetchone()[0],0)
+        self.request['known_statuses']=[]
+        self.request_path=self.directory/'authentic-request.json'
+        code,output,error=self.call()
+        self.assertEqual((code,error),(0,''))
+
+    def test_failed_original_recovery_remembers_revocation_after_restart(self):
+        self.assert_revocation_survives_restart('recover-ack')
+
     def test_existing_output_is_preserved_before_network_access(self):
         _write_new_private(self.output, b"synthetic existing evidence\n")
         code, output, error = self.call()
@@ -114,6 +156,17 @@ class RepairAdminTests(_AdminFixture, unittest.TestCase):
 
 
 class RepairOccupiedAdminTests(_AdminFixture, unittest.TestCase):
+    def test_failed_occupied_recovery_remembers_revocation_after_restart(self):
+        from tests.test_open_repair_occupied_client import OccupiedHTTPFixture
+        occupied=OccupiedHTTPFixture(self)
+        self.host=occupied.http
+        self.configure_owner()
+        expected=occupied.empty.expected
+        self.request.update(schema_version=OCCUPIED_REQUEST_SCHEMA,
+            receipt_writer=expected['expected_receipt_writer'],message_id=expected['expected_message_id'],
+            envelope_ref=expected['expected_envelope_ref'])
+        self.assert_revocation_survives_restart('recover-occupied')
+
     def test_command_recovers_recipient_original_and_all_status_generations(self):
         from tests.test_open_repair_occupied_client import OccupiedHTTPFixture
         occupied = OccupiedHTTPFixture(self)
@@ -141,9 +194,12 @@ class RepairOccupiedAdminTests(_AdminFixture, unittest.TestCase):
 
 
 class RepairEmptyAdminTests(_AdminFixture, unittest.TestCase):
+    repair_profile='receipt'
+
     def setUp(self):
         from tests.test_open_repair_empty_http import EmptyHTTPFixture
-        self.empty_host = EmptyHTTPFixture(self)
+        # Fund repeated real recovery before signing the synthetic grants.
+        self.empty_host = EmptyHTTPFixture(self,signature_limit=1024,proof_limit=1048576)
         self.host = self.empty_host.http
         self.configure_owner()
         expected = self.empty_host.expected
@@ -177,6 +233,26 @@ class RepairEmptyAdminTests(_AdminFixture, unittest.TestCase):
             self.assertTrue(all(raw == bytes(row[0]) for row in rows))
         self.assertEqual({path: path.read_bytes() for path in self.originals}, self.originals)
         self.assertNotIn(b'"private_key"', self.output.read_bytes())
+
+    def test_successful_empty_recovery_reuses_and_exports_statuses_after_restart(self):
+        code,output,error=self.call("recover-empty")
+        self.assertEqual((code,error),(0,''))
+        first=json.loads(self.output.read_bytes())
+        self.output=self.directory/'second-evidence.json'
+        self.request_path=self.directory/'second-request.json'
+        code,output,error=self.call("recover-empty")
+        self.assertEqual((code,error),(0,''))
+        second=json.loads(self.output.read_bytes())
+        refs=lambda items:{canonical_bytes(item['ref']) for item in items}
+        self.assertTrue(refs(first['archive_statuses'])<=refs(second['archive_statuses']))
+        from memory_vault_open_client import OpenNetworkClient
+        with OpenNetworkClient(self.network) as network,network.participant.state.db() as db:
+            held={bytes(row[0]) for row in db.execute('SELECT ref FROM open_ack_replica_statuses')}
+        self.assertEqual(held,refs(second['archive_statuses']))
+        self.assertFalse(self.vault.exists())
+
+    def test_failed_empty_recovery_remembers_revocation_after_restart(self):
+        self.assert_revocation_survives_restart('recover-empty')
 
     def test_wrong_independent_tuple_writes_no_evidence(self):
         self.request["message_id"] = "synthetic-wrong-message"

@@ -35,8 +35,12 @@ OCCUPIED_LIMITS = RECEIPT_WORKFLOW_LIMITS
 
 class _ReplicaStatusJournal:
     """Keep authenticated full references across failed commands and targets."""
-    def __init__(self,db,root):
-        self.db=db;self.root=canonical_bytes(root);self.key=hashlib.sha256(self.root).hexdigest()
+    def __init__(self,db,root,*,original_source=False):
+        self.db=db;self.root=canonical_bytes(root)
+        # Preserve existing replica journal keys. Original-source observations
+        # have a separate domain because their permitted status scopes differ.
+        material=(b"original-source\0"+self.root) if original_source else self.root
+        self.key=hashlib.sha256(material).hexdigest()
         with db:
             db.execute('CREATE TABLE IF NOT EXISTS open_ack_replica_roots(root_id TEXT PRIMARY KEY,root BLOB NOT NULL,blocked INTEGER NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS open_ack_replica_statuses(root_id TEXT NOT NULL,ref_id TEXT NOT NULL,issuer TEXT NOT NULL,raw BLOB NOT NULL,ref BLOB NOT NULL,PRIMARY KEY(root_id,ref_id))')
@@ -98,6 +102,36 @@ def _recover_replica(network,client,request,arguments,archived):
             expected_source=request['source'],source_storage_epoch=request['source_storage_epoch'],expected_maintainer=request['maintainer'])
         for item in result.archive_statuses:journal.observe(item)
         return result
+
+
+def _recover_original(network,client,request,arguments,phase):
+    import memory_vault_open_repair_wire as wire
+    import memory_vault_open_repair_resource as resource
+    import memory_vault_open_repair_history as history
+    parties=[dict(signing_key=network.identity.public_descriptor(),encryption_key=network.encryption.public_descriptor()),
+        request['target']]
+    if phase=='occupied':parties.append(request['receipt_writer'])
+    budget=wire.RepairBudget(DEFAULT_POLICY)
+    for party in parties:resource._dual_key(party,budget)
+    slot=request['ack_slot']
+    if type(slot) is not dict or 'root_key' not in slot:raise RepairWireError('repair_invalid_request_bundle')
+    history._root(slot['root_key']);history._slot(slot,slot['root_key'],ack=True)
+    with network.participant.state.db() as db:
+        journal=_ReplicaStatusJournal(db,slot['root_key'],original_source=True)
+        retained=journal.statuses(parties)
+        merged={canonical_bytes(item['ref']):item for item in [*retained,*arguments['archive_statuses']]}
+        if len(merged)>32:raise RepairWireError('repair_status_history_capacity')
+        client.status_observer=journal.observe
+        result=dict(unbound=client.recover,empty=client.recover_empty,occupied=client.recover_occupied)[phase](
+            **dict(arguments,archive_statuses=list(merged.values())))
+        source=result.source
+        while source is not None:
+            for item in source.statuses:journal.observe(item)
+            source=getattr(source,'predecessor',None)
+        for item in result.current_statuses:journal.observe(item)
+        # Include retained originals in the exported evidence as well as the
+        # protected journal. They were reauthenticated by this recovery.
+        return result,list(merged.values())
 
 
 def _entry(value):
@@ -202,7 +236,9 @@ def recover_ack(network_config: Path, request_path: Path, output: Path, *, timeo
             bootstrap_entry=entries["bootstrap"], known_statuses=[_entry(item) for item in known],
             archive_statuses=[_entry(item) for item in archived], timeout=timeout, **expected)
         if phase=='replica_unbound':result=_recover_replica(network,client,request,arguments,archived)
-        else:result=dict(unbound=client.recover,empty=client.recover_empty,occupied=client.recover_occupied)[phase](**arguments)
+        else:
+            result,retained_archive=_recover_original(network,client,request,arguments,phase)
+            archived=[dict(raw_base64url=b64url(item['raw']),ref=item['ref']) for item in retained_archive]
     source=result.replica['source'] if phase=='replica_unbound' else result.source
     historical = list(result.archive_statuses) if phase=='replica_unbound' else list(source.statuses)
     predecessor = getattr(source, "predecessor", None)
