@@ -479,7 +479,7 @@ class AckOwnerRecoveryClient:
                 _fail("repair_status_mismatch")
             observed = status.authenticate_status_original(dict(raw=parsed.raw,ref=ref.as_dict()),
                 expected_root=root,expected_signing_key=signer,at=issued,allowed_scopes=allowed,
-                policy=self.policy,budget=budget,on_authenticated=self.status_observer)
+                policy=self.policy,budget=budget,on_authenticated=getattr(self,"status_observer",None))
             checked.append(observed)
         # Co-located A/B keys make a not-yet-recovered authority scope
         # ambiguous. Conservatively retain its READ revocation before probing.
