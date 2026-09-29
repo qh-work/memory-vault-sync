@@ -1,5 +1,10 @@
 # Memory Vault: connect, remember, exchange, continue
 
+The receiver can inspect/restore its saved mailbox configuration and generate
+persisted sender authorization from an already approved local contact through
+`connect`. Replies are paged within the Agent output budget. See the
+[authorization exchange](docs/OPEN_NETWORK_CONTACT.md#retain-an-already-sent-message-in-its-authorized-mailbox).
+
 The Python Agent now supports [retained mailbox provisioning and recovery](docs/OPEN_NETWORK_CONTACT.md):
 receivers provision and register a mailbox, senders submit their existing ciphertext,
 and ordinary receives recover messages and selected memories under independent
@@ -22,7 +27,7 @@ READ/bootstrap grants to discover and retrieve the original signed receipt.
 The publication and recovery commands retain exact original bytes and durable
 work limits. Message movement and automatic repair remain unfinished.
 
-**v0.28.0-alpha.0.11 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+**v0.28.0-alpha.0.12 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
 to bind your existing Vault and signing identity to an independent open transport,
 join through one or two actual signed node introductions, explicitly approve a
 finite delivery, and exchange encrypted chat or selected original memories.
