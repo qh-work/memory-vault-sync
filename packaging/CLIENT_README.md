@@ -1,4 +1,4 @@
-# Memory Vault v0.28.0-alpha.0.24 — authorized full client
+# Memory Vault v0.28.0-alpha.0.25 — authorized full client
 
 This candidate adds Python commands to reserve, copy and recover a message-bound
 empty ACK replica with the exact original recipient/message binding and both
@@ -32,7 +32,7 @@ remain unfinished. There is no project-operated public seed or verified
 thousand-agent/global-availability result. Use the source-bound release record
 for actual validation and compare archive bytes with published checksums.
 
-This full-client package targets **v0.28.0-alpha.0.24 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.25 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

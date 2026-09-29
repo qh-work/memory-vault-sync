@@ -189,16 +189,18 @@ class RemoteAckSourceProvisioner(AckSourceProvisioner):
         return min(30, remaining)
 
     async def queue_and_prepare(self, request_id, recipient, *, source_url, source_key_id,
-                                text='', memory_ids=None, profile='receipt', lifetime=3600):
+                                text='', memory_ids=None, profile='receipt', lifetime=3600,copy_maintainer=None):
         digest, selected = self.delivery._send_input(request_id, [recipient], text, memory_ids, None)
         self.delivery._prepare_outbox(request_id, recipient, digest, text, selected)
         return await self.prepare_existing(request_id, source_url=source_url, source_key_id=source_key_id,
-                                           profile=profile, lifetime=lifetime)
+                                           profile=profile, lifetime=lifetime,copy_maintainer=copy_maintainer)
 
-    async def prepare_existing(self, request_id, *, source_url, source_key_id, profile='receipt', lifetime=3600):
+    async def prepare_existing(self, request_id, *, source_url, source_key_id, profile='receipt', lifetime=3600,copy_maintainer=None):
         if type(profile) is not str or profile not in PROFILES or type(lifetime) is not int or not 120 <= lifetime <= 86400:
             _fail('repair_invalid_request_bundle')
         resource._opaque(request_id)
+        from memory_vault_open_repair_provision import _copy_maintainer
+        copy_maintainer=_copy_maintainer(copy_maintainer,profile,self.policy)
         self._unsent(self.delivery._outbox(request_id))
         from memory_vault_open_transport import endpoint
         from memory_vault_open_control import coordinate
@@ -208,6 +210,7 @@ class RemoteAckSourceProvisioner(AckSourceProvisioner):
         self.deadline = time.monotonic() + 120
         held = self._load(request_id)
         if held is not None:
+            if held[0].get('copy_maintainer')!=copy_maintainer:_fail('repair_provision_conflict')
             if held[1] and 'remote_context' not in held[1]:
                 _fail('repair_provision_context_mismatch')
             prior = json.loads(held[0]['node']['raw'])['payload']
@@ -230,7 +233,7 @@ class RemoteAckSourceProvisioner(AckSourceProvisioner):
         self.source = SimpleNamespace(target=target, node=frozen_node, limits=PROFILES[profile],
                                       _now=lambda: int(time.time()))
         self.empty = SimpleNamespace(bind=self._remote_bind)
-        return await super().prepare_existing(request_id, profile=profile, lifetime=lifetime)
+        return await super().prepare_existing(request_id, profile=profile, lifetime=lifetime,copy_maintainer=copy_maintainer)
 
     def _request(self, value, response_kind, fields):
         raw = canonical_bytes(value)

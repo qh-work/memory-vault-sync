@@ -35,6 +35,18 @@ REPLICA_READ_PACK_ROLES=frozenset(role for role in REPLICA_FIXED_ROLES
 REPLICA_EMPTY_FIXED_ROLES=(REPLICA_FIXED_ROLES|empty.ROLES|{'history.ack_empty','ack.empty_custody','replica.read_pack'})-{'ack.slot_custody'}
 REPLICA_EMPTY_REPEATED=frozenset(role for role in ack.ROLES & empty.ROLES if role.startswith('historical.status.'))
 SOURCE_STATES['replica_empty']=(REPLICA_EMPTY_FIXED_ROLES,2)
+REPLICA_OCCUPIED_FIXED_ROLES=REPLICA_EMPTY_FIXED_ROLES|occupied.ROLES|{'history.ack_occupied_inputs','ack.commit',
+    'copy.recipient_reservation_consent','copy.recipient_disclosure','return.recipient'}
+REPLICA_OCCUPIED_REPEATED={role:sum(role in roles for roles in (ack.ROLES,empty.ROLES,occupied.ROLES))
+    for role in ack.ROLES|empty.ROLES|occupied.ROLES if role.startswith('historical.status.')
+    and sum(role in roles for roles in (ack.ROLES,empty.ROLES,occupied.ROLES))>1}
+SOURCE_STATES['replica_occupied']=(REPLICA_OCCUPIED_FIXED_ROLES,3)
+
+
+def replica_read_pack_roles(state):
+    return REPLICA_READ_PACK_ROLES|({'copy.recipient_reservation_consent','copy.recipient_disclosure','return.recipient'}
+        if state=='replica_occupied' else set())
+
 OFFER_CURRENT_ROLES = (CURRENT_ROLES - {"current.status.ack_read", "current.status.ack_owner_bootstrap"}) | {"current.status.ack_write", "current.status.ack_offer_bootstrap"}
 OFFER_FIXED_ROLES = empty.ROLES | OFFER_CURRENT_ROLES | {"history.ack_empty", "ack.empty_custody", "ack.head"}
 MAILBOX_CURRENT_ROLES = frozenset("current.status."+name for name in
@@ -146,12 +158,12 @@ def _manifest(value, expected, maximum_items, expected_source_state=None):
             'resource.data_allocate','resource.metadata_allocate','resource.data_offer','resource.metadata_offer',
             'resource.slot_activation','resource.data_active','resource.metadata_active','feed.head','feed.checkpoint','history.mailbox_feed','feed.custody'}
         if any(counts.get(role)!=1 for role in singleton) or any(counts.get(role,0)<1 for role in fixed_roles):_fail()
-    elif source_state in ("replica_unbound","replica_empty"):
+    elif source_state in ("replica_unbound","replica_empty","replica_occupied"):
         repeated={"copy.current_status","current.status.replica_read"}
-        historical=REPLICA_EMPTY_REPEATED if source_state=='replica_empty' else frozenset()
-        if (any(counts.get(role)!=1 for role in fixed_roles-repeated-historical)
+        historical=REPLICA_OCCUPIED_REPEATED if source_state=='replica_occupied' else {role:2 for role in REPLICA_EMPTY_REPEATED} if source_state=='replica_empty' else {}
+        if (any(counts.get(role)!=1 for role in fixed_roles-repeated-set(historical))
                 or any(not 1<=counts.get(role,0)<=16 for role in repeated)
-                or any(not 1<=counts.get(role,0)<=2 for role in historical)):_fail()
+                or any(not 1<=counts.get(role,0)<=maximum for role,maximum in historical.items())):_fail()
     elif any(counts.get(role) != 1 for role in fixed_roles):
         _fail()
     if len(packs) < minimum_packs:

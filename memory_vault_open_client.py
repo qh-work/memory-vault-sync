@@ -445,10 +445,19 @@ class OpenNetworkClient:
         from memory_vault_open_repair_admin import MAX_BUNDLE_BYTES
         from memory_vault_open_control import coordinate
         from memory_vault_open_transport import endpoint
-        object_fields(value,{'schema_version','action','source_url','source_key_id','request_id','recipient','text','memory_ids','repair_profile','lifetime'})
+        object_fields(value,{'schema_version','action','source_url','source_key_id','request_id','recipient','text','memory_ids','repair_profile','lifetime'}
+            |({'copy_maintainer'} if 'copy_maintainer' in value else set()))
         if (value['repair_profile'] not in ('receipt','receipt-index') or type(value['lifetime']) is not int
                 or not 120<=value['lifetime']<=86400):raise MemoryError('open_invalid_ack_request')
         endpoint(value['source_url'],allow_loopback=self.participant.transport.allow_loopback);coordinate(value['source_key_id'])
+        if 'copy_maintainer' in value:
+            from memory_vault_open_repair_provision import _copy_maintainer
+            from memory_vault_open_repair_state import DEFAULT_POLICY
+            if value['copy_maintainer'] is None:raise MemoryError('open_invalid_ack_request')
+            selected_copy=_copy_maintainer(value['copy_maintainer'],value['repair_profile'],DEFAULT_POLICY)
+            if (selected_copy['signing_key']['key_id'] in (self.identity.key_id,value['recipient'],value['source_key_id'])
+                    or selected_copy['encryption_key']['key_id']==self.encryption.key_id):
+                raise MemoryError('repair_copy_maintainer_distinct_parties_required')
         delivery=self._ack_preparations_initialize()
         delivery._send_input(value['request_id'],[value['recipient']],value['text'],value['memory_ids'],None)
         binding=hashlib.sha256(canonical_bytes(value)).hexdigest()
@@ -467,7 +476,7 @@ class OpenNetworkClient:
         else:
             result=asyncio.run(RemoteAckSourceProvisioner(delivery).queue_and_prepare(value['request_id'],value['recipient'],
                 text=value['text'],memory_ids=value['memory_ids'],source_url=value['source_url'],source_key_id=value['source_key_id'],
-                profile=value['repair_profile'],lifetime=value['lifetime']))
+                profile=value['repair_profile'],lifetime=value['lifetime'],copy_maintainer=value.get('copy_maintainer')))
             raw=canonical_bytes(result)
             if len(raw)>MAX_BUNDLE_BYTES:raise MemoryError('open_ack_preparation_capacity')
             with self.participant.state.db() as db:
@@ -645,16 +654,20 @@ class OpenNetworkClient:
                 return dict(state='retained_at_ack_source',message_id=request['message_id'],
                     receipt_ref=result.source.inputs['receipt'].ref.as_dict(),commit_ref=result.source.commit.ref.as_dict(),
                     from_local_history=result.from_local_history,network_accessed=not result.from_local_history)
-            if value['action']!='recover_receipt':raise MemoryError('open_invalid_ack_request')
+            if value['action'] not in ('recover_receipt','recover_replica_receipt'):raise MemoryError('open_invalid_ack_request')
+            replica=value['action']=='recover_replica_receipt'
             from memory_vault_open_repair_client import AckOwnerRecoveryClient,MailboxSetupJournal
             object_fields(request,{'target_node_entry','expected_target','expected_ack_slot','root_entry','read_entry','bootstrap_entry',
-                'expected_receipt_writer','expected_message_id','expected_envelope_ref'}|({'known_statuses'} if 'known_statuses' in request else set()))
+                'expected_receipt_writer','expected_message_id','expected_envelope_ref'}|({'known_statuses'} if 'known_statuses' in request else set())
+                |({'expected_source','source_storage_epoch','expected_maintainer'} if replica else set()))
             supplied=request.pop('known_statuses',[])
             if type(supplied) is not list or len(supplied)>16:raise MemoryError('open_invalid_ack_request')
             supplied=[decode(entry) for entry in supplied]
             for name in ('target_node_entry','root_entry','read_entry','bootstrap_entry'):request[name]=decode(request[name])
-            plan=canonical_bytes(dict(kind='ack.owner_recovery',owner=self.identity.public_descriptor(),
-                **{name:request[name] for name in ('expected_target','expected_ack_slot','expected_receipt_writer','expected_message_id','expected_envelope_ref')},
+            binding=('expected_target','expected_ack_slot','expected_receipt_writer','expected_message_id','expected_envelope_ref')
+            if replica:binding+=('expected_source','source_storage_epoch','expected_maintainer')
+            plan=canonical_bytes(dict(kind='ack.replica_owner_recovery' if replica else 'ack.owner_recovery',owner=self.identity.public_descriptor(),
+                **{name:request[name] for name in binding},
                 grants={name:request[name]['ref'] for name in ('root_entry','read_entry','bootstrap_entry')}))
             key=hashlib.sha256(plan).hexdigest()
             with self.participant.state.db() as db:
@@ -671,9 +684,12 @@ class OpenNetworkClient:
                     transport=self.participant.transport,allow_loopback=self.participant.transport.allow_loopback,
                     status_observer=observed)
                 try:
-                    recovered=reader.recover_occupied(value['base_url'],known_statuses=supplied,archive_statuses=known,**request)
-                    result=self._delivery().accept_recovered_receipt(recovered.source.inputs['receipt'].raw)
-                    return dict(result,commit_ref=recovered.source.commit.ref.as_dict(),network_accessed=True)
+                    recover=reader.recover_replica_occupied if replica else reader.recover_occupied
+                    recovered=recover(value['base_url'],known_statuses=supplied,archive_statuses=known,**request)
+                    source=recovered.replica['source'].event if replica else recovered.source
+                    result=self._delivery().accept_recovered_receipt(source.inputs['receipt'].raw)
+                    extra=dict(replica_custody_ref=recovered.replica['custody'].ref.as_dict()) if replica else {}
+                    return dict(result,commit_ref=source.commit.ref.as_dict(),network_accessed=True,**extra)
                 finally:
                     reader.close()
         except RepairWireError as error:

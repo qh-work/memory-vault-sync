@@ -75,6 +75,29 @@ independent source remains reachable and the original grants are still valid.
 These bundles contain no private keys. Existing contact approval and R's explicit
 remote setup opt-in remain required, as in the command workflow below.
 
+### Optional replica maintenance for a new message
+
+Python Agent preparation can explicitly include `copy_maintainer` with that
+selected maintainer's full public `signing_key` and `encryption_key` descriptors.
+Use `repair_profile: receipt-index` so the original grants reserve enough finite
+metadata and verification work. The maintainer must have keys distinct from the
+owner, recipient and original source.
+
+This option adds the selected maintainer to the original root's maintainer list
+and includes COPY in its operation mask. The original source keeps its directory
+maintenance role. Actual copying still needs separate owner and recipient
+reservation/copy permissions bound to the chosen target, the source's disclosure,
+and a real target reservation. Owner reads need separate return permissions.
+Selecting a maintainer does not itself allocate a replacement or move bytes.
+
+Omit the field to retain the existing preparation behavior. An existing prepared
+message cannot add, remove or change this selection; its signed grants and
+journal stay fixed. Preparation with this option uses a distinct private journal
+version so older runtimes refuse to reinterpret it. See
+[copy and recover an existing saved receipt](OPEN_ACK_RECOVERY.md#copy-and-recover-an-existing-saved-receipt)
+and the Agent recovery action in that guide. The same optional argument is
+available on the Python local and remote source-provisioner APIs.
+
 ## Freeze and prepare
 
 For later directory publication, explicitly select `receipt-index` both when

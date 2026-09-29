@@ -1,4 +1,4 @@
-"""Whole-original authority for unbound and bound-empty ACK replica commits.
+"""Whole-original authority for unbound, empty and occupied ACK replicas.
 
 The returned observations must be retained before a caller acts on denial_code.
 This module does not reserve storage, persist bytes, advertise or serve a replica.
@@ -14,7 +14,7 @@ import memory_vault_open_repair_resource as resource
 import memory_vault_open_repair_status as status
 import memory_vault_open_repair_wire as wire
 import memory_vault_open_repair_copy_source as copy_source
-from memory_vault_open_repair_copy_prepare import CONSENT_FIELDS
+from memory_vault_open_repair_copy_prepare import CONSENT_FIELDS, _recipient_reservation
 from memory_vault_open_repair_copy_resources import INTENT_FIELDS
 
 DISCLOSURE_FIELDS = resource.COMMON | frozenset('issued_at expires_at consent_id revision variant root_key assignment_ref source_custody_ref historical_manifest_ref target target_storage_epoch disclosure'.split())
@@ -31,6 +31,12 @@ def verify_unbound_replica_event(*args,**options):
 
 def verify_empty_replica_event(*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
     return _verify_replica_event(*args,**options,source_state='empty',bound=dict(
+        expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+        expected_envelope_ref=expected_envelope_ref))
+
+
+def verify_occupied_replica_event(*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
+    return _verify_replica_event(*args,**options,source_state='occupied',bound=dict(
         expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
         expected_envelope_ref=expected_envelope_ref))
 
@@ -82,15 +88,17 @@ def _verify_replica_event(manifest_entry,resolver,custody_entry,*,expected_ack_s
         values=entries.get(role,())
         if len(values)!=1:wire._fail('repair_copy_commit_mismatch')
         return values[0]
-    source_history='history.ack_'+source_state
-    source_custody='ack.empty_custody' if source_state=='empty' else 'ack.slot_custody'
+    source_history=copy_source.history_role(source_state)
+    source_custody={'unbound':'ack.slot_custody','empty':'ack.empty_custody','occupied':'ack.commit'}[source_state]
     plan=_verify_copy(one(source_history),resolver,one(source_custody),
         one('copy.allocation'),one('copy.offer'),one('copy.assignment'),one('copy.reservation_consent'),
         one('copy.owner_disclosure'),one('copy.source_disclosure'),expected_ack_slot=expected_ack_slot,
         expected_owner=expected_owner,expected_source=expected_source,source_storage_epoch=source_storage_epoch,
         expected_maintainer=expected_maintainer,expected_target=target,target_storage_epoch=target_storage_epoch,
         current_statuses=entries.get('copy.current_status',()),at=stored_at,
-        limit_policy=limit_policy,policy=policy,budget=budget,source_state=source_state,bound=bound)
+        limit_policy=limit_policy,policy=policy,budget=budget,source_state=source_state,bound=bound,
+        recipient_reservation_entry=one('copy.recipient_reservation_consent') if source_state=='occupied' else None,
+        recipient_disclosure_entry=one('copy.recipient_disclosure') if source_state=='occupied' else None)
     if plan.denial_code:wire._fail(plan.denial_code)
     if (p['assignment_ref']!=plan.assignment.ref.as_dict()
             or p['original_custody_ref']!=plan.source.custody.ref.as_dict()
@@ -102,6 +110,7 @@ def _verify_replica_event(manifest_entry,resolver,custody_entry,*,expected_ack_s
     for role,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
             ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):
         roles.add((role,*history._ref_tuple(item.ref)))
+    if copy_source.occupied_source(plan.source):roles.add(('copy.recipient_disclosure',*history._ref_tuple(plan.disclosures[2].ref)))
     roles.update(('copy.current_status',*history._ref_tuple(item.ref)) for item in plan.statuses)
     edges=[]
     for role,entry,source_manifest in copy_source.source_histories(plan.source,one(source_history)):
@@ -120,7 +129,7 @@ def _verify_replica_event(manifest_entry,resolver,custody_entry,*,expected_ack_s
         entries=MappingProxyType({role:tuple(values) for role,values in entries.items()}))
 
 
-def source_inventory(source, reservation, policy, budget):
+def source_inventory(source, reservation, policy, budget, recipient_reservation=None):
     rows = {}
     inputs=[(r.role,r.original) for manifest in copy_source.source_manifests(source) for r in manifest.roles]
     for role, item in inputs + [
@@ -129,13 +138,18 @@ def source_inventory(source, reservation, policy, budget):
         if 'payload' not in value:continue
         issuer = value['payload']['signing_key']['key_id']
         rows[index._pair(role,item.ref)] = index.IndexOriginal(role,item,issuer)
+    if copy_source.occupied_source(source):
+        if recipient_reservation is None:wire._fail('repair_copy_recipient_consent_missing')
+        item=recipient_reservation;role='copy.recipient_reservation_consent'
+        rows[index._pair(role,item.ref)]=index.IndexOriginal(role,item,item.payload['signing_key']['key_id'])
+    elif recipient_reservation is not None:wire._fail('repair_copy_scope')
     return tuple(rows[key] for key in sorted(rows))
 
 
 def disclosure_permissions(rows, issuer, root, policy, budget):
     originals, scopes = index._permissions(rows, issuer, policy, budget)
     for row in rows:
-        if row.issuer == issuer and row.role == 'copy.reservation_consent':
+        if row.issuer == issuer and row.role in ('copy.reservation_consent','copy.recipient_reservation_consent'):
             scopes.append(dict(scope_kind='authority',scope_id=index._authority(root,row.original,policy,budget)))
     scopes = [dict(scope_kind=k,scope_id=v) for k,v in sorted({(e['scope_kind'],e['scope_id']) for e in scopes})]
     return originals, scopes
@@ -167,10 +181,17 @@ def verify_empty_copy(*args,expected_receipt_writer,expected_message_id,expected
         expected_envelope_ref=expected_envelope_ref))
 
 
+def verify_occupied_copy(*args,expected_receipt_writer,expected_message_id,expected_envelope_ref,**options):
+    return _verify_copy(*args,**options,source_state='occupied',bound=dict(
+        expected_receipt_writer=expected_receipt_writer,expected_message_id=expected_message_id,
+        expected_envelope_ref=expected_envelope_ref))
+
+
 def _verify_copy(manifest_entry,resolver,custody_entry,allocation_entry,offer_entry,assignment_entry,
         reservation_entry,owner_disclosure_entry,source_disclosure_entry,*,expected_ack_slot,expected_owner,
         expected_source,source_storage_epoch,expected_maintainer,expected_target,target_storage_epoch,
-        current_statuses,at,limit_policy,policy,budget,source_state,bound,on_observed=None):
+        current_statuses,at,limit_policy,policy,budget,source_state,bound,on_observed=None,
+        recipient_reservation_entry=None,recipient_disclosure_entry=None):
     wire._context(policy,budget);at=wire.u53(at)
     context=wire.build_new_wire(dict(owner=expected_owner,source=expected_source,maintainer=expected_maintainer,
         target=expected_target),policy,budget).value
@@ -230,11 +251,17 @@ def _verify_copy(manifest_entry,resolver,custody_entry,allocation_entry,offer_en
         and c['target']==context['target'] and c['target_storage_epoch']==target_storage_epoch
         and source.stored_at<=c['issued_at']<=a['issued_at'] and disclosure['intent_sha256']==digest
         and at<wire.u53(disclosure['until'])<=maximum)
-    rows=source_inventory(source,reservation,policy,budget)
-    signers={context[n]['signing_key']['key_id']:context[n]['signing_key'] for n in ('owner','source','maintainer')}
+    recipient_reservation=_recipient_reservation(source,reservation,recipient_reservation_entry,at,policy,budget)
+    variants=('owner','source')
+    if copy_source.occupied_source(source):
+        context=dict(context,recipient=source.receipt_writer);variants+=('recipient',)
+        maximum=min(maximum,recipient_reservation.payload['expires_at'],recipient_reservation.payload['reservation_disclosure']['until'])
+    elif recipient_disclosure_entry is not None:wire._fail('repair_copy_scope')
+    rows=source_inventory(source,reservation,policy,budget,recipient_reservation)
+    signers={context[n]['signing_key']['key_id']:context[n]['signing_key'] for n in (*variants,'maintainer')}
     allowed={key:[] for key in signers};consents=[]
     until=min(maximum,m['expires_at'])
-    for variant,entry in (('owner',owner_disclosure_entry),('source',source_disclosure_entry)):
+    for variant,entry in zip(variants,(owner_disclosure_entry,source_disclosure_entry,recipient_disclosure_entry)):
         signer=context[variant]['signing_key']
         consent=index._signed(entry,signer,'ack.copy_disclosure',DISCLOSURE_FIELDS,policy,budget)
         p=consent.payload;index._timed(p,at);resource._opaque(p['consent_id']);wire.u53(p['revision'],1)
@@ -258,11 +285,14 @@ def _verify_copy(manifest_entry,resolver,custody_entry,allocation_entry,offer_en
     obligations=[index._obligation(context['owner']['signing_key'],'authority',index._authority(root_key,item,policy,budget),item.payload['revision'],mask)
         for item,mask in ((root,78),(read,2),(bootstrap,10),(reservation,4))]
     obligations.extend(copy_source.additional_obligations(source,context['owner'],policy,budget))
+    if recipient_reservation is not None:
+        obligations.append(index._obligation(context['recipient']['signing_key'],'authority',
+            index._authority(root_key,recipient_reservation,policy,budget),recipient_reservation.payload['revision'],4))
     obligations.extend((index._obligation(context['owner']['signing_key'],'ack_slot',status.status_scope(root_key,'ack_slot',slot,policy,budget),root.payload['revision'],70),
         index._obligation(context['source']['signing_key'],'resource',status.status_scope(root_key,'resource',active.payload['resource'],policy,budget),active.payload['reservation_generation'],4),
         index._obligation(context['maintainer']['signing_key'],'assignment',assignment_scope,0,70)))
     obligations.extend(index._obligation(context[variant]['signing_key'],'authority',index._authority(root_key,item,policy,budget),item.payload['revision'],4)
-        for variant,item in zip(('owner','source'),consents))
+        for variant,item in zip(variants,consents))
     checked,denial=[],None
     def observe(item):
         checked.append(item)
@@ -308,6 +338,7 @@ def copy_return_permissions(plan, issuer, policy, budget):
     candidates=[(row.role,row.original) for row in plan.originals]
     candidates.extend((('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
         ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])))
+    if copy_source.occupied_source(plan.source):candidates.append(('copy.recipient_disclosure',plan.disclosures[2]))
     for role,item in candidates:
         payload=wire.parse_new_wire(item.raw,policy,budget).value['payload']
         if payload['signing_key']['key_id']==issuer:
@@ -316,7 +347,7 @@ def copy_return_permissions(plan, issuer, policy, budget):
     root=plan.assignment.payload['root_key']
     for row in rows.values():
         item=row.original;kind=wire.parse_new_wire(item.raw,policy,budget).value['payload']['kind']
-        if kind in ('ack.copy_reservation_consent','ack.copy_disclosure'):
+        if kind in ('ack.copy_reservation_consent','ack.copy_recipient_reservation_consent','ack.copy_disclosure'):
             scopes.append(dict(scope_kind='authority',scope_id=index._authority(root,item,policy,budget)))
         elif kind=='maintenance.assignment':
             scopes.append(dict(scope_kind='assignment',scope_id=status.status_scope(root,'assignment',
@@ -342,15 +373,17 @@ def _check_unbound_owner_return(replica,consent_entries,*,expected_owner,expecte
     source=replica['source'];plan=replica['authority'];custody=replica['custody']
     root=plan.assignment.payload['root_key'];bootstrap=source.bootstrap.originals['bootstrap']
     parties=dict(owner=expected_owner,source=expected_source,maintainer=expected_maintainer,target=expected_target)
+    variants=('owner','source','maintainer')
+    if copy_source.occupied_source(source):parties['recipient']=source.receipt_writer;variants+=('recipient',)
     parties=wire.build_new_wire(parties,policy,budget).value
     owner_id=resource._dual_key(parties['owner'],budget)
     signers={p['signing_key']['key_id']:p['signing_key'] for p in parties.values()}
-    if len(signers)!=4:wire._fail('repair_replica_read_distinct_parties_required')
-    wire.object_fields(consent_entries,{'owner','source','maintainer'})
+    if len(signers)!=len(variants)+1:wire._fail('repair_replica_read_distinct_parties_required')
+    wire.object_fields(consent_entries,set(variants))
     obligations=[];allowed={key:[] for key in signers};consents=[];denial=None
     expires=min(custody.payload['read_until'],custody.payload['retain_until'],bootstrap.payload['expires_at'],
         bootstrap.payload['probe_until'] if action=='challenge' else bootstrap.payload['proof_until'])
-    for variant in ('owner','source','maintainer'):
+    for variant in variants:
         signer=parties[variant]['signing_key']
         item=index._signed(consent_entries[variant],signer,'ack.replica_return_consent',RETURN_FIELDS,policy,budget)
         p=item.payload;resource._opaque(p['consent_id']);wire.u53(p['revision'],1)

@@ -17,6 +17,7 @@ from types import MappingProxyType
 import memory_vault_open_blob as blob
 import memory_vault_open_repair_ack as ack
 import memory_vault_open_repair_empty as empty
+import memory_vault_open_repair_occupied as occupied
 import memory_vault_open_repair_history as history
 import memory_vault_open_repair_original as original
 import memory_vault_open_repair_probe as probe
@@ -50,7 +51,15 @@ COPY_STAGE_ROLES = COPY_SINGLE_ROLES | {"copy.current_status", "history.raw_pack
 EMPTY_COPY_ROLES = COPY_STAGE_ROLES | empty.ROLES | {'history.ack_empty','ack.empty_custody'}
 EMPTY_COPY_ROLES = EMPTY_COPY_ROLES - {'ack.slot_custody'}
 EMPTY_COPY_REPEATED = frozenset(role for role in ack.ROLES & empty.ROLES if role.startswith('historical.status.'))
-CONSUMERS = frozenset(("index_admit", "ack_copy_unbound", "ack_copy_empty"))
+# Occupied source originals already live in three exact historical packs.
+# Upload the closed source closure once, plus its independent copy permissions.
+# Destination commit reconstructs and authenticates every original from it.
+OCCUPIED_COPY_ROLES=frozenset(('history.ack_unbound','history.ack_empty',
+    'history.ack_occupied_inputs','history.raw_pack','ack.commit','copy.allocation',
+    'copy.offer','copy.assignment','copy.reservation_consent','copy.owner_disclosure',
+    'copy.source_disclosure','copy.recipient_reservation_consent','copy.recipient_disclosure',
+    'copy.current_status'))
+CONSUMERS = frozenset(("index_admit", "ack_copy_unbound", "ack_copy_empty", "ack_copy_occupied"))
 
 
 def _fail(code="repair_invalid_stage"):
@@ -137,12 +146,13 @@ def _manifest(value, policy, budget, expected_consumer=None):
     history._root(value["root_key"])
     # Consumer binding is checked again on every signed intent verification;
     # directory admission must never accept the replica upload profile.
-    copying=value["consumer"] in ("ack_copy_unbound","ack_copy_empty")
+    copying=value["consumer"] in ("ack_copy_unbound","ack_copy_empty","ack_copy_occupied")
     copying_empty=value["consumer"]=="ack_copy_empty"
+    copying_occupied=value["consumer"]=="ack_copy_occupied"
     if copying:
         from memory_vault_open_repair_copy_resources import ack_copy_scope
         ack_copy_scope(value["scope"],value["root_key"])
-        if value["scope"]["kind"]!=('ack_empty' if copying_empty else 'ack_unbound'):_fail()
+        if value["scope"]["kind"]!=value['consumer'].replace('ack_copy_','ack_'):_fail()
     else:
         _scope(value["scope"], value["root_key"])
     children = value["children"]
@@ -154,7 +164,7 @@ def _manifest(value, policy, budget, expected_consumer=None):
         if wire.u53(child["index"]) != index:
             _fail()
         role = child["role"]
-        allowed_roles=EMPTY_COPY_ROLES if copying_empty else COPY_STAGE_ROLES if copying else STAGE_ROLES
+        allowed_roles=OCCUPIED_COPY_ROLES if copying_occupied else EMPTY_COPY_ROLES if copying_empty else COPY_STAGE_ROLES if copying else STAGE_ROLES
         if type(role) is not str or role not in allowed_roles:_fail()
         counts[role] = counts.get(role, 0) + 1
         ref = wire.raw_ref(child["ref"])
@@ -162,10 +172,7 @@ def _manifest(value, policy, budget, expected_consumer=None):
         if previous is not None and pair <= previous:
             _fail()
         previous = pair
-        # The original object receipt remains inside its exact historical pack;
-        # this metadata stage accepts no direct object/E upload.
-        if ref.namespace != "meta":
-            _fail()
+        if ref.namespace != "meta":_fail()
         if ref.size > policy.max_document_bytes:
             _fail("repair_stage_capacity")
         location = (ref.namespace, ref.key)
@@ -177,7 +184,12 @@ def _manifest(value, policy, budget, expected_consumer=None):
         total += ref.size
         if total > min(MAX_STAGE_BYTES, policy.max_retained_bytes, wire.U53_MAX):
             _fail("repair_stage_capacity")
-    if copying_empty:
+    if copying_occupied:
+        single=OCCUPIED_COPY_ROLES-{'copy.current_status','history.raw_pack'}
+        if (any(counts.get(role)!=1 for role in single)
+                or not 3<=counts.get('history.raw_pack',0)<=len(ack.ROLES|empty.ROLES|occupied.ROLES)
+                or not 1<=counts.get('copy.current_status',0)<=16):_fail()
+    elif copying_empty:
         single=EMPTY_COPY_ROLES-EMPTY_COPY_REPEATED-{'copy.current_status','history.raw_pack'}
         if (any(counts.get(role)!=1 for role in single)
                 or any(not 1<=counts.get(role,0)<=2 for role in EMPTY_COPY_REPEATED)
