@@ -2812,3 +2812,13 @@ allocation and offer. The maintainer then calls `assign_unbound` with current
 authority; owner/source upload disclosures are still separate original inputs to
 `upload`. The private reservation and upload journals have separate phase keys
 and finite work/metadata budgets; neither phase can overwrite the other.
+
+Development after immutable alpha.0.16 adds the explicit `recover-replica` owner
+command. It verifies independent A/R/M/P bindings and the complete returned
+unbound replica event before writing a private new evidence file. Authenticated
+status observations, including supplied facts rejected before networking and
+facts observed before a later failure, persist in the existing protected
+transport database with their full original references. The bounded root journal
+is shared across retries/output filenames and supplies relevant previously
+authenticated issuers to each fresh verification. It never opens the content
+Vault, replaces output, claims recipient saving or changes a source's authority.

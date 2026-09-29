@@ -307,7 +307,7 @@ class AckOwnerRecoveryClient:
             scopes=[dict(scope_kind=e["scope_kind"],scope_id=e["scope_id"]) for e in self._status_entries(payload)]
             checked.append(status.authenticate_status_original(dict(raw=parsed.raw,ref=ref.as_dict()),
                 expected_root=root,expected_signing_key=signers[issuer],at=issued,allowed_scopes=scopes,
-                policy=self.policy,budget=budget))
+                policy=self.policy,budget=budget,on_authenticated=self.status_observer))
         return tuple(checked)
 
     def _replica_result(self,held,roles,originals,entry,setup,known,expected,node,context,

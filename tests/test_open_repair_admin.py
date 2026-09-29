@@ -60,8 +60,10 @@ class _AdminFixture:
         _write_new_private(self.request_path, canonical_bytes(self.request))
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            code = main([command, "--network-config", str(self.network), "--request", str(self.request_path),
-                         "--output", str(self.output), "--timeout", "30"])
+            args=[command, "--network-config", str(self.network), "--request", str(self.request_path),
+                  "--output", str(self.output), "--timeout", "30"]
+            if getattr(self,'repair_profile',None):args.extend(['--repair-profile',self.repair_profile])
+            code = main(args)
         return code, stdout.getvalue(), stderr.getvalue()
 
 
@@ -185,7 +187,82 @@ class RepairEmptyAdminTests(_AdminFixture, unittest.TestCase):
         self.assertFalse(self.vault.exists())
 
 
+class RepairReplicaAdminTests(_AdminFixture,unittest.TestCase):
+    repair_profile='receipt-index'
+
+    def setUp(self):
+        from types import SimpleNamespace
+        from tests.test_open_repair_copy_service import ReplicaReadHTTPTests
+        from memory_vault_open_repair_admin import REPLICA_REQUEST_SCHEMA
+        self.replica=ReplicaReadHTTPTests();self.addCleanup(self.replica.doCleanups);self.replica.setUp()
+        self.host=SimpleNamespace(source=SimpleNamespace(temp=self.replica.h.destination.temp,fixture=self.replica.h.f))
+        self.configure_owner()
+        raw=canonical_bytes(self.replica.descriptor);digest=hashlib.sha256(raw).hexdigest()
+        self.request.update(schema_version=REPLICA_REQUEST_SCHEMA,target=self.replica.expected['expected_target'],
+            source=self.replica.context['expected_source'],source_storage_epoch=self.replica.context['source_storage_epoch'],
+            maintainer=self.replica.context['expected_maintainer'],
+            node=dict(raw_base64url=b64url(raw),ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw))))
+
+    def test_command_exports_full_replica_and_reuses_retained_statuses_after_restart(self):
+        code,output,error=self.call('recover-replica');self.assertEqual((code,error),(0,''))
+        result=json.loads(output);evidence=json.loads(self.output.read_bytes())
+        self.assertEqual(result['state'],'ack_replica_unbound_source_recovered')
+        self.assertFalse(result['recipient_saved']);self.assertFalse(result['vault_modified']);self.assertFalse(self.vault.exists())
+        custody=evidence['replica_custody'];self.assertNotEqual(custody['ref']['key'],custody['ref']['raw_sha256'])
+        self.assertEqual(stat.S_IMODE(self.output.stat().st_mode),0o600)
+        self.replica.restart()
+        self.output=self.directory/'second-evidence.json';self.request_path=self.directory/'second-request.json'
+        code,output,error=self.call('recover-replica');self.assertEqual((code,error),(0,''))
+        second=json.loads(self.output.read_bytes());self.assertEqual(second['replica_custody'],custody)
+        self.assertGreater(json.loads(output)['requests'],2)
+        self.assertEqual({path:path.read_bytes() for path in self.originals},self.originals)
+        import sqlite3
+        with sqlite3.connect(self.directory/'transport'/'network.sqlite3') as db:
+            refs={bytes(row[0]) for row in db.execute('SELECT ref FROM open_ack_replica_statuses')}
+        self.assertEqual(refs,{canonical_bytes(e['ref']) for e in second['archive_statuses']})
+        self.assertNotIn(b'"private_key"',self.output.read_bytes())
+
+    def test_failed_command_remembers_supplied_revocation_before_next_command(self):
+        from tests.open_repair_ack_fixtures import signed_entry
+        from unittest.mock import patch
+        p=json.loads(self.replica.statuses[0]['raw'])['payload'];p['revision']+=1
+        for item in p['entries']:item['status']='revoked'
+        revoked=signed_entry(p,self.replica.h.f['signers']['owner'],'synthetic_admin_revocation')
+        self.request['known_statuses']=[dict(raw_base64url=b64url(revoked['raw']),ref=revoked['ref'])]
+        with patch('memory_vault_open_transport.OpenHTTPTransport.request_repair',side_effect=AssertionError('must not send')):
+            code,output,error=self.call('recover-replica')
+        self.assertEqual((code,output),(1,''));self.assertEqual(json.loads(error)['error'],'repair_authority_revoked')
+        self.assertFalse(self.output.exists())
+        self.request['known_statuses']=[];self.request_path=self.directory/'retry-request.json'
+        with patch('memory_vault_open_transport.OpenHTTPTransport.request_repair',side_effect=AssertionError('forgot revocation')):
+            code,output,error=self.call('recover-replica')
+        self.assertEqual((code,output),(1,''));self.assertEqual(json.loads(error)['error'],'repair_authority_revoked')
+        self.assertFalse(self.output.exists());self.assertFalse(self.vault.exists())
+
+    def test_existing_replica_output_is_preserved_before_client_initialization(self):
+        _write_new_private(self.output,b'synthetic original output\n')
+        code,output,error=self.call('recover-replica')
+        self.assertEqual((code,output),(1,''));self.assertEqual(json.loads(error)['error'],'repair_output_exists')
+        self.assertEqual(self.output.read_bytes(),b'synthetic original output\n')
+        self.assertFalse((self.directory/'transport').exists())
+
+
 class RepairSetupTests(unittest.TestCase):
+    def test_remote_copy_is_explicit_requires_repair_and_keeps_new_node_offline(self):
+        from memory_vault import MemoryError
+        from memory_vault_open_repair_copy_resources import REMOTE_COPY_POLICY
+        with tempfile.TemporaryDirectory(prefix='synthetic-remote-copy-node-') as temporary:
+            root=Path(temporary).resolve();directory=root/'copy-node'
+            with self.assertRaisesRegex(MemoryError,'open_invalid_repair_policy'):
+                initialize_node(directory,base_url='https://synthetic-copy.example',enable_remote_copy=True)
+            self.assertFalse(directory.exists())
+            result=initialize_node(directory,base_url='https://synthetic-copy.example',enable_repair=True,
+                enable_remote_copy=True,repair_profile='receipt-index')
+            config=json.loads(Path(result['config_path']).read_bytes())
+            self.assertEqual(config['repair_policy']['remote_copy'],dict(REMOTE_COPY_POLICY,enabled=True))
+            self.assertTrue(config['provider_policy']['enabled']);self.assertFalse(result['network_started'])
+            self.assertFalse((directory/'state'/'network.sqlite3').exists())
+
     def test_new_node_can_explicitly_enable_finite_repair_and_lists_proxy_path(self):
         with tempfile.TemporaryDirectory(prefix="synthetic-repair-setup-") as temporary:
             directory = Path(temporary).resolve() / "node"

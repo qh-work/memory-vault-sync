@@ -113,10 +113,11 @@ integrations can retain them even when recovery fails. The client creates no
 separate local database and never imports these originals into the Vault.
 
 This operator API, HTTP service and Python client are development functionality.
-The standard recovery command and native TypeScript recovery client do not yet
-consume this replica profile. Remote copy upload, first-receipt admission on a
-replacement, occupied replica recovery and automatic replacement selection
-remain unfinished. Published alpha.0.14 archives do not include this feature.
+The post-alpha.0.16 recovery command is described below. Native TypeScript
+replica recovery, first-receipt admission on a replacement, occupied replica
+recovery and automatic replacement selection remain unfinished. Explicit Python
+remote reservation and copy upload are available in the alpha.0.16 candidate;
+published alpha.0.14 archives do not include these features.
 
 ## Owner recovery command
 
@@ -177,6 +178,57 @@ previous evidence files; expiration alone does not permit deleting conflict
 witnesses. This development client does not maintain
 a separate persistent recipient-side status database automatically. Source-side
 floors are durable in the existing protected transport database.
+
+## Unbound replica command (development after alpha.0.16)
+
+A new replacement node can explicitly accept finite remote copy reservations:
+
+```sh
+python -B memory_vault_open_setup.py --directory /absolute/private/new-replacement \
+  --base-url "$MV_NODE_ORIGIN" --enable-repair --repair-profile receipt-index \
+  --enable-remote-copy
+```
+
+Setup writes a new private configuration; start the node separately as above.
+`--enable-remote-copy` requires `--enable-repair` and is off by default. Its
+per-caller limits persist across restarts; capacity reservation still requires
+separate signed COPY/disclosure and READ/return permissions.
+
+`recover-replica` uses the existing owner's network configuration to recover an
+explicitly authorized replacement copy. This command is later than the immutable
+alpha.0.16 candidate. Its private request uses
+`memory-vault-open-ack-replica-unbound-recovery-request/v1` and the unbound fields
+above, with `target`/`node` naming replacement P. Add `source` (original R's
+independently held signing/encryption descriptors), `source_storage_epoch`, and
+`maintainer` (M's independently held descriptors). Root/read/bootstrap remain
+A's original grants. The response cannot supply these trusted expectations.
+A/R/M/P must be distinct as required by the replica READ profile.
+
+```sh
+python -B memory_vault_open_repair_admin.py recover-replica \
+  --network-config /absolute/private/open-agent/open-config.json \
+  --request /absolute/private/replica-recovery-request.json \
+  --output /absolute/private/new-replica-evidence.json \
+  --repair-profile receipt-index
+```
+
+The explicit profile is a client acceptance ceiling; it does not enlarge the
+source's signed grants. The command performs the real possession exchange,
+fetches originals, checks the complete original and replacement custody chains,
+and verifies current return authority. Its private new-only output includes
+`replica_custody`, both source/replacement bindings, full original references and
+status archives. `ack_replica_unbound_source_recovered` has
+`recipient_saved:false`: an unbound replacement is not a received message.
+Existing files are never overwritten, and the content Vault is not opened.
+
+For this command, authenticated status observations also persist in the existing
+protected transport database, including observations from rejected recoveries.
+The journal is keyed by the owner's root, not the output filename or replacement
+URL. Subsequent commands reuse relevant A/R/M/P observations and verify them
+again. It preserves opaque full status references and caps history at 16 roots,
+32 originals and 256 KiB per root. Capacity exhaustion refuses further recovery;
+it does not discard remembered revocations. Continue retaining exported evidence
+and supply any additional independently held status originals in the request.
 
 ## Message-bound empty recovery
 
