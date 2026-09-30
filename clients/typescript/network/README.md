@@ -277,3 +277,23 @@ in `open-repair-admin.ts`: `recover-ack`, `recover-empty`, and
 verified status observations across restarts, including failed recovery.
 See [request formats and commands](../../../docs/OPEN_ACK_RECOVERY.md#native-recovery-commands-development-after-alpha019).
 This command entry is development after the frozen alpha.0.19 archives.
+
+### Retained mailbox inbox recovery (development)
+
+A native `Agent.handle({op: "receive", limit: 1})` can resume an ordinary mailbox transfer
+already durably staged by the Python client in the same protected inbox. It
+rechecks the original owner/contact approvals, activated storage resources,
+complete feed prefix, recipient-encrypted directory and admission core, and
+READ observations recorded at receipt time. A retained revocation or missing
+sender permission blocks the object read. The original memory share then
+uses the existing Vault import and its idempotent transfer receipt. The saved
+receipt remains available to an explicit `connect/return_receipt` request;
+mailbox access does not grant an independent receipt return.
+
+`readMailboxIndex` and `readMailboxAdmission` accept a caller-authorized exact
+reference reader. They support asynchronous reads without delegating to Python.
+`verifyMailboxInboxEvidence` reopens the retained ordinary-mailbox format without
+network access. This is historical local recovery, not a claim about current
+source availability. Native discovery/download of a new remote mailbox and the
+replica inbox format remain separate unfinished work; use the Python client for
+those paths. These additions are development source, not yet a public release.

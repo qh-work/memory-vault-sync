@@ -41,7 +41,12 @@
     "./open-repair-wire": "./open-repair-wire.ts",
     "./open-repair-bound": "./open-repair-bound.ts",
     "./open-repair-empty": "./open-repair-empty.ts",
-    "./open-repair-occupied": "./open-repair-occupied.ts"
+    "./open-repair-occupied": "./open-repair-occupied.ts",
+    "./open-repair-mailbox-authority": "./open-repair-mailbox-authority.ts",
+    "./open-repair-mailbox-member": "./open-repair-mailbox-member.ts",
+    "./open-repair-mailbox-feed": "./open-repair-mailbox-feed.ts",
+    "./open-repair-mailbox-read": "./open-repair-mailbox-read.ts",
+    "./open-repair-mailbox-inbox": "./open-repair-mailbox-inbox.ts"
   },
   "types": "./crypto.ts",
   "engines": {
