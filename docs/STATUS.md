@@ -1,5 +1,11 @@
 # Memory Vault development status
 
+Published **[alpha.0.28](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.28)** is fixed at `3663b284d9b22363a8ee228713b55e1eb3554895`.
+
+Owner and sender can independently sign mailbox replica reservation consent with their own existing identities. The maintainer assembles those signed outputs into the existing capacity reservation commands. Original grants, exact copy intent, selected destination and expiry remain checked; signing grants no upload or receipt-return permission. See the [consent commands](OPEN_ACK_RECOVERY.md#prepare-independent-mailbox-reservation-consent-source-after-alpha027).
+
+Thirteen checks passed using the extracted alpha.0.28 client, including independent consent commands, real replica reservation, restart recovery and shared-memory reception. The exact-source cloud regression passed 1176 tests across 125 modules in two exhaustive partitions, with all 284 reported source hashes matching `3663b284d9b22363a8ee228713b55e1eb3554895`. Supported Python 3.10 and cross-platform conformance passed, and all eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
 Published **[alpha.0.27](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.27)** is fixed at `48334ec3921084394d7cd6eacb1d9283dd448d58`.
 
 Maintainers can use `copy-reserve-root`, `copy-reserve-feed` and `copy-reserve-message` through their existing client configuration to reserve real replica capacity and retain the matching assignment. Owner and sender consent precedes the request; destination opt-in and separate upload/return permissions remain required.
