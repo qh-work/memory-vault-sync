@@ -1348,6 +1348,47 @@ class MailboxDestinationStore:
     def __init__(self, db, identity, encryption_identity, *, policy=DEFAULT_POLICY):
         self.db,self.identity,self.encryption_identity,self.policy=db,identity,encryption_identity,policy
 
+    def _retained_authority(self, builder, slots, contact, at, budget):
+        """Authenticate durable receive observations before issuing more authority."""
+        from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_bootstrap
+        p=builder.plan;root=p['root_key'];owner=builder.owner;target=p['target']
+        request=original.parse_original_control(contact['request'],self.policy,budget).value['payload']
+        sender=dict(signing_key=request['signing_key'],encryption_key=request['encryption_key'])
+        plan=wire.build_new_wire(dict(kind='mailbox.feed_recovery',slot_key=p['slot_key'],owner=owner,sender=sender,target=target,
+            entries={name:value['ref'] for name,value in slots.items()}),self.policy,budget).raw
+        key=budget._hash(plan)
+        exists=self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='open_mailbox_setup_jobs'").fetchone()
+        if exists is None or self.db.execute('SELECT 1 FROM open_mailbox_setup_jobs WHERE job_key=?',(key,)).fetchone() is None:return -1
+        setup=verify_mailbox_feed_bootstrap(slots,expected_slot=p['slot_key'],expected_owner=owner,
+            expected_target=target,target_storage_epoch=p['slot_key']['writer_storage_epoch'],
+            limit_policy=p['limits'],at=at,policy=self.policy,budget=budget)
+        required={}
+        for name,bits in (('slot',65),('read',2),('maintenance',65),('bootstrap',10)):
+            entry=setup[name];kind='mailbox_slot' if name=='slot' else 'authority'
+            subject=p['slot_key'] if name=='slot' else dict(authority_kind=entry.payload['kind'],authority_sha256=entry.ref.raw_sha256)
+            required[(owner['signing_key']['key_id'],kind,status.status_scope(root,kind,subject,self.policy,budget))]=(entry.payload['revision'],bits)
+        for name in ('data','metadata'):
+            resource=setup['slot'].payload[name+'_resource_ref']
+            required[(target['signing_key']['key_id'],'resource',status.status_scope(root,'resource',resource,self.policy,budget))]=(None,65)
+        revisions={};owner_revision=-1
+        for entry in MailboxSetupJournal(self.db).statuses(key):
+            preview=original.parse_original_control(entry['raw'],self.policy,budget).value['payload']
+            signer=next((v['signing_key'] for v in (owner,target,sender) if v['signing_key']==preview['signing_key']),None)
+            if signer is None or wire.u53(preview['issued_at'])>at:_fail('repair_status_disclosure')
+            observed=status.authenticate_status_original(entry,expected_root=root,expected_signing_key=signer,at=preview['issued_at'],
+                allowed_scopes=[dict(scope_kind=v['scope_kind'],scope_id=v['scope_id']) for v in preview['entries']],policy=self.policy,budget=budget)
+            value=observed.payload;identity=(signer['key_id'],value['revision'])
+            if identity in revisions and revisions[identity]!=observed.canonical_sha256:_fail('repair_status_conflict')
+            revisions[identity]=observed.canonical_sha256
+            if signer==owner['signing_key']:owner_revision=max(owner_revision,value['revision'])
+            for row in value['entries']:
+                needed=required.get((signer['key_id'],row['scope_kind'],row['scope_id']))
+                if needed is None:continue
+                revision,bits=needed
+                if row['status']=='revoked' and row['operation_mask']&bits:_fail('repair_authority_revoked')
+                if revision is not None and row['minimum_document_revision']>revision:_fail('repair_status_revision')
+        return owner_revision
+
     def prepare(self, plan, slot_entries, contact_originals, *, at, expires_at, status_revision, status_until):
         from memory_vault_open_repair_bind import encode_entry,decode_entry
         import memory_vault_open_repair_resource as resource
@@ -1365,6 +1406,7 @@ class MailboxDestinationStore:
         if self.db.in_transaction:_fail('repair_destination_transaction_active')
         self.db.execute('BEGIN IMMEDIATE')
         try:
+            observed_revision=self._retained_authority(builder,slots,contact_originals,at,budget)
             self.db.execute('CREATE TABLE IF NOT EXISTS open_mailbox_destinations(root_digest TEXT NOT NULL,revision INTEGER NOT NULL,binding TEXT NOT NULL,bundle BLOB NOT NULL,bundle_sha256 TEXT NOT NULL,PRIMARY KEY(root_digest,revision))')
             row=self.db.execute('SELECT binding,bundle,bundle_sha256 FROM open_mailbox_destinations WHERE root_digest=? AND revision=?',(root,status_revision)).fetchone()
             if row is not None:
@@ -1378,7 +1420,7 @@ class MailboxDestinationStore:
                     original._verify_control_signature(signed['payload'],signed['proof'],builder.owner['signing_key'],budget)
             else:
                 latest=self.db.execute('SELECT max(revision) FROM open_mailbox_destinations WHERE root_digest=?',(root,)).fetchone()[0]
-                if latest is not None and status_revision<=latest:_fail('repair_destination_revision_rollback')
+                if status_revision<=observed_revision or (latest is not None and status_revision<=latest):_fail('repair_destination_revision_rollback')
                 if self.db.execute('SELECT count(*) FROM open_mailbox_destinations').fetchone()[0]>=128:_fail('repair_destination_capacity')
                 result=builder.destination_bundle(slots,contact_originals,at=at,expires_at=expires_at,
                     status_revision=status_revision,status_until=status_until)

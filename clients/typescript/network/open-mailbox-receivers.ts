@@ -12,6 +12,8 @@ import {verifyMailboxFeedBootstrap} from './open-repair-mailbox-authority.ts';
 import {verifySourceNodeOriginal} from './open-repair-original.ts';
 import {endpoint} from './open-transport.ts';
 import {transaction} from './io.ts';
+import {prepareMailboxDestination,mailboxPage} from './open-mailbox-destination.ts';
+import {OpenContactClient} from './open-contact-client.ts';
 import {MailboxReceiptJobs} from './open-mailbox-receipts.ts';
 type Obj=Record<string,any>;
 export const MAILBOX_CONNECT_SCHEMA='memory-vault-open-mailbox-connect/v1';
@@ -40,6 +42,20 @@ export class RegisteredMailboxReceivers{
     const value=document(invitation as any,65536) as Obj;if(value.schema_version!==MAILBOX_CONNECT_SCHEMA)fail('open_invalid_mailbox_receiver');
     if(value.action==='list'){objectFields(value,['schema_version','action']);const rows=this.#participant.providerStorage(db=>db.prepare('SELECT receiver_id FROM open_mailbox_receivers ORDER BY receiver_id LIMIT 17').all()) as Obj[];if(rows.length>16)fail('open_mailbox_receiver_capacity');return {state:'configured',mailboxes:rows.map(v=>v.receiver_id),network_accessed:false};}
     if(value.action==='remove'){objectFields(value,['schema_version','action','receiver_id']);opaqueId(value.receiver_id);this.#participant.providerStorage(db=>db.prepare('DELETE FROM open_mailbox_receivers WHERE receiver_id=?').run(value.receiver_id));return {state:'removed',receiver_id:value.receiver_id,network_accessed:false};}
+    if(value.action==='inspect'||value.action==='authorize'){
+      objectFields(value,['schema_version','action','receiver_id',...(value.action==='authorize'?['contact_request_ref','expires_at','status_revision','status_until']:[]),...(Object.hasOwn(value,'cursor')?['cursor']:[])]);
+      opaqueId(value.receiver_id);const row=this.#participant.providerStorage(db=>db.prepare('SELECT body FROM open_mailbox_receivers WHERE receiver_id=?').get(value.receiver_id)) as Obj|undefined;
+      if(!row)fail('open_mailbox_receiver_missing');const config=document(row.body,65536) as Obj;
+      if(value.receiver_id!=='mailbox_'+sha256(canonicalBytes(config.expected_slot)))fail('open_invalid_mailbox_receiver');const options=this.#validate(config);
+      if(value.action==='inspect')return mailboxPage(config,value.receiver_id,value.cursor,'configuration');
+      const contact=new OpenContactClient(this.#participant,this.#encryption).approvedIncomingOriginals(value.contact_request_ref);
+      const bundle=prepareMailboxDestination(this.#participant,this.#encryption,config,options.slotEntries,contact,
+        {expires_at:value.expires_at,status_revision:value.status_revision,status_until:value.status_until});
+      const encoded=(e:Obj)=>({raw:Buffer.from(e.raw).toString('utf8'),ref:e.ref});
+      return mailboxPage({destination_entry:encoded(bundle.destination),owner_status_entry:encoded(bundle.owner_status),
+        slot_entries:Object.fromEntries(['slot','read','maintenance'].map(n=>[n,config.slot_entries[n]])),target:config.expected_target,
+        target_node_entry:config.target_node_entry,base_url:config.base_url},value.receiver_id,value.cursor,'authorization');
+    }
     this.#validate(value);const receiver='mailbox_'+sha256(canonicalBytes(value.expected_slot)),raw=canonicalBytes(value);
     this.#participant.providerStorage(db=>transaction(db,()=>{const old=db.prepare('SELECT body FROM open_mailbox_receivers WHERE receiver_id=?').get(receiver) as Obj|undefined;
       if(old){if(!Buffer.from(old.body).equals(Buffer.from(raw)))fail('open_mailbox_receiver_conflict');return;}

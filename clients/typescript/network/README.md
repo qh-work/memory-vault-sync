@@ -332,3 +332,44 @@ history. Re-registering a completed selection can reuse authenticated local
 history without another upload. Direct `return_mailbox_receipt` supports the same
 message and source selection. Native replica inbox support remains unfinished.
 These additions are development source after the frozen alpha.0.36 candidate.
+
+### Receiver-issued mailbox authorization (development after alpha.0.37)
+
+After registering an already provisioned mailbox and explicitly approving the
+sender's contact request, a native recipient can export the existing mailbox
+admission invitation with ordinary `connect`:
+
+```ts
+await agent.handle({op: 'connect', invitation: {
+  schema_version: 'memory-vault-open-mailbox-connect/v1', action: 'authorize',
+  receiver_id, contact_request_ref, expires_at, status_revision, status_until
+}});
+```
+
+Choose the expiry windows within the original contact and mailbox permissions.
+The owner supplies and coordinates `status_revision`; a new selection must not
+reuse or roll back an issued revision. Authorization binds the exact approved
+contact, sender and recipient keys, mailbox slot, selected source and existing
+storage resources. It does not reserve new storage or create ACK-return grants.
+The native client signs with the recipient's own existing identity and persists
+the exact destination and status originals before returning them.
+
+The response supplies a base64 `authorization_chunk` of at most 3,072 bytes,
+`authorization_sha256`, `total_bytes`, `offset`, and `next_cursor`. Repeat the
+same invitation with `cursor: next_cursor` until it is null, join decoded chunks
+in order, and verify the complete byte count and SHA-256 before parsing the
+sender's `retain` authorization. A cursor cannot be reused for different bytes.
+`inspect` with `receiver_id` similarly pages `configuration_chunk` with
+`configuration_sha256`; both operations reauthenticate the retained receiver
+and perform no HTTP requests.
+
+Python and native clients share the bounded destination journal. Restarting or
+switching clients returns the same signed originals; a conflicting request or
+reused older revision fails. Both clients reauthenticate retained receive-status
+observations inside the signing transaction. Revoked slot, parent permission or
+storage-resource authority blocks both cached output and fresh issuance even
+after that status expires; higher remembered document floors also remain in force. A completed local authorization does not prove that
+the source is currently available or that a message was delivered. The sender
+must still prepare and admit its exact ciphertext under current source checks;
+these sender and provisioning operations currently use Python. The existing
+native mailbox receive and independent receipt-return paths remain available.
