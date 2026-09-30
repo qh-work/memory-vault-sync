@@ -30,7 +30,7 @@ from tests import test_open_delivery_http as fixtures
 
 
 class FeedCopyFixture:
-    def __init__(self, test, fixture, staging, slot, head, *, message=False):
+    def __init__(self, test, fixture, staging, slot, head, *, message=False, lifetime=50):
         self.message = message
         self.recipient_agent=fixture.b
         self.call_agent=fixture.call
@@ -39,7 +39,7 @@ class FeedCopyFixture:
         else:
             from memory_vault_open_repair_mailbox_feed_copy import RESERVATION_KIND, DISCLOSURE_KIND
         self.test = test; self.staging = staging; self.source = staging.source; self.slot = slot; self.root = slot['root_key']
-        s = self.source; self.now = int(time.time()); self.until = self.now + 50; self.policy = s.policy; self.limits = s.limits
+        s = self.source; self.now = int(time.time()); self.until = self.now + lifetime; self.policy = s.policy; self.limits = s.limits
         rid = staging.db.execute('SELECT resource_id FROM open_repair_mailbox_roots').fetchone()[0]
         self.snapshot = MailboxSnapshotSource(staging).load(rid, slot, head, max_bytes=2_000_000, max_items=256)
         self.part = self.snapshot.parts[1]
@@ -437,6 +437,7 @@ class MailboxFeedCopyTests(unittest.TestCase):
                             else:received=h.call_agent(h.recipient_agent,op='connect',invitation=invitation)
                     except AssertionError as error:raise AssertionError((str(error),errors)) from None
                     if not registered:self.assertEqual(received['body_transport'],'mailbox_message_replica')
+                    self.assertTrue(received.get('messages'),received)
                     self.assertEqual(received['messages'][0]['share']['records_added'],1)
                     self.assertTrue(received['network_accessed'])
                     # Agent operations reopen the protected state, including

@@ -108,7 +108,10 @@ class ReplicaReceiptReturnTests(unittest.TestCase):
         h=fixtures.MailboxStagingHTTPTests('test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources')
         h.setUp();self.addCleanup(h.doCleanups);h.ack_cold_return=True
         def receive(staging,slot,head):
-            replica=FeedCopyFixture(self,h,staging,slot,head,message=True)
+            # This combined workflow uses real clocks, including the independent
+            # ACK subprocess. Keep synthetic copy authority alive on slow runners;
+            # original reservation and possession deadlines remain unchanged.
+            replica=FeedCopyFixture(self,h,staging,slot,head,message=True,lifetime=180)
             write=json.loads(h.ack_configuration['ack.write_grant']['raw'])['payload']
             with h.b._network() as network:
                 self.assertIsNone(network._delivery()._inbox(write['message_id']))

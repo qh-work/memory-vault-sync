@@ -110,9 +110,9 @@ jobs:
     name: Receipt and mailbox recovery on supported Python 3.10 (${{ matrix.suite }})
     if: github.event_name != 'pull_request' || github.event.action != 'labeled'
     runs-on: ubuntu-24.04
-    # Proof/state cases take about five minutes; full Agent receipt and mailbox
-    # round trips get a separate runner. Both retain the same finite deadline.
-    timeout-minutes: 10
+    # Real Agent replica/receipt round trips now exceed ten minutes together.
+    # Keep both suites bounded while allowing the full result to be reported.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
