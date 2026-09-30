@@ -123,14 +123,14 @@ function floors(previous:readonly AuthenticatedStatusOriginal[],current:readonly
   for(const observed of previous){const p=observed.payload as Obj;for(const item of p.entries){const scope=p.scope_key.issuer_key_id+':'+scopeKey(item),held=prior.get(scope)??[0,0];prior.set(scope,[Math.max(held[0],p.revision),Math.max(held[1],item.minimum_document_revision)]);}}
   for(const observed of current){const p=observed.payload as Obj;for(const item of p.entries){const held=prior.get(p.scope_key.issuer_key_id+':'+scopeKey(item));if(held&&(p.revision<held[0]||item.minimum_document_revision<held[1]))fail('repair_status_rollback');}}
 }
-function windows(prior:AuthenticatedAckEmptySourceEvent,values:AuthenticatedAckOccupiedSourceEvent['inputs'],at:number):{readUntil:number;retainUntil:number}{
+function windows(prior:AuthenticatedAckEmptySourceEvent,values:AuthenticatedAckOccupiedSourceEvent['inputs'],at:number):{readUntil:number;retainUntil:number;admitUntil:number}{
   const old=prior.predecessor.resources.originals,r=old.root.payload as Obj,read=old.read.payload as Obj,a=old.active.payload as Obj,
     w=prior.authorities.originals.write.payload as Obj,g=prior.authorities.originals.bootstrap.payload as Obj,owner=prior.predecessor.bootstrap.originals.bootstrap.payload as Obj,
     d=values.disclosure.payload as Obj,p=values.put.payload as Obj;
   const admit=Math.min(r.windows.admit_until,a.windows.admit_until,w.windows.admit_until,r.expires_at,w.expires_at,g.expires_at,g.upload_until,d.expires_at,d.consent_until,p.expires_at),
     readUntil=Math.min(prior.read_until,d.consent_until,d.expires_at,d.bootstrap_return.until,r.windows.read_until,read.windows.read_until,a.windows.read_until,owner.proof_until),
     retainUntil=Math.min(prior.retain_until,r.windows.retain_until,a.windows.retain_until,w.windows.retain_until,d.consent_until);
-  if(!(prior.stored_at<=at&&at<Math.min(admit,readUntil,retainUntil)))fail('repair_access_expired');return {readUntil:Math.min(readUntil,retainUntil),retainUntil};
+  if(!(prior.stored_at<=at&&at<Math.min(admit,readUntil,retainUntil)))fail('repair_access_expired');return {readUntil:Math.min(readUntil,retainUntil),retainUntil,admitUntil:admit};
 }
 export function verifyAckOccupiedSourceEvent(manifestEntry:unknown,resolver:LocalRawResolver,commitEntry:unknown,options:AckEmptySourceEventOptions):AuthenticatedAckOccupiedSourceEvent{
   const args=fields(options,OPTIONS),policy=args.policy as RepairPolicy,budget=args.budget as RepairBudget;
@@ -161,3 +161,8 @@ export function verifyAckOccupiedHead(value:unknown,checked:AuthenticatedAckOccu
     !same(rawRef(p.original_ack_commit_ref),checked.commit.ref)||!same(rawRef(p.root_authority_ref),checked.predecessor.predecessor.resources.originals.root.ref)||
     ['grant_ref','binding_ref','receipt_ref'].some(name=>!same(p[name],c[name])))mismatch();return head;
 }
+
+// The native writer uses the same receipt, consent, window and historical
+// checks as the independently verified occupied source response.
+export {inputs as verifyAckReceiptInputs, obligations as ackReceiptObligations,
+  windows as ackReceiptWindows, floors as checkAckReceiptHistoryFloors};

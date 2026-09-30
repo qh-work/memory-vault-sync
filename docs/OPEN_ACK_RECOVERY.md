@@ -1052,6 +1052,19 @@ is a positive deadline of at most sixty seconds.
 
 The result contains the authenticated empty source, bounded proof, current
 statuses, original bytes and actual request/work counts. This preflight uploads
-no receipt and grants no upload authority. The complete native saved-receipt
-upload and restart journal remain subsequent integration work; Python's existing
-receipt-return workflow remains the available complete path.
+no receipt and grants no upload authority. `AckReceiptClient` from the same module additionally uploads the existing saved
+receipt under its independent disclosure and put consent, then authenticates the
+returned occupied storage history. It uses one finite work budget for preflight,
+upload and response verification, with a default limit of 96 signature checks.
+
+Call `put(baseUrl, receiptEntry, disclosureEntry, putEntry, options)` with the
+preflight options plus `currentStatuses`, `readUntil` and `retainUntil`. Optional
+`knownDisclosureStatuses` retain prior recipient consent observations. A
+`journal(kind, raw)` callback may persist the exact `request` journal before any
+private receipt upload and the verified `response` afterward. The callback is
+awaited; failure to store the request stops the upload. Journal data contains
+private original records and belongs in the participant's private durable store.
+The journal format is compatible with the existing Python receipt recovery
+client. Native prepared-return reuse, native journal replay and automatic Agent
+integration remain subsequent work; Python remains the complete automated
+receipt-return path.
