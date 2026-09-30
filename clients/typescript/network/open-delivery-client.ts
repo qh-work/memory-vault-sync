@@ -371,6 +371,25 @@ export class OpenDeliveryClient{
       db.prepare('UPDATE open_delivery_inbox SET receipt=? WHERE message_id=?').run(encoded,messageId);return receipt;
     }));
   }
+  /** Read the actually saved inbox receipt for an explicitly requested return.
+   * The caller cannot substitute receipt bytes or a saved-state flag. */
+  savedReceiptForAck(messageId:string,owner:Obj,expectedEnvelope:unknown):{raw:Uint8Array;ref:Obj}{
+    if(!/^msg_[0-9a-f]{64}$/.test(messageId))fail('repair_saved_tuple_mismatch');
+    const row=this.inbox(messageId);if(!row||row.phase!=='saved')fail('repair_receipt_not_saved');
+    const keys=OpenDeliveryClient.keys(document(row.session,MAX_INBOX_SESSION_BYTES) as Obj);
+    if(sha256(row.envelope)!==row.envelope_sha256||row.sender!==owner.signing_key.key_id||!same(envelopeRef(row.envelope),expectedEnvelope)||
+      !same(keys,{sender_signing_key:owner.signing_key,sender_encryption_key:owner.encryption_key,
+        recipient_signing_key:validateSigningIdentity(this.participant.identity),recipient_encryption_key:validateEncryptionIdentity(this.encryption)}))fail('repair_saved_tuple_mismatch');
+    const result=document(row.result,MAX_RESULT_BYTES) as Obj;
+    if(result.state!=='validated_saved'||result.message_id!==messageId||result.sender_key_id!==row.sender||
+      !['message','memory_transfer'].includes(result.content_kind))fail('repair_receipt_not_saved');
+    this.savedReceipt(messageId);const saved=this.inbox(messageId);
+    if(!saved||saved.phase!=='saved'||saved.sender!==row.sender||!raw(saved.envelope).equals(raw(row.envelope))||!raw(saved.body).equals(raw(row.body)))fail('repair_saved_tuple_mismatch');
+    const bytes=Buffer.from(saved.receipt);
+    verifyRecipientReceipt(document(bytes,4096),{recipient_signing_key:validateSigningIdentity(this.participant.identity),
+      sender_key_id:row.sender,message_id:messageId,envelope_ref:expectedEnvelope} as any);
+    const digest=sha256(bytes);return {raw:bytes,ref:{namespace:'meta',key:digest,raw_sha256:digest,size:bytes.length}};
+  }
   private async sendReceipt(messageId:string,budget:DeliveryBudget,node?:SignedNode){
     const row=this.inbox(messageId);if(!row||row.phase!=='saved')fail('open_delivery_not_saved');if(row.receipt_sent)return;
     const receipt=this.savedReceipt(messageId);verifyRecipientReceipt(receipt,{recipient_signing_key:validateSigningIdentity(this.participant.identity),

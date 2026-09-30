@@ -516,6 +516,32 @@ or `ack_recovery_error` when that attempt is refused or unavailable; the ordinar
 send retains its existing storage/recipient receipt distinction.
 
 This adds owner receipt recovery from the selected original ACK source. ACK
-source preparation, receipt return, cold-mailbox reception and ACK replica
-recovery still require their Python workflows. It does not automatically select
+source preparation, cold-mailbox reception and ACK replica recovery still require
+their Python workflows; native receipt return is described below. It does not automatically select
 nodes, grant access, import memory or run a Python subprocess.
+
+
+## Native saved receipt return (development after alpha.0.34)
+
+The native TypeScript Agent now accepts the existing `connect/return_receipt`
+invitation shown above. The recipient uses the same private exported preparation
+and `receipt` or `receipt-index` profile. It reads its protected delivery inbox,
+requires an actually validated and saved message or memory transfer, and checks
+the exact sender, recipient, envelope and source binding before returning the
+original receipt. Receiving alone does not grant this disclosure permission.
+
+The recipient signs the existing bounded return consent and persists it before
+private upload. The exact upload journal is durable before transmission. A
+restart, or switching between Python and native clients, reuses those originals
+and the same upload carrier while its original use remains valid. An expired
+use needs independent reconciliation. A completed retry reauthenticates stored
+history without contacting the network and sets `from_local_history: true` and
+`network_accessed: false`; this is not a fresh source availability claim.
+
+Both clients share the existing SQLite journal, limited to sixteen saved ACK
+records and one MiB per record. Conflicting retry inputs, changed inbox data,
+failed journal persistence and insufficient original permissions stop the return.
+The original delivery node may be offline: the sender can independently recover
+this exact receipt from the authorized ACK source and match its original send.
+This is the explicit original-source return path; automatic native mailbox and
+replica orchestration remains unfinished.

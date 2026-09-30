@@ -1,4 +1,15 @@
-# Memory Vault v0.28.0-alpha.0.34 — independent protocol
+# Memory Vault v0.28.0-alpha.0.35 — independent protocol
+
+Native TypeScript recipients can return an actually saved message or memory
+receipt through the existing `connect/return_receipt` invitation. The protected
+inbox supplies the exact original receipt. Independent return consent, source
+binding and current permissions are checked before upload. The request is
+persisted first; restart or switching from Python replays the same carrier while
+its original use remains valid. Completed retries read authenticated local
+history without claiming current source availability. The sender can separately
+recover that receipt and confirm its original send while the delivery node is
+offline. Preparation and complete native mailbox/replica orchestration remain
+unfinished. See `docs/OPEN_ACK_PROVISIONING.md`.
 
 Original ACK sources can publish the same retained receipt location through
 another explicitly selected independent directory with new owner and recipient
@@ -39,7 +50,7 @@ state. Fresh source identity, origin, epoch and revision floors remain checked.
 Confirmed repeats stay local, and signed refusal history is shared with Python
 across restart. Automatic recovery has twenty seconds within the existing
 sixty-second send deadline. No Python subprocess or new permission is created.
-ACK source preparation, receipt return and replica workflows still use Python.
+ACK source preparation and replica workflows still use Python.
 See `docs/OPEN_ACK_PROVISIONING.md`.
 
 Authorized maintainers can retain exact mailbox copy bundles and resume them
@@ -142,7 +153,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.34;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.35;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility

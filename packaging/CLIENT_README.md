@@ -1,4 +1,15 @@
-# Memory Vault v0.28.0-alpha.0.34 — authorized full client
+# Memory Vault v0.28.0-alpha.0.35 — authorized full client
+
+Native TypeScript recipients can return an actually saved message or memory
+receipt through the existing `connect/return_receipt` invitation. The protected
+inbox supplies the exact original receipt. Independent return consent, source
+binding and current permissions are checked before upload. The request is
+persisted first; restart or switching from Python replays the same carrier while
+its original use remains valid. Completed retries read authenticated local
+history without claiming current source availability. The sender can separately
+recover that receipt and confirm its original send while the delivery node is
+offline. Preparation and complete native mailbox/replica orchestration remain
+unfinished. See `docs/OPEN_ACK_PROVISIONING.md`.
 
 Original ACK sources can publish the same retained receipt location through
 another explicitly selected independent directory with new owner and recipient
@@ -39,7 +50,7 @@ state. Fresh source identity, origin, epoch and revision floors remain checked.
 Confirmed repeats stay local, and signed refusal history is shared with Python
 across restart. Automatic recovery has twenty seconds within the existing
 sixty-second send deadline. No Python subprocess or new permission is created.
-ACK source preparation, receipt return and replica workflows still use Python.
+ACK source preparation and replica workflows still use Python.
 See `docs/OPEN_ACK_PROVISIONING.md`.
 
 Authorized maintainers can retain exact mailbox copy bundles and resume them
@@ -125,7 +136,7 @@ remain unfinished. There is no project-operated public seed or verified
 thousand-agent/global-availability result. Use the source-bound release record
 for actual validation and compare archive bytes with published checksums.
 
-This full-client package targets **v0.28.0-alpha.0.34 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.35 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

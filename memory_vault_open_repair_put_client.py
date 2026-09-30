@@ -94,7 +94,8 @@ class AckReceiptClient(AckOfferClient):
         checked = self._put_statuses(current_statuses,known_disclosure_statuses,duties,source,owner,budget,
             retained_authorities=retained,current_authorities=prepared.current_statuses)
         handle = prepared.proof.handle.payload
-        expiry = min(handle["expires_at"],admit_until,self._now()+max(1,int(timeout-(time.monotonic()-started))))
+        expiry = min(handle["expires_at"],admit_until,*(item.payload["valid_until"] for item in checked),
+                     self._now()+max(1,int(timeout-(time.monotonic()-started))))
         if self._now() >= expiry or time.monotonic()-started >= timeout:
             _fail("repair_access_expired")
         # Reserve enough of this same local meter for the full occupied
@@ -118,6 +119,8 @@ class AckReceiptClient(AckOfferClient):
         if _journal is not None:
             journal = self._journal_record(packet.raw,prepared,retained,known_disclosure_statuses,budget)
             _journal("request",journal)
+        if self._now() >= expiry or time.monotonic()-started >= timeout:
+            _fail("repair_access_expired")
         response = self.transport.request_repair(base_url,packet.raw,deadline=started+timeout)
         result=self._finish(response,prepared,inputs,checked,owner,target,use,read_until,retain_until,
             preflight_options,started,timeout,expiry,upload_bytes,budget)

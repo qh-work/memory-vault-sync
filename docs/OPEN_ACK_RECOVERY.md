@@ -1029,3 +1029,50 @@ same queue. Completed jobs stay local on subsequent runs.
 Use `list` to inspect the queue or `remove --job-id selected-message` to stop
 retaining a job. Removing it preserves the copy preparation journal and remote
 storage. Keep the private request and exported result outside public repositories.
+
+
+## Native writer preflight (development after alpha.0.34)
+
+The native TypeScript `AckOfferClient` in `open-repair-offer-client.ts` can read
+and authenticate a message-bound empty ACK source directly over HTTP. It checks
+the source's two keys, both storage history events, the caller's exact original
+owner root, write grant and offer bootstrap, and current ADMIT/READ/DISCOVER
+permissions. Retained status originals keep revocations and revision floors in
+force. A historical owner READ revocation does not remove the recipient's
+separately granted ADMIT permission.
+
+Construct the client with the receipt writer's signing and encryption identities,
+using the same bounded policy and transport options as `AckOwnerRecoveryClient`.
+Call `preflight(baseUrl, options)` with `targetNodeEntry`, `expectedTarget`,
+`expectedAckSlot`, `expectedOwner`, `expectedMessageId`, `expectedEnvelopeRef`,
+`rootEntry`, `writeEntry`, and `bootstrapEntry`. Raw entries are `{raw: Uint8Array,
+ref: RawRef}` containing independently held signed originals. Optional
+`knownStatuses` and `archiveStatuses` retain original status evidence; `timeout`
+is a positive deadline of at most sixty seconds.
+
+The result contains the authenticated empty source, bounded proof, current
+statuses, original bytes and actual request/work counts. This preflight uploads
+no receipt and grants no upload authority. `AckReceiptClient` from the same module additionally uploads the existing saved
+receipt under its independent disclosure and put consent, then authenticates the
+returned occupied storage history. It uses one finite work budget for preflight,
+upload and response verification, with a default limit of 96 signature checks.
+
+Call `put(baseUrl, receiptEntry, disclosureEntry, putEntry, options)` with the
+preflight options plus `currentStatuses`, `readUntil` and `retainUntil`. Optional
+`knownDisclosureStatuses` retain prior recipient consent observations. A
+`journal(kind, raw)` callback may persist the exact `request` journal before any
+private receipt upload and the verified `response` afterward. The callback is
+awaited; failure to store the request stops the upload. Journal data contains
+private original records and belongs in the participant's private durable store.
+The journal format is compatible with the existing Python receipt recovery
+client. `prepareReturn(baseUrl, options)` saves one preflight for the next
+matching `put` on that client. It retains the original work meter and deadline;
+changed destinations, newer revocations and elapsed permissions stop upload.
+`resume(baseUrl, journalRaw, receiptEntry, disclosureEntry, putEntry, options)`
+reauthenticates the retained originals and replays the exact saved carrier. It
+never creates another probe, consent or use. An expired use reports
+`repair_reconciliation_required`; it does not silently renew authority.
+
+The native Agent now connects this writer to its actual saved inbox through
+`connect/return_receipt`. See [saved receipt return](OPEN_ACK_PROVISIONING.md#native-saved-receipt-return-development-after-alpha034).
+Preparation and complete mailbox/replica orchestration still use Python.
