@@ -1,4 +1,9 @@
-# Memory Vault v0.28.0-alpha.0.27 independent review kit
+# Memory Vault v0.28.0-alpha.0.28 independent review kit
+
+This candidate adds participant-local mailbox reservation consent and maintainer
+assembly commands. Each owner/sender uses only its own existing keys, checks its
+independently retained exact destination selection, and keeps retry/denial state
+in the existing protected transport database. See `docs/OPEN_ACK_RECOVERY.md`.
 
 This version adds `copy-reserve-root`, `copy-reserve-feed` and
 `copy-reserve-message`: existing client identities reserve real replica capacity

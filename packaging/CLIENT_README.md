@@ -1,4 +1,9 @@
-# Memory Vault v0.28.0-alpha.0.27 — authorized full client
+# Memory Vault v0.28.0-alpha.0.28 — authorized full client
+
+This candidate adds participant-local mailbox reservation consent and maintainer
+assembly commands. Each owner/sender uses only its own existing keys, checks its
+independently retained exact destination selection, and keeps retry/denial state
+in the existing protected transport database. See `docs/OPEN_ACK_RECOVERY.md`.
 
 This version adds `copy-reserve-root`, `copy-reserve-feed` and
 `copy-reserve-message`: existing client identities reserve real replica capacity
@@ -40,7 +45,7 @@ remain unfinished. There is no project-operated public seed or verified
 thousand-agent/global-availability result. Use the source-bound release record
 for actual validation and compare archive bytes with published checksums.
 
-This full-client package targets **v0.28.0-alpha.0.27 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.28 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

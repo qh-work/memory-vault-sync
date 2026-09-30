@@ -75,31 +75,31 @@ def _source(journal, manifest, resolver, custody, selection, owner, source, epoc
             held.get('feed_custody', held['custody']).payload['stored_at']))
 
 
-def prepare(journal, manifest_entry, resolver, custody_entry, reservation_entry, intent, *,
-        expected_owner, expected_source, source_storage_epoch, current_statuses, at, limit_policy,
-        selection, sender_reservation_entry=None, offer_entry=None):
-    policy, budget, db = journal.policy, resolver.budget, journal.db
+def reservation_context(manifest_entry, resolver, custody_entry, intent, *, maintainer, purpose,
+        expected_owner, expected_source, source_storage_epoch, selection, at, limit_policy):
+    """Verify source history and one exact bounded intent before asking for consent."""
+    from types import SimpleNamespace
+    policy, budget = resolver.policy, resolver.budget
     wire._context(policy, budget); wire.u53(at)
-    _require(not db.in_transaction and resolver.policy is policy and policy.max_signature_checks <= 64)
+    _require(policy.max_signature_checks <= 64)
     selection = wire.build_new_wire(selection, policy, budget).value
-    binding = db.execute('SELECT value FROM ack_copy_prepare_binding WHERE id=1').fetchone()
-    _require(binding is not None and bytes(binding[0]) == canonical_bytes(journal.keys))
+    source_context = SimpleNamespace(policy=policy, purpose=purpose)
     value = wire.build_new_wire(intent, policy, budget).value
     resource._fields(value, INTENT_FIELDS)
     parties = wire.build_new_wire(dict(owner=expected_owner, source=expected_source,
-        maintainer=journal.keys, target=value['target'], **({'sender': selection['expected_sender']}
+        maintainer=maintainer, target=value['target'], **({'sender': selection['expected_sender']}
             if 'expected_sender' in selection else {})), policy, budget).value
     ids = {name: resource._dual_key(keys, budget) for name, keys in parties.items()}
-    context = _source(journal, manifest_entry, resolver, custody_entry, selection,
+    context = _source(source_context, manifest_entry, resolver, custody_entry, selection,
         parties['owner'], parties['source'], source_storage_epoch, limit_policy, budget)
     root, read, bootstrap, active = (context[k] for k in ('root', 'read', 'bootstrap', 'active'))
     root_key = value['root_key']; history._root(root_key)
-    _require(root_key == (context['scope']['root_key'] if journal.purpose == 'root_replica'
+    _require(root_key == (context['scope']['root_key'] if purpose == 'root_replica'
         else context['scope']['slot_key']['root_key']))
     mailbox_copy_scope(value['scope'], root_key, value['purpose'])
     resource._budget(value['budget']); resource._windows(value['windows'], issued=at)
     for name in ('allocation_id', 'job_id', 'target_storage_epoch'): resource._opaque(value[name])
-    _require(value['kind'] == 'resource.copy_intent' and value['purpose'] == journal.purpose
+    _require(value['kind'] == 'resource.copy_intent' and value['purpose'] == purpose
         and value['caller'] == parties['maintainer'] and value['scope'] == context['scope']
         and value['historical_manifest_ref'] == context['historical_ref']
         and ids['target'] not in (ids['source'], ids['maintainer'])
@@ -108,7 +108,7 @@ def prepare(journal, manifest_entry, resolver, custody_entry, reservation_entry,
         and root.payload['max_concurrent_jobs'] > 0)
     _require(all(value['budget'][name] > 0 for name in resource._BUDGET if name != 'max_live_bytes'))
     _require(value['budget']['max_live_bytes'] >= wire.raw_ref(context['scope']['envelope_ref']).size
-        if journal.purpose == 'message_replica' else value['budget']['max_live_bytes'] == 0)
+        if purpose == 'message_replica' else value['budget']['max_live_bytes'] == 0)
     for control in context['controls']:
         _require(all(value['budget'][k] <= control.payload['budget'][k] for k in resource._BUDGET)
             and all(value['windows'][k] <= control.payload['windows'][k] for k in resource._WINDOWS))
@@ -122,13 +122,37 @@ def prepare(journal, manifest_entry, resolver, custody_entry, reservation_entry,
         index._obligation(parties['source']['signing_key'], 'resource',
             status.status_scope(root_key, 'resource', active.payload['resource'], policy, budget),
             active.payload['reservation_generation'], 4)))
-    historical = journal._source_statuses(context['held'])
+    historical = (context['held']['statuses'] if purpose == 'root_replica' else
+        (*context['held']['graph']['statuses'], *(item for member in context['held']['graph']['members'] for item in member['statuses'])))
     signers = {keys['signing_key']['key_id']: keys['signing_key'] for keys in parties.values()}
     allowed = {key: [] for key in signers}
     for old in historical:
         issuer = old.payload['signing_key']['key_id']
         _require(issuer in signers and old.payload['signing_key'] == signers[issuer])
         allowed[issuer].extend(dict(scope_kind=e['scope_kind'], scope_id=e['scope_id']) for e in old.payload['entries'])
+    allowed = {key: [dict(scope_kind=k, scope_id=v) for k, v in sorted({(e['scope_kind'], e['scope_id']) for e in rows})]
+        for key, rows in allowed.items()}
+    return dict(value=value, parties=parties, ids=ids, context=context, root=root, read=read,
+        bootstrap=bootstrap, active=active, root_key=root_key, maximum=maximum, parent_until=parent_until, digest=digest,
+        needs=needs, historical=historical, signers=signers, allowed=allowed)
+
+
+def prepare(journal, manifest_entry, resolver, custody_entry, reservation_entry, intent, *,
+        expected_owner, expected_source, source_storage_epoch, current_statuses, at, limit_policy,
+        selection, sender_reservation_entry=None, offer_entry=None):
+    policy, budget, db = journal.policy, resolver.budget, journal.db
+    wire._context(policy, budget); wire.u53(at)
+    _require(not db.in_transaction and resolver.policy is policy and policy.max_signature_checks <= 64)
+    selection = wire.build_new_wire(selection, policy, budget).value
+    binding = db.execute('SELECT value FROM ack_copy_prepare_binding WHERE id=1').fetchone()
+    _require(binding is not None and bytes(binding[0]) == canonical_bytes(journal.keys))
+    prepared = reservation_context(manifest_entry, resolver, custody_entry, intent,
+        maintainer=journal.keys, purpose=journal.purpose, expected_owner=expected_owner,
+        expected_source=expected_source, source_storage_epoch=source_storage_epoch,
+        selection=selection, at=at, limit_policy=limit_policy)
+    value, parties, ids, context, root, read, bootstrap, active, root_key, maximum, digest, needs, historical, signers, allowed = (
+        prepared[k] for k in ('value', 'parties', 'ids', 'context', 'root', 'read', 'bootstrap',
+            'active', 'root_key', 'maximum', 'digest', 'needs', 'historical', 'signers', 'allowed'))
     reservations = {}
     _require((sender_reservation_entry is not None) == ('sender' in context['variants']))
     for variant in context['variants']:
@@ -236,7 +260,7 @@ def prepare(journal, manifest_entry, resolver, custody_entry, reservation_entry,
                     (value['job_id'], root_digest, digest, consent_binding, allocation['raw'], canonical_bytes(allocation['ref'])))
             result = dict(allocation=allocation)
             if offer_entry is not None:
-                result['assignment'] = _assign(journal, allocation, offer_entry, value, root, bootstrap, parent_until, at, budget)
+                result['assignment'] = _assign(journal, allocation, offer_entry, value, root, bootstrap, prepared['parent_until'], at, budget)
             result['status_stamp'] = tuple((bytes(r[0]), bytes(r[1])) for r in db.execute(
                 'SELECT raw,ref FROM ack_copy_prepare_status WHERE root_digest=? ORDER BY raw_digest', (root_digest,)))
     if denial: wire._fail(denial)
