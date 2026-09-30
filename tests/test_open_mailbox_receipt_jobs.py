@@ -122,14 +122,20 @@ class ReplicaReceiptReturnTests(unittest.TestCase):
             completed=h.call(h.b,op='connect',invitation=dict(schema_version=ACK_CONNECT_SCHEMA,
                 action='inspect_mailbox_receipt_return',message_id=mid))
             self.assertEqual(completed['state'],'complete',completed)
-            chunks=[];cursor=None
-            while True:
-                query=dict(schema_version=ACK_CONNECT_SCHEMA,action='export_preparation',request_id=h.ack_preparation_request_id,part='owner_invitation')
-                if cursor is not None:query['cursor']=cursor
-                page=h.call(h.a,op='connect',invitation=query);chunks.append(base64.b64decode(page['bundle_chunk']));cursor=page['next_cursor']
-                if cursor is None:break
-            recovered=h.call(h.a,op='connect',invitation=json.loads(b''.join(chunks)))
+            from memory_vault_open_delivery_client import OpenDeliveryClient
+            changed=dict(h.ack_original_send_request,text=h.ack_original_send_request['text']+' changed')
+            with patch.object(OpenHTTPTransport,'request_node',side_effect=AssertionError('changed send read ACK source')):
+                refused=h.a.handle(changed)
+            self.assertFalse(refused['ok']);self.assertEqual(refused['error']['code'],'network_request_id_conflict')
+            with patch.object(OpenDeliveryClient,'call',side_effect=AssertionError('original delivery endpoint used')):
+                recovered=h.call(h.a,**h.ack_original_send_request)
             self.assertEqual(recovered['message_id'],mid)
+            self.assertEqual(recovered['state'],'validated_saved')
+            self.assertEqual(recovered['ack_recovery'],'validated_saved')
+            self.assertTrue(recovered['network_accessed'])
+            with patch.object(OpenHTTPTransport,'request_node',side_effect=AssertionError('saved acknowledgement read source again')):
+                again=h.call(h.a,**h.ack_original_send_request)
+            self.assertEqual(again['state'],'validated_saved');self.assertFalse(again['network_accessed'])
             with h.a._network() as network:
                 with network.participant.state.db() as db:
                     self.assertIsNotNone(db.execute('SELECT acknowledgement FROM open_delivery_outbox WHERE message_id=?',(mid,)).fetchone()[0])

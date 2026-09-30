@@ -422,3 +422,19 @@ frozen receipt-return journal. A changed destination cannot silently replace
 that original journal. Removing a completed selection and registering it again
 may report verified local history instead of transmitting another receipt.
 A still retrieves the original receipt through its independent recovery grant.
+
+When A repeats the same `send` after storage acceptance, an existing successful
+ACK preparation can supply its original owner READ request automatically. A
+checks the exact request, message, ciphertext and recipient before any ACK-source
+network access. It refreshes only the previously selected origin's introduction,
+requiring the same key and storage epoch, then authenticates the original receipt
+through the existing recovery workflow. A changed send under the same request ID
+is refused before this source read.
+
+This recovery has at most twenty seconds and shares the send operation's existing
+sixty-second network deadline. Failure leaves the original delivery result and
+its separate pending state intact, with `ack_recovery_error` describing the failed
+independent read. A confirmed receipt updates the original outbox; subsequent
+identical sends verify that local receipt without contacting either source.
+There is no additional authority when no matching ACK preparation exists, and no
+new source or permission is inferred from a memory or peer message.

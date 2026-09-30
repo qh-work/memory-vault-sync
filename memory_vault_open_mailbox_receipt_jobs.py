@@ -127,3 +127,46 @@ def poll(network, result, *, deadline, attempted):
                     (raw,hashlib.sha256(raw).hexdigest(),message_id,row['body_sha256']))
         result['errors'].append(dict(message_id=message_id,operation='return_mailbox_receipt',
             code=error.code,retryable=getattr(error,'retryable',False)))
+
+
+def recover_prepared(network, delivery, arguments, *, deadline):
+    """A repeated original send can use its separately prepared owner READ grant."""
+    from memory_vault_open_control import verify_node
+    from memory_vault_open_delivery import envelope_ref
+    from memory_vault_open_repair_wire import RepairWireError
+    result=dict(network_accessed=False)
+    if set(arguments)-{'request_id','recipients','text','memory_ids','control'}:return result
+    input_sha,_=delivery._send_input(arguments.get('request_id'),arguments.get('recipients'),
+        arguments.get('text',''),arguments.get('memory_ids'),arguments.get('control'))
+    row=delivery._outbox(arguments['request_id'])
+    if row is None:return result
+    if row['input_sha256'] != input_sha:raise MemoryError('network_request_id_conflict')
+    if row['result'] is None or row['acknowledgement'] is not None:return result
+    network._ack_preparations_initialize()
+    with network.participant.state.db() as db:
+        prepared=db.execute('SELECT result FROM open_ack_agent_preparations WHERE request_id=?',(arguments['request_id'],)).fetchone()
+    if prepared is None or prepared['result'] is None:return result
+    try:
+        invitation=network._ack_preparation_value(arguments['request_id'],'owner_invitation')
+        request=invitation['request']
+        if (request['expected_message_id']!=row['message_id']
+                or request['expected_envelope_ref']!=envelope_ref(bytes(row['envelope']))
+                or request['expected_receipt_writer']['signing_key']['key_id']!=row['recipient']):
+            raise MemoryError('open_ack_preparation_conflict')
+        old=document(request['target_node_entry']['raw'].encode('utf-8'))['payload']
+        if time.monotonic()>=deadline:raise MemoryError('open_delivery_budget_exhausted',retryable=True)
+        result['network_accessed']=True
+        current=network.participant.transport.request_node(invitation['base_url'],deadline=deadline).response
+        node=verify_node(current)
+        if (node['status']!='active' or node['signing_key']!=request['expected_target']['signing_key']
+                or node['storage_epoch']!=old['storage_epoch'] or node['revision']<old['revision']
+                or endpoint(node['base_url'],allow_loopback=network.participant.transport.allow_loopback)
+                    !=endpoint(invitation['base_url'],allow_loopback=network.participant.transport.allow_loopback)):
+            raise MemoryError('open_ack_preparation_conflict')
+        raw=canonical_bytes(current);digest=hashlib.sha256(raw).hexdigest()
+        request['target_node_entry']=dict(raw=raw.decode('utf-8'),ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw)))
+        recovered=network._ack_connect(invitation,_deadline=deadline)
+        result['state']=recovered['state']
+    except (MemoryError,RepairWireError) as error:
+        result['error']=dict(code=error.code,retryable=getattr(error,'retryable',False))
+    return result

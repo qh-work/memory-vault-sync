@@ -91,7 +91,14 @@ class OpenNetworkClient:
         return {**result, "profile": "open-routing-v1", "network_accessed": True}
 
     def send(self, **arguments):
-        return asyncio.run(self._delivery().send(**arguments))
+        from memory_vault_open_mailbox_receipt_jobs import recover_prepared
+        delivery=self._delivery();deadline=time.monotonic()+60
+        recovered=recover_prepared(self,delivery,arguments,deadline=min(deadline,time.monotonic()+20))
+        result=asyncio.run(delivery.send(**arguments,_deadline=deadline))
+        result['network_accessed'] |= recovered['network_accessed']
+        if recovered.get('state') is not None:result['ack_recovery']=recovered['state']
+        if recovered.get('error') is not None:result['ack_recovery_error']=recovered['error']
+        return result
 
     def receive(self, limit=4):
         from memory_vault_open_repair_wire import RepairWireError
@@ -551,11 +558,10 @@ class OpenNetworkClient:
             message_id=result['message_id'],resource_id=result['resource_id'],preparation_delivery_uploaded=False,preparation_recipient_saved=False,
             from_local_history=cached,network_accessed=not cached,source_rechecked=not cached)
 
-    def _ack_export_preparation(self, value):
-        import base64
+    def _ack_preparation_value(self, request_id, part):
+        value=dict(request_id=request_id,part=part)
         from memory_vault_network_crypto import opaque
         from memory_vault_open_repair_admin import MAX_BUNDLE_BYTES
-        object_fields(value,{'schema_version','action','request_id','part'}|({'cursor'} if 'cursor' in value else set()))
         opaque(value['request_id'])
         if value['part'] not in ('owner_request','recipient_request','owner_invitation','recipient_invitation'):raise MemoryError('open_invalid_ack_request')
         self._ack_preparations_initialize()
@@ -586,6 +592,12 @@ class OpenNetworkClient:
                 exported=dict(schema_version=ACK_CONNECT_SCHEMA,action='recover_receipt',
                     base_url=recipient['base_url'],repair_profile=recipient['repair_profile'],request=request)
         else:exported=prepared[value['part']]
+        return exported
+
+    def _ack_export_preparation(self, value):
+        import base64
+        object_fields(value,{'schema_version','action','request_id','part'}|({'cursor'} if 'cursor' in value else set()))
+        exported=self._ack_preparation_value(value['request_id'],value['part'])
         raw=canonical_bytes(exported);digest=hashlib.sha256(raw).hexdigest();offset=0
         cursor=value.get('cursor')
         if cursor is not None:
@@ -702,7 +714,7 @@ class OpenNetworkClient:
         finally:
             reader.close()
 
-    def _ack_connect(self, invitation):
+    def _ack_connect(self, invitation, *, _deadline=None, _network_observer=None):
         """Explicit original-grant operations through the existing Agent facade."""
         from memory_vault_open_repair_wire import RepairWireError
         from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS,INDEX_WORKFLOW_LIMITS
@@ -760,17 +772,22 @@ class OpenNetworkClient:
                     # is authenticated; malformed invitations consume no slot.
                     journal.start(key,plan)
                     journal.observe(key,value)
+                from memory_vault_open_mailbox_receipt_jobs import ObservedTransport
                 reader=AckOwnerRecoveryClient(self.identity,self.encryption,limit_policy=profiles[value['repair_profile']],
-                    transport=self.participant.transport,allow_loopback=self.participant.transport.allow_loopback,
-                    status_observer=observed)
+                    transport=ObservedTransport(self.participant.transport,_network_observer,_deadline),
+                    allow_loopback=self.participant.transport.allow_loopback,status_observer=observed)
                 try:
                     recover=reader.recover_replica_occupied if replica else reader.recover_occupied
                     # Replica recovery authenticates the source histories plus
                     # independent copy/return authority. Give this complete
                     # Agent workflow the same finite 60s window as mailbox
                     # replica reception; signed expiry may still end it sooner.
+                    timeout=60 if replica else 30
+                    if _deadline is not None:
+                        timeout=min(timeout,_deadline-time.monotonic())
+                        if timeout<=0:raise MemoryError('open_delivery_budget_exhausted',retryable=True)
                     recovered=recover(value['base_url'],known_statuses=supplied,archive_statuses=known,
-                        timeout=60 if replica else 30,**request)
+                        timeout=timeout,**request)
                     source=recovered.replica['source'].event if replica else recovered.source
                     result=self._delivery().accept_recovered_receipt(source.inputs['receipt'].raw)
                     extra=dict(replica_custody_ref=recovered.replica['custody'].ref.as_dict()) if replica else {}

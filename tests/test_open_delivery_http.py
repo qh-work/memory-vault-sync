@@ -959,6 +959,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         old_call=self.call
         def call(agent,**request):
             if request['op']=='send' and agent is self.a and not hasattr(self,'ack_configuration'):
+                self.ack_original_send_request=dict(request)
                 from memory_vault_open_client import ACK_CONNECT_SCHEMA
                 prepared=old_call(self.a,op='connect',invitation=dict(schema_version=ACK_CONNECT_SCHEMA,action='prepare',
                     request_id=request['request_id'],recipient=self.bi.key_id,text=request['text'],memory_ids=request.get('memory_ids',[]),
