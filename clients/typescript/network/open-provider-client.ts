@@ -25,7 +25,7 @@ type Obj=Record<string,any>;
 type ProviderBudget=LookupBudget&{provider_unmeasured_failures?:number};
 export interface PublicationOptions{budget?:LookupBudget;lease_seconds?:number;resource_seconds?:number;directory_count?:number;}
 export interface PublishOptions extends PublicationOptions{authorizations?:unknown[];}
-export interface FindOptions{budget?:LookupBudget;maximum_candidates?:number;maximum_directories?:number;}
+export interface FindOptions{budget?:LookupBudget;maximum_candidates?:number;maximum_directories?:number;directory?:SignedNode;}
 const now=()=>Math.floor(Date.now()/1000);
 const same=(a:unknown,b:unknown)=>Buffer.from(canonicalBytes(a)).equals(Buffer.from(canonicalBytes(b)));
 const digest=(value:unknown)=>documentSha256(value as DocumentInput);
@@ -118,7 +118,7 @@ export class OpenProviderClient{
     // Persist equivocation before reporting refusal; rollback must not erase it.
     if(refusal)throw refusal;
   }
-  private factCurrent(fact:unknown):boolean{
+  factCurrent(fact:unknown):boolean{
     const raw=verifyDocument(fact,'provider.fact');
     const row=this.participant.providerStorage(db=>db.prepare('SELECT digest,status FROM open_provider_local_floors WHERE fact_key=?').get(this.factKey(raw))) as Obj|undefined;
     return !!row&&row.digest===digest(fact)&&row.status==='active';
@@ -184,11 +184,21 @@ export class OpenProviderClient{
     }
     throw new ProviderError('provider_directory_unresolved',true);
   }
+  async findAt(directory:SignedNode,reference:unknown,options:Omit<FindOptions,'directory'|'maximum_directories'>={}):Promise<Obj>{
+    return this.find(reference,{...options,directory,maximum_directories:1});
+  }
   async find(reference:unknown,options:FindOptions={}):Promise<Obj>{
     const ref=opaqueRef(doc(reference)),budget=this.budget(options.budget),maximum=options.maximum_candidates??8,directoryCount=options.maximum_directories??3;
     bounded(maximum,16);bounded(directoryCount,3);
     const candidates=new Map<string,Obj>(),errors:Obj[]=[];let partial=false,directories:SignedNode[];
-    try{const route=await this.directories(ref,budget,directoryCount);directories=route.nodes;partial=route.partial;}
+    try{
+      if(options.directory===undefined){const route=await this.directories(ref,budget,directoryCount);directories=route.nodes;partial=route.partial;}
+      else{
+        const directory=doc(options.directory,4096) as SignedNode,raw=verifyNode(directory);
+        if(raw.status!=='active'||!raw.roles.includes('directory'))throw new ProviderError('provider_wrong_directory');
+        directories=[directory];
+      }
+    }
     catch(error){if(!expectedError(error))throw error;return {state:'not_observed',candidates:[],errors:[{code:(error as any).code??'provider_unreachable'}],partial:true,...this.metrics(budget)};}
     for(const directory of directories){
       let cursor:string|null=null,stopped=false;

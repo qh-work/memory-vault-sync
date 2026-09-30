@@ -3,6 +3,8 @@ import {performance} from 'node:perf_hooks';
 import {verifyNode} from './open-control.ts';
 import {endpoint} from './open-transport.ts';
 import {envelopeRef} from './open-delivery-control.ts';
+import {DiscoveredAckRecoveryClient} from './open-ack-discovery.ts';
+import {OpenProviderClient} from './open-provider-client.ts';
 import {OriginalAckStatusJournal} from './open-ack-status.ts';
 import type {DatabaseSync} from 'node:sqlite';
 import {canonicalBytes,document,objectFields,sha256,validateSigningIdentity,decodeBase64url} from './crypto.ts';
@@ -73,15 +75,16 @@ class Journal{
 }
 export async function recoverReceipt(participant:OpenParticipant,encryption:EncryptionIdentityDocument,
   delivery:OpenDeliveryClient,invitation:unknown,deadline?:number):Promise<Obj>{
-  const value=objectFields(document(invitation as any,65536),['schema_version','action','base_url','repair_profile','request']);
-  if(value.schema_version!==ACK_CONNECT_SCHEMA||value.action!=='recover_receipt')fail('open_invalid_ack_request');
+  const parsed=document(invitation as any,65536),discovered=parsed.action==='recover_discovered_receipt';
+  const value=objectFields(parsed,['schema_version','action','repair_profile','request',...(discovered?[]:['base_url'])]);
+  if(value.schema_version!==ACK_CONNECT_SCHEMA||!['recover_receipt','recover_discovered_receipt'].includes(value.action as string))fail('open_invalid_ack_request');
   if(typeof value.repair_profile!=='string'||!Object.hasOwn(PROFILES,value.repair_profile))fail('open_invalid_repair_policy');
-  const names=['target_node_entry','expected_target','expected_ack_slot','root_entry','read_entry','bootstrap_entry',
+  const names=[...(discovered?['expected_directory_node','expected_directory','expected_source_epoch']:['target_node_entry']),'expected_target','expected_ack_slot','root_entry','read_entry','bootstrap_entry',
     'expected_receipt_writer','expected_message_id','expected_envelope_ref'];
   const request=objectFields(value.request,[...names,...(Object.hasOwn(value.request??{},'known_statuses')?['known_statuses']:[])]) as Obj;
   const supplied=request.known_statuses??[];
   if(!Array.isArray(supplied)||supplied.length>16)fail('open_invalid_ack_request');
-  const entries=Object.fromEntries(['target_node_entry','root_entry','read_entry','bootstrap_entry'].map(name=>[name,decode(request[name])]));
+  const entries=Object.fromEntries([...(discovered?[]:['target_node_entry']),'root_entry','read_entry','bootstrap_entry'].map(name=>[name,decode(request[name])]));
   const binding=Object.fromEntries(['expected_target','expected_ack_slot','expected_receipt_writer','expected_message_id','expected_envelope_ref'].map(name=>[name,request[name]]));
   const plan=canonicalBytes({kind:'ack.owner_recovery',owner:validateSigningIdentity(participant.identity),...binding,
     grants:Object.fromEntries(['root_entry','read_entry','bootstrap_entry'].map(name=>[name,entries[name].ref]))});
@@ -96,11 +99,14 @@ export async function recoverReceipt(participant:OpenParticipant,encryption:Encr
   try{
     const timeout=deadline===undefined?30:Math.min(30,deadline-performance.now()/1000);
     if(timeout<=0)throw new NetworkError('open_delivery_budget_exhausted',true);
-    const recovered=await reader.recoverOccupied(value.base_url as string,{targetNodeEntry:entries.target_node_entry,
-      expectedTarget:request.expected_target,expectedAckSlot:request.expected_ack_slot,rootEntry:entries.root_entry,
+    const options={expectedTarget:request.expected_target,expectedAckSlot:request.expected_ack_slot,rootEntry:entries.root_entry,
       readEntry:entries.read_entry,bootstrapEntry:entries.bootstrap_entry,expectedReceiptWriter:request.expected_receipt_writer,
       expectedMessageId:request.expected_message_id,expectedEnvelopeRef:request.expected_envelope_ref,
-      knownStatuses:supplied.map(decode),archiveStatuses:[...retained.values()],timeout});
+      knownStatuses:supplied.map(decode),archiveStatuses:[...retained.values()],timeout};
+    const recovered=discovered?(await new DiscoveredAckRecoveryClient(new OpenProviderClient(participant,encryption),reader).recover({
+      ...options,expectedDirectoryNode:request.expected_directory_node,expectedDirectory:request.expected_directory,
+      expectedSourceEpoch:request.expected_source_epoch})).recovery:
+      await reader.recoverOccupied(value.base_url as string,{...options,targetNodeEntry:entries.target_node_entry});
     return {...delivery.acceptRecoveredReceipt(recovered.source.inputs.receipt.raw),commit_ref:recovered.source.commit.ref,network_accessed:true};
   }finally{reader.close();}
 }

@@ -100,3 +100,38 @@ is `DiscoveredAckRecoveryClient.recover`. The source API is
 `AckIndexPublicationClient.publish`. The operation remains one original source
 and one explicitly authorized directory; it does not migrate the message,
 create replicas, automatically renew authority, or prove global availability.
+
+## Agent directory recovery (development after alpha.0.32)
+
+Python and native TypeScript accept the same explicit `connect` invitation:
+`schema_version: memory-vault-open-ack-connect/v1`,
+`action: recover_discovered_receipt`, `repair_profile: receipt-index`, and
+`request`. There is no top-level `base_url`; the independently selected signed
+`expected_directory_node` supplies the directory address. The directory supplies
+the source introduction only after authenticating its provider record.
+
+The request has these exact fields:
+
+- `expected_directory_node`: the selected directory's signed node document.
+- `expected_directory`: its independently held public signing and encryption keys.
+- `expected_target` and `expected_source_epoch`: the authorized ACK source's
+  public signing/encryption keys and storage epoch.
+- `expected_ack_slot`, `expected_receipt_writer`, `expected_message_id`, and
+  `expected_envelope_ref`: the original send's independent bindings.
+- `root_entry`, `read_entry`, and `bootstrap_entry`: original grants, each as
+  `{raw, ref}` where `raw` is the exact UTF-8 original string.
+- Optional `known_statuses`: at most sixteen original `{raw, ref}` entries.
+
+The client queries that exact directory, proves the advertised source's two
+keys, and independently retrieves the signed receipt under the original owner
+READ/bootstrap grants. It checks the actual receipt commit against the directory
+fact before updating the original outbox. An index lease never substitutes for
+READ permission. Missing records, mismatched custody, expired observations and
+retained revocations cannot confirm a send. If the original send is absent,
+recovery cannot manufacture an outbox entry.
+
+The whole call retains a thirty-second deadline, with at most ten seconds for
+directory lookup and the remaining time for the source read. Existing bounded
+provider revision floors and original-root status journals are reused across
+restart and client-language changes. This operation does not select replacement
+directories, sign publication consent, or republish a lost directory.
