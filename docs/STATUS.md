@@ -1,5 +1,11 @@
 # Memory Vault development status
 
+Published **[alpha.0.31](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.31)** is fixed at `8ee27f7478388e7611e3293e628e96e481da673f`.
+
+Python maintainers can retain exact authorized mailbox copies in a [finite persistent worker](OPEN_ACK_RECOVERY.md). Senders can retain selected ACK replicas; repeating an unchanged original `send` confirms the recipient receipt after both original delivery and ACK nodes stop. Exact requests and signed refusal history survive restart. Destination selection and independent permissions remain explicit. See [ACK replica confirmation](OPEN_ACK_PROVISIONING.md).
+
+Five checks passed using the extracted alpha.0.31 client: persistent copy recovery through the public CLI after source loss, response loss and worker/target restart; original-send confirmation after both original nodes stop; retained signed revocation after refusal/removal/restart; ordinary independent receipt retry; and replica-memory reception followed by receipt return and original-send confirmation. Exact-source cloud regression passed 1182 tests across 129 modules, with all 292 reported source hashes matching `8ee27f7478388e7611e3293e628e96e481da673f`. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
 Published **[alpha.0.30](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.30)** is fixed at `bebd7f1b8b9c4a9079a02b233a738dc9cfa2002d`.
 
 Python recipients can retain an independent ACK destination for an exact message. Ordinary `receive` returns the actual saved receipt under its original authorization; a repeated original `send` can use its already prepared owner READ grant to confirm that receipt. Lost replies and restart reuse durable requests, completed repeats remain local, and pending return failures are inspectable. See [ordinary independent receipt return](OPEN_ACK_PROVISIONING.md#retain-a-receipt-destination-for-ordinary-receive-source-after-alpha029).
