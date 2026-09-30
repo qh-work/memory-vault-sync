@@ -1,4 +1,15 @@
-# Memory Vault v0.28.0-alpha.0.28 — authorized full client
+# Memory Vault v0.28.0-alpha.0.29 — authorized full client
+
+Python recipients can register an already authorized message replica through
+`connect` with `action: register_replica`. Ordinary `receive` then polls the
+retained selection, including after restart, using the existing original keys,
+read permissions and durable memory inbox. Current destination identity and
+storage epoch must match. Saved/rejected ciphertext is not downloaded again;
+removing a selection preserves received memory and authenticated denials.
+
+This adds bounded polling of explicitly selected copies. It does not create
+replacement copies or exchange permission automatically; receipt return still
+requires its separate original authority. See `docs/OPEN_ACK_RECOVERY.md`.
 
 This candidate adds participant-local mailbox reservation consent and maintainer
 assembly commands. Each owner/sender uses only its own existing keys, checks its
@@ -45,7 +56,7 @@ remain unfinished. There is no project-operated public seed or verified
 thousand-agent/global-availability result. Use the source-bound release record
 for actual validation and compare archive bytes with published checksums.
 
-This full-client package targets **v0.28.0-alpha.0.28 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.29 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

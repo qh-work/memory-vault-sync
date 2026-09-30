@@ -1,4 +1,15 @@
-# Memory Vault v0.28.0-alpha.0.28 — prepare independent mailbox replica consent
+# Memory Vault v0.28.0-alpha.0.29 — receive from retained mailbox replicas
+
+Python recipients can register an already authorized message replica through
+`connect` with `action: register_replica`. Ordinary `receive` then polls the
+retained selection, including after restart, using the existing original keys,
+read permissions and durable memory inbox. Current destination identity and
+storage epoch must match. Saved/rejected ciphertext is not downloaded again;
+removing a selection preserves received memory and authenticated denials.
+
+This adds bounded polling of explicitly selected copies. It does not create
+replacement copies or exchange permission automatically; receipt return still
+requires its separate original authority. See `docs/OPEN_ACK_RECOVERY.md`.
 
 The owner and sender can now independently sign a mailbox reservation plan with
 `memory_vault_open_repair_mailbox_consent.py sign`, using their existing protected
@@ -71,7 +82,7 @@ TypeScript recognizes the mailbox replica proof and status profiles. Participant
 operate their own authorized nodes; no central authority or project-operated
 public seed is required or provided.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.28/docs/OPEN_NETWORK_QUICKSTART.md)
-and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.28/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.29/docs/OPEN_NETWORK_QUICKSTART.md)
+and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.29/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
 Preserve existing identity and state files when installing. The archives contain
 implementation, public documentation and wholly synthetic fixtures only.

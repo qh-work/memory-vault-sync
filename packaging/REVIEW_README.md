@@ -1,4 +1,15 @@
-# Memory Vault v0.28.0-alpha.0.28 independent review kit
+# Memory Vault v0.28.0-alpha.0.29 independent review kit
+
+Python recipients can register an already authorized message replica through
+`connect` with `action: register_replica`. Ordinary `receive` then polls the
+retained selection, including after restart, using the existing original keys,
+read permissions and durable memory inbox. Current destination identity and
+storage epoch must match. Saved/rejected ciphertext is not downloaded again;
+removing a selection preserves received memory and authenticated denials.
+
+This adds bounded polling of explicitly selected copies. It does not create
+replacement copies or exchange permission automatically; receipt return still
+requires its separate original authority. See `docs/OPEN_ACK_RECOVERY.md`.
 
 This candidate adds participant-local mailbox reservation consent and maintainer
 assembly commands. Each owner/sender uses only its own existing keys, checks its

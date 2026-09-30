@@ -1,4 +1,15 @@
-# Memory Vault v0.28.0-alpha.0.28 — independent protocol
+# Memory Vault v0.28.0-alpha.0.29 — independent protocol
+
+Python recipients can register an already authorized message replica through
+`connect` with `action: register_replica`. Ordinary `receive` then polls the
+retained selection, including after restart, using the existing original keys,
+read permissions and durable memory inbox. Current destination identity and
+storage epoch must match. Saved/rejected ciphertext is not downloaded again;
+removing a selection preserves received memory and authenticated denials.
+
+This adds bounded polling of explicitly selected copies. It does not create
+replacement copies or exchange permission automatically; receipt return still
+requires its separate original authority. See `docs/OPEN_ACK_RECOVERY.md`.
 
 This candidate adds participant-local mailbox reservation consent and maintainer
 assembly commands. Each owner/sender uses only its own existing keys, checks its
@@ -62,7 +73,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.28;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.29;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility
