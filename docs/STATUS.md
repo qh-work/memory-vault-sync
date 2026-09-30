@@ -1,5 +1,11 @@
 # Memory Vault development status
 
+Published **[alpha.0.29](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.29)** is fixed at `20b53a5d664b622c01ffe209c65557ea2a1d2d04`.
+
+Python recipients can retain an already authorized message replica with `connect/register_replica`. Ordinary `receive` then recovers the original message and selected memories after source storage loss, including after restart. Current destination key/epoch and original permissions remain checked; saved ciphertext is not downloaded again. This polls explicitly selected copies and does not create replacements or grant receipt-return permission. See [ordinary replica reception](OPEN_ACK_RECOVERY.md#retain-a-replica-for-ordinary-receive-source-after-alpha028).
+
+Four checks passed using the extracted alpha.0.29 client: registered replica recovery through ordinary receive, original delivery and restart recall, pending-receipt fairness, and replica-memory reception followed by independent receipt return. The exact-source cloud regression passed 1177 tests across 126 modules in two exhaustive partitions, with all 286 reported source hashes matching `20b53a5d664b622c01ffe209c65557ea2a1d2d04`. Supported Python 3.10 and cross-platform conformance passed, and all eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
 Published **[alpha.0.28](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.28)** is fixed at `3663b284d9b22363a8ee228713b55e1eb3554895`.
 
 Owner and sender can independently sign mailbox replica reservation consent with their own existing identities. The maintainer assembles those signed outputs into the existing capacity reservation commands. Original grants, exact copy intent, selected destination and expiry remain checked; signing grants no upload or receipt-return permission. See the [consent commands](OPEN_ACK_RECOVERY.md#prepare-independent-mailbox-reservation-consent-source-after-alpha027).
