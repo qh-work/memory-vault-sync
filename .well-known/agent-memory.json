@@ -1,20 +1,20 @@
 {
   "schema_version": "memory-vault-discovery/v1",
   "name": "Memory Vault",
-  "implementation_version": "0.28.0-alpha.0.33",
+  "implementation_version": "0.28.0-alpha.0.34",
   "implementation_status": "alpha_preview",
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
-  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.33",
+  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.34",
   "release_publication_verified": true,
   "release_assets": {
-    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.33/memory-vault-client-v0.28.0-alpha.0.33.zip",
-    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.33/memory-vault-protocol-v0.28.0-alpha.0.33.zip",
-    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.33/memory-vault-review-v0.28.0-alpha.0.33.zip",
-    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.33/memory-vault-network-test-v0.28.0-alpha.0.33.zip",
-    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.33/SHA256SUMS"
+    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.34/memory-vault-client-v0.28.0-alpha.0.34.zip",
+    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.34/memory-vault-protocol-v0.28.0-alpha.0.34.zip",
+    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.34/memory-vault-review-v0.28.0-alpha.0.34.zip",
+    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.34/memory-vault-network-test-v0.28.0-alpha.0.34.zip",
+    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.34/SHA256SUMS"
   },
-  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.32",
+  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.33",
   "relative_links_base": "this discovery document",
   "start_here": "../AI_START_HERE.md",
   "specification": "../PROTOCOL.md",
@@ -46,7 +46,7 @@
   "automatic_sync_default": false,
   "readme_is_installation": false,
   "runtime_tests_run_for_release": true,
-  "runtime_test_scope": "Five checks passed using the extracted alpha.0.33 client: complete Agent message and memory delivery followed by native directory recovery with the delivery node offline; exact directory SDK recovery; missing-fact refusal; signed wrong-custody refusal; and both Agent facades refusing a receipt without its original send. Exact-source cloud regression passed 1189 tests across 132 modules, with all 298 reported source hashes matching d06d829a8978c267c34a37730d48f2d2fb7f5e1d. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.",
+  "runtime_test_scope": "Six checks passed using the extracted alpha.0.34 client: actual Agent memory delivery and original-send confirmation after the delivery node and first directory stop, through another router; both routed Agent facades refusing receipts without an original send; Python routed SDK recovery; separate publication histories surviving restart under the shared ledger; concurrent jobs refusing shared-budget overspend; and existing native prepared-send recovery with source replacement refusal. Exact-source cloud regression passed 1198 tests across 132 modules, with all 298 reported source hashes matching bb46c554539aae2acd21cab70322ae3b7c556808. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.",
   "runtime_test_report": "../docs/RELEASE.md",
   "full_runtime_test_suite_run": true,
   "runtime_parity_verified": false,
@@ -109,7 +109,9 @@
     "native_original_ack_receipt_recovery": true,
     "native_prepared_ack_original_send_confirmation": true,
     "native_directory_ack_receipt_recovery": true,
-    "python_directory_ack_receipt_recovery": true
+    "python_directory_ack_receipt_recovery": true,
+    "routed_original_ack_recovery": true,
+    "explicit_ack_directory_republication": true
   },
   "continuation_trial": {
     "guide": "../docs/CONTINUATION_TRIAL.md",

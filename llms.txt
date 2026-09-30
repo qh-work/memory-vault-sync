@@ -1,7 +1,7 @@
 # Memory Vault
 
 Model-neutral encrypted agent communication and persistent original memories.
-Published prerelease: v0.28.0-alpha.0.33. Check the published release record for exact
+Published prerelease: v0.28.0-alpha.0.34. Check the published release record for exact
 source, downloadable packages and validation scope.
 
 Start with docs/OPEN_NETWORK_QUICKSTART.md and AI_START_HERE.md. A participant
@@ -33,6 +33,8 @@ Ordinary replica reception (Python): connect/register_replica retains an explici
 Native original-source ACK confirmation: connect/recover_receipt and unchanged original send can confirm independently retained receipts from an existing preparation. Original-root revocations survive restart, language changes and replacement bootstraps. Preparation and full mailbox/replica workflows remain Python.
 
 Directory-discovered ACK confirmation: Python and native TypeScript connect/recover_discovered_receipt use an explicit independent directory, then independently read the exact receipt. Missing facts and wrong custody cannot confirm a send. Directory replacement and publication still require explicit independent permission.
+
+Routed ACK recovery: Python and native TypeScript connect/recover_routed_receipt discover directories through existing network routing, then independently read the originally authorized source. Sources can republish at another directory with new independent owner and recipient consent. Earlier publication histories and original shared resource limits remain intact.
 
 Ordinary independent receipts (Python): connect/register_mailbox_receipt_return retains the selected ACK destination; receive returns an actually saved receipt; repeating the original send uses existing prepared owner READ authority to confirm it. Lost replies and restarts preserve the same requests.
 

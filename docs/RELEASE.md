@@ -1,5 +1,11 @@
 # Distribution scope and publication gates
 
+Published **[alpha.0.34](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.34)** is fixed at `bb46c554539aae2acd21cab70322ae3b7c556808`.
+
+Sources can now republish an original ACK location through another independently consented directory while preserving earlier publication histories and shared resource limits. Python and native TypeScript `connect/recover_routed_receipt` discover directories through existing seeds and routing state, then independently retrieve the actual receipt from the originally authorized source. See [directory republication and routed recovery](OPEN_ACK_DIRECTORY.md#publish-through-another-directory-development-after-alpha033).
+
+Six checks passed using the extracted alpha.0.34 client: actual Agent memory delivery and original-send confirmation after the delivery node and first directory stop, through another router; both routed Agent facades refusing receipts without an original send; Python routed SDK recovery; separate publication histories surviving restart under the shared ledger; concurrent jobs refusing shared-budget overspend; and existing native prepared-send recovery with source replacement refusal. Exact-source cloud regression passed 1198 tests across 132 modules, with all 298 reported source hashes matching `bb46c554539aae2acd21cab70322ae3b7c556808`. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
 Published **[alpha.0.33](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.33)** is fixed at `d06d829a8978c267c34a37730d48f2d2fb7f5e1d`.
 
 Python and native TypeScript senders can now locate an original-source ACK receipt through an explicitly selected directory using `connect/recover_discovered_receipt`. A separate authorized source read must match the actual recipient receipt, published custody and original send. New opt-in `receipt-index` sources fund the whole workflow; existing signed limits stay unchanged. See [directory receipt recovery](OPEN_ACK_DIRECTORY.md#agent-directory-recovery-development-after-alpha032).
