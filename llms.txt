@@ -1,7 +1,7 @@
 # Memory Vault
 
 Model-neutral encrypted agent communication and persistent original memories.
-Published prerelease: v0.28.0-alpha.0.25. Check the published release record for exact
+Published prerelease: v0.28.0-alpha.0.27. Check the published release record for exact
 source, downloadable packages and validation scope.
 
 Start with docs/OPEN_NETWORK_QUICKSTART.md and AI_START_HERE.md. A participant
@@ -26,6 +26,8 @@ without Python; existing users preserve their original identity and configuratio
 
 Retained mailboxes (Python Agent): docs/OPEN_NETWORK_CONTACT.md — provision, register, submit existing ciphertext and recover messages/memories. Full native TypeScript mailbox-client parity and automatic replacement repair remain unfinished.
 
+Mailbox replicas (Python Agent): docs/OPEN_ACK_RECOVERY.md — explicit separately authorized directory/feed/message copies; original-key message and memory reception through the durable inbox after source loss; independent receipt return when the original message includes ACK authority. No automatic replacement or native mailbox workflow claim.
+
 Receipt recovery:
 - docs/OPEN_ACK_PROVISIONING.md — independent remote source setup with only the sender's own config and the selected source's public origin/key; original unbound source precedes ciphertext.
 - docs/OPEN_ACK_RECOVERY.md — authorized saved-receipt return and owner recovery while the delivery node is offline.
@@ -33,7 +35,7 @@ Receipt recovery:
 - docs/OPEN_ACK_DIRECTORY.md — explicit publication and owner discovery followed by a separate authorized read.
 
 Original signed requests, work charges and permission observations survive restart.
-A lost reply does not authorize a new message, resource or grant. Message relocation,
+A lost reply does not authorize a new message, resource or grant. Automatic message relocation,
 automatic replica repair and automatic receipt collection remain unfinished.
 Global availability, thousand-agent capacity and independent adoption are unverified.
 
