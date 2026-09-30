@@ -9,7 +9,7 @@ import {OpenDeliveryClient} from './open-delivery-client.ts';
 import {OpenParticipant} from './open-participant.ts';
 import {OpenContactClient,CONNECT_SCHEMA} from './open-contact-client.ts';
 import type {SignedNode} from './open-control.ts';
-import {ACK_CONNECT_SCHEMA,recoverReceipt} from './open-ack-client.ts';
+import {ACK_CONNECT_SCHEMA,recoverReceipt,recoverPrepared} from './open-ack-client.ts';
 export const OPEN_CLIENT_CONFIG='memory-vault-open-client-config/v1';
 function fail(code:string):never{throw new NetworkError(code);}
 export class OpenNetworkClient{
@@ -49,7 +49,11 @@ export class OpenNetworkClient{
     const {route,...result}=await this.participant.findContact(keyId);
     return {...result,profile:'open-routing-v1',network_accessed:true};
   }
-  async send(requestId:string,recipients:string[],text='',memoryIds:string[]=[],control?:DocumentInput):Promise<Record<string,any>>{return this.result(await this.delivery().send(requestId,recipients,text,memoryIds,control));}
+  async send(requestId:string,recipients:string[],text='',memoryIds:string[]=[],control?:DocumentInput):Promise<Record<string,any>>{
+    const delivery=this.delivery();
+    return this.result(await delivery.send(requestId,recipients,text,memoryIds,control,
+      (row,deadline)=>recoverPrepared(this.participant,this.encryption,delivery,row,deadline)));
+  }
   async receive(limit=4):Promise<Record<string,any>>{return this.result(await this.delivery().receive(limit));}
   readMessage(messageId:string,offset=0):Record<string,any>{return this.result(this.delivery().readMessage(messageId,offset));}
   respondTo(..._args:any[]):never{return fail('open_hint_exchange_unsupported');}

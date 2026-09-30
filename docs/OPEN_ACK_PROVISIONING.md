@@ -501,6 +501,17 @@ existing limits remain sixteen setup jobs, thirty-two statuses and 256 KiB of
 status originals per job; capacity exhaustion blocks that job. Recovery uses a
 thirty-second network deadline and the original signed permission windows.
 
+If the same protected state already contains a successful ACK preparation,
+repeating the unchanged original native `send` also recovers the receipt
+automatically. It reads the existing owner grants and exact message binding,
+fetches the selected source's current signed introduction and requires its
+original key, origin and storage epoch. It retains current node revision floors.
+A changed send fails before any source read, and an already confirmed send
+remains local. Recovery takes at most twenty seconds within the send's existing
+sixty-second network deadline. The result includes `ack_recovery` on confirmation
+or `ack_recovery_error` when that attempt is refused or unavailable; the ordinary
+send retains its existing storage/recipient receipt distinction.
+
 This adds owner receipt recovery from the selected original ACK source. ACK
 source preparation, receipt return, cold-mailbox reception and ACK replica
 recovery still require their Python workflows. It does not automatically select

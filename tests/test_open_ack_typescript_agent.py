@@ -20,7 +20,10 @@ for(const name of ['requestRepair','request','requestNode','requestBlob']){
   OpenHTTPTransport.prototype[name]=async function(...args){
     calls.push({kind:name,base:args[0]});
     if(input.no_network)throw Error('confirmed or revoked operation attempted HTTP');
-    return original.apply(this,args);
+    const result=await original.apply(this,args);
+    if(name==='requestNode'&&input.node_override&&args[0]===input.node_override.payload.base_url)
+      return {...result,response:input.node_override};
+    return result;
   };
 }
 const agent=new Agent(input.client_config,input.network_config),results=[];
@@ -35,15 +38,19 @@ class NativeAckAgentTests(unittest.TestCase):
         ts_runtime.TypeScriptAgentNetworkTests.setUpClass.__func__(cls)
         (cls.fixture/'driver.mjs').write_text(DRIVER)
 
-    def native(self,agent,requests,*,no_network=False):
+    def native(self,agent,requests,*,no_network=False,node_override=None):
         result=subprocess.run([self.node,'--experimental-strip-types',str(self.fixture/'driver.mjs')],
             input=json.dumps(dict(client_config=str(agent.client_config),network_config=str(agent.network_config),
-                requests=requests,no_network=no_network)).encode(),cwd=self.fixture,
+                requests=requests,no_network=no_network,node_override=node_override)).encode(),cwd=self.fixture,
             stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=45)
         self.assertEqual(result.returncode,0,result.stderr.decode(errors='replace')[-3000:])
         value=json.loads(result.stdout);self.assertEqual(value['subprocessCalls'],0)
         if no_network:self.assertEqual(value['calls'],[])
         return value
+
+    def test_native_original_send_uses_existing_preparation_and_refuses_replaced_source(self):
+        self.automatic=True
+        self.test_native_recovers_original_receipt_then_reuses_python_state_and_revocation()
 
     def test_native_recovers_original_receipt_then_reuses_python_state_and_revocation(self):
         h=fixtures.MailboxStagingHTTPTests('test_cold_mailbox_returns_independent_receipt')
@@ -54,7 +61,25 @@ class NativeAckAgentTests(unittest.TestCase):
             if agent is h.a and invitation.get('action')=='recover_receipt':
                 h.host.stop(0)
                 before={p:p.read_bytes() for p in (Path(h.a.client_config),Path(h.a.network_config))}
-                result=self.native(h.a,[request]);response=result['results'][0]
+                if getattr(self,'automatic',False):
+                    changed=dict(h.ack_original_send_request,text=h.ack_original_send_request['text']+' changed')
+                    invalid=self.native(h.a,[changed],no_network=True)['results'][0]
+                    self.assertFalse(invalid['ok']);self.assertEqual(invalid['error']['code'],'network_request_id_conflict')
+                    from memory_vault_open_control import issue_node
+                    import time
+                    old=h.ack_host.nodes[0]['payload'];now=int(time.time())
+                    replacement=issue_node(h.ack_host.identities[0],base_url=old['base_url'],
+                        storage_epoch='synthetic_changed_epoch',roles=old['roles'],revision=old['revision']+1,
+                        issued_at=now-1,expires_at=now+300)
+                    wrong=self.native(h.a,[h.ack_original_send_request],node_override=replacement)
+                    refused=wrong['results'][0];self.assertTrue(refused['ok'],refused)
+                    self.assertEqual(refused['result']['state'],'storage_accepted')
+                    self.assertEqual(refused['result']['ack_recovery_error']['code'],'open_ack_preparation_conflict')
+                    self.assertFalse(any(c['kind']=='requestRepair' for c in wrong['calls']))
+                    selected=h.ack_original_send_request
+                else:selected=request
+                result=self.native(h.a,[selected]);response=result['results'][0]
+                if getattr(self,'automatic',False):self.assertEqual(response['result']['ack_recovery'],'validated_saved')
                 self.assertTrue(response['ok'],response)
                 self.assertEqual(response['result']['state'],'validated_saved')
                 self.assertTrue(result['calls'])

@@ -1,6 +1,10 @@
 /** Explicit native ACK recovery, sharing the protected Python journal and outbox. */
+import {performance} from 'node:perf_hooks';
+import {verifyNode} from './open-control.ts';
+import {endpoint} from './open-transport.ts';
+import {envelopeRef} from './open-delivery-control.ts';
 import type {DatabaseSync} from 'node:sqlite';
-import {canonicalBytes,document,objectFields,sha256,validateSigningIdentity} from './crypto.ts';
+import {canonicalBytes,document,objectFields,sha256,validateSigningIdentity,decodeBase64url} from './crypto.ts';
 import {NetworkError,transaction} from './io.ts';
 import {AckOwnerRecoveryClient,DEFAULT_REPAIR_CLIENT_LIMITS} from './open-repair-client.ts';
 import type {AuthenticatedStatusOriginal} from './open-repair-status.ts';
@@ -67,7 +71,7 @@ class Journal{
   }
 }
 export async function recoverReceipt(participant:OpenParticipant,encryption:EncryptionIdentityDocument,
-  delivery:OpenDeliveryClient,invitation:unknown):Promise<Obj>{
+  delivery:OpenDeliveryClient,invitation:unknown,deadline?:number):Promise<Obj>{
   const value=objectFields(document(invitation as any,65536),['schema_version','action','base_url','repair_profile','request']);
   if(value.schema_version!==ACK_CONNECT_SCHEMA||value.action!=='recover_receipt')fail('open_invalid_ack_request');
   if(typeof value.repair_profile!=='string'||!Object.hasOwn(PROFILES,value.repair_profile))fail('open_invalid_repair_policy');
@@ -84,11 +88,56 @@ export async function recoverReceipt(participant:OpenParticipant,encryption:Encr
   const reader=new AckOwnerRecoveryClient(participant.identity,encryption,{limitPolicy:PROFILES[value.repair_profile as keyof typeof PROFILES],
     transport:participant.transport,allowLoopback:participant.transport.allow_loopback,statusObserver:item=>journal.observe(key,plan,item)});
   try{
+    const timeout=deadline===undefined?30:Math.min(30,deadline-performance.now()/1000);
+    if(timeout<=0)throw new NetworkError('open_delivery_budget_exhausted',true);
     const recovered=await reader.recoverOccupied(value.base_url as string,{targetNodeEntry:entries.target_node_entry,
       expectedTarget:request.expected_target,expectedAckSlot:request.expected_ack_slot,rootEntry:entries.root_entry,
       readEntry:entries.read_entry,bootstrapEntry:entries.bootstrap_entry,expectedReceiptWriter:request.expected_receipt_writer,
       expectedMessageId:request.expected_message_id,expectedEnvelopeRef:request.expected_envelope_ref,
-      knownStatuses:supplied.map(decode),archiveStatuses:archive,timeout:30});
+      knownStatuses:supplied.map(decode),archiveStatuses:archive,timeout});
     return {...delivery.acceptRecoveredReceipt(recovered.source.inputs.receipt.raw),commit_ref:recovered.source.commit.ref,network_accessed:true};
   }finally{reader.close();}
+}
+
+/** Read only an existing successful preparation; never mint or renew authority. */
+export async function recoverPrepared(participant:OpenParticipant,encryption:EncryptionIdentityDocument,
+  delivery:OpenDeliveryClient,row:Obj,operationDeadline:number):Promise<Obj>{
+  const result:Obj={network_accessed:false};
+  const held=participant.contactStorage(db=>{
+    if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='open_ack_agent_preparations'").get())return undefined;
+    return db.prepare('SELECT result,result_sha256 FROM open_ack_agent_preparations WHERE request_id=?').get(row.request_id) as Obj|undefined;
+  });
+  if(!held?.result)return result;
+  try{
+    if(held.result.length>1048576||sha256(held.result)!==held.result_sha256)fail('open_ack_preparation_corrupt');
+    const prepared=document(held.result,1048576) as Obj,owner=prepared.owner_request,recipient=prepared.recipient_request;
+    const encoded=(value:unknown)=>{
+      const entry=objectFields(value,['raw_base64url','ref']);
+      return {raw:new TextDecoder('utf-8',{fatal:true}).decode(decodeBase64url(entry.raw_base64url,524288)),ref:entry.ref};
+    };
+    const request:Obj={target_node_entry:encoded(owner.node),expected_target:owner.target,expected_ack_slot:owner.ack_slot,
+      root_entry:encoded(owner.root),read_entry:encoded(owner.read),bootstrap_entry:encoded(owner.bootstrap),
+      expected_receipt_writer:owner.receipt_writer,expected_message_id:owner.message_id,expected_envelope_ref:owner.envelope_ref,
+      known_statuses:owner.known_statuses.map(encoded)};
+    const same=(a:unknown,b:unknown)=>Buffer.from(canonicalBytes(a)).equals(Buffer.from(canonicalBytes(b)));
+    if(request.expected_message_id!==row.message_id||!same(request.expected_envelope_ref,envelopeRef(row.envelope))||
+      request.expected_receipt_writer.signing_key.key_id!==row.recipient)fail('open_ack_preparation_conflict');
+    const old=(document(Buffer.from(request.target_node_entry.raw,'utf8')) as Obj).payload;
+    const deadline=Math.min(operationDeadline,performance.now()/1000+20);
+    if(deadline<=performance.now()/1000)throw new NetworkError('open_delivery_budget_exhausted',true);
+    result.network_accessed=true;
+    const current=(await participant.transport.requestNode(recipient.base_url,deadline)).response,node=verifyNode(current);
+    if(node.status!=='active'||!same(node.signing_key,request.expected_target.signing_key)||node.storage_epoch!==old.storage_epoch||
+      node.revision<old.revision||!same(endpoint(node.base_url,participant.transport.allow_loopback),endpoint(recipient.base_url,participant.transport.allow_loopback)))
+      fail('open_ack_preparation_conflict');
+    participant.acceptContactControl(current);
+    const raw=canonicalBytes(current),digest=sha256(raw);
+    request.target_node_entry={raw:Buffer.from(raw).toString('utf8'),ref:{namespace:'meta',key:digest,raw_sha256:digest,size:raw.length}};
+    const recovered=await recoverReceipt(participant,encryption,delivery,{schema_version:ACK_CONNECT_SCHEMA,action:'recover_receipt',
+      base_url:recipient.base_url,repair_profile:recipient.repair_profile,request},deadline);
+    result.state=recovered.state;
+  }catch(error){
+    result.error={code:(error as any)?.code??'open_ack_preparation_corrupt',retryable:(error as any)?.retryable===true};
+  }
+  return result;
 }
