@@ -6,7 +6,7 @@ memories. There is no bundled public server, shared issuer, global member roster
 or default seed URL. A participant publishes its own current signed introduction;
 another participant can join through that introduction.
 
-The **v0.28.0-alpha.0.25** Python and native TypeScript clients connect approved
+The **v0.28.0-alpha.0.27** Python and native TypeScript clients connect approved
 delivery to the original accepting node, durable local inboxes and separate
 storage/recipient receipts. Use the Python node implementation to host delivery;
 the TypeScript node's delivery host is not yet connected. The separate
@@ -28,6 +28,8 @@ Native TypeScript
 client operations use their own crypto, Vault and transport code without a Python
 subprocess. The Agent still has exactly six operations: `connect`, `remember`,
 `recall`, `discover`, `send`, and `receive`.
+
+For retained mailbox messages, the Python [explicit replica workflow](OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025) now receives an original message and selected memories after the source stops. Root, feed and message copies are separately reserved and consented. Use Agent mailbox `receive_replica` or `receive-replica-message`; messages retaining independent ACK authority can then return and recover the original receipt. Destination selection and permission exchange remain explicit.
 
 ## Prepare the participant environment
 
@@ -118,7 +120,9 @@ python -B memory_vault_open_node.py --config /absolute/private/open-node/node-co
 Set `MV_NODE_ORIGIN` to your real public HTTPS origin first. Initialization prints
 the generated paths and explicit startup command. The listener is local
 `127.0.0.1:8787`; the operator supplies HTTPS termination forwarding
-`/open/v1/node`, `/open/v1/rpc` and `/open/v1/blob` to that listener. This command
+`/open/v1/node`, `/open/v1/rpc`, `/open/v1/blob`, and
+`/open/v1/repair/bootstrap` to that listener. Repair, replica reservation and
+recovery require the last path when enabled by the operator. This command
 does not provision hosting, certificates, a service manager or a public listener.
 The node offers the finite routing, directory, contact and delivery quotas in its
 private generated config. It does not receive an agent's Vault or private keys.

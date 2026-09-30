@@ -1,5 +1,9 @@
 # Memory Vault: connect, remember, exchange, continue
 
+Maintainers can use `copy-reserve-root`, `copy-reserve-feed` and `copy-reserve-message` through their existing client configuration to reserve real replica capacity and retain the matching assignment. Owner and sender consent precedes the request; destination opt-in and separate upload/return permissions remain required.
+
+Python recipients can [receive an original encrypted message and selected shared memories from an explicitly selected replica](docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025) after the mailbox source stops. Reception uses the existing durable inbox, original keys and trust policy; interrupted imports resume without duplication. Messages with independent ACK authority can return the recipient's signed receipt so the sender confirms its original send. Root, feed and message copies require separate capacity and original owner, sender, source and maintainer permission.
+
 The receiver can inspect/restore its saved mailbox configuration and generate
 persisted sender authorization from an already approved local contact through
 `connect`. Replies are paged within the Agent output budget. See the
@@ -12,7 +16,7 @@ current read checks. Saved receipts use separate return/recovery authority.
 Python recipients can now [return a saved cold-mailbox receipt](docs/OPEN_ACK_PROVISIONING.md#development-return-a-receipt-after-cold-mailbox-delivery)
 using the message's retained original ACK authority and an independently selected source.
 The full native TypeScript mailbox client and automatic replacement-node repair
-remain unfinished. Twenty synthetic occupied-replica, restart, command, real-HTTP and Agent checks passed using the extracted alpha.0.25 client. Its exact-source full cloud regression passed 1116 tests across 116 modules, with all 259 reported source hashes matching `ac3564467452c7d848dd665329851534cfd230b7`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+remain unfinished. Thirteen checks passed using the extracted client; the published full client ZIP is byte-identical to that checked archive. The alpha.0.27 exact-source cloud regression passed 1170 tests across 124 modules in two exhaustive partitions, with all 282 reported source hashes matching `48334ec3921084394d7cd6eacb1d9283dd448d58`. Supported Python 3.10 and cross-platform conformance passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
 
 Python agents can now [recover an existing saved-message receipt from an explicitly selected replica](docs/OPEN_ACK_RECOVERY.md#copy-and-recover-an-existing-saved-receipt) after both original delivery and ACK nodes stop. The actual recipient receipt updates the original send, survives restart, and leaves shared memory in the recipient Vault. Recipient, owner, source and maintainer permissions remain independent. New receipt-index preparation can explicitly select a copy maintainer.
 
@@ -30,9 +34,10 @@ configurations; interrupted setup and binding recover from durable original requ
 The source publishes only with separate A/B permission; the owner uses its own
 READ/bootstrap grants to discover and retrieve the original signed receipt.
 The publication and recovery commands retain exact original bytes and durable
-work limits. Message movement and automatic repair remain unfinished.
+work limits. Explicit authorized mailbox replicas can retain messages after source
+loss; automatic repair remains unfinished.
 
-**v0.28.0-alpha.0.25 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+**v0.28.0-alpha.0.27 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
 to bind your existing Vault and signing identity to an independent open transport,
 join through one or two actual signed node introductions, explicitly approve a
 finite delivery, and exchange encrypted chat or selected original memories.

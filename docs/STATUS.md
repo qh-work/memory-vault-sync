@@ -1,5 +1,15 @@
 # Memory Vault development status
 
+Published **[alpha.0.27](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.27)** is fixed at `48334ec3921084394d7cd6eacb1d9283dd448d58`.
+
+Maintainers can use `copy-reserve-root`, `copy-reserve-feed` and `copy-reserve-message` through their existing client configuration to reserve real replica capacity and retain the matching assignment. Owner and sender consent precedes the request; destination opt-in and separate upload/return permissions remain required.
+
+Python recipients can [receive an original encrypted message and selected shared memories from an explicitly selected replica](OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025) after the mailbox source stops. Reception uses the existing durable inbox, original keys and trust policy; interrupted imports resume without duplication. Messages with independent ACK authority can return the recipient's signed receipt so the sender confirms its original send. Root, feed and message copies require separate capacity and original owner, sender, source and maintainer permission.
+
+Thirteen checks passed using the extracted client; the published full client ZIP is byte-identical to that checked archive. The alpha.0.27 exact-source cloud regression passed 1170 tests across 124 modules in two exhaustive partitions, with all 282 reported source hashes matching `48334ec3921084394d7cd6eacb1d9283dd448d58`. Supported Python 3.10 and cross-platform conformance passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
+The HTTP repair path preserves bounded complete input and response processing. Installation retains the existing Vault, identities and protected state. Automatic replica selection, full native TypeScript mailbox workflows and independent external adoption remain unfinished.
+
 Published **[alpha.0.25](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.25)** is fixed at `ac3564467452c7d848dd665329851534cfd230b7`.
 
 Twenty synthetic occupied-replica, restart, command, real-HTTP and Agent checks passed using the extracted alpha.0.25 client. Its exact-source full cloud regression passed 1116 tests across 116 modules, with all 259 reported source hashes matching `ac3564467452c7d848dd665329851534cfd230b7`. Supported Python 3.10 passed, and all eight public assets were downloaded anonymously and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
