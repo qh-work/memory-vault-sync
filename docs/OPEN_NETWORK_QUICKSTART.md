@@ -6,7 +6,7 @@ memories. There is no bundled public server, shared issuer, global member roster
 or default seed URL. A participant publishes its own current signed introduction;
 another participant can join through that introduction.
 
-The **v0.28.0-alpha.0.30** Python and native TypeScript clients connect approved
+The **v0.28.0-alpha.0.31** Python and native TypeScript clients connect approved
 delivery to the original accepting node, durable local inboxes and separate
 storage/recipient receipts. Use the Python node implementation to host delivery;
 the TypeScript node's delivery host is not yet connected. The separate
@@ -36,6 +36,8 @@ Owner and sender can independently sign mailbox replica reservation consent with
 Python recipients can retain an already authorized message replica with `connect/register_replica`. Ordinary `receive` then recovers the original message and selected memories after source storage loss, including after restart. Current destination key/epoch and original permissions remain checked; saved ciphertext is not downloaded again. This polls explicitly selected copies and does not create replacements or grant receipt-return permission. See [ordinary replica reception](OPEN_ACK_RECOVERY.md#retain-a-replica-for-ordinary-receive-source-after-alpha028).
 
 Python recipients can retain an independent ACK destination for an exact message. Ordinary `receive` returns the actual saved receipt under its original authorization; a repeated original `send` can use its already prepared owner READ grant to confirm that receipt. Lost replies and restart reuse durable requests, completed repeats remain local, and pending return failures are inspectable. See [ordinary independent receipt return](OPEN_ACK_PROVISIONING.md#retain-a-receipt-destination-for-ordinary-receive-source-after-alpha029).
+
+Python maintainers can retain exact authorized mailbox copies in a [finite persistent worker](OPEN_ACK_RECOVERY.md). Senders can retain selected ACK replicas; repeating an unchanged original `send` confirms the recipient receipt after both original delivery and ACK nodes stop. Exact requests and signed refusal history survive restart. Destination selection and independent permissions remain explicit. See [ACK replica confirmation](OPEN_ACK_PROVISIONING.md).
 
 ## Prepare the participant environment
 

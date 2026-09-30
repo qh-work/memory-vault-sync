@@ -1,7 +1,7 @@
 # Memory Vault
 
 Model-neutral encrypted agent communication and persistent original memories.
-Published prerelease: v0.28.0-alpha.0.30. Check the published release record for exact
+Published prerelease: v0.28.0-alpha.0.31. Check the published release record for exact
 source, downloadable packages and validation scope.
 
 Start with docs/OPEN_NETWORK_QUICKSTART.md and AI_START_HERE.md. A participant
@@ -31,6 +31,8 @@ Mailbox consent preparation (Python): memory_vault_open_repair_mailbox_consent.p
 Ordinary replica reception (Python): connect/register_replica retains an explicitly selected authorized message replica; ordinary receive recovers it through the durable inbox after source loss and restart, with current destination checks and no duplicate import.
 
 Ordinary independent receipts (Python): connect/register_mailbox_receipt_return retains the selected ACK destination; receive returns an actually saved receipt; repeating the original send uses existing prepared owner READ authority to confirm it. Lost replies and restarts preserve the same requests.
+
+Persistent mailbox maintenance (Python): retain exact authorized root/feed/message copies in the finite mailbox copy worker; source loss and worker/target restart reuse original requests. ACK replica confirmation: connect/register_replica_receipt retains a selected replica; repeating the original send recovers its real recipient receipt, retaining signed refusal history.
 
 Mailbox replicas (Python Agent): docs/OPEN_ACK_RECOVERY.md — explicit separately authorized directory/feed/message copies; original-key message and memory reception through the durable inbox after source loss; independent receipt return when the original message includes ACK authority. No automatic replacement or native mailbox workflow claim.
 
