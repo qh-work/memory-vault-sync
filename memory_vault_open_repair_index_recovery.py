@@ -45,7 +45,13 @@ class DiscoveredAckRecoveryClient:
             _fail('repair_index_owner_mismatch')
         self.provider,self.recovery=provider_client,recovery_client
 
-    async def recover(self, *, expected_directory_node, expected_directory, expected_target,
+    async def recover(self, **options):
+        return await self._recover(routed=False,**options)
+
+    async def recover_routed(self, **options):
+        return await self._recover(routed=True,expected_directory_node=None,expected_directory=None,**options)
+
+    async def _recover(self, *, routed, expected_directory_node, expected_directory, expected_target,
             expected_source_epoch, expected_ack_slot, root_entry, read_entry, bootstrap_entry,
             expected_receipt_writer, expected_message_id, expected_envelope_ref,
             known_statuses=(), archive_statuses=(), lookup_budget=None, timeout=30):
@@ -56,16 +62,19 @@ class DiscoveredAckRecoveryClient:
         local=wire.RepairBudget(policy)
         expected=wire.build_new_wire(dict(directory=expected_directory,target=expected_target,slot=expected_ack_slot,
             epoch=expected_source_epoch),policy,local).value
-        resource._dual_key(expected['directory'],local);resource._dual_key(expected['target'],local)
+        if not routed:resource._dual_key(expected['directory'],local)
+        resource._dual_key(expected['target'],local)
         resource._opaque(expected['epoch'])
         history._slot(expected['slot'],expected['slot']['root_key'],ack=True)
         if expected['slot']['root_key']['owner'] != provider.as_dual(self.recovery.subject):
             _fail('repair_index_owner_mismatch')
-        directory=document(canonical_bytes(expected_directory_node),maximum=4096)
-        node=verify_node(directory,now=self.recovery._now())
-        if (node['signing_key'] != expected['directory']['signing_key']
-                or node['status']!='active' or 'directory' not in node['roles']):
-            _fail('repair_index_directory_mismatch')
+        directory=None
+        if not routed:
+            directory=document(canonical_bytes(expected_directory_node),maximum=4096)
+            node=verify_node(directory,now=self.recovery._now())
+            if (node['signing_key'] != expected['directory']['signing_key']
+                    or node['status']!='active' or 'directory' not in node['roles']):
+                _fail('repair_index_directory_mismatch')
         if lookup_budget is None:
             lookup_budget=LookupBudget(maximum_seconds=min(timeout,10))
         elif type(lookup_budget) is not LookupBudget:
@@ -73,14 +82,16 @@ class DiscoveredAckRecoveryClient:
         # This is the same live routing budget, not a fresh budget per page.
         lookup_budget.deadline=min(lookup_budget.deadline,lookup_budget.clock()+max(0,deadline-time.monotonic()))
         lookup_budget.check()
-        target=await self.provider.prove_target(directory,lookup_budget)
-        descriptor=provider.verify_document(target,'provider.target',now=self.recovery._now())
-        if (descriptor['signing_key'] != expected['directory']['signing_key']
-                or descriptor['targetEncryptionKey'] != expected['directory']['encryption_key']
-                or descriptor['storage_epoch'] != node['storage_epoch']):
-            _fail('repair_index_directory_mismatch')
+        if not routed:
+            target=await self.provider.prove_target(directory,lookup_budget)
+            descriptor=provider.verify_document(target,'provider.target',now=self.recovery._now())
+            if (descriptor['signing_key'] != expected['directory']['signing_key']
+                    or descriptor['targetEncryptionKey'] != expected['directory']['encryption_key']
+                    or descriptor['storage_epoch'] != node['storage_epoch']):
+                _fail('repair_index_directory_mismatch')
         ref=expected['slot']['root_key']['anchor_ref']
-        found=await self.provider.find_at(directory,ref,lookup_budget,maximum_candidates=8)
+        found=(await self.provider.find(ref,lookup_budget,maximum_candidates=8,maximum_directories=3) if routed else
+            await self.provider.find_at(directory,ref,lookup_budget,maximum_candidates=8))
         wanted=None
         for candidate in found['candidates']:
             raw=verify_node(candidate['node'],now=self.recovery._now())
@@ -92,10 +103,10 @@ class DiscoveredAckRecoveryClient:
                 continue
             observations=[]
             for item in candidate['facts']:
-                if item['directory'] != directory:
+                if directory is not None and item['directory'] != directory:
                     continue
                 fact=provider.verify_document(item['fact'],'provider.fact',now=self.recovery._now())
-                provider.verify_index_lease(item['index_lease'],fact=item['fact'],node=directory,now=self.recovery._now())
+                provider.verify_index_lease(item['index_lease'],fact=item['fact'],node=item['directory'],now=self.recovery._now())
                 if (fact['ref']==ref and fact['status']=='active' and fact['signing_key']==expected['target']['signing_key']
                         and fact['storage_epoch']==expected['epoch']):
                     observations.append(item)
@@ -118,16 +129,17 @@ class DiscoveredAckRecoveryClient:
             _fail('repair_access_expired')
         # Revalidate all observation windows after the actual source read.
         verify_node(candidate['node'],now=self.recovery._now())
-        verify_node(directory,now=self.recovery._now())
+        if directory is not None:verify_node(directory,now=self.recovery._now())
         if self.recovery._now()>=min(recovered.source.read_until,recovered.source.retain_until,
                 recovered.proof.handle.payload['expires_at'],*(item.payload['valid_until'] for item in recovered.current_statuses)):
             _fail('repair_access_expired')
         custody='ack_'+recovered.source.commit.ref.raw_sha256
         for item in observations:
+            verify_node(item['directory'],now=self.recovery._now())
             fact=provider.verify_document(item['fact'],'provider.fact',now=self.recovery._now())
-            provider.verify_index_lease(item['index_lease'],fact=item['fact'],node=directory,now=self.recovery._now())
+            provider.verify_index_lease(item['index_lease'],fact=item['fact'],node=item['directory'],now=self.recovery._now())
             if fact['custody_id']==custody and self.provider._fact_current(item['fact']):
-                snapshot=wire.build_new_wire(dict(fact=item['fact'],lease=item['index_lease'],directory=directory,node=candidate['node']),policy,local).value
+                snapshot=wire.build_new_wire(dict(fact=item['fact'],lease=item['index_lease'],directory=item['directory'],node=candidate['node']),policy,local).value
                 metrics=MappingProxyType(dict(discovery=self.provider._metrics(lookup_budget),recovery=dict(recovered.metrics)))
                 if time.monotonic()>=deadline:
                     _fail('repair_access_expired')

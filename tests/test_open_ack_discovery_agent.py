@@ -44,10 +44,10 @@ class NativeDiscoveredSendTests(unittest.TestCase):
         thread=threading.Thread(target=server.serve_forever,kwargs=dict(poll_interval=.02),daemon=True);thread.start()
         self.addCleanup(lambda:(server.shutdown(),thread.join(timeout=3)))
 
-    def publish_directory(self,h,invitation):
-        self.observe_source(h.ack_host)
-        directory=HTTPNodes(h.root/'ack_directory',1);self.addCleanup(directory.close);directory.stop(0)
-        encryption=EncryptionIdentity.generate();key=h.root/'ack_directory/encryption.json';encryption.save(key)
+    def publish_directory(self,h,invitation,name="ack_directory"):
+        if not hasattr(self,"source_participant"):self.observe_source(h.ack_host)
+        directory=HTTPNodes(h.root/name,1);self.addCleanup(directory.close);directory.stop(0)
+        encryption=EncryptionIdentity.generate();key=h.root/name/'encryption.json';encryption.save(key)
         config=json.loads(directory.configs[0].read_bytes());config.update(encryption_key_path=str(key),provider_policy=dict(enabled=True),
             repair_policy=dict(enabled=True,limit_policy=repair_state.INDEX_WORKFLOW_LIMITS))
         atomic_write(directory.configs[0],canonical_bytes(config),replace=True)
@@ -64,16 +64,18 @@ class NativeDiscoveredSendTests(unittest.TestCase):
         server=OpenHTTPServer(('127.0.0.1',config['listen_port']),participant);self.addCleanup(server.server_close)
         thread=threading.Thread(target=server.serve_forever,kwargs=dict(poll_interval=.02),daemon=True);thread.start()
         self.addCleanup(lambda:(server.shutdown(),thread.join(timeout=3)))
+        self.directory_servers=getattr(self,"directory_servers",{})
+        self.directory_servers[name]=(server,thread)
         keys=dict(signing_key=directory.identities[0].public_descriptor(),encryption_key=encryption.public_descriptor())
         request=invitation['request'];root=json.loads(request['root_entry']['raw'])['payload']
         raw=canonical_bytes(directory.nodes[0]);digest=hashlib.sha256(raw).hexdigest()
         node=dict(raw_base64url=b64url(raw),ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw)))
-        folder=h.root/'index_preparation';folder.mkdir(mode=0o700)
+        folder=h.root/(name+'_preparation');folder.mkdir(mode=0o700)
         def write(name,value):
             path=folder/name;atomic_write(path,canonical_bytes(value),replace=False);return path
         limits=dict(root['budget'],max_live_bytes=0,max_items=64,max_meta_bytes=524288)
         export=write('export.json',dict(schema_version=EXPORT_SCHEMA,resource_id=self.prepared['resource_id'],directory=keys,
-            directory_node=node,allocation_id='synthetic_real_send_directory',job_id='synthetic_real_send_publication',
+            directory_node=node,allocation_id='synthetic_'+name,job_id='synthetic_'+name+'_publication',
             budget_limits=limits,windows=root['windows']))
         plan=folder/'plan.json';export_plan(h.ack_host.configs[0],export,plan)
         with h.a._network() as network:
@@ -110,7 +112,28 @@ class NativeDiscoveredSendTests(unittest.TestCase):
                 return result
             if agent is h.a and invitation.get('action')=='recover_receipt':
                 discovered=self.publish_directory(h,invitation);h.host.stop(0)
+                if getattr(self,'replace_directory',False):
+                    with self.source_participant.state.db() as db:
+                        original_history=tuple(db.execute('SELECT plan_digest,plan FROM open_repair_index_execution').fetchone())
+                    server,thread=self.directory_servers['ack_directory'];server.shutdown();thread.join(timeout=3);server.server_close()
+                    refused=self.native(h.a,[dict(op='connect',invitation=discovered)])['results'][0]
+                    self.assertFalse(refused['ok'],refused)
+                    discovered=self.publish_directory(h,invitation,'replacement_directory')
+                    with self.source_participant.state.db() as db:
+                        histories=list(db.execute('SELECT plan_digest,plan FROM open_repair_index_execution'))
+                    self.assertEqual(len(histories),2)
+                    self.assertIn(original_history,[tuple(row) for row in histories])
+                if getattr(self,'routed_recovery',False):
+                    router=HTTPNodes(h.root/'discovery_router',1);self.addCleanup(router.close);router.stop(0)
+                    config=json.loads(router.configs[0].read_bytes());config['seeds']=[discovered['request']['expected_directory_node']]
+                    atomic_write(router.configs[0],canonical_bytes(config),replace=True);router.start(0)
+                    config=json.loads(Path(h.a.network_config).read_bytes());config['seeds']=[router.nodes[0]]
+                    atomic_write(Path(h.a.network_config),canonical_bytes(config),replace=True)
+                    discovered=copy.deepcopy(discovered);discovered['action']='recover_routed_receipt'
+                    discovered['request'].pop('expected_directory_node');discovered['request'].pop('expected_directory')
                 result=self.native(h.a,[dict(op='connect',invitation=discovered)])
+                if getattr(self,'routed_recovery',False):
+                    self.assertTrue(any(c['base']==router.nodes[0]['payload']['base_url'] for c in result['calls']))
                 response=result['results'][0];self.assertTrue(response['ok'],dict(response=response,calls=result['calls'],source_failures=self.source_failures))
                 self.assertEqual(response['result']['state'],'validated_saved')
                 # This complete workflow consumed the old signed 128-request
@@ -127,5 +150,13 @@ class NativeDiscoveredSendTests(unittest.TestCase):
         h.call=dispatch
         h.test_cold_mailbox_returns_independent_receipt()
         self.assertEqual(len(confirmed),1)
+
+    def test_original_send_recovers_after_independent_directory_republication(self):
+        self.replace_directory=True
+        self.test_directory_read_confirms_original_send_and_shared_memory_after_delivery_node_stops()
+
+    def test_routed_original_send_finds_republished_directory_through_another_router(self):
+        self.routed_recovery=True
+        self.test_original_send_recovers_after_independent_directory_republication()
 
 if __name__=='__main__':unittest.main()

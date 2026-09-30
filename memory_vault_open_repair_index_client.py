@@ -527,6 +527,7 @@ class AckIndexPublicationClient:
             owner_consent_entry=owner_consent_entry, recipient_consent_entry=recipient_consent_entry,
             current_statuses=current_statuses, expected_directory=expected_directory, directory_storage_epoch=intent["target_storage_epoch"])
         self.plan = self.access.plan(self.prepared)
+        self.journal = AckIndexJournal.for_job(self.state,resource_id,self.plan.intent["job_id"])
         self.until = min(self._now() + 60, self.plan.publish_until)
         budget = self._budget()
         with self.journal.preparation_work(resource_id, budget):

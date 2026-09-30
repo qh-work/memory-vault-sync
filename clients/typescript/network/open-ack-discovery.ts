@@ -16,6 +16,7 @@ function fail(code:string):never{throw new RepairError(code);}
 export interface DiscoveredAckOptions extends Omit<AckOwnerRecoverOccupiedOptions,'targetNodeEntry'>{
   readonly expectedDirectoryNode:SignedNode;readonly expectedDirectory:unknown;readonly expectedSourceEpoch:string;
 }
+export type RoutedAckOptions=Omit<DiscoveredAckOptions,'expectedDirectoryNode'|'expectedDirectory'>;
 export interface DiscoveredAckReceipt{readonly state:'usable';readonly recovery:RecoveredAckOwnerOccupiedProof;
   readonly fact:Obj;readonly index_lease:Obj;readonly directory:SignedNode;readonly source_node:SignedNode;}
 export class DiscoveredAckRecoveryClient{
@@ -24,24 +25,32 @@ export class DiscoveredAckRecoveryClient{
     if(!(provider instanceof OpenProviderClient)||!(recovery instanceof AckOwnerRecoveryClient))fail('repair_invalid_context');
     this.provider=provider;this.recovery=recovery;
   }
-  async recover(value:DiscoveredAckOptions):Promise<DiscoveredAckReceipt>{
-    const required=['expectedDirectoryNode','expectedDirectory','expectedSourceEpoch','expectedTarget','expectedAckSlot',
+  async recover(value:DiscoveredAckOptions):Promise<DiscoveredAckReceipt>{return this.recoverInternal(value,false);}
+  async recoverRouted(value:RoutedAckOptions):Promise<DiscoveredAckReceipt>{return this.recoverInternal(value,true);}
+  private async recoverInternal(value:DiscoveredAckOptions|RoutedAckOptions,routed:boolean):Promise<DiscoveredAckReceipt>{
+    const required=[...(routed?[]:['expectedDirectoryNode','expectedDirectory']),'expectedSourceEpoch','expectedTarget','expectedAckSlot',
       'rootEntry','readEntry','bootstrapEntry','expectedReceiptWriter','expectedMessageId','expectedEnvelopeRef'];
     const args=objectFields(value,[...required,...['knownStatuses','archiveStatuses','timeout'].filter(n=>Object.hasOwn(value,n))]) as Obj;
     const timeout=args.timeout??30;
     if(typeof timeout!=='number'||!Number.isFinite(timeout)||timeout<=0||timeout>60)fail('repair_invalid_deadline');
     const deadline=clock()+timeout;
-    const held=document(canonicalBytes({directory:args.expectedDirectory,target:args.expectedTarget,
+    const held=document(canonicalBytes({directory:routed?null:args.expectedDirectory,target:args.expectedTarget,
       slot:args.expectedAckSlot,epoch:args.expectedSourceEpoch}),65536) as Obj;
-    asDual(held.directory);asDual(held.target);
+    if(!routed)asDual(held.directory);asDual(held.target);
     if(!same(held.slot.root_key.owner,asDual(this.provider.subject)))fail('repair_index_owner_mismatch');
-    const directory=document(canonicalBytes(args.expectedDirectoryNode),4096) as SignedNode,node=verifyNode(directory);
-    if(!same(node.signing_key,held.directory.signing_key)||node.status!=='active'||!node.roles.includes('directory'))fail('repair_index_directory_mismatch');
     const budget=new LookupBudget({maximum_seconds:Math.min(timeout,10)});
-    const target=await this.provider.proveTarget(directory,budget),descriptor=verifyDocument(target,'provider.target');
-    if(!same(descriptor.signing_key,held.directory.signing_key)||!same(descriptor.targetEncryptionKey,held.directory.encryption_key)||
-      descriptor.storage_epoch!==node.storage_epoch)fail('repair_index_directory_mismatch');
-    const ref=held.slot.root_key.anchor_ref,found=await this.provider.findAt(directory,ref,{budget,maximum_candidates:8});
+    let directory:SignedNode|null=null;
+    if(!routed){
+      directory=document(canonicalBytes(args.expectedDirectoryNode),4096) as SignedNode;
+      const node=verifyNode(directory);
+      if(!same(node.signing_key,held.directory.signing_key)||node.status!=='active'||!node.roles.includes('directory'))fail('repair_index_directory_mismatch');
+      const target=await this.provider.proveTarget(directory,budget),descriptor=verifyDocument(target,'provider.target');
+      if(!same(descriptor.signing_key,held.directory.signing_key)||!same(descriptor.targetEncryptionKey,held.directory.encryption_key)||
+        descriptor.storage_epoch!==node.storage_epoch)fail('repair_index_directory_mismatch');
+    }
+    const ref=held.slot.root_key.anchor_ref,found=routed?
+      await this.provider.find(ref,{budget,maximum_candidates:8,maximum_directories:3}):
+      await this.provider.findAt(directory!,ref,{budget,maximum_candidates:8});
     let selected:Obj|undefined,observations:Obj[]=[];
     for(const candidate of found.candidates){
       const source=verifyNode(candidate.node),proven=verifyDocument(candidate.target,'provider.target');
@@ -49,8 +58,8 @@ export class DiscoveredAckRecoveryClient{
         !same(proven.signing_key,held.target.signing_key)||!same(proven.targetEncryptionKey,held.target.encryption_key)||proven.storage_epoch!==held.epoch)continue;
       const matches=[];
       for(const item of candidate.facts){
-        if(!same(item.directory,directory))continue;
-        const fact=verifyDocument(item.fact,'provider.fact');verifyIndexLease(item.index_lease,{fact:item.fact,node:directory});
+        if(directory!==null&&!same(item.directory,directory))continue;
+        const fact=verifyDocument(item.fact,'provider.fact');verifyIndexLease(item.index_lease,{fact:item.fact,node:item.directory});
         if(same(fact.ref,ref)&&fact.status==='active'&&same(fact.signing_key,held.target.signing_key)&&fact.storage_epoch===held.epoch)matches.push(item);
       }
       if(matches.length){selected=candidate;observations=matches;break;}
@@ -64,15 +73,16 @@ export class DiscoveredAckRecoveryClient{
       bootstrapEntry:args.bootstrapEntry,expectedReceiptWriter:args.expectedReceiptWriter,expectedMessageId:args.expectedMessageId,
       expectedEnvelopeRef:args.expectedEnvelopeRef,knownStatuses:args.knownStatuses??[],archiveStatuses:args.archiveStatuses??[],timeout:remaining});
     if(clock()>=deadline)fail('repair_access_expired');
-    verifyNode(selected.node);verifyNode(directory);
+    verifyNode(selected.node);if(directory!==null)verifyNode(directory);
     if(Math.floor(Date.now()/1000)>=Math.min(recovered.source.read_until,recovered.source.retain_until,
       recovered.proof.handle.payload.expires_at as number,...recovered.current_statuses.map(s=>s.payload.valid_until as number)))fail('repair_access_expired');
     const custody='ack_'+recovered.source.commit.ref.raw_sha256;
     for(const item of observations){
-      const fact=verifyDocument(item.fact,'provider.fact');verifyIndexLease(item.index_lease,{fact:item.fact,node:directory});
+      verifyNode(item.directory);
+      const fact=verifyDocument(item.fact,'provider.fact');verifyIndexLease(item.index_lease,{fact:item.fact,node:item.directory});
       if(fact.custody_id===custody&&this.provider.factCurrent(item.fact)){
         if(clock()>=deadline)fail('repair_access_expired');
-        return Object.freeze({state:'usable',recovery:recovered,fact:item.fact,index_lease:item.index_lease,directory,source_node:selected.node});
+        return Object.freeze({state:'usable',recovery:recovered,fact:item.fact,index_lease:item.index_lease,directory:item.directory,source_node:selected.node});
       }
     }
     fail('repair_index_custody_mismatch');

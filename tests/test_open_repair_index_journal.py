@@ -36,6 +36,77 @@ class OpenRepairIndexJournalTests(unittest.TestCase):
     def usage(self):
         return self.h.db.execute("SELECT requests,signatures,proof_bytes,replays FROM open_repair_bootstrap_usage").fetchone()
 
+    def test_separate_campaigns_preserve_requests_and_charge_one_original_ledger(self):
+        resource=self.h.resource_id
+        a=self.journal
+        b=AckIndexJournal(self.h.state,campaign_id="b"*64)
+        b.start(resource,b'{"synthetic_second_directory":1}',deadline=self.h.now[0]+100,guard=lambda:None)
+        first=a.begin(resource,0,b'first directory',signature_allowance=4,response_allowance=32,guard=lambda:None)
+        second=b.begin(resource,0,b'second directory',signature_allowance=4,response_allowance=32,guard=lambda:None)
+        charged=self.usage()
+        self.assertEqual(charged[0],5)
+        self.h.db.close();self.h.connect()
+        a=AckIndexJournal(self.h.state);a.initialize()
+        b=AckIndexJournal(self.h.state,campaign_id="b"*64)
+        self.assertEqual(a.saved_step(resource,0)['request'],b'first directory')
+        self.assertEqual(b.saved_step(resource,0)['request'],b'second directory')
+        b.finish(resource,second,b'second reply',signature_checks=2,guard=lambda:None)
+        self.assertIsNone(a.saved_step(resource,0)['response'])
+        settled=self.usage()
+        b.finish(resource,second,b'second reply',signature_checks=2,guard=lambda:None)
+        self.assertEqual(self.usage(),settled)
+        a.finish(resource,first,b'first reply',signature_checks=1,guard=lambda:None)
+        self.assertEqual(b.saved_step(resource,0)['response'],b'second reply')
+        self.assertEqual(self.h.db.execute("SELECT * FROM open_repair_ack_jobs").fetchone(),self.job)
+
+    def test_new_campaign_cannot_reset_exhausted_shared_work_or_replace_old_plan(self):
+        resource=self.h.resource_id
+        old=self.journal.snapshot(resource)
+        other=AckIndexJournal(self.h.state,campaign_id="c"*64)
+        other.start(resource,b'{"synthetic_second_directory":1}',deadline=self.h.now[0]+100,guard=lambda:None)
+        self.h.db.execute("UPDATE open_repair_bootstrap_usage SET signatures=?",(self.h.state.limits['max_signature_checks'],));self.h.db.commit()
+        before=self.usage()
+        with self.assertRaisesRegex(RepairWireError,'repair_index_job_capacity'):
+            other.begin(resource,0,b'new directory',signature_allowance=1,response_allowance=8,guard=lambda:None)
+        self.assertEqual(self.usage(),before)
+        self.assertEqual(self.journal.snapshot(resource),old)
+        with self.assertRaisesRegex(RepairWireError,'repair_index_job_conflict'):
+            other.start(resource,b'{"changed":1}',deadline=self.h.now[0]+100,guard=lambda:None)
+
+    def test_concurrent_campaigns_cannot_double_spend_shared_signature_allowance(self):
+        resource=self.h.resource_id
+        second=AckIndexJournal(self.h.state,campaign_id="e"*64)
+        second.start(resource,b'{"synthetic_second_directory":1}',deadline=self.h.now[0]+100,guard=lambda:None)
+        self.h.db.execute('UPDATE open_repair_bootstrap_usage SET signatures=?',(self.h.state.limits['max_signature_checks']-4,));self.h.db.commit()
+        def attempt(campaign):
+            db=sqlite3.connect(self.h.path,timeout=20)
+            try:
+                f=self.h.fixture
+                state=RepairAckState(db,f['signers']['target'],f['docs']['descriptor'],encryption_identity=f['encryption']['target'],
+                    limit_policy=f['expected']['limit_policy'],clock=lambda:self.h.now[0])
+                state.initialize();journal=AckIndexJournal(state,campaign_id=campaign);journal.initialize()
+                try:
+                    journal.begin(resource,0,b'directory request',signature_allowance=4,response_allowance=32,guard=lambda:None)
+                    return 'reserved'
+                except RepairWireError as error:return error.code
+            finally:db.close()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results=list(pool.map(attempt,(None,"e"*64)))
+        self.assertEqual(sorted(results),['repair_index_job_capacity','reserved'])
+        self.assertEqual(self.usage()[1],self.h.state.limits['max_signature_checks'])
+
+    def test_all_campaigns_share_the_original_job_byte_ceiling(self):
+        resource=self.h.resource_id
+        _,_,remaining=self.journal._bounds(resource)
+        first=self.journal.snapshot(resource)
+        other=AckIndexJournal(self.h.state,campaign_id="d"*64)
+        # This fits the per-journal ceiling but exceeds the source's remaining
+        # aggregate allowance once the original history is counted.
+        with self.assertRaisesRegex(RepairWireError,'repair_index_job_capacity'):
+            other.start(resource,b'x'*(remaining-first['used_bytes']),deadline=self.h.now[0]+100,guard=lambda:None)
+        self.assertEqual(self.journal.snapshot(resource),first)
+        self.assertEqual(self.h.db.execute('SELECT count(*) FROM open_repair_index_campaigns').fetchone()[0],0)
+
     def test_lost_response_restart_keeps_exact_request_and_all_prior_work(self):
         first = self.journal.begin(self.h.resource_id,0,b'synthetic_request',signature_allowance=8,
             response_allowance=128,guard=lambda:None)
