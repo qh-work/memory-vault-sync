@@ -935,6 +935,7 @@ python -B memory_vault_open_repair_admin.py receive-replica-message \
 | Command | Private request |
 | --- | --- |
 | `copy-upload-message` | `memory-vault-open-mailbox-message-copy-request/v1`; the feed-copy fields plus `envelope`, an exact `{raw_base64url,ref}` entry. The separate allocation, offer, assignment, reservations and disclosures must all bind this message and its original `message.custody`. |
+
 | `configure-replica-message` | `memory-vault-open-mailbox-message-replica-read-config/v1`; the feed-return fields, with `context.expected_envelope_ref` and four independent message return consents. |
 | `receive-replica-message` | `memory-vault-open-mailbox-message-replica-recovery-request/v1`; the feed-recovery fields plus `envelope_ref`, matching the selected original message. |
 
@@ -990,3 +991,41 @@ recipient can then call the existing ACK `return_mailbox_receipt` action. The
 sender uses `recover_receipt` to update its original send record after the
 message source has stopped. Both actions use the retained original grants;
 receiving from a replica does not create or renew ACK permission.
+
+### Retained maintainer copy jobs (source after alpha.0.30)
+
+A maintainer can retain one already allocated, independently consented copy
+request and run it across connection failures or process restarts. This uses the
+same private request bundle as `copy-upload-root`, `copy-upload-feed`, or
+`copy-upload-message`, with the maintainer's own existing network configuration:
+
+```sh
+python -B memory_vault_open_mailbox_copy_jobs.py --network-config /absolute/private/maintainer/open.json \
+  queue --job-id selected-message --kind message --request /absolute/private/message-copy.json
+python -B memory_vault_open_mailbox_copy_jobs.py --network-config /absolute/private/maintainer/open.json \
+  run --watch-seconds 600
+python -B memory_vault_open_mailbox_copy_jobs.py --network-config /absolute/private/maintainer/open.json \
+  inspect --job-id selected-message
+python -B memory_vault_open_mailbox_copy_jobs.py --network-config /absolute/private/maintainer/open.json \
+  export --job-id selected-message --output /absolute/private/committed-copy.json
+```
+
+Queueing is local. The worker uses the existing copy verifier, target possession
+check and immutable upload journal. It never selects another destination,
+renews a grant, or enables a replica's read service. Install separately signed
+return consents on the target with the existing `configure-replica-*` operation.
+The source may be offline when the maintainer already holds the complete
+authorized snapshot and all required originals.
+
+Up to four jobs share a 16 MiB retained-body/result limit. Each job permits at
+most eight attempts within its explicit local lifetime (default 600 seconds,
+maximum 3600). Signed authority and reservation deadlines can expire sooner.
+Transient transport failures retry the same request with a short backoff;
+refusals, uncertain expired publication, and exhausted limits become
+`needs_attention`. Requeueing an identical job preserves its deadline and
+attempt count. A process lock prevents concurrent workers from executing the
+same queue. Completed jobs stay local on subsequent runs.
+
+Use `list` to inspect the queue or `remove --job-id selected-message` to stop
+retaining a job. Removing it preserves the copy preparation journal and remote
+storage. Keep the private request and exported result outside public repositories.
