@@ -1,4 +1,15 @@
-# Memory Vault v0.28.0-alpha.0.31 — authorized full client
+# Memory Vault v0.28.0-alpha.0.32 — authorized full client
+
+Native TypeScript Agents can confirm a stored send through its independently
+selected original ACK source while the delivery node is offline. An explicit
+`connect/recover_receipt` uses the existing owner invitation; repeating the
+unchanged original `send` uses a successful preparation already in protected
+state. Fresh source identity, origin, epoch and revision floors remain checked.
+Confirmed repeats stay local, and signed refusal history is shared with Python
+across restart. Automatic recovery has twenty seconds within the existing
+sixty-second send deadline. No Python subprocess or new permission is created.
+ACK source preparation, receipt return and replica workflows still use Python.
+See `docs/OPEN_ACK_PROVISIONING.md`.
 
 Authorized maintainers can retain exact mailbox copy bundles and resume them
 through a finite worker after source loss, lost commit replies or restart.
@@ -83,7 +94,7 @@ remain unfinished. There is no project-operated public seed or verified
 thousand-agent/global-availability result. Use the source-bound release record
 for actual validation and compare archive bytes with published checksums.
 
-This full-client package targets **v0.28.0-alpha.0.31 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.32 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under
