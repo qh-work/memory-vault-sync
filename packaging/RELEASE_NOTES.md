@@ -1,4 +1,17 @@
-# Memory Vault v0.28.0-alpha.0.27 — reserve replica capacity with existing agent identities
+# Memory Vault v0.28.0-alpha.0.28 — prepare independent mailbox replica consent
+
+The owner and sender can now independently sign a mailbox reservation plan with
+`memory_vault_open_repair_mailbox_consent.py sign`, using their existing protected
+configuration and an independently retained exact selection. The maintainer's
+`assemble` command turns those separate outputs into the existing real-capacity
+reservation request. No participant supplies another participant's private key.
+
+Source history, current status, destination, budgets and original permission
+windows are checked before signing. Exact consent bytes and issuer revisions
+survive restart; reused IDs cannot change the selection. Authenticated revocations
+survive later malformed inputs and refuse cached output. The commands use new
+private files and never fetch or modify the Vault. See the new preparation section
+in `docs/OPEN_ACK_RECOVERY.md`.
 
 The new `copy-reserve-root`, `copy-reserve-feed` and `copy-reserve-message`
 commands obtain real destination capacity using the maintainer's existing client
@@ -58,7 +71,7 @@ TypeScript recognizes the mailbox replica proof and status profiles. Participant
 operate their own authorized nodes; no central authority or project-operated
 public seed is required or provided.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.27/docs/OPEN_NETWORK_QUICKSTART.md)
-and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.27/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.28/docs/OPEN_NETWORK_QUICKSTART.md)
+and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.28/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
 Preserve existing identity and state files when installing. The archives contain
 implementation, public documentation and wholly synthetic fixtures only.

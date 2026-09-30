@@ -660,6 +660,70 @@ an empty slot again, generate new consent, or clear the source's budget. After
 that window expires it reports that reconciliation is required; A can use the
 independent occupied recovery path instead of assuming the upload failed.
 
+## Prepare independent mailbox reservation consent (source after alpha.0.27)
+
+Each owner, and separately each sender for feed/message copies, can sign the
+exact destination intent using its existing protected open-client configuration.
+The maintainer never needs another participant's private key. This source
+workflow precedes the `copy-reserve-root/feed/message` commands below; it does
+not enable automatic repair or authorize upload or replica return.
+
+```sh
+python -B memory_vault_open_repair_mailbox_consent.py sign \
+  --network-config /absolute/private/owner/open.json \
+  --bundle /absolute/private/reservation-plan.json \
+  --expected /absolute/private/owner-selection.json \
+  --variant owner --consent-id owner_copy_01 --expires-at "$MV_CONSENT_EXPIRES_AT" \
+  --output /absolute/private/owner-reservation-consent.json
+```
+
+The private plan uses `memory-vault-open-mailbox-reservation-preparation/v1`
+with `kind` (`root`, `feed` or `message`), `expected`, `manifest`, `custody`,
+`originals` and `current_statuses`. The last four fields carry the exact source
+history and authenticated status entries used by the reservation command;
+original entries use `{raw_base64url, ref}`. The plan contains no private keys.
+Source history must already be available under the participant's own authority;
+this command does not fetch or disclose it.
+
+`expected` and the separately retained selection file contain `root_key`,
+`owner`, `source`, `source_storage_epoch`, `maintainer` and the **complete exact
+resource `intent`**, including its destination, limits, windows and scope.
+Feed/message selections also contain `slot_key` and `sender`; message selections
+add `envelope_ref`. Compare these selections with your own original context
+before signing. Set `MV_CONSENT_EXPIRES_AT` to an explicit Unix expiry within the
+original authority windows. For feed/message copies, the sender runs the same
+command using its own configuration, selection, new output and `--variant sender`.
+
+The result contains `consent` and `reservation_status`. Exact retries retain the
+same signed originals across restarts. A consent ID cannot be reused for a changed
+selection or expiry. `--known-statuses` optionally accepts a private
+`{"known_statuses": [...]}` file: authenticated revocations and conflicts are
+retained even if another supplied status fails. Later denial also refuses a cached
+consent. Status freshness is checked without renewing the original grants.
+
+The maintainer assembles the independent outputs with its own identity:
+
+```sh
+python -B memory_vault_open_repair_mailbox_consent.py assemble \
+  --network-config /absolute/private/maintainer/open.json \
+  --bundle /absolute/private/reservation-plan.json \
+  --expected /absolute/private/maintainer-selection.json \
+  --node /absolute/private/target-node-entry.json \
+  --owner-consent /absolute/private/owner-reservation-consent.json \
+  --sender-consent /absolute/private/sender-reservation-consent.json \
+  --output /absolute/private/message-reservation.json
+```
+
+Omit `--sender-consent` for a root copy. `--node` is the destination's current
+signed public introduction encoded as `{raw_base64url, ref}`. Assembly verifies
+both signatures, current source history, exact intent and node key/storage epoch,
+then retains the maintainer's exact local allocation request. It performs no
+network request and acquires no capacity. Its output goes directly to the matching
+`copy-reserve-root/feed/message` command below, which still challenges the remote
+node and obtains its real offer. Run that command within the original finite
+request window. All outputs are new private files; existing files and the Vault
+are never overwritten.
+
 ## Mailbox replica capacity reservation (development after alpha.0.26)
 
 The maintainer can now request a real destination reservation with
