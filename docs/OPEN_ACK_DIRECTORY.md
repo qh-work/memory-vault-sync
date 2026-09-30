@@ -135,3 +135,10 @@ directory lookup and the remaining time for the source read. Existing bounded
 provider revision floors and original-root status journals are reused across
 restart and client-language changes. This operation does not select replacement
 directories, sign publication consent, or republish a lost directory.
+
+New `receipt-index` sources reserve up to 256 shared requests for the complete
+bind, receipt-return, directory-publication and independent-read workflow. The
+previous 128-request preparation can exhaust its allowance during final receipt
+retrieval. Existing signed grants and node policies keep their original limits;
+this update does not renew or enlarge an existing authorization. Operators must
+explicitly enable the profile when preparing a new source.

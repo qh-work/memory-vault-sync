@@ -6,7 +6,6 @@ from pathlib import Path
 import unittest
 import threading
 from memory_vault_open_node import OpenHTTPServer,OpenParticipant
-from unittest.mock import patch
 from memory_vault import canonical_bytes
 from memory_vault_network_crypto import EncryptionIdentity,b64url
 from memory_vault_storage import atomic_write
@@ -29,7 +28,7 @@ class NativeDiscoveredSendTests(unittest.TestCase):
         participant=OpenParticipant(Identity.load(Path(config['identity_path'])),Path(config['state_directory']),
             seeds=config['seeds'],descriptor=config['node'],encryption_identity=EncryptionIdentity.load(Path(config['encryption_key_path'])),
             allow_loopback=True,index_policy=config['index_policy'],provider_policy=config['provider_policy'],repair_policy=config['repair_policy'])
-        self.addCleanup(participant.close);self.source_failures=[];original=participant.handle_repair
+        self.addCleanup(participant.close);self.source_participant=participant;self.source_failures=[];original=participant.handle_repair
         def checked(raw):
             try:return original(raw)
             except Exception as error:
@@ -100,7 +99,7 @@ class NativeDiscoveredSendTests(unittest.TestCase):
         return dict(schema_version=ACK_CONNECT_SCHEMA,action='recover_discovered_receipt',repair_profile='receipt-index',request=request)
 
     def test_directory_read_confirms_original_send_and_shared_memory_after_delivery_node_stops(self):
-        h=fixtures.MailboxStagingHTTPTests('test_cold_mailbox_returns_independent_receipt');h.setUp();self.addCleanup(h.doCleanups)
+        h=fixtures.MailboxStagingHTTPTests('test_cold_mailbox_returns_independent_receipt');h.setUp();self.addCleanup(h.doCleanups);h.ack_repair_profile='receipt-index'
         original=h.call;confirmed=[]
         def dispatch(agent,**request):
             invitation=request.get('invitation',{})
@@ -114,14 +113,19 @@ class NativeDiscoveredSendTests(unittest.TestCase):
                 result=self.native(h.a,[dict(op='connect',invitation=discovered)])
                 response=result['results'][0];self.assertTrue(response['ok'],dict(response=response,calls=result['calls'],source_failures=self.source_failures))
                 self.assertEqual(response['result']['state'],'validated_saved')
+                # This complete workflow consumed the old signed 128-request
+                # allowance before its final proof; new original grants fund it.
+                self.assertEqual(json.loads(discovered['request']['bootstrap_entry']['raw'])['payload']['limits']['max_requests'],256)
+                with self.source_participant.state.db() as db:
+                    used=db.execute('SELECT requests FROM open_repair_bootstrap_usage').fetchone()[0]
+                self.assertGreater(used,128);self.assertLessEqual(used,256)
                 self.assertTrue(any(c['kind']=='requestRepair' for c in result['calls']))
                 repeated=self.native(h.a,[h.ack_original_send_request],no_network=True)['results'][0]
                 self.assertTrue(repeated['ok'],repeated);self.assertEqual(repeated['result']['state'],'validated_saved')
                 confirmed.append(response['result']);return response['result']
             return original(agent,**request)
         h.call=dispatch
-        with patch.object(repair_state,'RECEIPT_WORKFLOW_LIMITS',repair_state.INDEX_WORKFLOW_LIMITS):
-            h.test_cold_mailbox_returns_independent_receipt()
+        h.test_cold_mailbox_returns_independent_receipt()
         self.assertEqual(len(confirmed),1)
 
 if __name__=='__main__':unittest.main()
