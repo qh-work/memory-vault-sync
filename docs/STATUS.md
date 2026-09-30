@@ -1,5 +1,11 @@
 # Memory Vault development status
 
+Published **[alpha.0.36](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.36)** is fixed at `bd3ca97ee56ca59a85c87eb1395e738e1a8c56ca`.
+
+Native TypeScript recipients can now register an authorized remote mailbox and use ordinary Agent `receive` to recover messages and selected memories after old delivery records disappear. Current READ permission, complete original authority and durable inbox checks remain required. Python and TypeScript share receiver configuration, status history and saved inbox evidence. See [native mailbox recovery](../clients/typescript/network/README.md).
+
+Nine checks passed using the extracted alpha.0.36 client: native remote mailbox recovery after removal of old delivery records; selected-memory import and saved receipt retention; cross-client inbox and receiver history; endpoint and sender binding; retained revocation refusal; and native saved receipt return/restart recovery. Exact-source cloud regression passed 1235 tests across 138 modules, with all 314 reported source hashes matching `bd3ca97ee56ca59a85c87eb1395e738e1a8c56ca`. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
 Published **[alpha.0.35](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.35)** is fixed at `d86d62083566a30804f3cae5ad6643da73e28f9a`.
 
 Native TypeScript recipients can now return an actual saved receipt through `connect/return_receipt`, using separate original owner, recipient and storage permissions. The native client shares the bounded pending/completed journal with Python and can resume the exact pending upload after restart without consuming new consent. See [independent receipt return](OPEN_ACK_PROVISIONING.md#native-saved-receipt-return-development-after-alpha034).

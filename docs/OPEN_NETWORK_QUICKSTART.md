@@ -6,7 +6,7 @@ memories. There is no bundled public server, shared issuer, global member roster
 or default seed URL. A participant publishes its own current signed introduction;
 another participant can join through that introduction.
 
-The **v0.28.0-alpha.0.35** Python and native TypeScript clients connect approved
+The **v0.28.0-alpha.0.36** Python and native TypeScript clients connect approved
 delivery to the original accepting node, durable local inboxes and separate
 storage/recipient receipts. Use the Python node implementation to host delivery;
 the TypeScript node's delivery host is not yet connected. The separate
@@ -46,6 +46,8 @@ Python and native TypeScript senders can now locate an original-source ACK recei
 Sources can now republish an original ACK location through another independently consented directory while preserving earlier publication histories and shared resource limits. Python and native TypeScript `connect/recover_routed_receipt` discover directories through existing seeds and routing state, then independently retrieve the actual receipt from the originally authorized source. See [directory republication and routed recovery](OPEN_ACK_DIRECTORY.md#publish-through-another-directory-development-after-alpha033).
 
 Native TypeScript recipients can now return an actual saved receipt through `connect/return_receipt`, using separate original owner, recipient and storage permissions. The native client shares the bounded pending/completed journal with Python and can resume the exact pending upload after restart without consuming new consent. See [independent receipt return](OPEN_ACK_PROVISIONING.md#native-saved-receipt-return-development-after-alpha034).
+
+Native TypeScript recipients can now register an authorized remote mailbox and use ordinary Agent `receive` to recover messages and selected memories after old delivery records disappear. Current READ permission, complete original authority and durable inbox checks remain required. Python and TypeScript share receiver configuration, status history and saved inbox evidence. See [native mailbox recovery](../clients/typescript/network/README.md).
 
 ## Prepare the participant environment
 
