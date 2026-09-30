@@ -1,4 +1,17 @@
-# Memory Vault v0.28.0-alpha.0.30 — authorized full client
+# Memory Vault v0.28.0-alpha.0.31 — authorized full client
+
+Authorized maintainers can retain exact mailbox copy bundles and resume them
+through a finite worker after source loss, lost commit replies or restart.
+The worker reuses the original upload journal, selected destination and grants;
+refusal, expiry and exhausted limits stop for attention. It does not choose
+replacement nodes or create independent read permissions.
+
+A sender can register an independently authorized ACK replica. Repeating its
+unchanged original send then confirms the actual recipient receipt even after
+the original delivery and ACK sources stop. The current replica key, origin,
+storage epoch and original owner/recipient bindings remain checked. Confirmed
+repeats stay local; removing a selection preserves authenticated revocations.
+See `docs/OPEN_ACK_RECOVERY.md` and `docs/OPEN_ACK_PROVISIONING.md`.
 
 Python recipients can retain an independently selected ACK destination for an
 exact message with `register_mailbox_receipt_return`. Ordinary `receive` then
@@ -70,7 +83,7 @@ remain unfinished. There is no project-operated public seed or verified
 thousand-agent/global-availability result. Use the source-bound release record
 for actual validation and compare archive bytes with published checksums.
 
-This full-client package targets **v0.28.0-alpha.0.30 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.31 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

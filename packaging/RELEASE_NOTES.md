@@ -1,4 +1,17 @@
-# Memory Vault v0.28.0-alpha.0.30 — complete independent receipts through ordinary operations
+# Memory Vault v0.28.0-alpha.0.31 — resumable copies and original-send confirmation from ACK replicas
+
+Authorized maintainers can retain exact mailbox copy bundles and resume them
+through a finite worker after source loss, lost commit replies or restart.
+The worker reuses the original upload journal, selected destination and grants;
+refusal, expiry and exhausted limits stop for attention. It does not choose
+replacement nodes or create independent read permissions.
+
+A sender can register an independently authorized ACK replica. Repeating its
+unchanged original send then confirms the actual recipient receipt even after
+the original delivery and ACK sources stop. The current replica key, origin,
+storage epoch and original owner/recipient bindings remain checked. Confirmed
+repeats stay local; removing a selection preserves authenticated revocations.
+See `docs/OPEN_ACK_RECOVERY.md` and `docs/OPEN_ACK_PROVISIONING.md`.
 
 Python recipients can retain an independently selected ACK destination for an
 exact message with `register_mailbox_receipt_return`. Ordinary `receive` then
@@ -96,7 +109,7 @@ TypeScript recognizes the mailbox replica proof and status profiles. Participant
 operate their own authorized nodes; no central authority or project-operated
 public seed is required or provided.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.30/docs/OPEN_NETWORK_QUICKSTART.md)
-and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.30/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.31/docs/OPEN_NETWORK_QUICKSTART.md)
+and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.31/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
 Preserve existing identity and state files when installing. The archives contain
 implementation, public documentation and wholly synthetic fixtures only.

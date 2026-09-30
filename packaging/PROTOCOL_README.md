@@ -1,4 +1,17 @@
-# Memory Vault v0.28.0-alpha.0.30 — independent protocol
+# Memory Vault v0.28.0-alpha.0.31 — independent protocol
+
+Authorized maintainers can retain exact mailbox copy bundles and resume them
+through a finite worker after source loss, lost commit replies or restart.
+The worker reuses the original upload journal, selected destination and grants;
+refusal, expiry and exhausted limits stop for attention. It does not choose
+replacement nodes or create independent read permissions.
+
+A sender can register an independently authorized ACK replica. Repeating its
+unchanged original send then confirms the actual recipient receipt even after
+the original delivery and ACK sources stop. The current replica key, origin,
+storage epoch and original owner/recipient bindings remain checked. Confirmed
+repeats stay local; removing a selection preserves authenticated revocations.
+See `docs/OPEN_ACK_RECOVERY.md` and `docs/OPEN_ACK_PROVISIONING.md`.
 
 Python recipients can retain an independently selected ACK destination for an
 exact message with `register_mailbox_receipt_return`. Ordinary `receive` then
@@ -87,7 +100,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.30;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.31;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility
