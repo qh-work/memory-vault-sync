@@ -1,5 +1,11 @@
 # Memory Vault development status
 
+Published **[alpha.0.33](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.33)** is fixed at `d06d829a8978c267c34a37730d48f2d2fb7f5e1d`.
+
+Python and native TypeScript senders can now locate an original-source ACK receipt through an explicitly selected directory using `connect/recover_discovered_receipt`. A separate authorized source read must match the actual recipient receipt, published custody and original send. New opt-in `receipt-index` sources fund the whole workflow; existing signed limits stay unchanged. See [directory receipt recovery](OPEN_ACK_DIRECTORY.md#agent-directory-recovery-development-after-alpha032).
+
+Five checks passed using the extracted alpha.0.33 client: complete Agent message and memory delivery followed by native directory recovery with the delivery node offline; exact directory SDK recovery; missing-fact refusal; signed wrong-custody refusal; and both Agent facades refusing a receipt without its original send. Exact-source cloud regression passed 1189 tests across 132 modules, with all 298 reported source hashes matching `d06d829a8978c267c34a37730d48f2d2fb7f5e1d`. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
 Published **[alpha.0.32](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.32)** is fixed at `f8413a0619e00a7b079591053c3ef74c750559c1`.
 
 Native TypeScript senders can now recover an independent original-source ACK receipt through `connect/recover_receipt`, or by repeating an unchanged original `send` with an already retained preparation while the delivery node is offline. Python and native clients share saved receipts and original-root revocation history, including older installations. Preparation, recipient return and full replica/mailbox workflows still use Python. See [native ACK confirmation](OPEN_ACK_PROVISIONING.md#native-agent-receipt-recovery-source-after-alpha031).
