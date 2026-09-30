@@ -94,7 +94,7 @@ export class SavedAckReceiptPublisher{
   async publishSaved(baseUrl:string,value:unknown,timeout=30):Promise<PublishedSavedAck>{
     if(typeof timeout!=='number'||!Number.isFinite(timeout)||timeout<=0||timeout>60)fail('repair_invalid_deadline');
     const client=this.#client,policy=this.#policy,budget=new RepairBudget(policy),r=this.#request(value,budget);
-    const receipt=this.#delivery.savedReceiptForAck(r.message_id,r.owner,r.envelope_ref),now=client.timestamp;
+    const receipt=await this.#delivery.savedReceiptForAck(r.message_id,r.owner,r.envelope_ref),now=client.timestamp;
     const receiptPayload=(parseOriginalControl(receipt.raw,policy,budget).value as Obj).payload;
     const authorities=verifyAckOfferBootstrapOriginal(r.bootstrap_entry,{root:r.root_entry,write:r.write_entry},
       {expectedAckSlot:r.ack_slot,expectedOwner:r.owner,expectedReceiptWriter:client.subject,expectedMessageId:r.message_id,

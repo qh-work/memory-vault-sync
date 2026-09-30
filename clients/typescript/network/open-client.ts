@@ -6,6 +6,7 @@ import {absolutePath,readPrivate,NetworkError} from './io.ts';
 import {loadClient} from './client-config.ts';
 import type {Client} from './client-config.ts';
 import {OpenDeliveryClient} from './open-delivery-client.ts';
+import {RegisteredMailboxReceivers,MAILBOX_CONNECT_SCHEMA} from './open-mailbox-receivers.ts';
 import {OpenParticipant} from './open-participant.ts';
 import {OpenContactClient,CONNECT_SCHEMA} from './open-contact-client.ts';
 import type {SignedNode} from './open-control.ts';
@@ -36,6 +37,8 @@ export class OpenNetworkClient{
   private result(value:Record<string,any>):Record<string,any>{if(canonicalBytes(value).length>8192)fail('network_response_too_large');return value;}
   async connect(invitation?:unknown,requestId?:string):Promise<Record<string,any>>{
     if(invitation!=null){
+      if(typeof invitation==='object'&&!Array.isArray(invitation)&&(invitation as any).schema_version===MAILBOX_CONNECT_SCHEMA)
+        return this.result(new RegisteredMailboxReceivers(this.participant,this.encryption,this.delivery()).connect(invitation));
       if(typeof invitation==='object'&&!Array.isArray(invitation)&&(invitation as any).schema_version===ACK_CONNECT_SCHEMA)
         return this.result(await ((invitation as any).action==='return_receipt'?returnSavedReceipt:recoverReceipt)(this.participant,this.encryption,this.delivery(),invitation));
       if(typeof invitation!=='object'||Array.isArray(invitation)||(invitation as any).schema_version!==CONNECT_SCHEMA)fail('open_private_invitation_unsupported');
@@ -54,7 +57,7 @@ export class OpenNetworkClient{
     return this.result(await delivery.send(requestId,recipients,text,memoryIds,control,
       (row,deadline)=>recoverPrepared(this.participant,this.encryption,delivery,row,deadline)));
   }
-  async receive(limit=4):Promise<Record<string,any>>{return this.result(await this.delivery().receive(limit));}
+  async receive(limit=4):Promise<Record<string,any>>{return this.result(await new RegisteredMailboxReceivers(this.participant,this.encryption,this.delivery()).receive(limit));}
   readMessage(messageId:string,offset=0):Record<string,any>{return this.result(this.delivery().readMessage(messageId,offset));}
   respondTo(..._args:any[]):never{return fail('open_hint_exchange_unsupported');}
   readReceivedBatch(..._args:any[]):never{return fail('open_hint_exchange_unsupported');}

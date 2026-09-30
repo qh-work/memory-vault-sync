@@ -2,6 +2,9 @@
  * Original share bytes and author trust remain separate from network identity.
  */
 import {randomBytes} from 'node:crypto';
+import {verifyMailboxInboxEvidence} from './open-repair-mailbox-inbox.ts';
+import {MailboxFeedRecoveryClient} from './open-mailbox-client.ts';
+import type {MailboxRecoverOptions} from './open-mailbox-client.ts';
 import {performance} from 'node:perf_hooks';
 import type {DatabaseSync} from 'node:sqlite';
 import {canonicalBytes,document,objectFields,sha256,encodeBase64url,decodeBase64url,opaqueId,safeInteger,
@@ -41,7 +44,8 @@ function preview(text:string):string{
 const MAX_LOCAL_BYTES=256*1024*1024,MAX_SESSION_BYTES=32768,MAX_INBOX_SESSION_BYTES=65536,
   MAX_INTENT_BYTES=49152,MAX_RESULT_BYTES=16384;
 class DeliveryBudget{
-  readonly deadline=performance.now()/1000+60;
+  readonly deadline:number;
+  constructor(deadline?:number){this.deadline=Math.min(performance.now()/1000+60,deadline??Infinity);if(!Number.isFinite(this.deadline))fail('open_delivery_budget_exhausted',true);}
   requests=0;requestBytes=0;responseBytes=0;
   check(){if(performance.now()/1000>=this.deadline||this.requests>256||this.requestBytes+this.responseBytes>64*1024*1024)fail('open_delivery_budget_exhausted',true);}
   request(bytes:number){this.check();if(this.requests>=256||this.requestBytes+this.responseBytes+bytes>64*1024*1024)fail('open_delivery_budget_exhausted',true);this.requests++;this.requestBytes+=bytes;}
@@ -118,7 +122,8 @@ export class OpenDeliveryClient{
     }));
   }
   private static keys(session:Obj):Obj{
-    if(session.intent)session=session.intent.payload.authority;
+    if(Object.hasOwn(session,'mailbox'))session=session.authority;
+    else if(session.intent)session=session.intent.payload.authority;
     const request=session.request.payload,policy=session.policy.payload;
     return {sender_signing_key:request.signing_key,sender_encryption_key:request.encryption_key,
       recipient_signing_key:policy.signing_key,recipient_encryption_key:policy.encryption_key};
@@ -324,7 +329,7 @@ export class OpenDeliveryClient{
   private stageInbox(messageId:string,sender:string,envelope:Uint8Array,body:Uint8Array,session:Obj):Obj{
     originalDocument(envelope,{maximum:MAX_ENVELOPE_BYTES});const digest=sha256(envelope),content=validateContent(body);
     if(!['message','memory_transfer'].includes(content.kind))fail('open_delivery_invalid_content_kind');
-    const proof=canonicalBytes(document(session,MAX_INBOX_SESSION_BYTES));
+    const proof=canonicalBytes(OpenDeliveryClient.inboxSession(session));
     return this.db(db=>transaction(db,()=>{const old=db.prepare('SELECT * FROM open_delivery_inbox WHERE message_id=?').get(messageId) as Obj|undefined;
       if(old){if(old.envelope_sha256!==digest||old.sender!==sender||!raw(old.body).equals(raw(body)))fail('network_inbox_identity_conflict');return old;}
       const size=this.size(db,'open_delivery_inbox');if(size.count>=4096||size.bytes+envelope.length+body.length+proof.length+2*MAX_RESULT_BYTES>MAX_LOCAL_BYTES)fail('network_inbox_capacity');
@@ -337,10 +342,23 @@ export class OpenDeliveryClient{
     if(!row)fail('network_message_not_found');if(['saved','rejected'].includes(row.phase))return document(row.result,MAX_RESULT_BYTES);
     const result={message_id:messageId,state:'rejected',code};db.prepare("UPDATE open_delivery_inbox SET phase='rejected',result=? WHERE message_id=?").run(canonicalBytes(result),messageId);return result;
   }));}
+  private static inboxSession(value:DocumentInput):Obj{
+    const session=document(value,8*1024*1024) as Obj;
+    if(!Object.hasOwn(session,'mailbox'))return document(session,MAX_INBOX_SESSION_BYTES) as Obj;
+    return objectFields(session,['mailbox','authority','source_node']);
+  }
+  private async verifyMailboxInbox(session:Obj,row:Obj):Promise<void>{
+    const verified=await verifyMailboxInboxEvidence(session.mailbox,row.envelope,{owner:{signing_key:validateSigningIdentity(this.participant.identity),
+      encryption_key:validateEncryptionIdentity(this.encryption)},encryptionIdentity:this.encryption,stagedAt:row.created_at});
+    if(verified.core.message_id!==row.message_id||session.mailbox.sender.signing_key.key_id!==row.sender)fail('network_inbox_identity_conflict');
+    const expected=Object.fromEntries([['request','contact.request'],['policy','contact.policy']].map(([name,role])=>[name,document(verified.setup.roles[role].raw)]));
+    if(!same(session.authority,expected))fail('network_inbox_identity_conflict');
+  }
   private async finishInbox(messageId:string):Promise<Obj>{
     const row=this.inbox(messageId);if(!row)fail('network_message_not_found');if(['saved','rejected'].includes(row.phase))return document(row.result,MAX_RESULT_BYTES);
-    const session=document(row.session,MAX_INBOX_SESSION_BYTES) as Obj;if(sha256(row.envelope)!==row.envelope_sha256)fail('network_inbox_identity_conflict');
-    verifyStorageReceipt(session.storage_receipt,{node:session.source_node,intent:session.intent});const keys=OpenDeliveryClient.keys(session);
+    const session=OpenDeliveryClient.inboxSession(row.session);if(sha256(row.envelope)!==row.envelope_sha256)fail('network_inbox_identity_conflict');
+    if(Object.hasOwn(session,'mailbox'))await this.verifyMailboxInbox(session,row);
+    else verifyStorageReceipt(session.storage_receipt,{node:session.source_node,intent:session.intent});const keys=OpenDeliveryClient.keys(session);
     if(!same(keys.recipient_signing_key,validateSigningIdentity(this.participant.identity)))fail('open_delivery_key_binding_mismatch');
     const reopened=await decryptEnvelope(row.envelope,{...keys,encryption_identity:this.encryption} as any);
     if(!raw(reopened).equals(raw(row.body)))fail('network_inbox_identity_conflict');const content=validateContent(row.body);let imported:Obj|null=null;
@@ -373,10 +391,11 @@ export class OpenDeliveryClient{
   }
   /** Read the actually saved inbox receipt for an explicitly requested return.
    * The caller cannot substitute receipt bytes or a saved-state flag. */
-  savedReceiptForAck(messageId:string,owner:Obj,expectedEnvelope:unknown):{raw:Uint8Array;ref:Obj}{
+  async savedReceiptForAck(messageId:string,owner:Obj,expectedEnvelope:unknown):Promise<{raw:Uint8Array;ref:Obj}>{
     if(!/^msg_[0-9a-f]{64}$/.test(messageId))fail('repair_saved_tuple_mismatch');
     const row=this.inbox(messageId);if(!row||row.phase!=='saved')fail('repair_receipt_not_saved');
-    const keys=OpenDeliveryClient.keys(document(row.session,MAX_INBOX_SESSION_BYTES) as Obj);
+    const session=OpenDeliveryClient.inboxSession(row.session);if(Object.hasOwn(session,'mailbox'))await this.verifyMailboxInbox(session,row);
+    const keys=OpenDeliveryClient.keys(session);
     if(sha256(row.envelope)!==row.envelope_sha256||row.sender!==owner.signing_key.key_id||!same(envelopeRef(row.envelope),expectedEnvelope)||
       !same(keys,{sender_signing_key:owner.signing_key,sender_encryption_key:owner.encryption_key,
         recipient_signing_key:validateSigningIdentity(this.participant.identity),recipient_encryption_key:validateEncryptionIdentity(this.encryption)}))fail('repair_saved_tuple_mismatch');
@@ -384,7 +403,7 @@ export class OpenDeliveryClient{
     if(result.state!=='validated_saved'||result.message_id!==messageId||result.sender_key_id!==row.sender||
       !['message','memory_transfer'].includes(result.content_kind))fail('repair_receipt_not_saved');
     this.savedReceipt(messageId);const saved=this.inbox(messageId);
-    if(!saved||saved.phase!=='saved'||saved.sender!==row.sender||!raw(saved.envelope).equals(raw(row.envelope))||!raw(saved.body).equals(raw(row.body)))fail('repair_saved_tuple_mismatch');
+    if(!saved||saved.phase!=='saved'||saved.sender!==row.sender||!raw(saved.envelope).equals(raw(row.envelope))||!raw(saved.body).equals(raw(row.body))||!raw(saved.session).equals(raw(row.session))||saved.created_at!==row.created_at)fail('repair_saved_tuple_mismatch');
     const bytes=Buffer.from(saved.receipt);
     verifyRecipientReceipt(document(bytes,4096),{recipient_signing_key:validateSigningIdentity(this.participant.identity),
       sender_key_id:row.sender,message_id:messageId,envelope_ref:expectedEnvelope} as any);
@@ -392,7 +411,8 @@ export class OpenDeliveryClient{
   }
   private async sendReceipt(messageId:string,budget:DeliveryBudget,node?:SignedNode){
     const row=this.inbox(messageId);if(!row||row.phase!=='saved')fail('open_delivery_not_saved');if(row.receipt_sent)return;
-    const receipt=this.savedReceipt(messageId);verifyRecipientReceipt(receipt,{recipient_signing_key:validateSigningIdentity(this.participant.identity),
+    const receipt=this.savedReceipt(messageId);if(Object.hasOwn(OpenDeliveryClient.inboxSession(row.session),'mailbox'))return;
+    verifyRecipientReceipt(receipt,{recipient_signing_key:validateSigningIdentity(this.participant.identity),
       sender_key_id:row.sender,message_id:messageId,envelope_ref:envelopeRef(row.envelope)});
     if(!node){const session=document(row.session,MAX_INBOX_SESSION_BYTES) as Obj,child=budget.routing();
       try{node=await this.sessionNode({node:session.source_node},child);}finally{budget.merge(child);}}
@@ -429,6 +449,28 @@ export class OpenDeliveryClient{
     this.stageInbox(entry.message_id,session.request.payload.signing_key.key_id,envelope,body,
       {intent:original,storage_receipt:handle.storage_receipt,source_node:handle.source_node});return [await this.finishInbox(entry.message_id),true];
   }
+  async receiveMailbox(reader:MailboxFeedRecoveryClient,baseUrl:string,options:MailboxRecoverOptions,limit=4):Promise<Obj>{
+    if(!(reader instanceof MailboxFeedRecoveryClient)||!same(reader.subject,{signing_key:validateSigningIdentity(this.participant.identity),encryption_key:validateEncryptionIdentity(this.encryption)}))fail('open_delivery_key_binding_mismatch');
+    if(!Number.isSafeInteger(limit)||limit<1||limit>4)fail('network_invalid_receive_limit');
+    return this.serial(async()=>{
+      const deadline=performance.now()/1000+(options.timeout??60),feed=await reader.recover(baseUrl,options),messages:Obj[]=[];
+      for(const member of feed.entries){if(messages.length>=limit)break;
+        const candidates=(feed.source.manifest.manifest.value as Obj).members.filter((v:Obj)=>same(v.admission_link_ref,member.admission_link_ref));if(candidates.length!==1)fail('repair_proof_mismatch');
+        const selected=candidates[0],prior=this.inbox(selected.message_id);let result:Obj,fresh:boolean;
+        if(prior){if(prior.envelope_sha256!==selected.envelope_ref.raw_sha256)fail('network_inbox_identity_conflict');fresh=prior.phase==='staged';result=await this.finishInbox(selected.message_id);}
+        else{
+          const remaining=Math.min(30,deadline-performance.now()/1000);if(remaining<=0)fail('open_delivery_budget_exhausted',true);
+          const recovered=await reader.readMember(baseUrl,feed,member,{knownStatuses:options.knownStatuses,timeout:remaining}),roles=recovered.setup.roles;
+          const authority=Object.fromEntries([['request','contact.request'],['policy','contact.policy']].map(([n,r])=>[n,document(roles[r].raw)]));
+          const session={authority,source_node:document((options.targetNodeEntry as Obj).raw),mailbox:reader.inboxEvidence(feed,member)},envelope=recovered.envelope;
+          const body=await decryptEnvelope(envelope,{...OpenDeliveryClient.keys(session),encryption_identity:this.encryption} as any);
+          this.stageInbox(selected.message_id,authority.request.payload.signing_key.key_id,envelope,body,session);result=await this.finishInbox(selected.message_id);fresh=true;
+        }
+        if(fresh)messages.push(result);if(result.state==='validated_saved')this.savedReceipt(selected.message_id);
+      }
+      return {messages,errors:[],state:'observed',body_transport:'mailbox_retained_copy',receipt_state:'retained_for_independent_return'};
+    });
+  }
   private pendingReceiptBatch():Obj[]{return this.db(db=>{
     const select="SELECT message_id,phase,created_at FROM open_delivery_inbox WHERE (phase='staged' OR (phase='saved' AND receipt_sent=0))",
       order=' ORDER BY created_at,message_id LIMIT ?',
@@ -443,13 +485,14 @@ export class OpenDeliveryClient{
     const created=safeInteger(row.created_at),id=opaqueId(row.message_id);
     this.db(db=>db.prepare('INSERT OR REPLACE INTO open_delivery_retry_cursor VALUES(1,?,?)').run(created,id));
   }
-  async receive(limit=4):Promise<Obj>{if(!Number.isSafeInteger(limit)||limit<1||limit>4)fail('network_invalid_receive_limit');return this.serial(()=>this.receiveInternal(limit));}
-  private async receiveInternal(limit:number):Promise<Obj>{
-    const budget=new DeliveryBudget(),messages:Obj[]=[],errors:Obj[]=[];
-    const pending=this.pendingReceiptBatch();
+  async receive(limit=4,options:{pendingOnly?:boolean;skipPending?:boolean;deadline?:number}={}):Promise<Obj>{if(!Number.isSafeInteger(limit)||limit<1||limit>4)fail('network_invalid_receive_limit');return this.serial(()=>this.receiveInternal(limit,options));}
+  private async receiveInternal(limit:number,options:{pendingOnly?:boolean;skipPending?:boolean;deadline?:number}):Promise<Obj>{
+    const budget=new DeliveryBudget(options.deadline),messages:Obj[]=[],errors:Obj[]=[];
+    const pending=options.skipPending?[]:this.pendingReceiptBatch();
     for(const row of pending){if(messages.length>=limit)break;try{const result=await this.finishInbox(row.message_id);if(row.phase==='staged')messages.push(result);
       if(result.state==='validated_saved')await this.sendReceipt(row.message_id,budget);}catch(error){errors.push({message_id:row.message_id,...errorData(error)});}
       finally{this.advancePendingReceipt(row);}}
+    if(options.pendingOnly)return {messages,errors:errors.slice(0,4),network_accessed:budget.requests>0};
     for(const candidate of this.contactSessions(false)){if(messages.length>=limit)break;
       try{const session=await this.checkedSession(candidate,budget),node=session.node,leaseId=session.decision.payload.grant.payload.resource_lease.payload.lease_id;
         let [key,after]=this.cursor(session);const intent=readerIntent('list',{lease_id:leaseId,caller_key_id:this.participant.keyId});

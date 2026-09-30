@@ -1,4 +1,16 @@
-# Memory Vault v0.28.0-alpha.0.35 — authorized full client
+# Memory Vault v0.28.0-alpha.0.36 — authorized full client
+
+Native TypeScript recipients can register an explicitly authorized ordinary
+mailbox and recover messages and selected memories with normal Agent `receive`,
+even after the old delivery records and leases are gone. The client verifies
+original owner/contact/storage authority, the complete encrypted feed, current
+READ permissions and the exact ciphertext before importing through its durable
+inbox. Retained revocations survive restart. Python and TypeScript share receiver
+configuration, status history and saved inbox evidence; either can resume an
+interrupted import. The native path performs its own HTTP and cryptography.
+Saved receipts remain available through independently authorized return requests.
+Native provisioning and replica inbox recovery remain unfinished. See
+`clients/typescript/network/README.md` and `docs/OPEN_NETWORK_CONTACT.md`.
 
 Native TypeScript recipients can return an actually saved message or memory
 receipt through the existing `connect/return_receipt` invitation. The protected
@@ -136,7 +148,7 @@ remain unfinished. There is no project-operated public seed or verified
 thousand-agent/global-availability result. Use the source-bound release record
 for actual validation and compare archive bytes with published checksums.
 
-This full-client package targets **v0.28.0-alpha.0.35 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.36 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under
