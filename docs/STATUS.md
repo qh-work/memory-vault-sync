@@ -1,5 +1,11 @@
 # Memory Vault development status
 
+Published **[alpha.0.35](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.35)** is fixed at `d86d62083566a30804f3cae5ad6643da73e28f9a`.
+
+Native TypeScript recipients can now return an actual saved receipt through `connect/return_receipt`, using separate original owner, recipient and storage permissions. The native client shares the bounded pending/completed journal with Python and can resume the exact pending upload after restart without consuming new consent. See [independent receipt return](OPEN_ACK_PROVISIONING.md#native-saved-receipt-return-development-after-alpha034).
+
+Six checks passed using the extracted alpha.0.35 client: native saved-memory receipt return and original-owner confirmation with the old delivery node unavailable; shared completed history reopened by either client; native recovery of a Python-staged pending return; exact upload replay after a lost reply and restart; refusal of unsaved or mismatched messages; and retained denial/expiry enforcement. Exact-source cloud regression passed 1224 tests across 135 modules, with all 303 reported source hashes matching `d86d62083566a30804f3cae5ad6643da73e28f9a`. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
 Published **[alpha.0.34](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.34)** is fixed at `bb46c554539aae2acd21cab70322ae3b7c556808`.
 
 Sources can now republish an original ACK location through another independently consented directory while preserving earlier publication histories and shared resource limits. Python and native TypeScript `connect/recover_routed_receipt` discover directories through existing seeds and routing state, then independently retrieve the actual receipt from the originally authorized source. See [directory republication and routed recovery](OPEN_ACK_DIRECTORY.md#publish-through-another-directory-development-after-alpha033).
