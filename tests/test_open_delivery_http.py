@@ -564,8 +564,10 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             client=MailboxFeedRecoveryClient(self.bi,owner_encryption,policy=replace(DEFAULT_POLICY,max_signature_checks=512),
                 limit_policy=limits,allow_loopback=True,status_observer=observed.append)
             self.addCleanup(client.close)
-            recipient_network=self.enterContext(self.b._network())
-            recipient_db=self.enterContext(recipient_network.participant.state.db())
+            from contextlib import ExitStack
+            recipient_context=ExitStack();self.addCleanup(recipient_context.close)
+            recipient_network=recipient_context.enter_context(self.b._network())
+            recipient_db=recipient_context.enter_context(recipient_network.participant.state.db())
             client_options=dict(target_node_entry=node_entry,expected_target=source.target,expected_sender=member_args['expected_sender'],
                 expected_slot=slot,slot_entries={name:slot_entries[name] for name in ('slot','read','maintenance','bootstrap')},
                 journal=MailboxSetupJournal(recipient_db))

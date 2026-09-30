@@ -402,8 +402,8 @@ configuration, original recipient signature and independently checked source.
 
 The protected selection survives restart. Each ordinary receive invocation
 attempts at most two distinct ready returns within its existing sixty-second
-network deadline. One attempt precedes mailbox polling with at most ten seconds;
-a second can follow reception with at most twenty seconds. An unavailable source
+network deadline. One attempt precedes mailbox polling with at most thirty seconds;
+a second can follow reception with at most thirty seconds. The last failure remains available through inspection. An unavailable source
 or lost response leaves the selection pending for a later receive invocation.
 The existing receipt publication journal retains exact requests across retries
 within their original signed expiry. An expired uncertain upload reports

@@ -120,11 +120,11 @@ def poll(network, result, *, deadline, attempted):
             from_local_history=returned['from_local_history']))
         result['network_accessed'] |= returned['network_accessed']
     except (MemoryError,RepairWireError) as error:
-        if error.code in {'repair_reconciliation_required','repair_saved_reconciliation_required'}:
-            raw=canonical_bytes(dict(state='reconciliation_required',code=error.code))
-            with network.participant.state.db() as db:
-                db.execute("UPDATE "+TABLE+" SET phase='reconciliation_required',result=?,result_sha256=? WHERE message_id=? AND body_sha256=?",
-                    (raw,hashlib.sha256(raw).hexdigest(),message_id,row['body_sha256']))
+        phase = 'reconciliation_required' if error.code in {'repair_reconciliation_required','repair_saved_reconciliation_required'} else 'pending'
+        raw=canonical_bytes(dict(state=phase,code=error.code,retryable=getattr(error,'retryable',False)))
+        with network.participant.state.db() as db:
+            db.execute("UPDATE "+TABLE+" SET phase=?,result=?,result_sha256=? WHERE message_id=? AND body_sha256=?",
+                (phase,raw,hashlib.sha256(raw).hexdigest(),message_id,row['body_sha256']))
         result['errors'].append(dict(message_id=message_id,operation='return_mailbox_receipt',
             code=error.code,retryable=getattr(error,'retryable',False)))
 

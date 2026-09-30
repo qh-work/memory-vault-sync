@@ -106,7 +106,7 @@ class OpenNetworkClient:
         result=asyncio.run(delivery.receive(limit=limit,_pending_only=True,_deadline=deadline))
         from memory_vault_open_mailbox_receipt_jobs import poll as poll_receipt_returns
         receipt_attempts=set()
-        poll_receipt_returns(self,result,deadline=min(deadline,time.monotonic()+10),attempted=receipt_attempts)
+        poll_receipt_returns(self,result,deadline=min(deadline,time.monotonic()+30),attempted=receipt_attempts)
         from memory_vault_open_mailbox_replica_receive import rows as receiver_rows, receive as receive_replica
         rows=receiver_rows(self)
         for row in rows:
@@ -132,7 +132,7 @@ class OpenNetworkClient:
             legacy=asyncio.run(delivery.receive(limit=limit-len(result['messages']),_skip_pending=True,_deadline=deadline))
             result['messages'].extend(legacy['messages']);result['errors'].extend(legacy['errors'])
             result['network_accessed']|=legacy['network_accessed']
-        poll_receipt_returns(self,result,deadline=min(deadline,time.monotonic()+20),attempted=receipt_attempts)
+        poll_receipt_returns(self,result,deadline=min(deadline,time.monotonic()+30),attempted=receipt_attempts)
         result['errors']=result['errors'][:4]
         return result
 

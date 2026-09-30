@@ -45,9 +45,12 @@ class RetainedReceiptTests(unittest.TestCase):
         with patch.object(OpenHTTPTransport,'request_repair',new=lose_response):
             first=h.call(h.b,op='receive',limit=1)
         self.assertEqual(dropped,[True]);self.assertTrue(first['network_accessed'])
-        self.assertTrue(deadlines);self.assertLessEqual(max(deadlines),started+11)
+        self.assertTrue(deadlines);self.assertLessEqual(max(deadlines),started+31)
         self.assertTrue(any(e['code']=='synthetic_lost_ack_reply' for e in first['errors']),first)
         self.assertFalse(first.get('receipt_returns'))
+        failure=h.call(h.b,op='connect',invitation=dict(schema_version=ACK_CONNECT_SCHEMA,
+            action='inspect_mailbox_receipt_return',message_id=mid))
+        self.assertEqual(failure['result']['code'],'synthetic_lost_ack_reply')
         # The next Agent operation reopens protected state after remote commit.
         resumed=h.call(h.b,op='receive',limit=1)
         self.assertIn('receipt_returns',resumed,resumed)
