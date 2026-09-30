@@ -1,5 +1,11 @@
 # Memory Vault development status
 
+Published **[alpha.0.37](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.37)** is fixed at `fe943c6466a6ef459ccb0d03e309b207b3b0fb95`.
+
+Native TypeScript recipients can now retain an explicitly authorized receipt destination for a cold-mailbox message. Ordinary Agent `receive` returns its actual saved receipt, reusing the exact upload after a lost reply or restart. Python and TypeScript share jobs and completed history; revocation stops retries and expired uncertain uploads stop for reconciliation. See [native mailbox receipt returns](../clients/typescript/network/README.md).
+
+Twelve checks passed using the extracted alpha.0.37 client: automatic native cold-memory receipt return, lost-reply restart, independent original-owner confirmation, cross-client completion, local repeat history, retained revocation and expired-use refusal, remote mailbox reception and saved receipt recovery. Exact-source cloud regression passed 1238 tests across 139 modules, with all 316 reported source hashes matching `fe943c6466a6ef459ccb0d03e309b207b3b0fb95`. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
 Published **[alpha.0.36](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.36)** is fixed at `bd3ca97ee56ca59a85c87eb1395e738e1a8c56ca`.
 
 Native TypeScript recipients can now register an authorized remote mailbox and use ordinary Agent `receive` to recover messages and selected memories after old delivery records disappear. Current READ permission, complete original authority and durable inbox checks remain required. Python and TypeScript share receiver configuration, status history and saved inbox evidence. See [native mailbox recovery](../clients/typescript/network/README.md).
