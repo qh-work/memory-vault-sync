@@ -1,5 +1,7 @@
 # Memory Vault: connect, remember, exchange, continue
 
+Native TypeScript recipients can now retain an explicitly authorized receipt destination for a cold-mailbox message. Ordinary Agent `receive` returns its actual saved receipt, reusing the exact upload after a lost reply or restart. Python and TypeScript share jobs and completed history; revocation stops retries and expired uncertain uploads stop for reconciliation. See [native mailbox receipt returns](clients/typescript/network/README.md).
+
 Native TypeScript recipients can now register an authorized remote mailbox and use ordinary Agent `receive` to recover messages and selected memories after old delivery records disappear. Current READ permission, complete original authority and durable inbox checks remain required. Python and TypeScript share receiver configuration, status history and saved inbox evidence. See [native mailbox recovery](clients/typescript/network/README.md).
 
 Native TypeScript recipients can now return an actual saved receipt through `connect/return_receipt`, using separate original owner, recipient and storage permissions. The native client shares the bounded pending/completed journal with Python and can resume the exact pending upload after restart without consuming new consent. See [independent receipt return](docs/OPEN_ACK_PROVISIONING.md#native-saved-receipt-return-development-after-alpha034).
@@ -34,7 +36,7 @@ current read checks. Saved receipts use separate return/recovery authority.
 Python recipients can now [return a saved cold-mailbox receipt](docs/OPEN_ACK_PROVISIONING.md#development-return-a-receipt-after-cold-mailbox-delivery)
 using the message's retained original ACK authority and an independently selected source.
 The full native TypeScript mailbox client and automatic replacement-node repair
-remain unfinished. Nine checks passed using the extracted alpha.0.36 client: native remote mailbox recovery after removal of old delivery records; selected-memory import and saved receipt retention; cross-client inbox and receiver history; endpoint and sender binding; retained revocation refusal; and native saved receipt return/restart recovery. Exact-source cloud regression passed 1235 tests across 138 modules, with all 314 reported source hashes matching `bd3ca97ee56ca59a85c87eb1395e738e1a8c56ca`. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+remain unfinished. Twelve checks passed using the extracted alpha.0.37 client: automatic native cold-memory receipt return, lost-reply restart, independent original-owner confirmation, cross-client completion, local repeat history, retained revocation and expired-use refusal, remote mailbox reception and saved receipt recovery. Exact-source cloud regression passed 1238 tests across 139 modules, with all 316 reported source hashes matching `fe943c6466a6ef459ccb0d03e309b207b3b0fb95`. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
 
 Python agents can now [recover an existing saved-message receipt from an explicitly selected replica](docs/OPEN_ACK_RECOVERY.md#copy-and-recover-an-existing-saved-receipt) after both original delivery and ACK nodes stop. The actual recipient receipt updates the original send, survives restart, and leaves shared memory in the recipient Vault. Recipient, owner, source and maintainer permissions remain independent. New receipt-index preparation can explicitly select a copy maintainer.
 
@@ -55,7 +57,7 @@ The publication and recovery commands retain exact original bytes and durable
 work limits. Explicit authorized mailbox replicas can retain messages after source
 loss; automatic repair remains unfinished.
 
-**v0.28.0-alpha.0.36 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+**v0.28.0-alpha.0.37 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
 to bind your existing Vault and signing identity to an independent open transport,
 join through one or two actual signed node introductions, explicitly approve a
 finite delivery, and exchange encrypted chat or selected original memories.
