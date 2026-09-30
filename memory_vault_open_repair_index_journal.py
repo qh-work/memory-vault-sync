@@ -45,6 +45,33 @@ class AckIndexJournal:
         return "index_campaign_" + hashlib.sha256(canonical_bytes(
             dict(resource_id=resource_id,campaign_id=self.campaign_id))).hexdigest()
 
+    @classmethod
+    def for_job(cls,state,resource_id,job_id):
+        """Select retained history only; this never authenticates a new job.
+
+        Keep the first/legacy journal at its original key. Later explicit job
+        IDs get stable separate keys, so retrying either cannot replace another.
+        The caller still verifies both independent consents before start().
+        """
+        if type(job_id) is not str or not 0<len(job_id)<=128:
+            _fail("repair_invalid_context")
+        scoped=cls(state,campaign_id=hashlib.sha256(canonical_bytes(dict(job_id=job_id))).hexdigest())
+        with state._lock:
+            state._binding()
+            mapped=state._one("SELECT journal_id FROM open_repair_index_campaigns WHERE resource_id=? AND campaign_id=?",(resource_id,scoped.campaign_id))
+            if mapped is not None:
+                scoped.snapshot(resource_id)
+                return scoped
+            legacy=state._one("SELECT plan,plan_digest FROM open_repair_index_execution WHERE resource_id=?",(resource_id,))
+            if legacy is None:
+                return cls(state)
+            raw=bytes(legacy["plan"])
+            if hashlib.sha256(raw).hexdigest()!=legacy["plan_digest"]:
+                _fail("repair_storage_corrupt")
+            try:old_job=json.loads(raw)["semantic"]["intent"]["job_id"]
+            except (ValueError,KeyError,TypeError):_fail("repair_storage_corrupt")
+            return cls(state) if old_job==job_id else scoped
+
     def _siblings(self, resource_id):
         keys=[resource_id]
         for campaign,key in self.db.execute("SELECT campaign_id,journal_id FROM open_repair_index_campaigns WHERE resource_id=? LIMIT 17",(resource_id,)):

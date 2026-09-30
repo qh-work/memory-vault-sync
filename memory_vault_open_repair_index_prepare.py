@@ -321,7 +321,8 @@ class AckIndexPlanPreparer:
                 if code is None:
                     saved=self.state._one('SELECT * FROM open_repair_index_prepare_exports WHERE resource_id=? AND job_id=?',(resource_id,job_id))
                     if saved is not None and saved['request_digest']!=request_digest: _fail('repair_index_job_conflict')
-                    execution=self.state._one('SELECT plan FROM open_repair_index_execution WHERE resource_id=?',(resource_id,))
+                    journal=AckIndexJournal.for_job(self.state,resource_id,job_id)
+                    execution=self.state._one('SELECT plan FROM open_repair_index_execution WHERE resource_id=?',(journal._key(resource_id),))
                     if execution is not None:
                         if saved is None or saved['raw'] is None: _fail('repair_index_job_conflict')
                         previous=json.loads(bytes(saved['raw'])); semantic=json.loads(bytes(execution['plan']))['semantic']
@@ -394,7 +395,8 @@ class AckIndexPlanPreparer:
                     live=self.state._row(resource_id)
                     old=self.state._one('SELECT raw FROM open_repair_index_prepare_exports WHERE resource_id=? AND job_id=?',(resource_id,job_id))
                     if old['raw'] is None:
-                        if self.db.execute('SELECT 1 FROM open_repair_index_execution WHERE resource_id=?',(resource_id,)).fetchone(): _fail('repair_index_job_conflict')
+                        journal=AckIndexJournal.for_job(self.state,resource_id,job_id)
+                        if self.db.execute('SELECT 1 FROM open_repair_index_execution WHERE resource_id=?',(journal._key(resource_id),)).fetchone(): _fail('repair_index_job_conflict')
                         self._refuse_existing_fact(source.commit.ref,root['ack_slot']['root_key']['anchor_ref'],expected['source_storage_epoch'],policy,meter)
                     if old['raw'] is not None:
                         if bytes(old['raw'])!=raw: _fail('repair_index_job_conflict')

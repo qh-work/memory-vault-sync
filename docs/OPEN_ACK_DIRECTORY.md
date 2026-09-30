@@ -142,3 +142,25 @@ previous 128-request preparation can exhaust its allowance during final receipt
 retrieval. Existing signed grants and node policies keep their original limits;
 this update does not renew or enlarge an existing authorization. Operators must
 explicitly enable the profile when preparing a new source.
+
+## Publish through another directory (development after alpha.0.33)
+
+The original source can prepare another explicitly selected directory by using
+new `allocation_id` and `job_id` values with the existing export, separate owner
+and receipt-writer signing, assemble and publish commands above. Both principals
+must consent to the new exact directory, fact and allocation. An old consent is
+not transferable. Existing signed source permissions, expiry and shared resource
+limits continue to apply; an exhausted source refuses further publication.
+
+Publication history is retained for each job. Its exact requests, response-loss
+charges, signing revisions and results survive restart without replacing earlier
+jobs. All retained jobs share the original source's request, signature, transfer
+and job-storage allowance, with at most sixteen histories and no increase to an
+existing signed job-count limit. Retrying an earlier job selects its earlier
+history and deadline. Unknown provider fact histories still refuse preparation.
+
+After publication, the owner supplies the new directory's signed introduction
+and full keys in `connect/recover_discovered_receipt`. The client independently
+reads the same original ACK source and checks the actual receipt against the
+original send. This explicit workflow works after the old directory stops. It
+does not automatically choose directories, obtain consent, or extend old grants.
