@@ -371,5 +371,16 @@ storage-resource authority blocks both cached output and fresh issuance even
 after that status expires; higher remembered document floors also remain in force. A completed local authorization does not prove that
 the source is currently available or that a message was delivered. The sender
 must still prepare and admit its exact ciphertext under current source checks;
-these sender and provisioning operations currently use Python. The existing
-native mailbox receive and independent receipt-return paths remain available.
+source provisioning currently uses Python. The native sender supports the same
+`prepare`, `admit`, and combined `retain` invitations in development after
+alpha.0.38. It freezes the original outbox ciphertext, disclosure and attempt in
+the shared Python/native journal before HTTP. A lost reply or restart reuses the
+same request, and changed selections fail instead of silently renewing grants.
+
+Pass `ack_request_id` to `prepare` or `retain` only when selecting an existing
+independently prepared receipt destination. Its six complete original controls
+and statuses are authenticated and carried in the mailbox member. The node
+still performs current permission, storage and resource checks before admission.
+`retained_at_mailbox` means the source signed actual custody;
+`recipient_acknowledged` remains false until a separate saved receipt is verified.
+Neither local preparation nor source custody means the recipient saved a memory.

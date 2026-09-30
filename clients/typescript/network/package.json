@@ -51,7 +51,8 @@
     "./open-mailbox-journal": "./open-mailbox-journal.ts",
     "./open-mailbox-receivers": "./open-mailbox-receivers.ts",
     "./open-mailbox-receipts": "./open-mailbox-receipts.ts",
-    "./open-mailbox-destination": "./open-mailbox-destination.ts"
+    "./open-mailbox-destination": "./open-mailbox-destination.ts",
+    "./open-mailbox-send": "./open-mailbox-send.ts"
   },
   "types": "./crypto.ts",
   "engines": {

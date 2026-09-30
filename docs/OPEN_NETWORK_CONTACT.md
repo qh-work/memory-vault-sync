@@ -201,8 +201,12 @@ Native TypeScript also supports receiver `authorize` and paginated `inspect` in
 development source after alpha.0.37. It shares the exact destination journal with
 Python, signs only with the receiver's own existing identity, and performs no HTTP
 requests during authorization. Both clients apply authenticated retained
-revocations before returning or issuing authorization. Source provisioning and
-sender mailbox admission still use Python.
+revocations before returning or issuing authorization. Source provisioning still
+uses Python. In development after alpha.0.38, native senders also support the `prepare`, `admit` and `retain` invitations below. They share
+the frozen ciphertext, disclosure, exact HTTP request and verified custody
+result with Python. Restarting or changing clients does not renew authority.
+An optional `ack_request_id` carries only the explicitly selected, independently
+prepared original receipt grants; custody does not imply recipient acknowledgement.
 
 A receiver using the Agent interface can authorize from an existing registered
 mailbox and its locally approved contact, without opening a database or loading
