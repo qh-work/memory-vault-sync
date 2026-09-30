@@ -38,7 +38,7 @@ OCCUPIED_LIMITS = RECEIPT_WORKFLOW_LIMITS
 class _ReplicaStatusJournal:
     """Keep authenticated full references across failed commands and targets."""
     def __init__(self,db,root,*,original_source=False):
-        self.db=db;self.root=canonical_bytes(root)
+        self.db=db;self.root=canonical_bytes(root);self.original_source=original_source
         # Preserve existing replica journal keys. Original-source observations
         # have a separate domain because their permitted status scopes differ.
         material=(b"original-source\0"+self.root) if original_source else self.root
@@ -58,7 +58,26 @@ class _ReplicaStatusJournal:
         self._check();issuers={p['signing_key']['key_id'] for p in parties}
         rows=self.db.execute('SELECT issuer,raw,ref FROM open_ack_replica_statuses WHERE root_id=? ORDER BY ref_id',(self.key,)).fetchall()
         if len(rows)>32 or sum(len(r[1])+len(r[2]) for r in rows)>262144:raise RepairWireError('repair_status_history_capacity')
-        return [dict(raw=bytes(raw),ref=json.loads(bytes(ref))) for issuer,raw,ref in rows if issuer in issuers]
+        retained={canonical_bytes(json.loads(bytes(ref))):dict(raw=bytes(raw),ref=json.loads(bytes(ref))) for issuer,raw,ref in rows if issuer in issuers}
+        if self.original_source and self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='open_mailbox_setup_jobs'").fetchone():
+            jobs=self.db.execute('SELECT job_key,plan,blocked FROM open_mailbox_setup_jobs LIMIT 17').fetchall()
+            if len(jobs)>16:raise RepairWireError('repair_status_history_capacity')
+            for key,raw,blocked in jobs:
+                plan=document(bytes(raw),maximum=65536)
+                if plan.get('kind')!='ack.owner_recovery':continue
+                if hashlib.sha256(bytes(raw)).hexdigest()!=key:raise RepairWireError('repair_storage_corrupt')
+                if canonical_bytes(plan['expected_ack_slot']['root_key'])!=self.root:continue
+                if blocked:raise RepairWireError('repair_setup_journal_capacity')
+                legacy=self.db.execute('SELECT digest,raw FROM open_mailbox_setup_statuses WHERE job_key=? ORDER BY digest LIMIT 33',(key,)).fetchall()
+                if len(legacy)>32 or sum(len(r[1]) for r in legacy)>262144:raise RepairWireError('repair_status_history_capacity')
+                for digest,raw in legacy:
+                    preview=document(bytes(raw),maximum=16384)
+                    if preview['payload']['signing_key']['key_id'] not in issuers:continue
+                    ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw))
+                    retained[canonical_bytes(ref)]=dict(raw=bytes(raw),ref=ref)
+        result=list(retained.values())
+        if len(result)>32 or sum(len(e['raw'])+len(canonical_bytes(e['ref'])) for e in result)>262144:raise RepairWireError('repair_status_history_capacity')
+        return result
 
     def observe(self,item):
         from memory_vault_open_repair_status import AuthenticatedStatusOriginal

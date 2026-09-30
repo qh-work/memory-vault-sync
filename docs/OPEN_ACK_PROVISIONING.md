@@ -475,3 +475,47 @@ schema. Inspection includes the last failure. Removal retains the original
 outbox and authenticated status history; switching destinations does not erase
 an earlier revocation. Existing explicit replica recovery uses that same
 root-scoped history as well.
+
+## Native Agent receipt recovery (source after alpha.0.31)
+
+The native TypeScript Agent accepts the same explicit `connect` invitation with
+schema `memory-vault-open-ack-connect/v1`, action `recover_receipt` and profile
+`receipt` or `receipt-index`. Use the `owner_invitation` exported by the existing
+ACK preparation workflow, with its original signed target introduction, root,
+owner READ and bootstrap grants and exact recipient/message/envelope binding.
+Keep this invitation private; it contains selected read authority.
+
+Pass the entire exported object as `invitation` in an `op: "connect"`
+request through the existing six-operation interface. Do not edit its `request`
+fields or substitute an empty object. The client refuses incomplete or changed
+authority. The same agent must already have the original send in its
+protected outbox. Recovery performs native HTTP and signature checks, binds the
+actual recipient receipt to that stored message and updates its acknowledgement.
+It works while the original delivery node is offline. A subsequent unchanged
+`send` uses the saved result without contacting either node.
+
+Native and Python clients share the existing protected outbox and setup-status
+journal, so a restart or change of client language preserves signed revocations
+and conflicts. Agent and command-line recovery also share the original-root
+status journal. A different bootstrap or request tuple cannot forget a revoked
+READ grant under that root. Old request-scoped records are bounded, loaded and
+reauthenticated when necessary; existing installations retain their history. Only authenticated relevant statuses reserve journal space. The
+existing limits remain sixteen setup jobs, thirty-two statuses and 256 KiB of
+status originals per job; capacity exhaustion blocks that job. Recovery uses a
+thirty-second network deadline and the original signed permission windows.
+
+If the same protected state already contains a successful ACK preparation,
+repeating the unchanged original native `send` also recovers the receipt
+automatically. It reads the existing owner grants and exact message binding,
+fetches the selected source's current signed introduction and requires its
+original key, origin and storage epoch. It retains current node revision floors.
+A changed send fails before any source read, and an already confirmed send
+remains local. Recovery takes at most twenty seconds within the send's existing
+sixty-second network deadline. The result includes `ack_recovery` on confirmation
+or `ack_recovery_error` when that attempt is refused or unavailable; the ordinary
+send retains its existing storage/recipient receipt distinction.
+
+This adds owner receipt recovery from the selected original ACK source. ACK
+source preparation, receipt return, cold-mailbox reception and ACK replica
+recovery still require their Python workflows. It does not automatically select
+nodes, grant access, import memory or run a Python subprocess.

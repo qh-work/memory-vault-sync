@@ -20,9 +20,9 @@ from typing import Sequence
 MAX_SOURCE_BYTES = 2 * 1024 * 1024
 MAX_TREE_BYTES = 2 * 1024 * 1024
 MAX_TREE_ENTRIES = 8192
-# The explicit mailbox runtime/review inventory contains 594 public files.
+# The explicit native ACK runtime/review inventory now exceeds 608 files.
 # Keep a finite source-count ceiling independent of the unchanged byte caps.
-MAX_SELECTED_FILES = 608
+MAX_SELECTED_FILES = 624
 MAX_SELECTED_BYTES = 32 * 1024 * 1024
 GIT_TIMEOUT_SECONDS = 15
 _SHA = re.compile(r"[0-9a-f]{40}")

@@ -26,6 +26,7 @@ import {CHUNK_BYTES,originalDocument,envelopeRef,immutableRef,issueUploadIntent,
 import {createEnvelope,verifyEnvelope,decryptEnvelope,MAX_ENVELOPE_BYTES} from './open-delivery.ts';
 
 type Obj=Record<string,any>;
+type AckRecovery=(row:Obj,deadline:number)=>Promise<Obj>;
 const now=()=>Math.floor(Date.now()/1000);
 const same=(a:unknown,b:unknown)=>Buffer.from(canonicalBytes(a)).equals(Buffer.from(canonicalBytes(b)));
 const raw=(value:Uint8Array)=>Buffer.from(value);
@@ -140,6 +141,20 @@ export class OpenDeliveryClient{
       return db.prepare('SELECT * FROM open_delivery_outbox WHERE request_id=?').get(row.request_id) as Obj;
     }));
   }
+  acceptRecoveredReceipt(receipt:DocumentInput):Obj{
+    const value=document(receipt,4096) as Obj,messageId=opaqueId(value.payload?.message_id);
+    return this.db(db=>transaction(db,()=>{
+      const row=db.prepare('SELECT * FROM open_delivery_outbox WHERE message_id=?').get(messageId) as Obj|undefined;
+      if(!row||!row.envelope||!row.session)fail('open_delivery_message_not_found');
+      const session=document(row.session,32768) as Obj;
+      verifyRecipientReceipt(value,{recipient_signing_key:OpenDeliveryClient.keys(session).recipient_signing_key,
+        sender_key_id:this.participant.identity.key_id,message_id:messageId,envelope_ref:envelopeRef(row.envelope)});
+      const encoded=canonicalBytes(value);
+      if(row.acknowledgement&&!raw(row.acknowledgement).equals(raw(encoded)))fail('open_delivery_receipt_conflict');
+      db.prepare('UPDATE open_delivery_outbox SET acknowledgement=? WHERE message_id=?').run(encoded,messageId);
+      return {state:'validated_saved',message_id:messageId,request_id:row.request_id,endpoint_validated:true,acknowledgement_pending:false};
+    }));
+  }
   private contactSessions(outgoing:boolean,recipient?:string):Obj[]{
     const rows=this.db(db=>db.prepare(`SELECT a.reference,a.body,b.body AS decision FROM open_contact_local a
       JOIN open_contact_local b ON b.reference=a.reference AND b.category=? WHERE a.category=? AND a.expires_at>? AND b.expires_at>?
@@ -251,18 +266,22 @@ export class OpenDeliveryClient{
     this.db(db=>transaction(db,()=>{const old=db.prepare('SELECT result FROM open_delivery_outbox WHERE request_id=?').get(requestId) as Obj|undefined;
       if(!old)fail('open_delivery_outbox_missing');if(old.result&&!raw(old.result).equals(raw(encoded)))fail('open_delivery_result_conflict');
       db.prepare('UPDATE open_delivery_outbox SET result=? WHERE request_id=?').run(encoded,requestId);}));}
-  async send(requestId:string,recipients:string[],text='',memoryIds:string[]=[],control?:DocumentInput):Promise<Obj>{
+  async send(requestId:string,recipients:string[],text='',memoryIds:string[]=[],control?:DocumentInput,recoverAck?:AckRecovery):Promise<Obj>{
     opaqueId(requestId);
     if(!Array.isArray(recipients)||recipients.length!==1||typeof recipients[0]!=='string'||!/^ed25519_[0-9a-f]{64}$/.test(recipients[0])||typeof text!=='string'||Buffer.byteLength(text)>16384||control!=null)fail('open_delivery_invalid_send');
     if(!Array.isArray(memoryIds)||memoryIds.length>32||new Set(memoryIds).size!==memoryIds.length||memoryIds.some(id=>typeof id!=='string'||!/^mem_[0-9a-f]{40}$/.test(id)))fail('network_invalid_memory_selection');
     if(!text&&!memoryIds.length)fail('network_empty_message');
     const recipient=recipients[0],selected=[...memoryIds],hash=sha256(canonicalBytes({recipients:[recipient],text,memory_ids:selected}));
-    return this.serial(()=>this.sendInternal(requestId,recipient,hash,text,selected));
+    return this.serial(()=>this.sendInternal(requestId,recipient,hash,text,selected,recoverAck));
   }
-  private async sendInternal(requestId:string,recipient:string,hash:string,text:string,memoryIds:string[]):Promise<Obj>{
+  private async sendInternal(requestId:string,recipient:string,hash:string,text:string,memoryIds:string[],recoverAck?:AckRecovery):Promise<Obj>{
     let row=this.prepareOutbox(requestId,recipient,hash,text,memoryIds);const budget=new DeliveryBudget();let session:Obj;
     if(!row.session){session=await this.sendingSession(recipient,budget);row=await this.encryptOutbox(row,session);}
     session=document(row.session,MAX_SESSION_BYTES) as Obj;row=await this.encryptOutbox(row,session);
+    let recovery:Obj={network_accessed:false};
+    if(row.result&&!row.acknowledgement&&recoverAck){
+      recovery=await recoverAck(row,budget.deadline);row=this.outbox(requestId)!;
+    }
     let node:SignedNode|null=null,pendingCode:string|undefined;
     if(!row.result&&row.intent){const child=budget.routing();try{node=await this.sessionNode(session,child);}finally{budget.merge(child);}
       const stored=await this.call(node,'stored.get',{message_id:row.message_id,envelope_ref:envelopeRef(row.envelope)},budget);
@@ -299,7 +318,8 @@ export class OpenDeliveryClient{
         db.prepare('UPDATE open_delivery_outbox SET acknowledgement=? WHERE request_id=?').run(encoded,requestId);}));}
     return {state:acknowledgement?'validated_saved':'storage_accepted',request_id:requestId,message_id:row.message_id,
       content_kind:validateContent(row.body).kind,storage_accepted:true,endpoint_validated:!!acknowledgement,recipient_key_id:row.recipient,
-      network_accessed:budget.requests>0,acknowledgement_pending:!acknowledgement,...(pendingCode?{pending_code:pendingCode}:{})};
+      network_accessed:budget.requests>0||recovery.network_accessed,acknowledgement_pending:!acknowledgement,
+      ...(recovery.state?{ack_recovery:recovery.state}:{}),...(recovery.error?{ack_recovery_error:recovery.error}:{}),...(pendingCode?{pending_code:pendingCode}:{})};
   }
   private stageInbox(messageId:string,sender:string,envelope:Uint8Array,body:Uint8Array,session:Obj):Obj{
     originalDocument(envelope,{maximum:MAX_ENVELOPE_BYTES});const digest=sha256(envelope),content=validateContent(body);

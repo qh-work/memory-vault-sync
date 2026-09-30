@@ -1,4 +1,15 @@
-# Memory Vault v0.28.0-alpha.0.31 — resumable copies and original-send confirmation from ACK replicas
+# Memory Vault v0.28.0-alpha.0.32 — native original-send confirmation through an independent ACK source
+
+Native TypeScript Agents can confirm a stored send through its independently
+selected original ACK source while the delivery node is offline. An explicit
+`connect/recover_receipt` uses the existing owner invitation; repeating the
+unchanged original `send` uses a successful preparation already in protected
+state. Fresh source identity, origin, epoch and revision floors remain checked.
+Confirmed repeats stay local, and signed refusal history is shared with Python
+across restart. Automatic recovery has twenty seconds within the existing
+sixty-second send deadline. No Python subprocess or new permission is created.
+ACK source preparation, receipt return and replica workflows still use Python.
+See `docs/OPEN_ACK_PROVISIONING.md`.
 
 Authorized maintainers can retain exact mailbox copy bundles and resume them
 through a finite worker after source loss, lost commit replies or restart.
@@ -109,7 +120,7 @@ TypeScript recognizes the mailbox replica proof and status profiles. Participant
 operate their own authorized nodes; no central authority or project-operated
 public seed is required or provided.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.31/docs/OPEN_NETWORK_QUICKSTART.md)
-and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.31/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.32/docs/OPEN_NETWORK_QUICKSTART.md)
+and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.32/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
 Preserve existing identity and state files when installing. The archives contain
 implementation, public documentation and wholly synthetic fixtures only.

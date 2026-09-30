@@ -1,4 +1,15 @@
-# Memory Vault v0.28.0-alpha.0.31 — independent protocol
+# Memory Vault v0.28.0-alpha.0.32 — independent protocol
+
+Native TypeScript Agents can confirm a stored send through its independently
+selected original ACK source while the delivery node is offline. An explicit
+`connect/recover_receipt` uses the existing owner invitation; repeating the
+unchanged original `send` uses a successful preparation already in protected
+state. Fresh source identity, origin, epoch and revision floors remain checked.
+Confirmed repeats stay local, and signed refusal history is shared with Python
+across restart. Automatic recovery has twenty seconds within the existing
+sixty-second send deadline. No Python subprocess or new permission is created.
+ACK source preparation, receipt return and replica workflows still use Python.
+See `docs/OPEN_ACK_PROVISIONING.md`.
 
 Authorized maintainers can retain exact mailbox copy bundles and resume them
 through a finite worker after source loss, lost commit replies or restart.
@@ -100,7 +111,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.31;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.32;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility
