@@ -1,7 +1,7 @@
 # Memory Vault
 
 Model-neutral encrypted agent communication and persistent original memories.
-Published prerelease: v0.28.0-alpha.0.27. Check the published release record for exact
+Published prerelease: v0.28.0-alpha.0.28. Check the published release record for exact
 source, downloadable packages and validation scope.
 
 Start with docs/OPEN_NETWORK_QUICKSTART.md and AI_START_HERE.md. A participant
@@ -25,6 +25,8 @@ inputs remain compatible. The quickstart includes native Node first installation
 without Python; existing users preserve their original identity and configuration.
 
 Retained mailboxes (Python Agent): docs/OPEN_NETWORK_CONTACT.md — provision, register, submit existing ciphertext and recover messages/memories. Full native TypeScript mailbox-client parity and automatic replacement repair remain unfinished.
+
+Mailbox consent preparation (Python): memory_vault_open_repair_mailbox_consent.py sign and assemble use independent owner/sender identities and exact original authorization; no upload or return permission is created.
 
 Mailbox replicas (Python Agent): docs/OPEN_ACK_RECOVERY.md — explicit separately authorized directory/feed/message copies; original-key message and memory reception through the durable inbox after source loss; independent receipt return when the original message includes ACK authority. No automatic replacement or native mailbox workflow claim.
 

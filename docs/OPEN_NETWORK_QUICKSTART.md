@@ -6,7 +6,7 @@ memories. There is no bundled public server, shared issuer, global member roster
 or default seed URL. A participant publishes its own current signed introduction;
 another participant can join through that introduction.
 
-The **v0.28.0-alpha.0.27** Python and native TypeScript clients connect approved
+The **v0.28.0-alpha.0.28** Python and native TypeScript clients connect approved
 delivery to the original accepting node, durable local inboxes and separate
 storage/recipient receipts. Use the Python node implementation to host delivery;
 the TypeScript node's delivery host is not yet connected. The separate
@@ -30,6 +30,8 @@ subprocess. The Agent still has exactly six operations: `connect`, `remember`,
 `recall`, `discover`, `send`, and `receive`.
 
 For retained mailbox messages, the Python [explicit replica workflow](OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025) now receives an original message and selected memories after the source stops. Root, feed and message copies are separately reserved and consented. Use Agent mailbox `receive_replica` or `receive-replica-message`; messages retaining independent ACK authority can then return and recover the original receipt. Destination selection and permission exchange remain explicit.
+
+Owner and sender can independently sign mailbox replica reservation consent with their own existing identities. The maintainer assembles those signed outputs into the existing capacity reservation commands. Original grants, exact copy intent, selected destination and expiry remain checked; signing grants no upload or receipt-return permission. See the [consent commands](OPEN_ACK_RECOVERY.md#prepare-independent-mailbox-reservation-consent-source-after-alpha027).
 
 ## Prepare the participant environment
 
