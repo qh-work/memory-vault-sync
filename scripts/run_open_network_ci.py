@@ -222,7 +222,17 @@ class Reports:
                                   "passed":passed, "complete":complete})
 
 
-def initialize(reports, mode, seed):
+def selected_modules(partition_index=0, partition_count=1):
+    require(type(partition_count) is int and 1 <= partition_count <= 8
+        and type(partition_index) is int and 0 <= partition_index < partition_count)
+    selected = MODULES[partition_index::partition_count]
+    require(bool(selected))
+    return selected
+
+
+def initialize(reports, mode, seed, partition_index=0, partition_count=1):
+    modules = selected_modules(partition_index, partition_count)
+    require(mode == 'light' or (partition_index, partition_count) == (0, 1))
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     require(re.fullmatch(r"[0-9a-f]{40}", sha) is not None)
     sources = ["scripts/run_open_network_ci.py", "tests/open_routing_acceptance.py", "tests/test_open_routing.py",
@@ -308,7 +318,8 @@ def initialize(reports, mode, seed):
         "expected_jose":"6.2.10" if mode=="light" else None,
         "requested_runner":"ubuntu-24.04-standard", "report_byte_limit":MAX_REPORT_BYTES, "synthetic_only":True,
         "scale_settings":{**EXPECTED,"queries_per_phase":1000} if mode == "scale" else None,
-        "test_modules":list(MODULES) if mode == "light" else []}
+        "test_modules":list(modules) if mode == "light" else [],
+        "partition_index":partition_index, "partition_count":partition_count}
     for name in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"):
         value=os.environ.get(name,"")
         if re.fullmatch(r"[0-9]{1,24}",value):settings[name.lower()]=value
@@ -325,9 +336,11 @@ def test_name(test):
     return value if re.fullmatch(r"[A-Za-z0-9_.]{1,240}",value) else "unidentified_test"
 
 
-def record_runtime(reports,mode,seed):
+def record_runtime(reports,mode,seed,partition_index=0,partition_count=1):
     settings=json.loads((reports.directory/"settings.json").read_text())
     require(settings["mode"]==mode and settings["seed"]==(seed if mode=="scale" else None))
+    require(settings['partition_index']==partition_index and settings['partition_count']==partition_count)
+    require(settings['test_modules']==(list(selected_modules(partition_index,partition_count)) if mode=='light' else []))
     actual_sha=subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip()
     require(settings["commit_sha"]==actual_sha)
     for name,digest in settings["source_sha256"].items():
@@ -390,7 +403,7 @@ class SyntheticResult(unittest.TestResult):
         super().addSubTest(test,subtest,err);self.record(test,"subtest_passed" if err is None else "subtest_failed",err)
 
 
-def run_light(reports):
+def run_light(reports,partition_index=0,partition_count=1):
     if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
     result=SyntheticResult(reports)
     # A rejected candidate cannot become accepted by running more cases. Stop
@@ -398,7 +411,7 @@ def run_light(reports):
     # Test exceptions remain classified, but raw provider errors/fixture paths
     # are not copied into either uploaded reports or public console output.
     with contextlib.redirect_stdout(DiscardOutput()),contextlib.redirect_stderr(DiscardOutput()):
-        suite=unittest.defaultTestLoader.loadTestsFromNames(MODULES)
+        suite=unittest.defaultTestLoader.loadTestsFromNames(selected_modules(partition_index,partition_count))
         planned=suite.countTestCases()
         suite.run(result)
     complete=planned>0 and result.testsRun==planned
@@ -458,8 +471,12 @@ def main():
     parser.add_argument("--phase",choices=("initialize","run","finalize"),required=True)
     parser.add_argument("--seed",type=int,choices=(17,29,43),default=17)
     parser.add_argument("--report-directory",type=Path,required=True)
+    parser.add_argument("--partition-index",type=int,default=0)
+    parser.add_argument("--partition-count",type=int,default=1)
     args=parser.parse_args();reports=Reports(args.report_directory)
-    if args.phase=="initialize":initialize(reports,args.mode,args.seed);return 0
+    selected_modules(args.partition_index,args.partition_count)
+    require(args.mode=='light' or (args.partition_index,args.partition_count)==(0,1))
+    if args.phase=="initialize":initialize(reports,args.mode,args.seed,args.partition_index,args.partition_count);return 0
     if args.phase=="finalize":return 0 if finalize(reports) else 1
     def interrupted(signum,frame):raise KeyboardInterrupt
     for signum in (signal.SIGINT,signal.SIGTERM,signal.SIGALRM):signal.signal(signum,interrupted)
@@ -468,8 +485,8 @@ def main():
     signal.alarm((55 if args.mode == "light" else 26)*60)
     reports.status("running")
     try:
-        record_runtime(reports,args.mode,args.seed)
-        passed=run_scale(reports,args.seed) if args.mode=="scale" else run_light(reports)
+        record_runtime(reports,args.mode,args.seed,args.partition_index,args.partition_count)
+        passed=run_scale(reports,args.seed) if args.mode=="scale" else run_light(reports,args.partition_index,args.partition_count)
         complete=args.mode=="scale" or json.loads((reports.directory/"results.json").read_text())["complete"]
         reports.status("passed" if passed else "failed",passed=passed,complete=complete)
         return 0 if passed else 1
