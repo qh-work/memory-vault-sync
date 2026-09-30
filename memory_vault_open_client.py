@@ -96,22 +96,25 @@ class OpenNetworkClient:
     def receive(self, limit=4):
         from memory_vault_open_repair_wire import RepairWireError
         delivery=self._delivery();deadline=time.monotonic()+60
-        result=asyncio.run(delivery.receive(limit=limit,_pending_only=True))
+        result=asyncio.run(delivery.receive(limit=limit,_pending_only=True,_deadline=deadline))
         if len(result['messages'])>=limit:return result
-        self._mailbox_receivers_initialize()
-        with self.participant.state.db() as db:
-            rows=db.execute('SELECT receiver_id,body FROM open_mailbox_receivers ORDER BY last_attempt,receiver_id LIMIT 4').fetchall()
+        from memory_vault_open_mailbox_replica_receive import rows as receiver_rows, receive as receive_replica
+        rows=receiver_rows(self)
         for row in rows:
             remaining=deadline-time.monotonic()
             if len(result['messages'])>=limit or remaining<=0:break
+            table='open_mailbox_replica_receivers' if row['receiver_kind']=='replica' else 'open_mailbox_receivers'
             with self.participant.state.db() as db:
-                db.execute('UPDATE open_mailbox_receivers SET last_attempt=? WHERE receiver_id=?',(time.time_ns(),row['receiver_id']))
+                db.execute('UPDATE '+table+' SET last_attempt=? WHERE receiver_id=?',(time.time_ns(),row['receiver_id']))
             try:
-                config=document(bytes(row['body']),maximum=65536)
-                options=self._mailbox_receiver_options(config)
                 def accessed():result['network_accessed']=True
-                received=self.receive_mailbox(config['base_url'],limit_policy=config['limit_policy'],
-                    limit=limit-len(result['messages']),timeout=min(60,remaining),_network_observer=accessed,**options)
+                if row['receiver_kind']=='replica':
+                    received=receive_replica(self,row,deadline=deadline,accessed=accessed)
+                else:
+                    config=document(bytes(row['body']),maximum=65536)
+                    options=self._mailbox_receiver_options(config)
+                    received=self.receive_mailbox(config['base_url'],limit_policy=config['limit_policy'],
+                        limit=limit-len(result['messages']),timeout=min(60,remaining),_network_observer=accessed,**options)
                 result['messages'].extend(received['messages'])
                 result['errors'].extend(received['errors'])
             except (MemoryError,RepairWireError) as error:
@@ -182,6 +185,11 @@ class OpenNetworkClient:
         from memory_vault_open_repair_resource import _dual_key
         value=document(invitation,maximum=65536)
         action=value.get('action')
+        if action in ('register_replica','list_replicas','inspect_replica','remove_replica'):
+            from memory_vault_open_mailbox_replica_receive import connect as replica_connect
+            try:return replica_connect(self,value)
+            except RepairWireError as error:raise MemoryError(error.code) from error
+            except (KeyError,TypeError) as error:raise MemoryError('open_invalid_mailbox_receiver') from error
         if action=='receive_replica':
             return self._mailbox_receive_replica(value)
         if action=='provision':
@@ -358,7 +366,7 @@ class OpenNetworkClient:
                 db.execute('INSERT INTO open_mailbox_receivers(receiver_id,body) VALUES(?,?)',(receiver_id,raw))
         return dict(state='registered',receiver_id=receiver_id,network_accessed=False,receipt_return='separate_authority_required')
 
-    def _mailbox_receive_replica(self, value):
+    def _mailbox_receive_replica(self, value, *, timeout=60):
         """Use original mailbox authority and retain observations across retries."""
         from dataclasses import replace
         from memory_vault_open_repair_admin import _ReplicaStatusJournal
@@ -367,6 +375,8 @@ class OpenNetworkClient:
         from memory_vault_open_repair_wire import RepairBudget, RepairWireError, build_new_wire
         from memory_vault_open_repair_history import _slot
         from memory_vault_open_repair_resource import _dual_key
+        import math
+        if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0<timeout<=60:raise MemoryError('open_invalid_repair_policy')
         object_fields(value,{'schema_version','action','base_url','repair_profile','request'})
         if value['repair_profile']!='mailbox':raise MemoryError('open_invalid_repair_policy')
         fields={'expected_slot','expected_sender','expected_target','expected_source','source_storage_epoch',
@@ -399,7 +409,7 @@ class OpenNetworkClient:
                     limit_policy=MAILBOX_WORKFLOW_LIMITS,transport=self.participant.transport,
                     allow_loopback=self.participant.transport.allow_loopback,status_observer=journal.observe)
                 try:
-                    result=asyncio.run(self._delivery().receive_mailbox_replica(reader,value['base_url'],timeout=60,**request))
+                    result=asyncio.run(self._delivery().receive_mailbox_replica(reader,value['base_url'],timeout=timeout,**request))
                 finally:reader.close()
             return dict(result,network_accessed=True)
         except RepairWireError as error:raise MemoryError(error.code) from error

@@ -660,6 +660,49 @@ an empty slot again, generate new consent, or clear the source's budget. After
 that window expires it reports that reconciliation is required; A can use the
 independent occupied recovery path instead of assuming the upload failed.
 
+## Retain a replica for ordinary receive (source after alpha.0.28)
+
+A Python recipient can opt into ordinary polling of an already authorized
+message replica. Use the exact same `base_url`, `repair_profile` and `request`
+as `receive_replica` below, changing only `action` to `register_replica`.
+Registration checks the original recipient controls, selected sender, maintainer
+and destination introduction locally. It does not fetch a message or grant any
+new source/copy/return permission.
+
+```python
+registered = agent.handle({"op": "connect", "invitation": {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "register_replica", "base_url": selected_replica_url,
+    "repair_profile": "mailbox", "request": recovery_request,
+}})
+# This later operation reopens the same protected state, including after restart.
+received = agent.handle({"op": "receive"})
+```
+
+The selection survives restart in the existing protected transport database.
+Ordinary `receive` rotates among original mailboxes and explicitly retained
+replicas, with at most four selections and the same sixty-second overall network
+budget. Each message has at most two registered destinations; there are at most
+sixteen replica selections per client. This is automatic polling of selected,
+already authorized copies, not automatic discovery or creation of replacements.
+
+Before recovery, the client fetches the selected origin's current public node
+introduction. The signing key and storage epoch must still match the saved
+selection. This refresh cannot renew read grants, choose another origin or approve
+a different node. Recovery then performs the existing protected proof/body
+exchange, original-key decryption, durable inbox import and independent receipt
+retention. Saved or rejected ciphertext is not fetched again; interrupted local
+imports use the existing inbox recovery path. Receipt return still needs its
+separate original authority.
+
+The same `connect` schema accepts `list_replicas`, `inspect_replica` and
+`remove_replica`. Inspection/removal require the returned `receiver_id`;
+inspection uses the existing explicit cursor paging. Removing a selection stops
+that polling but keeps received messages, memories and authenticated status
+observations. Removing/re-registering cannot erase a previously observed denial.
+Expired original grants require separately renewed authority; an unreachable
+node or failed check is reported by ordinary `receive` without importing data.
+
 ## Prepare independent mailbox reservation consent (source after alpha.0.27)
 
 Each owner, and separately each sender for feed/message copies, can sign the

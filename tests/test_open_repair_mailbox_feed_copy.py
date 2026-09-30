@@ -293,7 +293,7 @@ class MailboxFeedCopyTests(unittest.TestCase):
     def test_commands_upload_configure_and_recover_with_existing_keys_after_restart(self):
         self.http_roundtrip(commands=True)
 
-    def http_roundtrip(self, commands=False, message=False, upload_only=False, agent=False):
+    def http_roundtrip(self, commands=False, message=False, upload_only=False, agent=False, registered=False):
         from memory_vault import MemoryError
         from memory_vault_open_node import OpenParticipant, OpenHTTPServer
         from memory_vault_open_transport import OpenHTTPTransport
@@ -426,20 +426,32 @@ class MailboxFeedCopyTests(unittest.TestCase):
                             known_statuses=[],archive_statuses=[]))
                     from tests.test_open_delivery_http import repair_failure_diagnostics
                     try:
-                        with repair_failure_diagnostics():received=h.call_agent(h.recipient_agent,op='connect',invitation=invitation)
+                        with repair_failure_diagnostics():
+                            if registered:
+                                registration=dict(invitation,action='register_replica')
+                                configured=h.call_agent(h.recipient_agent,op='connect',invitation=registration)
+                                self.assertEqual(configured['state'],'registered');self.assertFalse(configured['network_accessed'])
+                                self.assertEqual(h.call_agent(h.recipient_agent,op='connect',invitation=registration),configured)
+                                if hasattr(self,'inspect_registration'):self.inspect_registration(h,registration,configured)
+                                received=h.call_agent(h.recipient_agent,op='receive')
+                            else:received=h.call_agent(h.recipient_agent,op='connect',invitation=invitation)
                     except AssertionError as error:raise AssertionError((str(error),errors)) from None
-                    self.assertEqual(received['body_transport'],'mailbox_message_replica')
+                    if not registered:self.assertEqual(received['body_transport'],'mailbox_message_replica')
                     self.assertEqual(received['messages'][0]['share']['records_added'],1)
                     self.assertTrue(received['network_accessed'])
                     # Agent operations reopen the protected state, including
                     # exact inbox evidence and retained status observations.
-                    repeated=h.call_agent(h.recipient_agent,op='connect',invitation=invitation)
+                    if registered:
+                        with patch('memory_vault_open_transport.OpenHTTPTransport.request_node',side_effect=AssertionError('saved replica was polled again')):
+                            repeated=h.call_agent(h.recipient_agent,op='receive')
+                    else:repeated=h.call_agent(h.recipient_agent,op='connect',invitation=invitation)
                     self.assertEqual(repeated['messages'],[])
                     with h.recipient_agent._network() as network:
                         with network.participant.state.db() as db:
                             self.assertGreater(db.execute('SELECT count(*) FROM open_ack_replica_statuses').fetchone()[0],0)
                     recalled=h.call_agent(h.recipient_agent,op='recall',query='Synthetic mailbox memory')
                     self.assertTrue(any(hit['text']=='Synthetic mailbox memory: consult current evidence before reuse.' for hit in recalled['hits']))
+                    if registered and hasattr(self,'inspect_received_registration'):self.inspect_received_registration(h,registration,configured)
                     return
                 recovered=h.command('receive-replica-message' if message else 'recover-replica-feed',dict(schema_version=FEED_RECOVER_SCHEMA,node=h.encode(h.wrap(canonical_bytes(descriptor))),
                     root_key=h.root,slot_key=h.slot,sender=h.sender,target=h.target,source=h.source.target,
@@ -453,6 +465,7 @@ class MailboxFeedCopyTests(unittest.TestCase):
                     self.assertEqual(recovered['replica_custody'],h.encode(result['custody']))
                     recalled=h.call_agent(h.recipient_agent,op='recall',query='Synthetic mailbox memory')
                     self.assertTrue(any(hit['text']=='Synthetic mailbox memory: consult current evidence before reuse.' for hit in recalled['hits']))
+                    if registered and hasattr(self,'inspect_received_registration'):self.inspect_received_registration(h,registration,configured)
                     return
                 self.assertEqual(len(recovered['members']),1)
                 self.assertEqual(recovered['state'],'mailbox_feed_replica_recovered')
