@@ -31,12 +31,17 @@ def _request(path, output, schema, fields, profile):
     if os.path.lexists(output): raise wire.RepairWireError('repair_output_exists')
     raw = _read_private(_absolute_path(path), MAX_COPY_BUNDLE_BYTES)
     if raw is None: raise wire.RepairWireError('repair_request_missing')
-    request = object_fields(document(raw, maximum=MAX_COPY_BUNDLE_BYTES), fields | {'schema_version'})
+    request, limits = _request_value(document(raw, maximum=MAX_COPY_BUNDLE_BYTES), schema, fields, profile)
+    return request, output, limits
+
+
+def _request_value(value, schema, fields, profile):
+    request = object_fields(value, fields | {'schema_version'})
     profiles = {'unbound': DEFAULT_LIMITS, 'receipt': RECEIPT_WORKFLOW_LIMITS, 'receipt-index': INDEX_WORKFLOW_LIMITS, 'mailbox': MAILBOX_WORKFLOW_LIMITS}
     if request['schema_version'] != schema or profile not in profiles: raise wire.RepairWireError('repair_invalid_request_bundle')
     history._root(request['root_key'])
     if request['root_key']['root_kind'] != 'mailbox': raise wire.RepairWireError('repair_invalid_request_bundle')
-    return request, output, profiles[profile]
+    return request, profiles[profile]
 
 
 def _base(entry):
@@ -124,14 +129,31 @@ def upload_message(network_config, request_path, output, *, timeout=30, repair_p
     return _upload_mailbox(network_config,request_path,output,timeout=timeout,repair_profile=repair_profile,source_state='message')
 
 
+def _upload_fields(source_state):
+    if source_state not in ('root','feed','message'): raise wire.RepairWireError('repair_invalid_request_bundle')
+    feed = source_state in ('feed','message'); message = source_state == 'message'
+    names = ('node','manifest','custody','allocation','offer','assignment','reservation','owner_disclosure','source_disclosure')
+    if feed: names += ('sender_reservation','sender_disclosure')
+    fields = set(names) | {'root_key','owner','source','source_storage_epoch','target','target_storage_epoch','originals','current_statuses'}
+    if feed: fields |= {'slot_key','sender'}
+    if message: fields.add('envelope')
+    schema = MESSAGE_UPLOAD_SCHEMA if message else FEED_UPLOAD_SCHEMA if feed else UPLOAD_SCHEMA
+    return names, fields, schema
+
+
 def _upload_mailbox(network_config, request_path, output, *, timeout, repair_profile, source_state):
-    """Upload an already allocated and independently consented exact transcript."""
-    feed = source_state in ('feed','message'); message=source_state=='message'
-    names = ('node', 'manifest', 'custody', 'allocation', 'offer', 'assignment', 'reservation', 'owner_disclosure', 'source_disclosure')
-    if feed: names += ('sender_reservation', 'sender_disclosure')
-    request, output, limits = _request(request_path, output, MESSAGE_UPLOAD_SCHEMA if message else FEED_UPLOAD_SCHEMA if feed else UPLOAD_SCHEMA,
-        set(names) | {'root_key', 'owner', 'source', 'source_storage_epoch', 'target', 'target_storage_epoch', 'originals', 'current_statuses'}
-            | ({'slot_key', 'sender'} if feed else set()) | ({'envelope'} if message else set()), repair_profile or 'unbound')
+    names, fields, schema = _upload_fields(source_state)
+    request, output, limits = _request(request_path, output, schema, fields, repair_profile or 'unbound')
+    with OpenNetworkClient(_absolute_path(network_config)) as network:
+        evidence = upload_value(network,request,timeout=timeout,repair_profile=repair_profile or 'unbound',source_state=source_state)
+    return _output(output,evidence)
+
+
+def upload_value(network, request, *, timeout, repair_profile, source_state):
+    """Execute the same original-authority upload from a retained private bundle."""
+    names, fields, schema = _upload_fields(source_state)
+    request, limits = _request_value(request,schema,fields,repair_profile)
+    feed = source_state in ('feed','message'); message = source_state == 'message'
     if feed: history._slot(request['slot_key'], request['root_key'])
     if type(request['originals']) is not list or not 1 <= len(request['originals']) <= 64: raise wire.RepairWireError('repair_invalid_request_bundle')
     if type(request['current_statuses']) is not list or not 1 <= len(request['current_statuses']) <= 16: raise wire.RepairWireError('repair_invalid_status')
@@ -147,7 +169,7 @@ def _upload_mailbox(network_config, request_path, output, *, timeout, repair_pro
     for value in request['originals']:
         entry = _entry(value); ref = wire.raw_ref(entry['ref'])
         if resolver.put(ref.namespace, ref.key, entry['raw']).ref != ref: raise wire.RepairWireError('repair_ref_mismatch')
-    with OpenNetworkClient(_absolute_path(network_config)) as network, network.participant.state.db() as db:
+    with network.participant.state.db() as db:
         journal = (MailboxMessageCopyPreparation if message else MailboxFeedCopyPreparation if feed else MailboxRootCopyPreparation)(db, network.identity, network.encryption, policy=DEFAULT_POLICY)
         client = (MailboxMessageCopyUploadClient if message else MailboxFeedCopyUploadClient if feed else MailboxRootCopyUploadClient)(journal, encryption_identity=network.encryption,
             transport=network.participant.transport, allow_loopback=network.participant.transport.allow_loopback)
@@ -168,7 +190,7 @@ def _upload_mailbox(network_config, request_path, output, *, timeout, repair_pro
         root_key=request['root_key'], target=request['target'], target_storage_epoch=request['target_storage_epoch'],
         manifest=_encoded(result['manifest']['raw'], wire.raw_ref(result['manifest']['ref'])),
         custody=_encoded(result['custody']['raw'], wire.raw_ref(result['custody']['ref'])), vault_modified=False, recipient_saved=False)
-    return _output(output, evidence)
+    return evidence
 
 
 def recover_root(network_config, request_path, output, *, timeout=30, repair_profile=None):

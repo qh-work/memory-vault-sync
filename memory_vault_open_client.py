@@ -93,11 +93,16 @@ class OpenNetworkClient:
     def send(self, **arguments):
         from memory_vault_open_mailbox_receipt_jobs import recover_prepared
         delivery=self._delivery();deadline=time.monotonic()+60
-        recovered=recover_prepared(self,delivery,arguments,deadline=min(deadline,time.monotonic()+20))
+        from memory_vault_open_ack_replica_send import recover as recover_replica
+        recovered=recover_replica(self,delivery,arguments,deadline=deadline)
+        if recovered is None:
+            recovered=recover_prepared(self,delivery,arguments,deadline=min(deadline,time.monotonic()+20))
         result=asyncio.run(delivery.send(**arguments,_deadline=deadline))
         result['network_accessed'] |= recovered['network_accessed']
         if recovered.get('state') is not None:result['ack_recovery']=recovered['state']
         if recovered.get('error') is not None:result['ack_recovery_error']=recovered['error']
+        for name in ('replica_id','commit_ref','replica_custody_ref'):
+            if name in recovered:result['ack_'+name]=recovered[name]
         return result
 
     def receive(self, limit=4):
@@ -720,6 +725,8 @@ class OpenNetworkClient:
         from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS,INDEX_WORKFLOW_LIMITS
         value=document(invitation,maximum=65536)
         try:
+            from memory_vault_open_ack_replica_send import ACTIONS as REPLICA_ACTIONS, connect as replica_connect
+            if value.get('action') in REPLICA_ACTIONS:return replica_connect(self,value)
             from memory_vault_open_mailbox_receipt_jobs import ACTIONS, connect as receipt_job_connect
             if value.get('action') in ACTIONS:return receipt_job_connect(self,value)
             if value.get('action')=='return_mailbox_receipt':return self._ack_return_mailbox_receipt(value)
@@ -767,11 +774,20 @@ class OpenNetworkClient:
                 exists=db.execute('SELECT 1 FROM open_mailbox_setup_jobs WHERE job_key=?',(key,)).fetchone() is not None
                 if exists:journal.start(key,plan)
                 known=journal.statuses(key) if exists else ()
+                replica_journal=None
+                if replica:
+                    from memory_vault_open_repair_admin import _ReplicaStatusJournal
+                    parties=(dict(signing_key=self.identity.public_descriptor(),encryption_key=self.encryption.public_descriptor()),)+tuple(
+                        request[name] for name in ('expected_target','expected_source','expected_maintainer','expected_receipt_writer'))
+                    replica_journal=_ReplicaStatusJournal(db,request['expected_ack_slot']['root_key'])
+                    known=list({canonical_bytes(e['ref']):e for e in [*known,*replica_journal.statuses(parties)]}.values())
+                    if len(known)>32:raise MemoryError('repair_status_history_capacity')
                 def observed(value):
                     # Reserve a new journal only after a relevant signed status
                     # is authenticated; malformed invitations consume no slot.
                     journal.start(key,plan)
                     journal.observe(key,value)
+                    if replica_journal is not None:replica_journal.observe(value)
                 from memory_vault_open_mailbox_receipt_jobs import ObservedTransport
                 reader=AckOwnerRecoveryClient(self.identity,self.encryption,limit_policy=profiles[value['repair_profile']],
                     transport=ObservedTransport(self.participant.transport,_network_observer,_deadline),
