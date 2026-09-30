@@ -1,5 +1,5 @@
-/** Native receipt-writer preflight over independently authorized empty sources.
- * This reads original source evidence only; it does not authorize or upload a receipt.
+/** Native receipt-writer preflight, consent-bound upload and exact journal replay.
+ * Preflight alone reads evidence; upload requires the independent receipt consent.
  */
 import {performance} from 'node:perf_hooks';
 import {randomBytes} from 'node:crypto';
@@ -30,6 +30,10 @@ export interface AckOfferOptions {
   readonly knownStatuses?:readonly unknown[];readonly archiveStatuses?:readonly unknown[];readonly timeout?:number;
 }
 export type PreparedAckOffer=RecoveredAckOwnerEmptyProof;
+const OFFER_FIELDS=['targetNodeEntry','expectedTarget','expectedAckSlot','expectedOwner','expectedMessageId','expectedEnvelopeRef',
+  'rootEntry','writeEntry','bootstrapEntry'] as const;
+interface CachedAckReturn {context:string;prepared:PreparedAckOffer;budget:RepairBudget;started:number;timeout:number;retained:RawOriginal[];}
+
 interface Obligation{role:string|null;kind:string;subject:unknown;revision:number;signer:Obj;scope_id:string;mask?:number;}
 function fail(code:string):never{throw new RepairError(code);}
 function fields(value:unknown,names:readonly string[]):Obj{return objectFields(value,names);}
@@ -57,6 +61,7 @@ function snapshotEntry(value:unknown,policy:RepairPolicy,budget:RepairBudget,leg
   return {raw,ref};
 }
 export class AckOfferClient{
+  #preparedReturn:CachedAckReturn|undefined;#preparedGeneration=0;
   readonly #identity:Obj;readonly #encryption:Obj;readonly #subject:Obj;readonly #policy:RepairPolicy;readonly #limits:Obj;
   readonly #statusObserver?: (item:AuthenticatedStatusOriginal)=>void;
   readonly #transport:OpenHTTPTransport;readonly #allowLoopback:boolean;readonly #clock:()=>number;readonly #ownTransport:boolean;
@@ -78,14 +83,32 @@ export class AckOfferClient{
     this.#statusObserver=args.statusObserver;
     Object.freeze(this);
   }
-  close():void{if(this.#ownTransport)this.#transport.close();}
+  close():void{this.#preparedReturn=undefined;this.#preparedGeneration++;if(this.#ownTransport)this.#transport.close();}
   #now():number{return u53(Math.floor(this.#clock()));}
   async preflight(baseUrl:string,value:AckOfferOptions):Promise<PreparedAckOffer>{
     return this.#preflight(baseUrl,value,new RepairBudget(this.#policy));
   }
+  async prepareReturn(baseUrl:string,value:AckOfferOptions):Promise<PreparedAckOffer>{
+    this.#preparedReturn=undefined;const generation=++this.#preparedGeneration;
+    const args=options(value,OFFER_FIELDS,['knownStatuses','archiveStatuses','timeout']);
+    const timeout=args.timeout??30;if(typeof timeout!=='number'||!Number.isFinite(timeout)||timeout<=0||timeout>60)fail('repair_invalid_deadline');
+    const started=clock(),budget=new RepairBudget(this.#policy),context=this.#offerContext(baseUrl,args,budget);
+    const owner=buildNewWire(args.expectedOwner,this.#policy,budget).value as Obj;
+    const retained=new OfferStatusChecks(owner,this.#policy,this.#clock,this.#statusObserver).history(args.knownStatuses??[],args.archiveStatuses??[],budget);
+    const selected={...args,knownStatuses:[],archiveStatuses:retained} as unknown as AckOfferOptions;
+    const prepared=await this.#preflight(baseUrl,selected,budget);
+    if(generation!==this.#preparedGeneration)fail('repair_invalid_context');
+    if(clock()>=started+timeout)fail('repair_access_expired');
+    this.#preparedReturn={context,prepared,budget,started,timeout,retained};return prepared;
+  }
+  #offerContext(baseUrl:string,args:Obj,budget:RepairBudget):string{
+    const selected:Obj={base_url:baseUrl};
+    for(const name of OFFER_FIELDS)selected[name]=['targetNodeEntry','rootEntry','writeEntry','bootstrapEntry'].includes(name)?
+      snapshotEntry(args[name],this.#policy,budget,true).ref:args[name];
+    return budget.hash(buildNewWire(selected,this.#policy,budget).raw);
+  }
   async #preflight(baseUrl:string,value:AckOfferOptions,budget:RepairBudget):Promise<PreparedAckOffer>{
-    const args=options(value,['targetNodeEntry','expectedTarget','expectedAckSlot','expectedOwner','expectedMessageId',
-      'expectedEnvelopeRef','rootEntry','writeEntry','bootstrapEntry'],['knownStatuses','archiveStatuses','timeout']);
+    const args=options(value,OFFER_FIELDS,['knownStatuses','archiveStatuses','timeout']);
     const timeout=args.timeout??30;if(typeof timeout!=='number'||!Number.isFinite(timeout)||timeout<=0||timeout>60)fail('repair_invalid_deadline');
     const policy=this.#policy,started=this.#now(),deadline=clock()+timeout;
     const expected=buildNewWire({target:args.expectedTarget,slot:args.expectedAckSlot,owner:args.expectedOwner,
@@ -172,24 +195,36 @@ export class AckOfferClient{
       metrics:Object.freeze({requests,wire_bytes:wireBytes,proof_bytes:proofBytes,...budget.snapshot()})});
   }
   async put(baseUrl:string,receiptEntry:unknown,disclosureEntry:unknown,putEntry:unknown,value:AckReceiptPutOptions):Promise<CommittedAckReceipt>{
-    const preflightNames=['targetNodeEntry','expectedTarget','expectedAckSlot','expectedOwner','expectedMessageId','expectedEnvelopeRef',
-      'rootEntry','writeEntry','bootstrapEntry'];
+    const preflightNames=OFFER_FIELDS;
     const args=options(value,[...preflightNames,'currentStatuses','readUntil','retainUntil'],
       ['knownStatuses','archiveStatuses','knownDisclosureStatuses','timeout','journal']);
-    const timeout=args.timeout??30;if(typeof timeout!=='number'||!Number.isFinite(timeout)||timeout<=0||timeout>60)fail('repair_invalid_deadline');
+    let timeout=args.timeout??30;if(typeof timeout!=='number'||!Number.isFinite(timeout)||timeout<=0||timeout>60)fail('repair_invalid_deadline');
     if(args.journal!==undefined&&typeof args.journal!=='function')fail('repair_invalid_context');
-    const started=clock(),policy=this.#policy,budget=new RepairBudget(policy);
+    const cached=this.#preparedReturn;this.#preparedReturn=undefined;this.#preparedGeneration++;
+    const started=cached?.started??clock(),policy=this.#policy,budget=cached?.budget??new RepairBudget(policy);
+    if(cached){
+      timeout=Math.min(timeout,cached.timeout);
+      if(clock()>=started+timeout)fail('repair_access_expired');
+      if(cached.context!==this.#offerContext(baseUrl,args,budget))fail('repair_proof_mismatch');
+    }
     const expected=buildNewWire({owner:args.expectedOwner,target:args.expectedTarget,message:args.expectedMessageId,envelope:args.expectedEnvelopeRef},policy,budget).value as Obj;
     const readUntil=u53(args.readUntil),retainUntil=u53(args.retainUntil);
     const checks=new OfferStatusChecks(expected.owner,policy,this.#clock,this.#statusObserver);
-    const retained=checks.history(args.knownStatuses??[],args.archiveStatuses??[],budget),disclosureHistory=checks.history(args.knownDisclosureStatuses??[],[],budget);
+    const retained=mergeRetained(cached?.retained??[],checks.history(args.knownStatuses??[],args.archiveStatuses??[],budget)),
+      disclosureHistory=checks.history(args.knownDisclosureStatuses??[],[],budget);
     if(!Array.isArray(args.currentStatuses)||isProxy(args.currentStatuses)||args.currentStatuses.length<1||args.currentStatuses.length>8)fail('repair_invalid_status');
     const currentEntries=checks.history(args.currentStatuses,[],budget);
     // Snapshot private upload originals before the first asynchronous read.
     const receipt=snapshotReceiptEntry(receiptEntry,policy,budget),disclosure=snapshotEntry(disclosureEntry,policy,budget,true),put=snapshotEntry(putEntry,policy,budget,true);
     const preflight=Object.fromEntries(preflightNames.map(name=>[name,args[name]]));
     preflight.archiveStatuses=retained;preflight.timeout=timeout;
-    const prepared=await this.#preflight(baseUrl,preflight as unknown as AckOfferOptions,budget),source=prepared.source;
+    const prepared=cached?.prepared??await this.#preflight(baseUrl,preflight as unknown as AckOfferOptions,budget),source=prepared.source;
+    // The cached proof does not renew its node descriptor or permit a changed
+    // source. Recheck the same exact original before private upload.
+    const nodeEntry=snapshotEntry(args.targetNodeEntry,policy,budget,true);
+    const sourceNode=verifySourceNodeOriginal(nodeEntry.raw,{expectedSigningKey:expected.target.signing_key,
+      expectedStorageEpoch:prepared.proof.handle.payload.target_storage_epoch,at:this.#now(),policy,budget});
+    if(!same(endpoint(baseUrl,this.#allowLoopback),endpoint(sourceNode.payload.base_url,this.#allowLoopback)))fail('repair_proof_mismatch');
     const inputs=verifyAckReceiptInputs(source,receipt,disclosure,put,expected.owner,this.#subject,this.#now(),policy,budget);
     if(!same((inputs.disclosure.payload as Obj).bootstrap_return.roles,['ack.disclosure','ack.put','authority.status.disclosure','recipient.receipt']))fail('repair_disclosure_permission');
     const windows=ackReceiptWindows(source,inputs,this.#now());
@@ -197,7 +232,7 @@ export class AckOfferClient{
     const slot=source.custody.payload.ack_slot as Obj,duties=ackReceiptObligations(source,inputs,expected.owner,this.#subject,expected.target,slot,policy,budget);
     const checked=this.#putStatuses(currentEntries,disclosureHistory,duties,source,expected.owner,budget,retained,prepared.current_statuses);
     const handle=prepared.proof.handle.payload as Obj;
-    const expiry=Math.min(handle.expires_at,windows.admitUntil,...checked.map(item=>item.payload.valid_until as number),this.#now()+Math.max(1,Math.floor(timeout-(clock()-started))));
+    const expiry=Math.min(handle.expires_at,sourceNode.payload.expires_at as number,windows.admitUntil,...checked.map(item=>item.payload.valid_until as number),this.#now()+Math.max(1,Math.floor(timeout-(clock()-started))));
     if(this.#now()>=expiry||clock()>=started+timeout)fail('repair_access_expired');
     if(budget.snapshot().signature_checks+32>(policy.max_signature_checks??0))fail('repair_over_budget');
     budget.output(16);const useId='use_'+randomBytes(16).toString('hex');
@@ -221,6 +256,14 @@ export class AckOfferClient{
     }
     if(this.#now()>=expiry||clock()>=started+timeout)fail('repair_access_expired');
     const response=await this.#transport.requestRepair(baseUrl,packet.raw,started+timeout);
+    const result=this.#finish(response,{prepared,inputs,checked,expected,use,readUntil,retainUntil,started,timeout,expiry,uploadBytes,budget});
+    if(args.journal)await journalBeforeDeadline(args.journal,'response',Uint8Array.from(response),started+timeout);
+    if(this.#now()>=expiry||clock()>=started+timeout)fail('repair_access_expired');return result;
+  }
+  #finish(response:Uint8Array,context:PutFinishContext):CommittedAckReceipt{
+    const {prepared,inputs,checked,expected,use,readUntil,retainUntil,started,timeout,expiry,uploadBytes,budget}=context;
+    const source=prepared.source,policy=this.#policy,slot=source.custody.payload.ack_slot as Obj,
+      handle=prepared.proof.handle.payload as Obj,grant=source.authorities.originals.bootstrap.payload as Obj;
     if(response.length===0||response.length>65536)fail('repair_invalid_response');
     const body=fields(parseNewWire(response,policy,budget).value,['schema_version','kind','use_ref','manifest','commit','head','packs']);
     if(body.schema_version!=='memory-vault-open-repair/v1'||body.kind!=='ack.put_response'||!same(rawRef(body.use_ref),use.ref))fail('repair_put_mismatch');
@@ -247,10 +290,119 @@ export class AckOfferClient{
     checkAckReceiptHistoryFloors(checked,complete.statuses);
     if(this.#now()>=expiry||clock()>=started+timeout)fail('repair_access_expired');
     for(const item of [manifest,commit,head,...packs,...complete.manifest.roles.map(item=>item.original)])originals.set(refKey(item.ref),item);
-    if(args.journal)await journalBeforeDeadline(args.journal,'response',Uint8Array.from(response),started+timeout);
     if(this.#now()>=expiry||clock()>=started+timeout)fail('repair_access_expired');
     return Object.freeze({source:complete,originals:Object.freeze([...originals.values()].map(item=>Object.freeze({ref:item.ref,get raw(){return Uint8Array.from(item.raw);}}))),
-      metrics:Object.freeze({requests:prepared.metrics.requests+1,transfer_bytes:transferred,...budget.snapshot()})});
+      metrics:Object.freeze({requests:context.replay?1:prepared.metrics.requests+1,transfer_bytes:transferred,...budget.snapshot()})});
+  }
+  async resume(baseUrl:string,journalRaw:Uint8Array,receiptEntry:unknown,disclosureEntry:unknown,putEntry:unknown,value:AckReceiptPutOptions):Promise<CommittedAckReceipt>{
+    const args=options(value,[...OFFER_FIELDS,'currentStatuses','readUntil','retainUntil'],
+      ['knownStatuses','archiveStatuses','knownDisclosureStatuses','timeout','journal']);
+    const timeout=args.timeout??30;if(typeof timeout!=='number'||!Number.isFinite(timeout)||timeout<=0||timeout>60)fail('repair_invalid_deadline');
+    if(args.journal!==undefined&&typeof args.journal!=='function')fail('repair_invalid_context');
+    this.#preparedReturn=undefined;this.#preparedGeneration++;
+    const started=clock(),policy=this.#policy,budget=new RepairBudget(policy);
+    const journal=fields(parseNewWire(journalRaw,policy,budget).value,['schema_version','packet','handle','manifest','originals','retained','disclosure_statuses']);
+    if(journal.schema_version!=='memory-vault-ack-put-journal/v1')fail('repair_invalid_context');
+    for(const [name,maximum] of [['originals',policy.max_entries],['retained',32],['disclosure_statuses',16]] as const)
+      if(!Array.isArray(journal[name])||journal[name].length>maximum)fail('repair_over_budget');
+    const packet=decodePutEntry(journal.packet,policy,budget);if(packet.raw.length>65536)fail('repair_put_too_large');
+    const body=fields(parseNewWire(packet.raw,policy,budget).value,['schema_version','kind','use','receipt','disclosure','put','current_statuses','read_until','retain_until']);
+    if(body.schema_version!=='memory-vault-open-repair/v1'||body.kind!=='ack.put_request')fail('repair_put_mismatch');
+    const useEntry=decodePutEntry(body.use,policy,budget),signed=fields(parseNewWire(useEntry.raw,policy,budget).value,['payload','proof']);
+    const use=fields(signed.payload,['schema_version','kind','signing_key','issued_at','expires_at','use_id','subject','target','target_storage_epoch',
+      'consumer','operation','bootstrap_probe_ref','bootstrap_manifest_ref','request_ref']);
+    if(this.#now()>=u53(use.expires_at))fail('repair_reconciliation_required');
+    verifyBoundedControlSignature(use,signed.proof,this.#subject.signing_key,budget);
+    const expected=buildNewWire({owner:args.expectedOwner,target:args.expectedTarget,slot:args.expectedAckSlot,
+      message:args.expectedMessageId,envelope:args.expectedEnvelopeRef},policy,budget).value as Obj;
+    const checks=new OfferStatusChecks(expected.owner,policy,this.#clock,this.#statusObserver);
+    const retained=mergeRetained(journal.retained.map((item:unknown)=>decodePutEntry(item,policy,budget)),
+      checks.history(args.knownStatuses??[],args.archiveStatuses??[],budget));
+    const prepared=this.#restore(baseUrl,journal,use,args,expected,retained,budget),source=prepared.source,handle=prepared.proof.handle.payload as Obj;
+    const dual=(keys:Obj)=>({signing_key_id:keys.signing_key.key_id,encryption_key_id:keys.encryption_key.key_id});
+    if(use.schema_version!=='memory-vault-open-repair/v1'||use.kind!=='bootstrap.use'||!same(use.signing_key,this.#subject.signing_key)||
+      use.consumer!=='ack_offer'||use.operation!=='ack.put'||!same(use.subject,dual(this.#subject))||!same(use.target,dual(expected.target))||
+      use.target_storage_epoch!==handle.target_storage_epoch||!same(rawRef(use.bootstrap_probe_ref),rawRef(handle.probe_ref))||
+      !same(rawRef(use.bootstrap_manifest_ref),prepared.proof.manifest_ref))fail('repair_put_mismatch');
+    if(!(u53(use.issued_at)<=this.#now()&&use.expires_at-use.issued_at>=1&&use.expires_at-use.issued_at<=60)||
+      typeof use.use_id!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(use.use_id))fail('repair_invalid_probe');
+    const decoded={receipt:decodePutEntry(body.receipt,policy,budget,true),disclosure:decodePutEntry(body.disclosure,policy,budget),put:decodePutEntry(body.put,policy,budget)};
+    for(const [name,value] of [['receipt',receiptEntry],['disclosure',disclosureEntry],['put',putEntry]] as const){
+      const item=name==='receipt'?snapshotReceiptEntry(value,policy,budget):snapshotEntry(value,policy,budget,true);
+      if(!same(item.ref,decoded[name].ref)||!Buffer.from(item.raw).equals(Buffer.from(decoded[name].raw)))fail('repair_put_mismatch');
+    }
+    const readUntil=u53(args.readUntil),retainUntil=u53(args.retainUntil);
+    if(!same(rawRef(use.request_ref),decoded.put.ref)||body.read_until!==readUntil||body.retain_until!==retainUntil)fail('repair_put_mismatch');
+    const inputs=verifyAckReceiptInputs(source,decoded.receipt,decoded.disclosure,decoded.put,expected.owner,this.#subject,this.#now(),policy,budget);
+    if(!same((inputs.disclosure.payload as Obj).bootstrap_return.roles,['ack.disclosure','ack.put','authority.status.disclosure','recipient.receipt']))fail('repair_disclosure_permission');
+    const windows=ackReceiptWindows(source,inputs,this.#now()),grant=source.authorities.originals.bootstrap.payload as Obj;
+    if(!(this.#now()<readUntil&&readUntil<=retainUntil&&retainUntil<=windows.retainUntil&&readUntil<=windows.readUntil)||
+      use.expires_at>Math.min(handle.expires_at,windows.admitUntil,grant.upload_until))fail('repair_put_mismatch');
+    if(!Array.isArray(body.current_statuses)||body.current_statuses.length<1||body.current_statuses.length>8)fail('repair_invalid_status');
+    const packetStatuses=body.current_statuses.map((item:unknown)=>decodePutEntry(item,policy,budget));
+    const disclosureHistory=mergeRetained(journal.disclosure_statuses.map((item:unknown)=>decodePutEntry(item,policy,budget)),
+      checks.history(args.knownDisclosureStatuses??[],[],budget));
+    if(disclosureHistory.length>16)fail('repair_status_history_capacity');
+    const duties=ackReceiptObligations(source,inputs,expected.owner,this.#subject,expected.target,source.custody.payload.ack_slot as Obj,policy,budget);
+    const current=this.#putStatuses(args.currentStatuses,disclosureHistory,duties,source,expected.owner,budget,retained,prepared.current_statuses);
+    const checked=this.#putStatuses(packetStatuses,[],duties,source,expected.owner,budget,[],[...prepared.current_statuses,...current]);
+    const uploadBytes=packet.raw.length+useEntry.raw.length+[...Object.values(inputs),...checked].reduce((sum,item)=>sum+item.raw.length,0);
+    if(prepared.metrics.proof_bytes+uploadBytes>grant.limits.max_proof_bytes||budget.snapshot().signature_checks+32>(policy.max_signature_checks??0))fail('repair_over_budget');
+    const node=snapshotEntry(args.targetNodeEntry,policy,budget,true),nodePayload=checkedNodePayload(node.raw,policy,budget);
+    const expiry=Math.min(use.expires_at,nodePayload.expires_at,...checked.map(item=>item.payload.valid_until as number),...current.map(item=>item.payload.valid_until as number));
+    if(this.#now()>=expiry||clock()>=started+timeout)fail('repair_reconciliation_required');
+    // Every byte, nonce and consent is the original retained carrier. A fresh
+    // local read budget cannot renew the source's original use or resource.
+    const response=await this.#transport.requestRepair(baseUrl,packet.raw,started+timeout);
+    const result=this.#finish(response,{prepared,inputs,checked,expected,use:useEntry,readUntil,retainUntil,started,timeout,expiry,uploadBytes,budget,replay:true});
+    if(args.journal)await journalBeforeDeadline(args.journal,'response',Uint8Array.from(response),started+timeout);
+    if(this.#now()>=expiry||clock()>=started+timeout)fail('repair_access_expired');return result;
+  }
+  #restore(baseUrl:string,journal:Obj,use:Obj,args:Obj,expected:Obj,retained:RawOriginal[],budget:RepairBudget):PreparedAckOffer{
+    const policy=this.#policy,setup=verifyAckOfferBootstrapOriginal(args.bootstrapEntry,{root:args.rootEntry,write:args.writeEntry},
+      {expectedAckSlot:expected.slot,expectedOwner:expected.owner,expectedReceiptWriter:this.#subject,expectedMessageId:expected.message,
+        expectedEnvelopeRef:expected.envelope,at:this.#now(),limitPolicy:this.#limits,policy,budget});
+    const nodeEntry=snapshotEntry(args.targetNodeEntry,policy,budget,true),nodePayload=checkedNodePayload(nodeEntry.raw,policy,budget);
+    const node=verifySourceNodeOriginal(nodeEntry.raw,{expectedSigningKey:expected.target.signing_key,expectedStorageEpoch:nodePayload.storage_epoch,at:this.#now(),policy,budget});
+    if(!same(endpoint(baseUrl,this.#allowLoopback),endpoint(node.payload.base_url,this.#allowLoopback)))fail('repair_proof_mismatch');
+    const handle=decodePutEntry(journal.handle,policy,budget),manifest=decodePutEntry(journal.manifest,policy,budget);
+    const hp=fields(parseNewWire(handle.raw,policy,budget).value,['payload','proof']).payload as Obj,grant=setup.originals.bootstrap.payload as Obj;
+    const handleEncoded=encodePutEntry(handle,budget),manifestEncoded=encodePutEntry(manifest,budget);
+    const response=buildNewWire({schema_version:'memory-vault-open-repair/v1',kind:'bootstrap.proof_response',
+      handle_raw_base64url:handleEncoded.raw_base64url,manifest_raw_base64url:manifestEncoded.raw_base64url},policy,budget);
+    const held=verifyBootstrapProofResponse(response.raw,{expectedSubject:this.#subject,expectedTarget:expected.target,
+      targetStorageEpoch:node.payload.storage_epoch as string,selector:grant.selector,bootstrapGrantRef:setup.originals.bootstrap.ref,
+      probeRef:rawRef(use.bootstrap_probe_ref),challengeRef:rawRef(hp.challenge_ref),answerRef:rawRef(hp.answer_ref),at:this.#now(),
+      maxProofItems:grant.limits.max_proof_items,maxProofBytes:grant.limits.max_proof_bytes,expectedSourceState:'empty',consumer:'ack_offer',policy,budget});
+    if(!same(held.handle.ref,handle.ref)||!same(held.manifest_ref,manifest.ref))fail('repair_ref_mismatch');
+    const originals=new Map<string,RawOriginal>(),roles=new Map<string,RawRef[]>();
+    for(const encoded of journal.originals){const item=decodePutEntry(encoded,policy,budget),key=refKey(item.ref);if(originals.has(key))fail('repair_invalid_context');originals.set(key,item);}
+    for(const item of (held.manifest.value as Obj).children){const reference=rawRef(item.ref);roles.set(item.role,[...(roles.get(item.role)??[]),reference]);}
+    const required=new Set([...roles.values()].flat().map(refKey));
+    if(originals.size!==required.size||[...originals.keys()].some(key=>!required.has(key)))fail('repair_proof_mismatch');
+    const resolver=new LocalRawResolver(policy,budget);
+    for(const reference of roles.get('history.raw_pack')!){const item=originals.get(refKey(reference))!;
+      if(!same(resolver.put(reference.namespace,reference.key,item.raw).ref,reference))fail('repair_ref_mismatch');}
+    const entry=(role:string):RawOriginal=>originals.get(refKey(roles.get(role)![0]))!;
+    const source=verifyAckEmptySourceEvent(entry('history.ack_empty'),resolver,entry('ack.empty_custody'),{
+      expectedAckSlot:expected.slot,expectedOwner:expected.owner,expectedReceiptWriter:this.#subject,expectedMessageId:expected.message,
+      expectedEnvelopeRef:expected.envelope,expectedTarget:expected.target,targetStorageEpoch:node.payload.storage_epoch as string,limitPolicy:this.#limits,policy,budget});
+    this.#emptyHead(entry('ack.head'),source,expected.target,budget);
+    for(const item of source.manifest.roles){const actual=originals.get(refKey(item.original.ref));
+      if(!same(roles.get(item.role),[item.original.ref])||!actual||!Buffer.from(actual.raw).equals(Buffer.from(item.original.raw)))fail('repair_proof_mismatch');}
+    for(const [name,item] of [['root',source.predecessor.resources.originals.root],['write',source.authorities.originals.write],['bootstrap',source.authorities.originals.bootstrap]] as const)
+      if(!same(item.ref,setup.originals[name].ref)||!Buffer.from(item.raw).equals(Buffer.from(setup.originals[name].raw)))fail('repair_proof_mismatch');
+    const packs=new Set<string>();for(const historical of [source.manifest,source.predecessor.manifest])
+      for(const item of (historical.manifest.value as Obj).roles)packs.add(refKey(rawRef(item.pack_ref)));
+    const supplied=roles.get('history.raw_pack')!.map(refKey);
+    if(packs.size!==supplied.length||supplied.some(key=>!packs.has(key)))fail('repair_unused_pack');
+    const checks=new OfferStatusChecks(expected.owner,policy,this.#clock,this.#statusObserver);
+    const known=checks.known(retained,checks.obligations(setup.originals,expected.slot,budget),expected.slot.root_key,expected.target,budget,true);
+    const current=checks.current(source,roles,originals,expected.target,budget,known);
+    const transferred=response.raw.length+handle.raw.length+manifest.raw.length+[...originals.values()].reduce((sum,item)=>sum+item.raw.length,0);
+    if(transferred>grant.limits.max_proof_bytes)fail('repair_over_budget');
+    return Object.freeze({source,proof:held,current_statuses:Object.freeze(current),originals:Object.freeze([...originals.values()]),
+      metrics:Object.freeze({requests:0,wire_bytes:0,proof_bytes:transferred,...budget.snapshot()})});
   }
   #putStatuses(entries:unknown,retained:RawOriginal[],duties:Obj[],source:AuthenticatedAckEmptySourceEvent,owner:Obj,budget:RepairBudget,
     retainedAuthorities:RawOriginal[],currentAuthorities:readonly AuthenticatedStatusOriginal[]):AuthenticatedStatusOriginal[]{
@@ -421,9 +573,9 @@ function encodePutEntry(item:RawOriginal,budget:RepairBudget):Obj{
   if(raw.length!==ref.size||budget.hash(raw)!==ref.raw_sha256)fail('repair_ref_mismatch');
   budget.output(Math.ceil(raw.length*4/3));return {ref,raw_base64url:Buffer.from(raw).toString('base64url')};
 }
-function decodePutEntry(value:unknown,policy:RepairPolicy,budget:RepairBudget):RawOriginal{
+function decodePutEntry(value:unknown,policy:RepairPolicy,budget:RepairBudget,receipt=false):RawOriginal{
   const item=fields(value,['raw_base64url','ref']),ref=rawRef(item.ref),encoded=item.raw_base64url;
-  if(ref.namespace!=='meta'||ref.size>policy.max_document_bytes||typeof encoded!=='string'||encoded.length>Math.ceil(ref.size*4/3)||!/^[A-Za-z0-9_-]*$/.test(encoded))fail('repair_put_too_large');
+  if((!receipt&&ref.namespace!=='meta')||ref.size>(receipt?4096:policy.max_document_bytes)||typeof encoded!=='string'||encoded.length>Math.ceil(ref.size*4/3)||!/^[A-Za-z0-9_-]*$/.test(encoded))fail('repair_put_too_large');
   budget.output(ref.size);const raw=Buffer.from(encoded,'base64url');
   if(raw.length!==ref.size||raw.toString('base64url')!==encoded||budget.hash(raw)!==ref.raw_sha256)fail('repair_ref_mismatch');return {raw,ref};
 }
@@ -436,4 +588,20 @@ async function journalBeforeDeadline(callback:NonNullable<AckReceiptPutOptions['
       timer=setTimeout(()=>reject(new RepairError('repair_access_expired')),Math.ceil(remaining*1000));
     })]);
   }finally{if(timer!==undefined)clearTimeout(timer);}
+}
+
+function mergeRetained(first:readonly RawOriginal[],second:readonly RawOriginal[]):RawOriginal[]{
+  const merged=new Map<string,RawOriginal>();
+  for(const item of [...first,...second]){
+    const key=refKey(item.ref),old=merged.get(key);
+    if(old&&!Buffer.from(old.raw).equals(Buffer.from(item.raw)))fail('repair_ref_conflict');
+    merged.set(key,item);if(merged.size>32)fail('repair_status_history_capacity');
+  }
+  return [...merged.values()];
+}
+
+interface PutFinishContext {
+  prepared:PreparedAckOffer;inputs:AuthenticatedAckOccupiedSourceEvent['inputs'];checked:AuthenticatedStatusOriginal[];
+  expected:Obj;use:RawOriginal;readUntil:number;retainUntil:number;started:number;timeout:number;expiry:number;
+  uploadBytes:number;budget:RepairBudget;replay?:boolean;
 }

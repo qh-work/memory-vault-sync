@@ -12,8 +12,9 @@ from tests.open_repair_ack_fixtures import signed_entry
 
 DRIVER=offer_ts.DRIVER.replace("const {AckOfferClient}=", "const {AckReceiptClient}=").replace('new AckOfferClient(', 'new AckReceiptClient(')
 DRIVER=DRIVER.replace("calls.push(JSON.parse(Buffer.from(raw).toString()).payload.kind);","const packet=JSON.parse(Buffer.from(raw).toString());calls.push(packet.payload?.kind??packet.kind);")
-DRIVER=DRIVER.replace("const input=JSON.parse", "const journal=[];\nconst input=JSON.parse")
-DRIVER=DRIVER.replace("return request(base,raw,...rest);", """const response=await request(base,raw,...rest);
+DRIVER=DRIVER.replace("const input=JSON.parse", "const journal=[],sentPackets=[];\nconst input=JSON.parse")
+DRIVER=DRIVER.replace("return request(base,raw,...rest);", """if(calls.at(-1)==='ack.put_request')sentPackets.push(Buffer.from(raw).toString('base64'));
+  const response=await request(base,raw,...rest);
   if(input.corruptReply&&calls.at(-1)==='ack.put_request'){
     const body=JSON.parse(Buffer.from(response).toString());body.commit.ref.raw_sha256='0'.repeat(64);
     const {canonicalBytes}=await import('./crypto.ts');return canonicalBytes(body);
@@ -25,13 +26,22 @@ DRIVER=DRIVER.replace('const result=await client.preflight(input.base,options);'
     if(input.failJournal&&kind==='request')throw Error('synthetic journal unavailable');
     if(input.blockJournal&&kind==='request')await new Promise(()=>{});
   };
-  const result=await client.put(input.base,decode(input.receipt),decode(input.disclosure),decode(input.put),options);""")
+  if(input.prepare){
+    const selected=Object.fromEntries(['targetNodeEntry','expectedTarget','expectedAckSlot','expectedOwner','expectedMessageId','expectedEnvelopeRef',
+      'rootEntry','writeEntry','bootstrapEntry','knownStatuses','archiveStatuses','timeout'].filter(name=>Object.hasOwn(options,name)).map(name=>[name,options[name]]));
+    if(input.prepareTimeout)selected.timeout=input.prepareTimeout;
+    await client.prepareReturn(input.base,selected);
+    if(input.changedBase)input.base=input.changedBase;
+    if(input.newKnownAfterPrepare)options.knownStatuses=input.newKnownAfterPrepare.map(decode);
+    if(input.waitAfterPrepare)await new Promise(resolve=>setTimeout(resolve,input.waitAfterPrepare));
+  }
+  const result=input.resumeJournal?await client.resume(input.base,Buffer.from(input.resumeJournal,'base64'),decode(input.receipt),decode(input.disclosure),decode(input.put),options):await client.put(input.base,decode(input.receipt),decode(input.disclosure),decode(input.put),options);""")
 start=DRIVER.index('  process.stdout.write(JSON.stringify({ok:true')
 end=DRIVER.index('\n}catch(error)',start)
 DRIVER=DRIVER[:start]+'''  process.stdout.write(JSON.stringify({ok:true,metrics:result.metrics,
     receipt:Buffer.from(result.source.inputs.receipt.raw).toString('base64'),commit:result.source.commit.ref,
-    immutable:Buffer.from(original.raw).toString('hex')===before,calls,nativeChecks,subprocessCalls,journal}));'''+DRIVER[end:]
-DRIVER=DRIVER.replace('calls,nativeChecks,subprocessCalls}));}', 'calls,nativeChecks,subprocessCalls,journal}));}')
+    immutable:Buffer.from(original.raw).toString('hex')===before,calls,nativeChecks,subprocessCalls,journal,sentPackets}));'''+DRIVER[end:]
+DRIVER=DRIVER.replace('calls,nativeChecks,subprocessCalls}));}', 'calls,nativeChecks,subprocessCalls,journal,sentPackets}));}')
 
 
 class NativePutClientTests(unittest.TestCase):
@@ -42,7 +52,7 @@ class NativePutClientTests(unittest.TestCase):
 
     def setUp(self):
         self.case=put_py.RepairPutClientTests();self.addCleanup(self.case.doCleanups)
-        if self._testMethodName=='test_bad_returned_commit_cannot_claim_verified_storage':
+        if self._testMethodName=='test_bad_returned_commit_cannot_claim_verified_storage' or 'resume' in self._testMethodName:
             # One original finite grant funds the two actual client exchanges.
             with patch.object(put_py.offer_fixture.RepairOfferClientTests,'fixture_limits',dict(proof_limit=524288),create=True):self.case.setUp()
         else:self.case.setUp()
@@ -67,6 +77,35 @@ class NativePutClientTests(unittest.TestCase):
         self.assertEqual([item['kind'] for item in result['journal']],['request','response'])
         self.assertNotIn('ack.put_request',result['journal'][0]['calls']);self.assertEqual(result['calls'][-1],'ack.put_request')
         self.assertEqual(self.host.source.db.execute('SELECT status FROM open_repair_ack_resources').fetchone()[0],'occupied')
+
+    def test_prepared_return_reuses_actual_preflight_and_original_work_meter(self):
+        result=self.native(self.call(prepare=True))
+        self.assertTrue(result['ok'],{k:v for k,v in result.items() if k!='journal'})
+        self.assertEqual(result['calls'].count('bootstrap.probe'),1)
+        self.assertEqual(result['metrics']['requests'],13)
+        self.assertEqual(result['metrics']['signature_checks'],result['nativeChecks'])
+        self.assertGreater(result['metrics']['signature_checks'],64)
+
+    def test_prepared_return_rejects_changed_source_before_network(self):
+        result=self.native(self.call(prepare=True,changedBase='http://127.0.0.1:1'))
+        self.assertFalse(result['ok']);self.assertEqual(result['code'],'repair_proof_mismatch')
+        self.assertEqual(len(result['calls']),12);self.assertNotIn('ack.put_request',result['calls'])
+
+    def test_prepared_return_does_not_reset_local_signature_allowance(self):
+        value=self.call(prepare=True);value['policy']['max_signature_checks']=64
+        result=self.native(value);self.assertFalse(result['ok']);self.assertEqual(result['code'],'repair_over_budget')
+        self.assertEqual(result['calls'].count('bootstrap.probe'),1);self.assertNotIn('ack.put_request',result['calls'])
+
+    def test_prepared_return_keeps_original_deadline(self):
+        result=self.native(self.call(prepare=True,prepareTimeout=8,waitAfterPrepare=8000))
+        self.assertFalse(result['ok']);self.assertEqual(result['code'],'repair_access_expired')
+        self.assertEqual(len(result['calls']),12);self.assertNotIn('ack.put_request',result['calls'])
+
+    def test_new_revocation_after_preparation_stops_private_upload(self):
+        revoked=self.case.case.revoke('ack.write_grant',self.host.write)
+        result=self.native(self.call(prepare=True,newKnownAfterPrepare=[probe_ts.encoded(revoked)]))
+        self.assertFalse(result['ok']);self.assertEqual(result['code'],'repair_authority_revoked')
+        self.assertEqual(len(result['calls']),12);self.assertNotIn('ack.put_request',result['calls'])
 
     def test_legacy_disclosure_does_not_send_receipt(self):
         from memory_vault_open_repair_occupied import RETURN_ROLES_LEGACY
@@ -123,6 +162,58 @@ class NativePutClientTests(unittest.TestCase):
         result=self.native(value);self.assertFalse(result['ok']);self.assertEqual(result['code'],'repair_access_expired')
         self.assertEqual([item['kind'] for item in result['journal']],['request'])
         self.assertNotIn('ack.put_request',result['calls'])
+
+    def pending_native(self):
+        result=self.native(self.call(corruptReply=True))
+        self.assertFalse(result['ok']);self.assertEqual(result['code'],'repair_ref_mismatch')
+        self.assertEqual([item['kind'] for item in result['journal']],['request'])
+        return result['journal'][0]['raw']
+
+    def test_resume_exact_native_journal_after_client_and_service_restart(self):
+        journal=self.pending_native();self.host.http.restart()
+        result=self.native(self.call(resumeJournal=journal))
+        self.assertTrue(result['ok'],{k:v for k,v in result.items() if k!='journal'})
+        self.assertEqual(result['calls'],['ack.put_request'])
+        packet=json.loads(base64.b64decode(journal))['packet']['raw_base64url']
+        self.assertEqual(base64.b64decode(result['sentPackets'][0]),base64.urlsafe_b64decode(packet+'='*((-len(packet))%4)))
+        self.assertEqual(result['metrics']['requests'],1)
+        self.assertEqual(result['nativeChecks'],result['metrics']['signature_checks'])
+        self.assertEqual(result['receipt'],probe_ts.encoded(self.case.inputs[0])['raw'])
+        self.assertEqual([item['kind'] for item in result['journal']],['response'])
+        self.assertEqual(self.host.source.db.execute('SELECT count(*) FROM open_repair_put_requests').fetchone()[0],1)
+
+    def test_resume_rejects_changed_source_message_and_raw_journal_without_network(self):
+        journal=self.pending_native()
+        values=[]
+        value=self.call(resumeJournal=journal);value['base']='http://127.0.0.1:1';values.append(value)
+        value=self.call(resumeJournal=journal);value['options']['expectedMessageId']='msg_'+'f'*64;values.append(value)
+        value=self.call(resumeJournal=journal);body=json.loads(base64.b64decode(journal))
+        body['packet']['ref']['raw_sha256']='0'*64
+        value['resumeJournal']=base64.b64encode(json.dumps(body,sort_keys=True,separators=(',',':')).encode()).decode();values.append(value)
+        for value in values:
+            with self.subTest():
+                result=self.native(value);self.assertFalse(result['ok'])
+                self.assertNotEqual(result['code'],'untyped_error');self.assertEqual(result['calls'],[])
+
+    def test_resume_python_journal_in_native_client(self):
+        journal=[];receipt,disclosure,put,options=self.case.inputs
+        self.case.client().put(self.host.http.base,receipt,disclosure,put,**options,**self.case.case.args,_journal=lambda kind,raw:journal.append((kind,raw)))
+        self.host.http.restart()
+        result=self.native(self.call(resumeJournal=base64.b64encode(journal[0][1]).decode()))
+        self.assertTrue(result['ok'],{k:v for k,v in result.items() if k!='journal'})
+        self.assertEqual(result['calls'],['ack.put_request'])
+        self.assertEqual(self.host.source.db.execute('SELECT count(*) FROM open_repair_put_requests').fetchone()[0],1)
+
+    def test_resume_expired_original_use_requires_reconciliation_without_network(self):
+        journal=self.pending_native();value=self.call(resumeJournal=journal);value['now']+=61
+        result=self.native(value);self.assertFalse(result['ok'])
+        self.assertEqual(result['code'],'repair_reconciliation_required');self.assertEqual(result['calls'],[])
+
+    def test_resume_refuses_new_revocation_before_network(self):
+        journal=self.pending_native();revoked=self.case.case.revoke('ack.write_grant',self.host.write)
+        value=self.call(resumeJournal=journal);value['options']['knownStatuses']=[probe_ts.encoded(revoked)]
+        result=self.native(value);self.assertFalse(result['ok'])
+        self.assertEqual(result['code'],'repair_authority_revoked');self.assertEqual(result['calls'],[])
 
     def test_bad_returned_commit_cannot_claim_verified_storage(self):
         result=self.native(self.call(corruptReply=True));self.assertFalse(result['ok'])
