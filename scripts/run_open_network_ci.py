@@ -245,7 +245,7 @@ def initialize(reports, mode, seed, partition_index=0, partition_count=1):
             "open-contact.ts", "open-contact-state.ts", "open-contact-client.ts",
             "open-provider.ts", "open-provider-client.ts", "open-blob.ts", "open-repair-wire.ts", "open-repair-history.ts", "open-repair-original.ts", "open-repair-resource.ts",
             "open-repair-bootstrap.ts", "open-repair-status.ts", "open-repair-mailbox-range.ts", "open-repair-ack.ts", "open-capacity.ts",
-            "open-repair-probe.ts", "open-repair-proof.ts", "open-repair-client.ts", "open-ack-client.ts", "open-repair-admin.ts",
+            "open-repair-probe.ts", "open-repair-proof.ts", "open-repair-client.ts", "open-ack-client.ts", "open-ack-status.ts", "open-repair-admin.ts",
             "open-repair-bound.ts", "open-repair-empty.ts", "open-repair-occupied.ts",
             "open-delivery.ts", "open-delivery-control.ts", "open-delivery-client.ts",
             "agent.ts", "peer.ts", "io.ts", "crypto.ts", "nodes.ts")]

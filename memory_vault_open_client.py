@@ -774,20 +774,19 @@ class OpenNetworkClient:
                 exists=db.execute('SELECT 1 FROM open_mailbox_setup_jobs WHERE job_key=?',(key,)).fetchone() is not None
                 if exists:journal.start(key,plan)
                 known=journal.statuses(key) if exists else ()
-                replica_journal=None
-                if replica:
-                    from memory_vault_open_repair_admin import _ReplicaStatusJournal
-                    parties=(dict(signing_key=self.identity.public_descriptor(),encryption_key=self.encryption.public_descriptor()),)+tuple(
-                        request[name] for name in ('expected_target','expected_source','expected_maintainer','expected_receipt_writer'))
-                    replica_journal=_ReplicaStatusJournal(db,request['expected_ack_slot']['root_key'])
-                    known=list({canonical_bytes(e['ref']):e for e in [*known,*replica_journal.statuses(parties)]}.values())
-                    if len(known)>32:raise MemoryError('repair_status_history_capacity')
+                from memory_vault_open_repair_admin import _ReplicaStatusJournal
+                parties=(dict(signing_key=self.identity.public_descriptor(),encryption_key=self.encryption.public_descriptor()),)+tuple(
+                    request[name] for name in (('expected_target','expected_source','expected_maintainer','expected_receipt_writer') if replica else
+                                              ('expected_target','expected_receipt_writer')))
+                replica_journal=_ReplicaStatusJournal(db,request['expected_ack_slot']['root_key'],original_source=not replica)
+                known=list({canonical_bytes(e['ref']):e for e in [*known,*replica_journal.statuses(parties)]}.values())
+                if len(known)>32:raise MemoryError('repair_status_history_capacity')
                 def observed(value):
                     # Reserve a new journal only after a relevant signed status
                     # is authenticated; malformed invitations consume no slot.
                     journal.start(key,plan)
                     journal.observe(key,value)
-                    if replica_journal is not None:replica_journal.observe(value)
+                    replica_journal.observe(value)
                 from memory_vault_open_mailbox_receipt_jobs import ObservedTransport
                 reader=AckOwnerRecoveryClient(self.identity,self.encryption,limit_policy=profiles[value['repair_profile']],
                     transport=ObservedTransport(self.participant.transport,_network_observer,_deadline),

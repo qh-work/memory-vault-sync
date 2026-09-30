@@ -3,6 +3,7 @@ import {performance} from 'node:perf_hooks';
 import {verifyNode} from './open-control.ts';
 import {endpoint} from './open-transport.ts';
 import {envelopeRef} from './open-delivery-control.ts';
+import {OriginalAckStatusJournal} from './open-ack-status.ts';
 import type {DatabaseSync} from 'node:sqlite';
 import {canonicalBytes,document,objectFields,sha256,validateSigningIdentity,decodeBase64url} from './crypto.ts';
 import {NetworkError,transaction} from './io.ts';
@@ -85,8 +86,13 @@ export async function recoverReceipt(participant:OpenParticipant,encryption:Encr
   const plan=canonicalBytes({kind:'ack.owner_recovery',owner:validateSigningIdentity(participant.identity),...binding,
     grants:Object.fromEntries(['root_entry','read_entry','bootstrap_entry'].map(name=>[name,entries[name].ref]))});
   const key=sha256(plan),journal=new Journal(operation=>participant.contactStorage(operation)),archive=journal.prior(key,plan);
+  const roots=new OriginalAckStatusJournal(participant,request.expected_ack_slot.root_key);
+  const issuers=new Set<string>([participant.identity.key_id,request.expected_target.signing_key.key_id,request.expected_receipt_writer.signing_key.key_id]);
+  const retained=new Map<string,any>();
+  for(const entry of [...roots.load(issuers),...archive])retained.set(Buffer.from(canonicalBytes(entry.ref)).toString('utf8'),entry);
+  if(retained.size>32)fail('repair_status_history_capacity');
   const reader=new AckOwnerRecoveryClient(participant.identity,encryption,{limitPolicy:PROFILES[value.repair_profile as keyof typeof PROFILES],
-    transport:participant.transport,allowLoopback:participant.transport.allow_loopback,statusObserver:item=>journal.observe(key,plan,item)});
+    transport:participant.transport,allowLoopback:participant.transport.allow_loopback,statusObserver:item=>{journal.observe(key,plan,item);roots.observe(item);}});
   try{
     const timeout=deadline===undefined?30:Math.min(30,deadline-performance.now()/1000);
     if(timeout<=0)throw new NetworkError('open_delivery_budget_exhausted',true);
@@ -94,7 +100,7 @@ export async function recoverReceipt(participant:OpenParticipant,encryption:Encr
       expectedTarget:request.expected_target,expectedAckSlot:request.expected_ack_slot,rootEntry:entries.root_entry,
       readEntry:entries.read_entry,bootstrapEntry:entries.bootstrap_entry,expectedReceiptWriter:request.expected_receipt_writer,
       expectedMessageId:request.expected_message_id,expectedEnvelopeRef:request.expected_envelope_ref,
-      knownStatuses:supplied.map(decode),archiveStatuses:archive,timeout});
+      knownStatuses:supplied.map(decode),archiveStatuses:[...retained.values()],timeout});
     return {...delivery.acceptRecoveredReceipt(recovered.source.inputs.receipt.raw),commit_ref:recovered.source.commit.ref,network_accessed:true};
   }finally{reader.close();}
 }

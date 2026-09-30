@@ -496,7 +496,10 @@ It works while the original delivery node is offline. A subsequent unchanged
 
 Native and Python clients share the existing protected outbox and setup-status
 journal, so a restart or change of client language preserves signed revocations
-and conflicts. Only authenticated relevant statuses reserve journal space. The
+and conflicts. Agent and command-line recovery also share the original-root
+status journal. A different bootstrap or request tuple cannot forget a revoked
+READ grant under that root. Old request-scoped records are bounded, loaded and
+reauthenticated when necessary; existing installations retain their history. Only authenticated relevant statuses reserve journal space. The
 existing limits remain sixteen setup jobs, thirty-two statuses and 256 KiB of
 status originals per job; capacity exhaustion blocks that job. Recovery uses a
 thirty-second network deadline and the original signed permission windows.

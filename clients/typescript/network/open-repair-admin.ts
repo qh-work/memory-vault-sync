@@ -3,11 +3,11 @@ import * as fs from 'node:fs';
 import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import {canonicalBytes,document,objectFields,decodeBase64url} from './crypto.ts';
-import {absolutePath,readPrivate,NetworkError,transaction} from './io.ts';
+import {absolutePath,readPrivate,NetworkError} from './io.ts';
 import {writeNewPrivate} from './setup.ts';
 import {OpenNetworkClient} from './open-client.ts';
 import {AckOwnerRecoveryClient,DEFAULT_REPAIR_CLIENT_LIMITS,DEFAULT_REPAIR_CLIENT_POLICY} from './open-repair-client.ts';
-import type {AuthenticatedStatusOriginal} from './open-repair-status.ts';
+import {OriginalAckStatusJournal} from './open-ack-status.ts';
 import type {RawOriginal} from './open-repair-wire.ts';
 
 type Obj=Record<string,any>;
@@ -31,50 +31,6 @@ function refuseExisting(output:string):void{
   fail('repair_output_exists');
 }
 
-/** Same root/domain and protected tables as the Python original-source CLI.
- * Transactions are synchronous and finish before any network await. */
-class StatusJournal{
-  readonly root:Buffer;readonly key:string;private readonly network:OpenNetworkClient;
-  constructor(network:OpenNetworkClient,root:unknown){
-    this.network=network;
-    this.root=bytes(root);this.key=hash(Buffer.concat([Buffer.from('original-source\0'),this.root]));
-    network.participant.providerStorage(db=>db.exec(`
-      CREATE TABLE IF NOT EXISTS open_ack_replica_roots(root_id TEXT PRIMARY KEY,root BLOB NOT NULL,blocked INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS open_ack_replica_statuses(root_id TEXT NOT NULL,ref_id TEXT NOT NULL,issuer TEXT NOT NULL,raw BLOB NOT NULL,ref BLOB NOT NULL,PRIMARY KEY(root_id,ref_id));`));
-  }
-  private check(db:any):Obj|undefined{
-    const held=db.prepare('SELECT root,blocked FROM open_ack_replica_roots WHERE root_id=?').get(this.key);
-    if(held){if(!equal(held.root,this.root))fail('repair_storage_corrupt');if(held.blocked)fail('repair_status_history_capacity');}
-    return held;
-  }
-  load(issuers:Set<string>):RawOriginal[]{
-    return this.network.participant.providerStorage(db=>{
-      this.check(db);
-      const rows=db.prepare('SELECT issuer,raw,ref FROM open_ack_replica_statuses WHERE root_id=? ORDER BY ref_id LIMIT 33').all(this.key) as Obj[];
-      if(rows.length>32||rows.reduce((n,r)=>n+r.raw.length+r.ref.length,0)>262144)fail('repair_status_history_capacity');
-      return rows.filter(r=>issuers.has(r.issuer)).map(r=>({raw:Uint8Array.from(r.raw),ref:document(r.ref,16384) as any}));
-    });
-  }
-  observe(item:AuthenticatedStatusOriginal):void{
-    if(!equal(bytes((item.payload.scope_key as Obj).root_key),this.root))fail('repair_invalid_context');
-    const raw=item.raw,reference=bytes(item.ref),key=hash(reference),issuer=(item.payload.signing_key as Obj).key_id;
-    const full=this.network.participant.providerStorage(db=>transaction(db,()=>{
-      if(!this.check(db)){
-        const count=db.prepare('SELECT count(*) AS n FROM open_ack_replica_roots').get()!;
-        if(Number(count.n)>=16)fail('repair_status_history_capacity');
-        db.prepare('INSERT INTO open_ack_replica_roots VALUES(?,?,0)').run(this.key,this.root);
-      }
-      const old=db.prepare('SELECT raw,ref FROM open_ack_replica_statuses WHERE root_id=? AND ref_id=?').get(this.key,key) as Obj|undefined;
-      if(old){if(!equal(old.raw,raw)||!equal(old.ref,reference))fail('repair_storage_corrupt');return false;}
-      const size=db.prepare('SELECT count(*) AS n,coalesce(sum(length(raw)+length(ref)),0) AS bytes FROM open_ack_replica_statuses WHERE root_id=?').get(this.key)!;
-      if(Number(size.n)>=32||Number(size.bytes)+raw.length+reference.length>262144){
-        db.prepare('UPDATE open_ack_replica_roots SET blocked=1 WHERE root_id=?').run(this.key);return true;
-      }
-      db.prepare('INSERT INTO open_ack_replica_statuses VALUES(?,?,?,?,?)').run(this.key,key,issuer,raw,reference);return false;
-    }));
-    if(full)fail('repair_status_history_capacity');
-  }
-}
 function compact(archive:Obj[]):Obj[]{
   const candidates=archive.map(item=>({item,payload:document(entry(item).raw).payload as Obj}));
   function dominates(a:Obj,b:Obj):boolean{
@@ -104,7 +60,7 @@ export async function recoverAck(networkConfig:string,requestPath:string,outputP
   const base=(document(originals.node.raw).payload as Obj).base_url;
   const network=new OpenNetworkClient(absolutePath(networkConfig));let client:AckOwnerRecoveryClient|undefined;
   try{
-    const journal=new StatusJournal(network,request.ack_slot.root_key);
+    const journal=new OriginalAckStatusJournal(network.participant,request.ack_slot.root_key);
     const issuers=new Set<string>([network.identity.key_id,request.target.signing_key.key_id]);
     if(phase==='occupied')issuers.add(request.receipt_writer.signing_key.key_id);
     const retained=new Map<string,RawOriginal>();

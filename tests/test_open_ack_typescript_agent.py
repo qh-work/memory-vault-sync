@@ -125,6 +125,30 @@ class NativeAckAgentTests(unittest.TestCase):
         with patch.object(OpenHTTPTransport,'request_repair',side_effect=AssertionError('Python forgot native revocation')):
             replay=h.a.handle(dict(op='connect',invitation=invitation))
         self.assertFalse(replay['ok']);self.assertEqual(replay['error']['code'],'repair_authority_revoked')
+        # An independently re-signed bootstrap changes the request-journal key,
+        # but cannot erase a revoked READ grant under the same original root.
+        from memory_vault import canonical_bytes
+        import hashlib
+        changed=copy.deepcopy(invitation)
+        bootstrap=json.loads(changed['request']['bootstrap_entry']['raw'])['payload']
+        bootstrap['revision']+=1
+        raw=canonical_bytes(dict(payload=bootstrap,proof=h.ai.sign_message(bootstrap)))
+        digest=hashlib.sha256(raw).hexdigest()
+        changed['request']['bootstrap_entry']=dict(raw=raw.decode(),ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw)))
+        def legacy_only():
+            # Model an installation from before root-scoped Agent persistence.
+            root_id=hashlib.sha256(b'original-source\0'+canonical_bytes(root)).hexdigest()
+            with h.a._network() as network:
+                with network.participant.state.db() as db:
+                    db.execute('DELETE FROM open_ack_replica_statuses WHERE root_id=?',(root_id,))
+                    db.execute('DELETE FROM open_ack_replica_roots WHERE root_id=?',(root_id,))
+        legacy_only()
+        alternative=self.native(h.a,[dict(op='connect',invitation=changed)],no_network=True)['results'][0]
+        self.assertFalse(alternative['ok']);self.assertEqual(alternative['error']['code'],'repair_authority_revoked')
+        legacy_only()
+        with patch.object(OpenHTTPTransport,'request_repair',side_effect=AssertionError('new Python request forgot root revocation')):
+            alternative=h.a.handle(dict(op='connect',invitation=changed))
+        self.assertFalse(alternative['ok']);self.assertEqual(alternative['error']['code'],'repair_authority_revoked')
 
 
 if __name__=='__main__':unittest.main()
