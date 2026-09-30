@@ -13,14 +13,14 @@ from unittest import mock
 from scripts import run_open_network_ci as ci
 
 
-def synthetic_report():
+def synthetic_report(nodes=100):
     phase={key:0 for key in ci.PHASE_FIELDS-{ "failures","passed" }}
     phase.update(queries=1000,successes=1000,success_rate=1.0,threshold=.99,passed=True,failures=[],
                  requests_p50=2,requests_p95=3,requests_max=4,candidate_peak=8,concurrency_peak=3)
-    graph=[{"node":i,"active":[],"spare":[],"pending":[]} for i in range(100)]
+    graph=[{"node":i,"active":[],"spare":[],"pending":[]} for i in range(nodes)]
     diagnostics={"schema_version":"memory-vault-open-routing-diagnostics/v1", "maintenance_graph":graph,
         "phases":{name:{"graph":copy.deepcopy(graph),"failure_samples":[]} for name in ("healthy","bootstrap_exit")}}
-    return {**ci.EXPECTED,"seed":17,"maintenance_and_join_requests":10,
+    return {**ci.scale_profile(nodes),"seed":17,"maintenance_and_join_requests":10,
         "maintenance_and_join_response_bytes":100,"maintenance_and_join_seconds":1.0,
         "phases":{"healthy":phase,"bootstrap_exit":{**copy.deepcopy(phase),"threshold":.97}},
         "max_per_node_routing_state":{k:1 for k in ci.ROUTING_STATS},
@@ -29,6 +29,63 @@ def synthetic_report():
 
 
 class OpenNetworkCITests(unittest.TestCase):
+    def test_growth_profile_requires_requested_topology_and_keeps_runtime_budgets(self):
+        for nodes in ci.SCALE_NODES:
+            value=synthetic_report(nodes)
+            self.assertIs(ci.validate_scale(value,17,nodes),value)
+            self.assertEqual({k:v for k,v in ci.scale_profile(nodes).items() if k!='logical_nodes'},
+                             {k:v for k,v in ci.EXPECTED.items() if k!='logical_nodes'})
+            if nodes!=100:
+                with self.assertRaises(ci.InvalidReport):ci.validate_scale(value,17)
+                bad=copy.deepcopy(value);bad['routing_diagnostics']['maintenance_graph'][-1]['node']=nodes
+                with self.assertRaises(ci.InvalidReport):ci.validate_scale(bad,17,nodes)
+        for nodes in (True,99,101,1001,100.0):
+            with self.assertRaises(ci.InvalidReport):ci.scale_profile(nodes)
+
+    def test_growth_run_and_finalize_cannot_reuse_smaller_topology(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            reports=ci.Reports(temporary,250);ci.initialize(reports,'scale',17,nodes=250)
+            settings=json.loads((Path(temporary)/'settings.json').read_text())
+            self.assertEqual(settings['scale_settings']['logical_nodes'],250)
+            self.assertEqual(settings['report_byte_limit'],ci.report_limit(250))
+            with self.assertRaises(ci.InvalidReport):ci.record_runtime(reports,'scale',17,nodes=100)
+            reports.write('results.json',synthetic_report(250));reports.status('passed',True,True)
+            self.assertTrue(ci.finalize(reports,'scale',17,250))
+            with self.assertRaises(ci.InvalidReport):ci.finalize(reports,'scale',17,100)
+            reports.write('results.json',synthetic_report(100))
+            with self.assertRaises(ci.InvalidReport):ci.finalize(reports,'scale',17,250)
+
+    def test_growth_child_receives_node_count_and_old_result_cannot_pass(self):
+        original=subprocess.Popen;seen=[]
+        for actual in (250,100):
+            program='print('+repr(json.dumps(synthetic_report(actual)))+')'
+            def fake(command,**options):
+                seen.append(command)
+                return original([sys.executable,'-c',program],**options)
+            with tempfile.TemporaryDirectory() as temporary,mock.patch.object(ci.subprocess,'Popen',side_effect=fake):
+                reports=ci.Reports(temporary,250)
+                if actual==250:self.assertTrue(ci.run_scale(reports,17,250))
+                else:
+                    with self.assertRaises(ci.InvalidReport):ci.run_scale(reports,17,250)
+        self.assertTrue(all(command[-2:]==['--nodes','250'] for command in seen))
+
+    def test_largest_complete_graph_fits_explicit_diagnostic_cap(self):
+        nodes=1000;value=synthetic_report(nodes)
+        graph=[]
+        for i in range(nodes):
+            peers=[j for j in range(nodes) if j!=i]
+            graph.append(dict(node=i,active=peers[:500],spare=peers[500:],pending=peers[:32]))
+        value['routing_diagnostics']['maintenance_graph']=graph
+        for name,phase in value['phases'].items():
+            phase.update(successes=0,success_rate=0.,passed=False,failures=[
+                dict(query=i,source=999,target=2+i%997,state='closest_known',requests=64) for i in range(1000)])
+            value['routing_diagnostics']['phases'][name]['graph']=graph
+        value['passed']=False;ci.validate_scale(value,17,nodes)
+        self.assertLess(len(json.dumps(value).encode()),ci.report_limit(nodes)-500000)
+        with tempfile.TemporaryDirectory() as temporary:
+            reports=ci.Reports(temporary,nodes);reports.write('results.json',value);reports.status('failed',False,True)
+            self.assertLess(sum(p.stat().st_size for p in Path(temporary).iterdir()),reports.byte_limit)
+
     def test_failure_reason_is_allowlisted_through_exception_wrappers(self):
         from memory_vault_open_repair_wire import RepairWireError
         for code in ('repair_access_expired','synthetic_private_value'):

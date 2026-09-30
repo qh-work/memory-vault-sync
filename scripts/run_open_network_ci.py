@@ -27,7 +27,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ("settings.json", "status.json", "progress.jsonl", "errors.jsonl", "results.json")
-MAX_REPORT_BYTES = 900_000  # All explicitly uploadable files together, <1 MiB.
+MAX_REPORT_BYTES = 900_000  # Default 100-node/light reports, <1 MiB.
+SCALE_NODES = (100, 250, 500, 1000)
+SCALE_MINUTES = {100: 26, 250: 55, 500: 110, 1000: 220}
 MODULES = tuple("tests.test_open_" + name for name in (
     "control", "index", "state", "transport", "routing", "join_progress", "node", "agent", "agent_setup", "typescript", "typescript_state", "typescript_http", "network_ci",
     "contact", "contact_state", "contact_http", "contact_directory_maintenance", "contact_typescript", "contact_typescript_http",
@@ -88,23 +90,35 @@ def number(value):
     return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 10**15
 
 
-def validate_diagnostics(value, phases):
+def scale_profile(nodes=100):
+    require(type(nodes) is int and nodes in SCALE_NODES)
+    return {**EXPECTED, "logical_nodes": nodes}
+
+
+def report_limit(nodes=100):
+    scale_profile(nodes)
+    # Complete synthetic graphs grow with the requested topology. This only
+    # bounds diagnostic files; runtime request/storage limits stay unchanged.
+    return MAX_REPORT_BYTES if nodes == 100 else 24_000 * nodes
+
+
+def validate_diagnostics(value, phases, nodes=100):
     """Only finite synthetic indices and routing outcomes, never descriptors."""
     def index(value):
-        return type(value) is int and 0 <= value < 100
+        return type(value) is int and 0 <= value < nodes
 
     def indices(value, limit):
         require(type(value) is list and len(value) <= limit and all(index(i) for i in value))
         require(len(set(value)) == len(value))
 
     def graph(value):
-        require(type(value) is list and len(value) == 100)
+        require(type(value) is list and len(value) == nodes)
         require(all(type(row) is dict and set(row) == {"node", "active", "spare", "pending"} for row in value))
         require(all(index(row["node"]) for row in value))
-        require({row["node"] for row in value} == set(range(100)))
+        require({row["node"] for row in value} == set(range(nodes)))
         for row in value:
             for kind in ("active", "spare", "pending"):
-                indices(row[kind], 32 if kind == "pending" else 99)
+                indices(row[kind], 32 if kind == "pending" else nodes - 1)
                 require(row["node"] not in row[kind])
             require(not set(row["active"]) & set(row["spare"]))
 
@@ -130,7 +144,7 @@ def validate_diagnostics(value, phases):
             holders = sample["target_holders"]
             require(type(holders) is dict and set(holders) == {"active", "spare", "pending"})
             for peers in holders.values():
-                indices(peers, 99); require(failure["target"] not in peers)
+                indices(peers, nodes - 1); require(failure["target"] not in peers)
             replies = sample["replies"]
             require(type(replies) is list and len(replies) <= failure["requests"])
             for reply in replies:
@@ -149,12 +163,12 @@ def validate_diagnostics(value, phases):
             require(len({p["peer"] for p in paths}) == len(paths))
 
 
-def validate_scale(value, seed):
+def validate_scale(value, seed, nodes=100):
     """Exact public result inventory prevents accidental logs/keys/path fields."""
     extra = {"seed", "maintenance_and_join_requests", "maintenance_and_join_response_bytes", "maintenance_and_join_seconds",
              "phases", "max_per_node_routing_state", "sum_per_node_routing_state", "total_seconds", "passed", "routing_diagnostics"}
     require(type(value) is dict and set(value) == set(EXPECTED) | extra)
-    for key, expected in EXPECTED.items():
+    for key, expected in scale_profile(nodes).items():
         require(type(value[key]) is type(expected) and value[key] == expected)
     require(type(value["seed"]) is int and value["seed"] == seed)
     require(type(value["passed"]) is bool and set(value["phases"]) == {"healthy", "bootstrap_exit"})
@@ -179,11 +193,11 @@ def validate_scale(value, seed):
             require(type(failure) is dict and set(failure) == {"query", "source", "target", "state", "requests"})
             require(type(failure["query"]) is int and 0 <= failure["query"] < 1000 and failure["query"] not in seen)
             seen.add(failure["query"])
-            require(all(type(failure[k]) is int and 2 <= failure[k] < 100 for k in ("source", "target")))
+            require(all(type(failure[k]) is int and 2 <= failure[k] < nodes for k in ("source", "target")))
             require(failure["state"] in {"closest_known", "budget_exhausted", "unreachable"})
             require(type(failure["requests"]) is int and 0 <= failure["requests"] <= 64)
     require(value["passed"] == all(phase["passed"] for phase in value["phases"].values()))
-    validate_diagnostics(value["routing_diagnostics"], value["phases"])
+    validate_diagnostics(value["routing_diagnostics"], value["phases"], nodes)
     return value
 
 
@@ -197,7 +211,8 @@ def clean_progress(value, seed):
 
 
 class Reports:
-    def __init__(self, directory):
+    def __init__(self, directory, nodes=100):
+        self.byte_limit = report_limit(nodes)
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
 
@@ -207,7 +222,7 @@ class Reports:
         path = self.directory / name
         previous = path.read_bytes() if append and path.exists() else b""
         total = sum((self.directory / n).stat().st_size for n in FILES if n != name and (self.directory / n).exists())
-        require(total + len(previous) + len(encoded) <= MAX_REPORT_BYTES - (0 if name == "status.json" else 4096))
+        require(total + len(previous) + len(encoded) <= self.byte_limit - (0 if name == "status.json" else 4096))
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_bytes(previous + encoded)
         temporary.replace(path)
@@ -230,7 +245,9 @@ def selected_modules(partition_index=0, partition_count=1):
     return selected
 
 
-def initialize(reports, mode, seed, partition_index=0, partition_count=1):
+def initialize(reports, mode, seed, partition_index=0, partition_count=1, nodes=100):
+    require(mode == "scale" or nodes == 100)
+    require(reports.byte_limit == report_limit(nodes))
     modules = selected_modules(partition_index, partition_count)
     require(mode == 'light' or (partition_index, partition_count) == (0, 1))
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
@@ -316,8 +333,8 @@ def initialize(reports, mode, seed, partition_index=0, partition_count=1):
         "seed":seed if mode == "scale" else None, "source_sha256":{name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in sources},
         "bootstrap_python":sys.version.split()[0], "expected_node":"22.19.0" if mode=="light" else None,
         "expected_jose":"6.2.10" if mode=="light" else None,
-        "requested_runner":"ubuntu-24.04-standard", "report_byte_limit":MAX_REPORT_BYTES, "synthetic_only":True,
-        "scale_settings":{**EXPECTED,"queries_per_phase":1000} if mode == "scale" else None,
+        "requested_runner":"ubuntu-24.04-standard", "report_byte_limit":reports.byte_limit, "synthetic_only":True,
+        "scale_settings":{**scale_profile(nodes),"queries_per_phase":1000} if mode == "scale" else None,
         "test_modules":list(modules) if mode == "light" else [],
         "partition_index":partition_index, "partition_count":partition_count}
     for name in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"):
@@ -336,11 +353,13 @@ def test_name(test):
     return value if re.fullmatch(r"[A-Za-z0-9_.]{1,240}",value) else "unidentified_test"
 
 
-def record_runtime(reports,mode,seed,partition_index=0,partition_count=1):
+def record_runtime(reports,mode,seed,partition_index=0,partition_count=1,nodes=100):
     settings=json.loads((reports.directory/"settings.json").read_text())
     require(settings["mode"]==mode and settings["seed"]==(seed if mode=="scale" else None))
     require(settings['partition_index']==partition_index and settings['partition_count']==partition_count)
     require(settings['test_modules']==(list(selected_modules(partition_index,partition_count)) if mode=='light' else []))
+    require(settings['scale_settings']==({**scale_profile(nodes),'queries_per_phase':1000} if mode=='scale' else None))
+    require(settings['report_byte_limit']==reports.byte_limit==report_limit(nodes))
     actual_sha=subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip()
     require(settings["commit_sha"]==actual_sha)
     for name,digest in settings["source_sha256"].items():
@@ -423,8 +442,10 @@ def run_light(reports,partition_index=0,partition_count=1):
     return passed
 
 
-def run_scale(reports,seed):
-    command=[sys.executable,"-m","tests.open_routing_acceptance","--seed",str(seed),"--queries","1000","--nodes","100"]
+def run_scale(reports,seed,nodes=100):
+    scale_profile(nodes)
+    require(reports.byte_limit == report_limit(nodes))
+    command=[sys.executable,"-m","tests.open_routing_acceptance","--seed",str(seed),"--queries","1000","--nodes",str(nodes)]
     process=subprocess.Popen(command,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
     selector=selectors.DefaultSelector(); buffers={"stdout":bytearray(),"stderr":bytearray()}; unexpected=False
     for name,stream in (("stdout",process.stdout),("stderr",process.stderr)):
@@ -434,7 +455,7 @@ def run_scale(reports,seed):
             for key,_ in selector.select(timeout=1):
                 chunk=os.read(key.fileobj.fileno(),65536)
                 if not chunk:selector.unregister(key.fileobj);continue
-                buffer=buffers[key.data];buffer.extend(chunk);require(len(buffer)<=750_000)
+                buffer=buffers[key.data];buffer.extend(chunk);require(len(buffer)<=reports.byte_limit-150_000)
                 if key.data=="stderr":
                     while b"\n" in buffer:
                         line,_,tail=buffer.partition(b"\n");buffer[:]=tail
@@ -443,7 +464,7 @@ def run_scale(reports,seed):
                             unexpected=True;reports.event({"event":"unstructured_stderr_omitted","bytes":len(line)},error=True)
         code=process.wait()
         require(not unexpected and not buffers["stderr"] and buffers["stdout"])
-        value=validate_scale(json.loads(buffers["stdout"]),seed)
+        value=validate_scale(json.loads(buffers["stdout"]),seed,nodes)
         require(code in (0,1) and (code==0)==value["passed"])
         reports.write("results.json",value)
         return value["passed"]
@@ -456,12 +477,18 @@ def run_scale(reports,seed):
         process.stdout.close();process.stderr.close()
 
 
-def finalize(reports):
+def finalize(reports, mode=None, seed=17, nodes=100):
+    if mode is not None:
+        settings=json.loads((reports.directory/"settings.json").read_text())
+        require(settings['mode']==mode and settings['seed']==(seed if mode=='scale' else None))
+        require(settings['scale_settings']==({**scale_profile(nodes),'queries_per_phase':1000} if mode=='scale' else None))
+        require(settings['report_byte_limit']==reports.byte_limit==report_limit(nodes))
     status=json.loads((reports.directory/"status.json").read_text())
     if status.get("complete") is not True:
         reports.status("incomplete");return False
     result=json.loads((reports.directory/"results.json").read_text())
     require(result.get("passed") is status.get("passed") and type(result.get("passed")) is bool)
+    if mode=="scale":validate_scale(result,seed,nodes)
     return status["passed"]
 
 
@@ -470,23 +497,25 @@ def main():
     parser.add_argument("--mode",choices=("light","scale"),required=True)
     parser.add_argument("--phase",choices=("initialize","run","finalize"),required=True)
     parser.add_argument("--seed",type=int,choices=(17,29,43),default=17)
+    parser.add_argument("--nodes",type=int,choices=SCALE_NODES,default=100)
     parser.add_argument("--report-directory",type=Path,required=True)
     parser.add_argument("--partition-index",type=int,default=0)
     parser.add_argument("--partition-count",type=int,default=1)
-    args=parser.parse_args();reports=Reports(args.report_directory)
+    args=parser.parse_args();reports=Reports(args.report_directory,args.nodes)
+    require(args.mode=="scale" or args.nodes==100)
     selected_modules(args.partition_index,args.partition_count)
     require(args.mode=='light' or (args.partition_index,args.partition_count)==(0,1))
-    if args.phase=="initialize":initialize(reports,args.mode,args.seed,args.partition_index,args.partition_count);return 0
-    if args.phase=="finalize":return 0 if finalize(reports) else 1
+    if args.phase=="initialize":initialize(reports,args.mode,args.seed,args.partition_index,args.partition_count,args.nodes);return 0
+    if args.phase=="finalize":return 0 if finalize(reports,args.mode,args.seed,args.nodes) else 1
     def interrupted(signum,frame):raise KeyboardInterrupt
     for signum in (signal.SIGINT,signal.SIGTERM,signal.SIGALRM):signal.signal(signum,interrupted)
     # The expanded real-HTTP suite exceeded its former 40-minute CI wall cap.
     # Keep a finite limit and leave time for finalization and bounded reports.
-    signal.alarm((55 if args.mode == "light" else 26)*60)
+    signal.alarm((55 if args.mode == "light" else SCALE_MINUTES[args.nodes])*60)
     reports.status("running")
     try:
-        record_runtime(reports,args.mode,args.seed,args.partition_index,args.partition_count)
-        passed=run_scale(reports,args.seed) if args.mode=="scale" else run_light(reports,args.partition_index,args.partition_count)
+        record_runtime(reports,args.mode,args.seed,args.partition_index,args.partition_count,args.nodes)
+        passed=run_scale(reports,args.seed,args.nodes) if args.mode=="scale" else run_light(reports,args.partition_index,args.partition_count)
         complete=args.mode=="scale" or json.loads((reports.directory/"results.json").read_text())["complete"]
         reports.status("passed" if passed else "failed",passed=passed,complete=complete)
         return 0 if passed else 1

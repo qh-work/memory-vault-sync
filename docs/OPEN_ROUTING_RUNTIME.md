@@ -252,3 +252,29 @@ migration is required for local memory use. To stop this experiment, stop its
 own configured node process and select the prior private configuration; retain
 the experiment's control state for review. Do not delete a Vault or reuse a
 stale control backup as fresh permission.
+
+
+## Graduated cloud routing runs
+
+The `Open network evidence` workflow accepts `scale_nodes` as 100 (default),
+250, 500 or 1000 when `run_scale` is enabled. `scale_only` skips the unrelated
+HTTP regression on that manually requested run; pull-request regression is
+unchanged. Each run still executes seeds 17, 29 and 43, with 1000 identical
+queries in each of the healthy and bootstrap-exit phases.
+
+Only topology size and the bounded experiment wall time change. Per-node
+maintenance remains 20 cycles of 16 requests, 1 MiB and five seconds per cycle;
+lookup remains 64 requests, 32 candidates and three concurrent operations.
+Success still requires 99% in the healthy phase and 97% after both bootstrap
+nodes exit. These are logical signed-control experiments, not real AI instances
+or internet availability measurements. Selecting a size does not establish that
+it passed.
+
+Settings, child execution, result validation and finalization bind the requested
+node count; a successful 100-node report cannot satisfy a 250-node request.
+Complete synthetic diagnostic graphs retain all nodes and failures. Their file
+limit remains 900,000 bytes at 100 nodes and is 24,000 bytes per requested node
+for larger runs (at most 24 MB); this changes no runtime storage or network grant.
+The experiment wall limits are 26, 55, 110 and 220 minutes respectively, with
+additional runner time reserved for finalization and artifact upload. Interrupted
+or oversized results remain incomplete.

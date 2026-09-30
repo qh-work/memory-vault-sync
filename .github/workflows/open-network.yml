@@ -34,7 +34,16 @@ on:
   workflow_dispatch:
     inputs:
       run_scale:
-        description: 'Run all three synthetic 100-node seeds (not AI or internet acceptance)'
+        description: 'Run all three synthetic routing seeds (not AI or internet acceptance)'
+        type: boolean
+        default: false
+      scale_nodes:
+        description: 'Logical routing nodes; per-node budgets and success thresholds are unchanged'
+        type: choice
+        options: ['100', '250', '500', '1000']
+        default: '100'
+      scale_only:
+        description: 'Skip unrelated regression when running a selected growth profile'
         type: boolean
         default: false
 
@@ -50,7 +59,7 @@ env:
 jobs:
   light:
     name: Open protocol and real local HTTP regression (${{ matrix.partition }})
-    if: github.event_name != 'pull_request' || github.event.action != 'labeled'
+    if: (github.event_name != 'pull_request' || github.event.action != 'labeled') && !(github.event_name == 'workflow_dispatch' && inputs.run_scale == true && inputs.scale_only == true)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -108,7 +117,7 @@ jobs:
 
   repair-python310:
     name: Receipt and mailbox recovery on supported Python 3.10 (${{ matrix.suite }})
-    if: github.event_name != 'pull_request' || github.event.action != 'labeled'
+    if: (github.event_name != 'pull_request' || github.event.action != 'labeled') && !(github.event_name == 'workflow_dispatch' && inputs.run_scale == true && inputs.scale_only == true)
     runs-on: ubuntu-24.04
     # Real Agent replica/receipt round trips now exceed ten minutes together.
     # Keep both suites bounded while allowing the full result to be reported.
@@ -139,19 +148,21 @@ jobs:
         run: python -B -m unittest -v tests.test_open_transport tests.test_open_repair_http tests.test_open_repair_proof tests.test_open_repair_admin tests.test_open_repair_copy_occupied.OccupiedCopyStateTests tests.test_open_repair_mailbox_consent
 
   scale:
-    name: Synthetic routing seed ${{ matrix.seed }}
+    name: Synthetic routing ${{ inputs.scale_nodes || '100' }} nodes seed ${{ matrix.seed }}
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.run_scale == true) ||
       (github.event_name == 'pull_request' && github.event.action == 'labeled' &&
        github.event.label.name == 'open-network-scale')
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.scale_nodes == '1000' && 230 || inputs.scale_nodes == '500' && 120 || inputs.scale_nodes == '250' && 65 || 30 }}
+    env:
+      SCALE_NODES: ${{ inputs.scale_nodes || '100' }}
     strategy:
       fail-fast: false
       matrix:
         seed: [17, 29, 43]
     concurrency:
-      group: open-network-scale-${{ github.event.pull_request.number || github.ref }}-${{ matrix.seed }}
+      group: open-network-scale-${{ github.event.pull_request.number || github.ref }}-${{ inputs.scale_nodes || '100' }}-${{ matrix.seed }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -159,7 +170,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Record immutable settings; old stronger-maintenance runs are not inputs
-        run: python3 scripts/run_open_network_ci.py --mode scale --phase initialize --seed ${{ matrix.seed }} --report-directory reports/open-scale
+        run: python3 scripts/run_open_network_ci.py --mode scale --nodes "$SCALE_NODES" --phase initialize --seed ${{ matrix.seed }} --report-directory reports/open-scale
       - name: Preserve initial evidence independently of test completion
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
@@ -175,11 +186,11 @@ jobs:
       - name: Install hashed Python runtime only; this stage does not use Node
         run: |
           python -m pip install --require-hashes --only-binary=:all: -r requirements-network-lock.txt
-      - name: Run 100 nodes and 1000 identical queries per phase with current bounded maintenance
-        run: python scripts/run_open_network_ci.py --mode scale --phase run --seed ${{ matrix.seed }} --report-directory reports/open-scale
+      - name: Run selected topology and 1000 identical queries per phase with current bounded maintenance
+        run: python scripts/run_open_network_ci.py --mode scale --nodes "$SCALE_NODES" --phase run --seed ${{ matrix.seed }} --report-directory reports/open-scale
       - name: Refuse empty, stale-profile or interrupted results
         if: always()
-        run: python3 scripts/run_open_network_ci.py --mode scale --phase finalize --seed ${{ matrix.seed }} --report-directory reports/open-scale
+        run: python3 scripts/run_open_network_ci.py --mode scale --nodes "$SCALE_NODES" --phase finalize --seed ${{ matrix.seed }} --report-directory reports/open-scale
       - name: Preserve full synthetic results, causal progress and classified errors
         if: always()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
