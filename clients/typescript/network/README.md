@@ -278,7 +278,7 @@ verified status observations across restarts, including failed recovery.
 See [request formats and commands](../../../docs/OPEN_ACK_RECOVERY.md#native-recovery-commands-development-after-alpha019).
 This command entry is development after the frozen alpha.0.19 archives.
 
-### Registered mailbox recovery (development)
+### Registered mailbox recovery (alpha.0.36 candidate)
 
 A native `Agent.handle({op: "connect", invitation})` accepts the existing
 `memory-vault-open-mailbox-connect/v1` `register`, `list`, and `remove` actions.
@@ -307,4 +307,4 @@ bounded feed/body recovery, and `readMailboxIndex`, `readMailboxAdmission`, and
 `verifyMailboxInboxEvidence` for exact-reference/local recovery. These paths do
 not delegate to a Python process. Native mailbox provisioning and replica inbox
 recovery remain unfinished; use the Python client for those paths. These additions
-are development source, not yet a public release.
+are in the alpha.0.36 candidate; public release acceptance remains pending.
