@@ -3,6 +3,10 @@
 This is a private local storage adapter, never a grant or a network verifier.
 The caller supplies a freshly authenticated publication plan and a transaction
 guard that preserves current observations before allowing each state change.
+Optional campaign IDs separate later publication histories without replacing the
+legacy journal. All campaigns still share the original resource's job storage,
+request, signature and transfer ceilings. This adapter grants no publication
+permission; callers must authenticate each new directory and independent consent.
 Original receipt/head/job records remain immutable. Failed and interrupted
 attempts retain their reserved work and transfer charges across restart.
 """
@@ -20,6 +24,7 @@ from memory_vault_open_repair_state import ROW_CHARGE
 
 MAX_JOURNAL_BYTES = 2 * 1024 * 1024
 MAX_STEPS = 128
+MAX_CAMPAIGNS = 16
 STATES = ("prepare", "allocated", "staged", "advertised", "usable")
 
 
@@ -28,8 +33,29 @@ def _fail(code):
 
 
 class AckIndexJournal:
-    def __init__(self, state):
+    def __init__(self, state, *, campaign_id=None):
+        if campaign_id is not None and (type(campaign_id) is not str or re.fullmatch(r"[0-9a-f]{64}",campaign_id) is None):
+            _fail("repair_invalid_context")
         self.state, self.db = state, state.db
+        self.campaign_id = campaign_id
+
+    def _key(self, resource_id):
+        if self.campaign_id is None:
+            return resource_id
+        return "index_campaign_" + hashlib.sha256(canonical_bytes(
+            dict(resource_id=resource_id,campaign_id=self.campaign_id))).hexdigest()
+
+    def _siblings(self, resource_id):
+        keys=[resource_id]
+        for campaign,key in self.db.execute("SELECT campaign_id,journal_id FROM open_repair_index_campaigns WHERE resource_id=? LIMIT 17",(resource_id,)):
+            expected="index_campaign_"+hashlib.sha256(canonical_bytes(dict(resource_id=resource_id,campaign_id=campaign))).hexdigest()
+            if key!=expected:
+                _fail("repair_storage_corrupt")
+            keys.append(key)
+        if len(keys)>MAX_CAMPAIGNS+1:
+            _fail("repair_index_job_capacity")
+        return keys
+
 
     def initialize(self):
         with self.state._transaction():
@@ -41,6 +67,9 @@ class AckIndexJournal:
                 attempt_id TEXT PRIMARY KEY,resource_id TEXT NOT NULL,request_digest TEXT NOT NULL,
                 signature_allowance INTEGER NOT NULL,signature_checks INTEGER,
                 created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)""")
+            self.db.execute("""CREATE TABLE IF NOT EXISTS open_repair_index_campaigns(
+                resource_id TEXT NOT NULL,campaign_id TEXT NOT NULL,journal_id TEXT NOT NULL UNIQUE,
+                PRIMARY KEY(resource_id,campaign_id))""")
             self.db.execute("""CREATE TABLE IF NOT EXISTS open_repair_index_execution(
                 resource_id TEXT PRIMARY KEY,plan_digest TEXT NOT NULL,plan BLOB NOT NULL,
                 deadline INTEGER NOT NULL,maximum_bytes INTEGER NOT NULL,used_bytes INTEGER NOT NULL,
@@ -63,9 +92,13 @@ class AckIndexJournal:
                 PRIMARY KEY(root_digest,issuer))""")
 
     def _row(self, resource_id):
-        row = self.state._one("SELECT * FROM open_repair_index_execution WHERE resource_id=?", (resource_id,))
+        row = self.state._one("SELECT * FROM open_repair_index_execution WHERE resource_id=?", (self._key(resource_id),))
         if row is None:
             _fail("repair_index_job_missing")
+        if self.campaign_id is not None:
+            held=self.state._one("SELECT journal_id FROM open_repair_index_campaigns WHERE resource_id=? AND campaign_id=?",(resource_id,self.campaign_id))
+            if held is None or held["journal_id"]!=self._key(resource_id):
+                _fail("repair_storage_corrupt")
         return row
 
     def _bounds(self, resource_id):
@@ -80,6 +113,15 @@ class AckIndexJournal:
         active = json.loads(bytes(source["active"]))["payload"]["budget"]
         available = min(MAX_JOURNAL_BYTES, active["max_job_bytes"] - committed["job_bytes"])
         if available < ROW_CHARGE or active["max_jobs"] < 1:
+            _fail("repair_index_job_capacity")
+        siblings=self._siblings(resource_id)
+        other=0
+        for key in siblings:
+            row=self.state._one("SELECT used_bytes FROM open_repair_index_execution WHERE resource_id=?",(key,))
+            if row is not None and key!=self._key(resource_id):
+                other+=row["used_bytes"]
+        available-=other
+        if available<ROW_CHARGE:
             _fail("repair_index_job_capacity")
         return source, active, available
 
@@ -125,7 +167,7 @@ class AckIndexJournal:
             limits = self._limits(source)
             usage = self.state._one("SELECT * FROM open_repair_bootstrap_usage WHERE resource_id=?",(resource_id,))
             if usage is None and (self.state._one("SELECT 1 FROM open_repair_bootstrap_work WHERE resource_id=?",(resource_id,))
-                    or self.state._one("SELECT 1 FROM open_repair_index_attempts WHERE resource_id=?",(resource_id,))):
+                    or any(self.state._one("SELECT 1 FROM open_repair_index_attempts WHERE resource_id=?",(key,)) for key in self._siblings(resource_id))):
                 _fail("repair_receipt_ledger_missing")
             used = usage or dict(requests=0,signatures=0,proof_bytes=0,replays=0)
             pending = self.db.execute("SELECT coalesce(sum(signature_allowance),0) FROM open_repair_bootstrap_work WHERE resource_id=? AND signature_checks IS NULL",(resource_id,)).fetchone()[0]
@@ -162,7 +204,7 @@ class AckIndexJournal:
         self._artifact_name(name)
         with self.state._lock:
             self.state._binding()
-            row=self.state._one("SELECT * FROM open_repair_index_artifacts WHERE resource_id=? AND name=?",(resource_id,name))
+            row=self.state._one("SELECT * FROM open_repair_index_artifacts WHERE resource_id=? AND name=?",(self._key(resource_id),name))
             if row is not None and ((row["raw"] is None)!=(row["digest"] is None)
                     or row["raw"] is not None and hashlib.sha256(bytes(row["raw"])).hexdigest()!=row["digest"]):
                 _fail("repair_storage_corrupt")
@@ -184,12 +226,12 @@ class AckIndexJournal:
             if code is None:
                 source,_,maximum=self._bounds(resource_id)
                 row=self._row(resource_id)
-                old=self.state._one("SELECT * FROM open_repair_index_artifacts WHERE resource_id=? AND name=?",(resource_id,name))
+                old=self.state._one("SELECT * FROM open_repair_index_artifacts WHERE resource_id=? AND name=?",(self._key(resource_id),name))
                 if old is not None:
                     if (old["status_revision"] is not None)!=status_revision:
                         _fail("repair_index_job_conflict")
                 else:
-                    count=self.db.execute("SELECT count(*) FROM open_repair_index_artifacts WHERE resource_id=?",(resource_id,)).fetchone()[0]
+                    count=self.db.execute("SELECT count(*) FROM open_repair_index_artifacts WHERE resource_id=?",(self._key(resource_id),)).fetchone()[0]
                     if now>=row["deadline"] or count>=16:
                         _fail("repair_index_job_capacity")
                     revision=None
@@ -221,8 +263,8 @@ class AckIndexJournal:
                         self.db.execute("INSERT INTO open_repair_index_issuer_sequence VALUES(?,?,?) ON CONFLICT(root_digest,issuer) DO UPDATE SET revision=excluded.revision",(root_digest,issuer,revision))
                         for table,name_key in legacy:
                             self.db.execute("UPDATE "+table+" SET value=? WHERE name=?",(str(revision),name_key))
-                    self.db.execute("INSERT INTO open_repair_index_artifacts VALUES(?,?,?,?,NULL,NULL)",(resource_id,name,now,revision))
-                    self.db.execute("UPDATE open_repair_index_execution SET used_bytes=used_bytes+? WHERE resource_id=?",(extra,resource_id))
+                    self.db.execute("INSERT INTO open_repair_index_artifacts VALUES(?,?,?,?,NULL,NULL)",(self._key(resource_id),name,now,revision))
+                    self.db.execute("UPDATE open_repair_index_execution SET used_bytes=used_bytes+? WHERE resource_id=?",(extra,self._key(resource_id)))
         if code is not None:
             _fail(code)
         return self.saved_artifact(resource_id,name)
@@ -238,7 +280,7 @@ class AckIndexJournal:
             if code is None:
                 _,_,maximum=self._bounds(resource_id)
                 row=self._row(resource_id)
-                old=self.state._one("SELECT * FROM open_repair_index_artifacts WHERE resource_id=? AND name=?",(resource_id,name))
+                old=self.state._one("SELECT * FROM open_repair_index_artifacts WHERE resource_id=? AND name=?",(self._key(resource_id),name))
                 if old is None:
                     _fail("repair_index_job_missing")
                 if old["raw"] is not None:
@@ -247,8 +289,8 @@ class AckIndexJournal:
                 else:
                     if row["used_bytes"]+len(raw)>min(row["maximum_bytes"],maximum):
                         _fail("repair_index_job_capacity")
-                    self.db.execute("UPDATE open_repair_index_artifacts SET raw=?,digest=? WHERE resource_id=? AND name=?",(raw,digest,resource_id,name))
-                    self.db.execute("UPDATE open_repair_index_execution SET used_bytes=used_bytes+? WHERE resource_id=?",(len(raw),resource_id))
+                    self.db.execute("UPDATE open_repair_index_artifacts SET raw=?,digest=? WHERE resource_id=? AND name=?",(raw,digest,self._key(resource_id),name))
+                    self.db.execute("UPDATE open_repair_index_execution SET used_bytes=used_bytes+? WHERE resource_id=?",(len(raw),self._key(resource_id)))
         if code is not None:
             _fail(code)
         return self.saved_artifact(resource_id,name)
@@ -262,19 +304,26 @@ class AckIndexJournal:
         with self.state._transaction() as now:
             code = self._guard(guard)
             if code is None:
-                source, _, maximum = self._bounds(resource_id)
+                source, capacity, maximum = self._bounds(resource_id)
                 if not now < deadline <= source["retain_until"]:
                     _fail("repair_access_expired")
-                old = self.state._one("SELECT * FROM open_repair_index_execution WHERE resource_id=?", (resource_id,))
+                old = self.state._one("SELECT * FROM open_repair_index_execution WHERE resource_id=?", (self._key(resource_id),))
                 if old is not None:
                     if old["plan_digest"] != digest or bytes(old["plan"]) != plan_raw or old["deadline"] != deadline:
                         _fail("repair_index_job_conflict")
                 else:
-                    used = len(plan_raw) + ROW_CHARGE
+                    siblings=self._siblings(resource_id)
+                    count=sum(self.state._one("SELECT 1 FROM open_repair_index_execution WHERE resource_id=?",(key,)) is not None for key in siblings)
+                    if count>=min(MAX_CAMPAIGNS,capacity["max_jobs"]):
+                        _fail("repair_index_job_capacity")
+                    mapping=self.campaign_id is not None
+                    used = len(plan_raw) + ROW_CHARGE*(2 if mapping else 1)
                     if used > maximum:
                         _fail("repair_index_job_capacity")
+                    if mapping:
+                        self.db.execute("INSERT INTO open_repair_index_campaigns VALUES(?,?,?)",(resource_id,self.campaign_id,self._key(resource_id)))
                     self.db.execute("INSERT INTO open_repair_index_execution VALUES(?,?,?,?,?,?,'prepare',?,0,NULL,NULL)",
-                        (resource_id,digest,plan_raw,deadline,maximum,used,now))
+                        (self._key(resource_id),digest,plan_raw,deadline,maximum,used,now))
         if code is not None:
             _fail(code)
         return self.snapshot(resource_id)
@@ -293,7 +342,7 @@ class AckIndexJournal:
             _fail("repair_index_job_capacity")
         with self.state._lock:
             self.state._binding()
-            row = self.state._one("SELECT * FROM open_repair_index_steps WHERE resource_id=? AND step=?",(resource_id,step))
+            row = self.state._one("SELECT * FROM open_repair_index_steps WHERE resource_id=? AND step=?",(self._key(resource_id),step))
             if row is not None and hashlib.sha256(bytes(row["request"])).hexdigest() != row["request_digest"]:
                 _fail("repair_storage_corrupt")
             return row
@@ -315,7 +364,7 @@ class AckIndexJournal:
                 row = self._row(resource_id)
                 if now >= row["deadline"] or row["state"] == "usable":
                     _fail("repair_access_expired")
-                previous = self.state._one("SELECT * FROM open_repair_index_steps WHERE resource_id=? AND step=?",(resource_id,step))
+                previous = self.state._one("SELECT * FROM open_repair_index_steps WHERE resource_id=? AND step=?",(self._key(resource_id),step))
                 if previous is not None and (previous["request_digest"] != digest or bytes(previous["request"]) != request):
                     _fail("repair_index_job_conflict")
                 usage = self.state._one("SELECT * FROM open_repair_bootstrap_usage WHERE resource_id=?",(resource_id,))
@@ -332,12 +381,12 @@ class AckIndexJournal:
                     _fail("repair_index_job_capacity")
                 attempt = row["attempts"]+1
                 if previous is None:
-                    self.db.execute("INSERT INTO open_repair_index_steps VALUES(?,?,?,?,NULL)",(resource_id,step,digest,request))
+                    self.db.execute("INSERT INTO open_repair_index_steps VALUES(?,?,?,?,NULL)",(self._key(resource_id),step,digest,request))
                 self.db.execute("INSERT INTO open_repair_index_attempts VALUES(?,?,?,?,?,NULL,NULL)",
-                    (resource_id,attempt,step,signature_allowance,transfer))
+                    (self._key(resource_id),attempt,step,signature_allowance,transfer))
                 self.db.execute("UPDATE open_repair_bootstrap_usage SET requests=requests+1,signatures=signatures+?,proof_bytes=proof_bytes+?,replays=replays+1 WHERE resource_id=?",
                     (signature_allowance,transfer,resource_id))
-                self.db.execute("UPDATE open_repair_index_execution SET used_bytes=used_bytes+?,attempts=?,last_error=NULL WHERE resource_id=?",(extra,attempt,resource_id))
+                self.db.execute("UPDATE open_repair_index_execution SET used_bytes=used_bytes+?,attempts=?,last_error=NULL WHERE resource_id=?",(extra,attempt,self._key(resource_id)))
         if code is not None:
             _fail(code)
         return attempt
@@ -353,10 +402,10 @@ class AckIndexJournal:
             if code is None:
                 _, _, maximum = self._bounds(resource_id)
                 row = self._row(resource_id)
-                work = self.state._one("SELECT * FROM open_repair_index_attempts WHERE resource_id=? AND attempt=?",(resource_id,attempt))
+                work = self.state._one("SELECT * FROM open_repair_index_attempts WHERE resource_id=? AND attempt=?",(self._key(resource_id),attempt))
                 if work is None:
                     _fail("repair_index_job_missing")
-                step = self.state._one("SELECT * FROM open_repair_index_steps WHERE resource_id=? AND step=?",(resource_id,work["step"]))
+                step = self.state._one("SELECT * FROM open_repair_index_steps WHERE resource_id=? AND step=?",(self._key(resource_id),work["step"]))
                 actual = len(bytes(step["request"])) + len(response)
                 if signature_checks > work["signature_allowance"] or actual > work["wire_allowance"]:
                     _fail("repair_over_budget")
@@ -369,11 +418,11 @@ class AckIndexJournal:
                     extra = len(response) if step["response"] is None else 0
                     if row["used_bytes"]+extra > min(row["maximum_bytes"],maximum):
                         _fail("repair_index_job_capacity")
-                    self.db.execute("UPDATE open_repair_index_steps SET response=? WHERE resource_id=? AND step=?",(response,resource_id,work["step"]))
-                    self.db.execute("UPDATE open_repair_index_attempts SET signature_checks=?,wire_bytes=? WHERE resource_id=? AND attempt=?",(signature_checks,actual,resource_id,attempt))
+                    self.db.execute("UPDATE open_repair_index_steps SET response=? WHERE resource_id=? AND step=?",(response,self._key(resource_id),work["step"]))
+                    self.db.execute("UPDATE open_repair_index_attempts SET signature_checks=?,wire_bytes=? WHERE resource_id=? AND attempt=?",(signature_checks,actual,self._key(resource_id),attempt))
                     self.db.execute("UPDATE open_repair_bootstrap_usage SET signatures=signatures-?,proof_bytes=proof_bytes-? WHERE resource_id=?",
                         (work["signature_allowance"]-signature_checks,work["wire_allowance"]-actual,resource_id))
-                    self.db.execute("UPDATE open_repair_index_execution SET used_bytes=used_bytes+? WHERE resource_id=?",(extra,resource_id))
+                    self.db.execute("UPDATE open_repair_index_execution SET used_bytes=used_bytes+? WHERE resource_id=?",(extra,self._key(resource_id)))
         if code is not None:
             _fail(code)
 
@@ -397,7 +446,7 @@ class AckIndexJournal:
                 if used > min(row["maximum_bytes"],maximum) or next_due > row["deadline"]:
                     _fail("repair_index_job_capacity")
                 self.db.execute("UPDATE open_repair_index_execution SET state=?,result=?,used_bytes=?,next_due=?,last_error=NULL WHERE resource_id=?",
-                    (state,evidence,used,next_due,resource_id))
+                    (state,evidence,used,next_due,self._key(resource_id)))
         if code is not None:
             _fail(code)
 
@@ -408,4 +457,4 @@ class AckIndexJournal:
         with self.state._transaction():
             row = self._row(resource_id)
             self.db.execute("UPDATE open_repair_index_execution SET last_error=?,next_due=? WHERE resource_id=?",
-                (code,min(next_due,row["deadline"]),resource_id))
+                (code,min(next_due,row["deadline"]),self._key(resource_id)))
