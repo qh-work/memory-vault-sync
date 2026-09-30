@@ -1,5 +1,11 @@
 # Memory Vault development status
 
+Published **[alpha.0.30](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.30)** is fixed at `bebd7f1b8b9c4a9079a02b233a738dc9cfa2002d`.
+
+Python recipients can retain an independent ACK destination for an exact message. Ordinary `receive` returns the actual saved receipt under its original authorization; a repeated original `send` can use its already prepared owner READ grant to confirm that receipt. Lost replies and restart reuse durable requests, completed repeats remain local, and pending return failures are inspectable. See [ordinary independent receipt return](OPEN_ACK_PROVISIONING.md#retain-a-receipt-destination-for-ordinary-receive-source-after-alpha029).
+
+Five checks passed using the extracted alpha.0.30 client: ordinary replica memory reception and independent receipt confirmation through the original send; lost-return/restart recovery and reconciliation; explicit cold-mailbox receipt return; approved delivery and restart recall; and pending-receipt fairness. The exact-source cloud regression passed 1179 tests across 127 modules, with all 288 reported source hashes matching `bebd7f1b8b9c4a9079a02b233a738dc9cfa2002d`. All three supported Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
 Published **[alpha.0.29](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.29)** is fixed at `20b53a5d664b622c01ffe209c65557ea2a1d2d04`.
 
 Python recipients can retain an already authorized message replica with `connect/register_replica`. Ordinary `receive` then recovers the original message and selected memories after source storage loss, including after restart. Current destination key/epoch and original permissions remain checked; saved ciphertext is not downloaded again. This polls explicitly selected copies and does not create replacements or grant receipt-return permission. See [ordinary replica reception](OPEN_ACK_RECOVERY.md#retain-a-replica-for-ordinary-receive-source-after-alpha028).
