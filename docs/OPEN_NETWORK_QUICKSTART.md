@@ -6,7 +6,7 @@ memories. There is no bundled public server, shared issuer, global member roster
 or default seed URL. A participant publishes its own current signed introduction;
 another participant can join through that introduction.
 
-The **v0.28.0-alpha.0.33** Python and native TypeScript clients connect approved
+The **v0.28.0-alpha.0.34** Python and native TypeScript clients connect approved
 delivery to the original accepting node, durable local inboxes and separate
 storage/recipient receipts. Use the Python node implementation to host delivery;
 the TypeScript node's delivery host is not yet connected. The separate
@@ -42,6 +42,8 @@ Python maintainers can retain exact authorized mailbox copies in a [finite persi
 Native TypeScript senders can now recover an independent original-source ACK receipt through `connect/recover_receipt`, or by repeating an unchanged original `send` with an already retained preparation while the delivery node is offline. Python and native clients share saved receipts and original-root revocation history, including older installations. Preparation, recipient return and full replica/mailbox workflows still use Python. See [native ACK confirmation](OPEN_ACK_PROVISIONING.md#native-agent-receipt-recovery-source-after-alpha031).
 
 Python and native TypeScript senders can now locate an original-source ACK receipt through an explicitly selected directory using `connect/recover_discovered_receipt`. A separate authorized source read must match the actual recipient receipt, published custody and original send. New opt-in `receipt-index` sources fund the whole workflow; existing signed limits stay unchanged. See [directory receipt recovery](OPEN_ACK_DIRECTORY.md#agent-directory-recovery-development-after-alpha032).
+
+Sources can now republish an original ACK location through another independently consented directory while preserving earlier publication histories and shared resource limits. Python and native TypeScript `connect/recover_routed_receipt` discover directories through existing seeds and routing state, then independently retrieve the actual receipt from the originally authorized source. See [directory republication and routed recovery](OPEN_ACK_DIRECTORY.md#publish-through-another-directory-development-after-alpha033).
 
 ## Prepare the participant environment
 
