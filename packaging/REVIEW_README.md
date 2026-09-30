@@ -1,4 +1,20 @@
-# Memory Vault v0.28.0-alpha.0.33 independent review kit
+# Memory Vault v0.28.0-alpha.0.34 independent review kit
+
+Original ACK sources can publish the same retained receipt location through
+another explicitly selected independent directory with new owner and recipient
+consent. Each publication keeps its exact requests and history across restart;
+all histories share the original resource limits. Earlier jobs and deadlines
+remain intact, with at most sixteen retained histories and no implicit renewal.
+
+Python and native TypeScript Agents also support `connect/recover_routed_receipt`.
+The client discovers directories through its configured seeds and retained
+routing state, then independently reads the exact originally authorized source.
+The recovery invitation needs no directory address. A directory lease still
+cannot grant READ access or replace the actual recipient receipt. Source keys,
+epochs, original send bindings, revocations and bounded deadlines remain checked.
+This supports recovery through another router after the earlier directory stops;
+publication consent and source replacement remain explicit. See
+`docs/OPEN_ACK_DIRECTORY.md`.
 
 Python and native TypeScript Agents can locate an independently retained original
 ACK receipt through an explicitly selected directory using

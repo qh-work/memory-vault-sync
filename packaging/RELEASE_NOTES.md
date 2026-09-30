@@ -1,4 +1,20 @@
-# Memory Vault v0.28.0-alpha.0.33 — directory-discovered independent receipt recovery
+# Memory Vault v0.28.0-alpha.0.34 — directory republication and routed receipt recovery
+
+Original ACK sources can publish the same retained receipt location through
+another explicitly selected independent directory with new owner and recipient
+consent. Each publication keeps its exact requests and history across restart;
+all histories share the original resource limits. Earlier jobs and deadlines
+remain intact, with at most sixteen retained histories and no implicit renewal.
+
+Python and native TypeScript Agents also support `connect/recover_routed_receipt`.
+The client discovers directories through its configured seeds and retained
+routing state, then independently reads the exact originally authorized source.
+The recovery invitation needs no directory address. A directory lease still
+cannot grant READ access or replace the actual recipient receipt. Source keys,
+epochs, original send bindings, revocations and bounded deadlines remain checked.
+This supports recovery through another router after the earlier directory stops;
+publication consent and source replacement remain explicit. See
+`docs/OPEN_ACK_DIRECTORY.md`.
 
 Python and native TypeScript Agents can locate an independently retained original
 ACK receipt through an explicitly selected directory using
@@ -135,7 +151,7 @@ TypeScript recognizes the mailbox replica proof and status profiles. Participant
 operate their own authorized nodes; no central authority or project-operated
 public seed is required or provided.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.33/docs/OPEN_NETWORK_QUICKSTART.md)
-and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.33/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.34/docs/OPEN_NETWORK_QUICKSTART.md)
+and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.34/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
 Preserve existing identity and state files when installing. The archives contain
 implementation, public documentation and wholly synthetic fixtures only.
