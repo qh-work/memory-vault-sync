@@ -49,7 +49,8 @@
     "./open-repair-mailbox-inbox": "./open-repair-mailbox-inbox.ts",
     "./open-mailbox-client": "./open-mailbox-client.ts",
     "./open-mailbox-journal": "./open-mailbox-journal.ts",
-    "./open-mailbox-receivers": "./open-mailbox-receivers.ts"
+    "./open-mailbox-receivers": "./open-mailbox-receivers.ts",
+    "./open-mailbox-receipts": "./open-mailbox-receipts.ts"
   },
   "types": "./crypto.ts",
   "engines": {

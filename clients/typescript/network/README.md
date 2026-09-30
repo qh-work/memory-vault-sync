@@ -308,3 +308,27 @@ bounded feed/body recovery, and `readMailboxIndex`, `readMailboxAdmission`, and
 not delegate to a Python process. Native mailbox provisioning and replica inbox
 recovery remain unfinished; use the Python client for those paths. These additions
 are in the alpha.0.36 candidate; public release acceptance remains pending.
+
+### Retained receipt destinations (development after alpha.0.36)
+
+The native Agent accepts `memory-vault-open-ack-connect/v1` actions
+`register_mailbox_receipt_return`, `list_mailbox_receipt_returns`,
+`inspect_mailbox_receipt_return` and `remove_mailbox_receipt_return`.
+Registration retains an exact `message_id`, `source_url`, `source_key_id` and
+`repair_profile` (`receipt` or `receipt-index`) locally. It can happen before
+reception; it grants no upload or disclosure permission.
+
+Ordinary `receive` attempts up to two ready, saved-message returns within its
+shared deadline. It reopens the mailbox evidence and original independent ACK
+configuration, proves the selected source, and persists the exact preparation
+before returning the actual saved receipt. A lost reply or process restart
+resumes the same original request. Authenticated original-root status history
+remains durable; retained denials stop a pending upload before retransmission.
+Expired uncertain returns become `reconciliation_required` and stop polling.
+
+The bounded selection and return journals use the same protected SQLite tables
+as Python. Removing a selection preserves the saved message and original return
+history. Re-registering a completed selection can reuse authenticated local
+history without another upload. Direct `return_mailbox_receipt` supports the same
+message and source selection. Native replica inbox support remains unfinished.
+These additions are development source after the frozen alpha.0.36 candidate.

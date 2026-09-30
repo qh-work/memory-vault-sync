@@ -21,6 +21,7 @@ type Obj=Record<string,any>;
 export const ACK_CONNECT_SCHEMA='memory-vault-open-ack-connect/v1';
 const PROFILES={receipt:{...DEFAULT_REPAIR_CLIENT_LIMITS,max_signature_checks:2048,max_proof_bytes:1048576},
   'receipt-index':{...DEFAULT_REPAIR_CLIENT_LIMITS,max_signature_checks:4096,max_proof_bytes:4194304,max_requests:256,max_replay_records:256}};
+export {PROFILES as ACK_REPAIR_PROFILES};
 function fail(code:string):never{throw new NetworkError(code);}
 function decode(value:unknown):Obj{
   const entry=objectFields(value,['raw','ref']);

@@ -7,6 +7,7 @@ import {loadClient} from './client-config.ts';
 import type {Client} from './client-config.ts';
 import {OpenDeliveryClient} from './open-delivery-client.ts';
 import {RegisteredMailboxReceivers,MAILBOX_CONNECT_SCHEMA} from './open-mailbox-receivers.ts';
+import {MailboxReceiptJobs,MAILBOX_RECEIPT_ACTIONS,returnMailboxReceipt} from './open-mailbox-receipts.ts';
 import {OpenParticipant} from './open-participant.ts';
 import {OpenContactClient,CONNECT_SCHEMA} from './open-contact-client.ts';
 import type {SignedNode} from './open-control.ts';
@@ -39,8 +40,10 @@ export class OpenNetworkClient{
     if(invitation!=null){
       if(typeof invitation==='object'&&!Array.isArray(invitation)&&(invitation as any).schema_version===MAILBOX_CONNECT_SCHEMA)
         return this.result(new RegisteredMailboxReceivers(this.participant,this.encryption,this.delivery()).connect(invitation));
-      if(typeof invitation==='object'&&!Array.isArray(invitation)&&(invitation as any).schema_version===ACK_CONNECT_SCHEMA)
+      if(typeof invitation==='object'&&!Array.isArray(invitation)&&(invitation as any).schema_version===ACK_CONNECT_SCHEMA){
+        if(MAILBOX_RECEIPT_ACTIONS.has((invitation as any).action))return this.result((invitation as any).action==='return_mailbox_receipt'?await returnMailboxReceipt(this.participant,this.encryption,this.delivery(),invitation):new MailboxReceiptJobs(this.participant,this.encryption,this.delivery()).connect(invitation));
         return this.result(await ((invitation as any).action==='return_receipt'?returnSavedReceipt:recoverReceipt)(this.participant,this.encryption,this.delivery(),invitation));
+      }
       if(typeof invitation!=='object'||Array.isArray(invitation)||(invitation as any).schema_version!==CONNECT_SCHEMA)fail('open_private_invitation_unsupported');
       const result=await new OpenContactClient(this.participant,this.encryption).dispatch(invitation,requestId);
       return this.result({...result,profile:'open-routing-v1',network_accessed:true,open_messaging_supported:true});

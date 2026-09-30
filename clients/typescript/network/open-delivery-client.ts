@@ -347,12 +347,12 @@ export class OpenDeliveryClient{
     if(!Object.hasOwn(session,'mailbox'))return document(session,MAX_INBOX_SESSION_BYTES) as Obj;
     return objectFields(session,['mailbox','authority','source_node']);
   }
-  private async verifyMailboxInbox(session:Obj,row:Obj):Promise<void>{
+  private async verifyMailboxInbox(session:Obj,row:Obj):Promise<Obj>{
     const verified=await verifyMailboxInboxEvidence(session.mailbox,row.envelope,{owner:{signing_key:validateSigningIdentity(this.participant.identity),
       encryption_key:validateEncryptionIdentity(this.encryption)},encryptionIdentity:this.encryption,stagedAt:row.created_at});
     if(verified.core.message_id!==row.message_id||session.mailbox.sender.signing_key.key_id!==row.sender)fail('network_inbox_identity_conflict');
     const expected=Object.fromEntries([['request','contact.request'],['policy','contact.policy']].map(([name,role])=>[name,document(verified.setup.roles[role].raw)]));
-    if(!same(session.authority,expected))fail('network_inbox_identity_conflict');
+    if(!same(session.authority,expected))fail('network_inbox_identity_conflict');return verified;
   }
   private async finishInbox(messageId:string):Promise<Obj>{
     const row=this.inbox(messageId);if(!row)fail('network_message_not_found');if(['saved','rejected'].includes(row.phase))return document(row.result,MAX_RESULT_BYTES);
@@ -389,8 +389,15 @@ export class OpenDeliveryClient{
       db.prepare('UPDATE open_delivery_inbox SET receipt=? WHERE message_id=?').run(encoded,messageId);return receipt;
     }));
   }
-  /** Read the actually saved inbox receipt for an explicitly requested return.
-   * The caller cannot substitute receipt bytes or a saved-state flag. */
+  /** Reauthenticate the saved mailbox evidence before deriving return authority. */
+  async savedMailboxForAck(messageId:string):Promise<Obj>{
+    if(!/^msg_[0-9a-f]{64}$/.test(messageId))fail('repair_saved_tuple_mismatch');
+    const row=this.inbox(messageId);if(!row||row.phase!=='saved')fail('repair_receipt_not_saved');
+    const session=OpenDeliveryClient.inboxSession(row.session);if(!Object.hasOwn(session,'mailbox'))fail('open_ack_mailbox_configuration_missing');
+    const verified=await this.verifyMailboxInbox(session,row);if(!verified.setup.ack_configuration)fail('open_ack_mailbox_configuration_missing');
+    return {owner:session.mailbox.sender,roles:Object.fromEntries(Object.entries(verified.setup.roles).map(([n,e]:[string,any])=>[n,{ref:e.ref,raw:e.raw}]))};
+  }
+  /** Read the actual saved receipt; never accept substituted receipt bytes. */
   async savedReceiptForAck(messageId:string,owner:Obj,expectedEnvelope:unknown):Promise<{raw:Uint8Array;ref:Obj}>{
     if(!/^msg_[0-9a-f]{64}$/.test(messageId))fail('repair_saved_tuple_mismatch');
     const row=this.inbox(messageId);if(!row||row.phase!=='saved')fail('repair_receipt_not_saved');

@@ -1,4 +1,13 @@
-# Memory Vault v0.28.0-alpha.0.36 — authorized full client
+# Memory Vault v0.28.0-alpha.0.37 — authorized full client
+
+Native TypeScript recipients can retain an independently authorized receipt
+return for a cold-mailbox message. Ordinary Agent `receive` then returns the
+actual durably saved receipt, keeping the exact upload across lost replies and
+process restarts. Python and TypeScript share the same retained jobs, pending
+requests and completed history. The sender can independently recover that
+receipt and confirm its original send. Observed revocations block retries;
+expired uncertain uploads stop for reconciliation. No new permission or source
+selection is created by retrying. See `clients/typescript/network/README.md`.
 
 Native TypeScript recipients can register an explicitly authorized ordinary
 mailbox and recover messages and selected memories with normal Agent `receive`,
@@ -148,7 +157,7 @@ remain unfinished. There is no project-operated public seed or verified
 thousand-agent/global-availability result. Use the source-bound release record
 for actual validation and compare archive bytes with published checksums.
 
-This full-client package targets **v0.28.0-alpha.0.36 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.37 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

@@ -1,4 +1,13 @@
-# Memory Vault v0.28.0-alpha.0.36 — native remote mailbox memory recovery
+# Memory Vault v0.28.0-alpha.0.37 — automatic native mailbox receipt returns
+
+Native TypeScript recipients can retain an independently authorized receipt
+return for a cold-mailbox message. Ordinary Agent `receive` then returns the
+actual durably saved receipt, keeping the exact upload across lost replies and
+process restarts. Python and TypeScript share the same retained jobs, pending
+requests and completed history. The sender can independently recover that
+receipt and confirm its original send. Observed revocations block retries;
+expired uncertain uploads stop for reconciliation. No new permission or source
+selection is created by retrying. See `clients/typescript/network/README.md`.
 
 Native TypeScript recipients can register an explicitly authorized ordinary
 mailbox and recover messages and selected memories with normal Agent `receive`,
@@ -174,7 +183,7 @@ TypeScript recognizes the mailbox replica proof and status profiles. Participant
 operate their own authorized nodes; no central authority or project-operated
 public seed is required or provided.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.36/docs/OPEN_NETWORK_QUICKSTART.md)
-and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.36/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.37/docs/OPEN_NETWORK_QUICKSTART.md)
+and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.37/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
 Preserve existing identity and state files when installing. The archives contain
 implementation, public documentation and wholly synthetic fixtures only.

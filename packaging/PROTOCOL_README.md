@@ -1,4 +1,13 @@
-# Memory Vault v0.28.0-alpha.0.36 — independent protocol
+# Memory Vault v0.28.0-alpha.0.37 — independent protocol
+
+Native TypeScript recipients can retain an independently authorized receipt
+return for a cold-mailbox message. Ordinary Agent `receive` then returns the
+actual durably saved receipt, keeping the exact upload across lost replies and
+process restarts. Python and TypeScript share the same retained jobs, pending
+requests and completed history. The sender can independently recover that
+receipt and confirm its original send. Observed revocations block retries;
+expired uncertain uploads stop for reconciliation. No new permission or source
+selection is created by retrying. See `clients/typescript/network/README.md`.
 
 Native TypeScript recipients can register an explicitly authorized ordinary
 mailbox and recover messages and selected memories with normal Agent `receive`,
@@ -165,7 +174,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.36;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.37;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility
