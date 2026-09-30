@@ -1,4 +1,15 @@
-# Memory Vault v0.28.0-alpha.0.34 — directory republication and routed receipt recovery
+# Memory Vault v0.28.0-alpha.0.35 — native saved receipt return and restart recovery
+
+Native TypeScript recipients can return an actually saved message or memory
+receipt through the existing `connect/return_receipt` invitation. The protected
+inbox supplies the exact original receipt. Independent return consent, source
+binding and current permissions are checked before upload. The request is
+persisted first; restart or switching from Python replays the same carrier while
+its original use remains valid. Completed retries read authenticated local
+history without claiming current source availability. The sender can separately
+recover that receipt and confirm its original send while the delivery node is
+offline. Preparation and complete native mailbox/replica orchestration remain
+unfinished. See `docs/OPEN_ACK_PROVISIONING.md`.
 
 Original ACK sources can publish the same retained receipt location through
 another explicitly selected independent directory with new owner and recipient
@@ -39,7 +50,7 @@ state. Fresh source identity, origin, epoch and revision floors remain checked.
 Confirmed repeats stay local, and signed refusal history is shared with Python
 across restart. Automatic recovery has twenty seconds within the existing
 sixty-second send deadline. No Python subprocess or new permission is created.
-ACK source preparation, receipt return and replica workflows still use Python.
+ACK source preparation and replica workflows still use Python.
 See `docs/OPEN_ACK_PROVISIONING.md`.
 
 Authorized maintainers can retain exact mailbox copy bundles and resume them
@@ -151,7 +162,7 @@ TypeScript recognizes the mailbox replica proof and status profiles. Participant
 operate their own authorized nodes; no central authority or project-operated
 public seed is required or provided.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.34/docs/OPEN_NETWORK_QUICKSTART.md)
-and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.34/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.35/docs/OPEN_NETWORK_QUICKSTART.md)
+and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.35/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
 Preserve existing identity and state files when installing. The archives contain
 implementation, public documentation and wholly synthetic fixtures only.

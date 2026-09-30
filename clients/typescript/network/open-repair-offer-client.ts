@@ -84,6 +84,10 @@ export class AckOfferClient{
     Object.freeze(this);
   }
   close():void{this.#preparedReturn=undefined;this.#preparedGeneration++;if(this.#ownTransport)this.#transport.close();}
+  get subject():Readonly<Obj>{return this.#subject;}
+  get policy():RepairPolicy{return this.#policy;}
+  get limits():Readonly<Obj>{return this.#limits;}
+  get timestamp():number{return this.#now();}
   #now():number{return u53(Math.floor(this.#clock()));}
   async preflight(baseUrl:string,value:AckOfferOptions):Promise<PreparedAckOffer>{
     return this.#preflight(baseUrl,value,new RepairBudget(this.#policy));

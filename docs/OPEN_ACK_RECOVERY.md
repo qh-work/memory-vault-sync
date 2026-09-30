@@ -1065,6 +1065,14 @@ private receipt upload and the verified `response` afterward. The callback is
 awaited; failure to store the request stops the upload. Journal data contains
 private original records and belongs in the participant's private durable store.
 The journal format is compatible with the existing Python receipt recovery
-client. Native prepared-return reuse, native journal replay and automatic Agent
-integration remain subsequent work; Python remains the complete automated
-receipt-return path.
+client. `prepareReturn(baseUrl, options)` saves one preflight for the next
+matching `put` on that client. It retains the original work meter and deadline;
+changed destinations, newer revocations and elapsed permissions stop upload.
+`resume(baseUrl, journalRaw, receiptEntry, disclosureEntry, putEntry, options)`
+reauthenticates the retained originals and replays the exact saved carrier. It
+never creates another probe, consent or use. An expired use reports
+`repair_reconciliation_required`; it does not silently renew authority.
+
+The native Agent now connects this writer to its actual saved inbox through
+`connect/return_receipt`. See [saved receipt return](OPEN_ACK_PROVISIONING.md#native-saved-receipt-return-development-after-alpha034).
+Preparation and complete mailbox/replica orchestration still use Python.

@@ -9,7 +9,7 @@ import {OpenDeliveryClient} from './open-delivery-client.ts';
 import {OpenParticipant} from './open-participant.ts';
 import {OpenContactClient,CONNECT_SCHEMA} from './open-contact-client.ts';
 import type {SignedNode} from './open-control.ts';
-import {ACK_CONNECT_SCHEMA,recoverReceipt,recoverPrepared} from './open-ack-client.ts';
+import {ACK_CONNECT_SCHEMA,recoverReceipt,recoverPrepared,returnSavedReceipt} from './open-ack-client.ts';
 export const OPEN_CLIENT_CONFIG='memory-vault-open-client-config/v1';
 function fail(code:string):never{throw new NetworkError(code);}
 export class OpenNetworkClient{
@@ -37,7 +37,7 @@ export class OpenNetworkClient{
   async connect(invitation?:unknown,requestId?:string):Promise<Record<string,any>>{
     if(invitation!=null){
       if(typeof invitation==='object'&&!Array.isArray(invitation)&&(invitation as any).schema_version===ACK_CONNECT_SCHEMA)
-        return this.result(await recoverReceipt(this.participant,this.encryption,this.delivery(),invitation));
+        return this.result(await ((invitation as any).action==='return_receipt'?returnSavedReceipt:recoverReceipt)(this.participant,this.encryption,this.delivery(),invitation));
       if(typeof invitation!=='object'||Array.isArray(invitation)||(invitation as any).schema_version!==CONNECT_SCHEMA)fail('open_private_invitation_unsupported');
       const result=await new OpenContactClient(this.participant,this.encryption).dispatch(invitation,requestId);
       return this.result({...result,profile:'open-routing-v1',network_accessed:true,open_messaging_supported:true});

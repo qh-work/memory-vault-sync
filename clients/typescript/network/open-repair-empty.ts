@@ -140,3 +140,7 @@ export function verifyAckEmptySourceEvent(manifestEntry:unknown,resolver:LocalRa
   const observed=statuses(roles,obligations(prior,authorities,owner,target,ackSlot,policy,budget),ackSlot.root_key,at,policy,budget);historyFloors(prior.statuses,observed);
   return Object.freeze({manifest,custody,predecessor:prior,binding,authorities,statuses:Object.freeze(observed),stored_at:at,read_until:event.read_until,retain_until:event.retain_until});
 }
+
+export function verifyAckBindingOriginal(value:unknown,target:Record<string,any>,policy:RepairPolicy,budget:RepairBudget):AuthenticatedRepairOriginal{
+  return signed(value,target,'ack.binding',policy,budget);
+}

@@ -5,6 +5,8 @@ import {endpoint} from './open-transport.ts';
 import {envelopeRef} from './open-delivery-control.ts';
 import {DiscoveredAckRecoveryClient} from './open-ack-discovery.ts';
 import {OpenProviderClient} from './open-provider-client.ts';
+import {AckReceiptClient} from './open-repair-offer-client.ts';
+import {SavedAckReceiptPublisher,SAVED_ACK_REQUEST_FIELDS} from './open-repair-receipt.ts';
 import {OriginalAckStatusJournal} from './open-ack-status.ts';
 import type {DatabaseSync} from 'node:sqlite';
 import {canonicalBytes,document,objectFields,sha256,validateSigningIdentity,decodeBase64url} from './crypto.ts';
@@ -72,6 +74,22 @@ class Journal{
     }));
     if(!saved)fail('repair_setup_journal_capacity');
   }
+}
+export async function returnSavedReceipt(participant:OpenParticipant,encryption:EncryptionIdentityDocument,
+  delivery:OpenDeliveryClient,invitation:unknown):Promise<Obj>{
+  const v=objectFields(document(invitation as any,65536),['schema_version','action','repair_profile','base_url','request']);
+  if(v.schema_version!==ACK_CONNECT_SCHEMA||v.action!=='return_receipt'||typeof v.repair_profile!=='string'||!Object.hasOwn(PROFILES,v.repair_profile))fail('open_invalid_ack_request');
+  const request=objectFields(v.request,SAVED_ACK_REQUEST_FIELDS) as Obj;
+  const decoded={...request};for(const name of SAVED_ACK_REQUEST_FIELDS.filter(n=>n.endsWith('_entry')))decoded[name]=decode(request[name]);
+  if(!Array.isArray(request.current_statuses)||request.current_statuses.length>7)fail('open_invalid_ack_request');
+  decoded.current_statuses=request.current_statuses.map(decode);
+  const client=new AckReceiptClient(participant.identity,encryption,{limitPolicy:PROFILES[v.repair_profile as keyof typeof PROFILES],
+    transport:participant.transport,allowLoopback:participant.transport.allow_loopback});
+  try{
+    const result=await new SavedAckReceiptPublisher(delivery,client).publishSaved(v.base_url as string,decoded);
+    return {state:'retained_at_ack_source',message_id:request.message_id,receipt_ref:result.source.inputs.receipt.ref,
+      commit_ref:result.source.commit.ref,from_local_history:result.from_local_history,network_accessed:!result.from_local_history};
+  }finally{client.close();}
 }
 export async function recoverReceipt(participant:OpenParticipant,encryption:EncryptionIdentityDocument,
   delivery:OpenDeliveryClient,invitation:unknown,deadline?:number):Promise<Obj>{

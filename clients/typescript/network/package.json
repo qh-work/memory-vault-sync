@@ -37,6 +37,7 @@
     "./open-repair-admin": "./open-repair-admin.ts",
     "./open-repair-client": "./open-repair-client.ts",
     "./open-repair-offer-client": "./open-repair-offer-client.ts",
+    "./open-repair-receipt": "./open-repair-receipt.ts",
     "./open-repair-wire": "./open-repair-wire.ts",
     "./open-repair-bound": "./open-repair-bound.ts",
     "./open-repair-empty": "./open-repair-empty.ts",
