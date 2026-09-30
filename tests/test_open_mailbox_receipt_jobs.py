@@ -98,4 +98,43 @@ class RetainedReceiptTests(unittest.TestCase):
                 network.receive(limit=1)
 
 
+class ReplicaReceiptReturnTests(unittest.TestCase):
+    def test_registered_replica_receive_imports_memory_and_returns_independent_ack(self):
+        from tests.test_open_repair_mailbox_feed_copy import MailboxFeedCopyTests
+        MailboxFeedCopyTests.http_roundtrip(self,message=True,commands=True,agent=True,registered=True)
+
+    def run_fixture(self, inspect):
+        from tests.test_open_repair_mailbox_feed_copy import FeedCopyFixture
+        h=fixtures.MailboxStagingHTTPTests('test_actual_delivery_stages_exact_ciphertext_under_mailbox_resources')
+        h.setUp();self.addCleanup(h.doCleanups);h.ack_cold_return=True
+        def receive(staging,slot,head):
+            replica=FeedCopyFixture(self,h,staging,slot,head,message=True)
+            write=json.loads(h.ack_configuration['ack.write_grant']['raw'])['payload']
+            with h.b._network() as network:
+                self.assertIsNone(network._delivery()._inbox(write['message_id']))
+            selection=dict(schema_version=ACK_CONNECT_SCHEMA,action='register_mailbox_receipt_return',
+                message_id=write['message_id'],source_url=h.ack_host.nodes[0]['payload']['base_url'],
+                source_key_id=h.ack_host.identities[0].key_id,repair_profile='receipt')
+            self.assertFalse(h.call(h.b,op='connect',invitation=selection)['network_accessed'])
+            inspect(replica)
+        def returned(host):
+            write=json.loads(h.ack_configuration['ack.write_grant']['raw'])['payload'];mid=write['message_id']
+            completed=h.call(h.b,op='connect',invitation=dict(schema_version=ACK_CONNECT_SCHEMA,
+                action='inspect_mailbox_receipt_return',message_id=mid))
+            self.assertEqual(completed['state'],'complete',completed)
+            chunks=[];cursor=None
+            while True:
+                query=dict(schema_version=ACK_CONNECT_SCHEMA,action='export_preparation',request_id=h.ack_preparation_request_id,part='owner_invitation')
+                if cursor is not None:query['cursor']=cursor
+                page=h.call(h.a,op='connect',invitation=query);chunks.append(base64.b64decode(page['bundle_chunk']));cursor=page['next_cursor']
+                if cursor is None:break
+            recovered=h.call(h.a,op='connect',invitation=json.loads(b''.join(chunks)))
+            self.assertEqual(recovered['message_id'],mid)
+            with h.a._network() as network:
+                with network.participant.state.db() as db:
+                    self.assertIsNotNone(db.execute('SELECT acknowledgement FROM open_delivery_outbox WHERE message_id=?',(mid,)).fetchone()[0])
+        h.inspect_committed_mailbox=receive;h._return_cold_ack=returned
+        h.test_ack_configuration_survives_mailbox_custody()
+
+
 if __name__=='__main__':unittest.main()

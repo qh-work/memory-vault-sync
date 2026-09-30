@@ -442,7 +442,11 @@ class MailboxFeedCopyTests(unittest.TestCase):
                     # Agent operations reopen the protected state, including
                     # exact inbox evidence and retained status observations.
                     if registered:
-                        with patch('memory_vault_open_transport.OpenHTTPTransport.request_node',side_effect=AssertionError('saved replica was polled again')):
+                        original_request_node=OpenHTTPTransport.request_node
+                        def no_saved_replica(transport, origin, **options):
+                            if origin.rstrip('/')==base.rstrip('/'):raise AssertionError('saved replica was polled again')
+                            return original_request_node(transport,origin,**options)
+                        with patch.object(OpenHTTPTransport,'request_node',new=no_saved_replica):
                             repeated=h.call_agent(h.recipient_agent,op='receive')
                     else:repeated=h.call_agent(h.recipient_agent,op='connect',invitation=invitation)
                     self.assertEqual(repeated['messages'],[])

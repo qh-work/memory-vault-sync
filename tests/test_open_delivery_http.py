@@ -949,6 +949,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS
         from memory_vault_open_repair_mailbox_activation import ACK_CONFIGURATION_ROLES
         ack_host=HTTPNodes(self.root/'independent_ack',1);self.addCleanup(ack_host.close)
+        self.ack_host=ack_host
         ack_host.stop(0)
         config=json.loads(ack_host.configs[0].read_bytes())
         encryption=EncryptionIdentity.generate();key=self.root/'independent_ack'/'encryption.json';encryption.save(key)
