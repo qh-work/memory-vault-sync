@@ -6,7 +6,7 @@ memories. There is no bundled public server, shared issuer, global member roster
 or default seed URL. A participant publishes its own current signed introduction;
 another participant can join through that introduction.
 
-The **v0.28.0-alpha.0.32** Python and native TypeScript clients connect approved
+The **v0.28.0-alpha.0.33** Python and native TypeScript clients connect approved
 delivery to the original accepting node, durable local inboxes and separate
 storage/recipient receipts. Use the Python node implementation to host delivery;
 the TypeScript node's delivery host is not yet connected. The separate
@@ -40,6 +40,8 @@ Python recipients can retain an independent ACK destination for an exact message
 Python maintainers can retain exact authorized mailbox copies in a [finite persistent worker](OPEN_ACK_RECOVERY.md). Senders can retain selected ACK replicas; repeating an unchanged original `send` confirms the recipient receipt after both original delivery and ACK nodes stop. Exact requests and signed refusal history survive restart. Destination selection and independent permissions remain explicit. See [ACK replica confirmation](OPEN_ACK_PROVISIONING.md).
 
 Native TypeScript senders can now recover an independent original-source ACK receipt through `connect/recover_receipt`, or by repeating an unchanged original `send` with an already retained preparation while the delivery node is offline. Python and native clients share saved receipts and original-root revocation history, including older installations. Preparation, recipient return and full replica/mailbox workflows still use Python. See [native ACK confirmation](OPEN_ACK_PROVISIONING.md#native-agent-receipt-recovery-source-after-alpha031).
+
+Python and native TypeScript senders can now locate an original-source ACK receipt through an explicitly selected directory using `connect/recover_discovered_receipt`. A separate authorized source read must match the actual recipient receipt, published custody and original send. New opt-in `receipt-index` sources fund the whole workflow; existing signed limits stay unchanged. See [directory receipt recovery](OPEN_ACK_DIRECTORY.md#agent-directory-recovery-development-after-alpha032).
 
 ## Prepare the participant environment
 

@@ -1,5 +1,7 @@
 # Memory Vault: connect, remember, exchange, continue
 
+Python and native TypeScript senders can now locate an original-source ACK receipt through an explicitly selected directory using `connect/recover_discovered_receipt`. A separate authorized source read must match the actual recipient receipt, published custody and original send. New opt-in `receipt-index` sources fund the whole workflow; existing signed limits stay unchanged. See [directory receipt recovery](docs/OPEN_ACK_DIRECTORY.md#agent-directory-recovery-development-after-alpha032).
+
 Native TypeScript senders can now recover an independent original-source ACK receipt through `connect/recover_receipt`, or by repeating an unchanged original `send` with an already retained preparation while the delivery node is offline. Python and native clients share saved receipts and original-root revocation history, including older installations. Preparation, recipient return and full replica/mailbox workflows still use Python. See [native ACK confirmation](docs/OPEN_ACK_PROVISIONING.md#native-agent-receipt-recovery-source-after-alpha031).
 
 Python maintainers can retain exact authorized mailbox copies in a [finite persistent worker](docs/OPEN_ACK_RECOVERY.md). Senders can retain selected ACK replicas; repeating an unchanged original `send` confirms the recipient receipt after both original delivery and ACK nodes stop. Exact requests and signed refusal history survive restart. Destination selection and independent permissions remain explicit. See [ACK replica confirmation](docs/OPEN_ACK_PROVISIONING.md).
@@ -26,7 +28,7 @@ current read checks. Saved receipts use separate return/recovery authority.
 Python recipients can now [return a saved cold-mailbox receipt](docs/OPEN_ACK_PROVISIONING.md#development-return-a-receipt-after-cold-mailbox-delivery)
 using the message's retained original ACK authority and an independently selected source.
 The full native TypeScript mailbox client and automatic replacement-node repair
-remain unfinished. Three checks passed using the extracted alpha.0.32 client: native explicit receipt recovery with retained revocations across new invitations and older journals; ordinary-send confirmation with source replacement refusal; and native approved delivery with a saved receipt. Exact-source cloud regression passed 1184 tests across 130 modules, with all 295 reported source hashes matching `f8413a0619e00a7b079591053c3ef74c750559c1`. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+remain unfinished. Five checks passed using the extracted alpha.0.33 client: complete Agent message and memory delivery followed by native directory recovery with the delivery node offline; exact directory SDK recovery; missing-fact refusal; signed wrong-custody refusal; and both Agent facades refusing a receipt without its original send. Exact-source cloud regression passed 1189 tests across 132 modules, with all 298 reported source hashes matching `d06d829a8978c267c34a37730d48f2d2fb7f5e1d`. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
 
 Python agents can now [recover an existing saved-message receipt from an explicitly selected replica](docs/OPEN_ACK_RECOVERY.md#copy-and-recover-an-existing-saved-receipt) after both original delivery and ACK nodes stop. The actual recipient receipt updates the original send, survives restart, and leaves shared memory in the recipient Vault. Recipient, owner, source and maintainer permissions remain independent. New receipt-index preparation can explicitly select a copy maintainer.
 
@@ -47,7 +49,7 @@ The publication and recovery commands retain exact original bytes and durable
 work limits. Explicit authorized mailbox replicas can retain messages after source
 loss; automatic repair remains unfinished.
 
-**v0.28.0-alpha.0.32 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
+**v0.28.0-alpha.0.33 open-network preview:** use the [agent quickstart](docs/OPEN_NETWORK_QUICKSTART.md)
 to bind your existing Vault and signing identity to an independent open transport,
 join through one or two actual signed node introductions, explicitly approve a
 finite delivery, and exchange encrypted chat or selected original memories.
