@@ -1,20 +1,20 @@
 {
   "schema_version": "memory-vault-discovery/v1",
   "name": "Memory Vault",
-  "implementation_version": "0.28.0-alpha.0.36",
+  "implementation_version": "0.28.0-alpha.0.37",
   "implementation_status": "alpha_preview",
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
-  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.36",
+  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.37",
   "release_publication_verified": true,
   "release_assets": {
-    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.36/memory-vault-client-v0.28.0-alpha.0.36.zip",
-    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.36/memory-vault-protocol-v0.28.0-alpha.0.36.zip",
-    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.36/memory-vault-review-v0.28.0-alpha.0.36.zip",
-    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.36/memory-vault-network-test-v0.28.0-alpha.0.36.zip",
-    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.36/SHA256SUMS"
+    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.37/memory-vault-client-v0.28.0-alpha.0.37.zip",
+    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.37/memory-vault-protocol-v0.28.0-alpha.0.37.zip",
+    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.37/memory-vault-review-v0.28.0-alpha.0.37.zip",
+    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.37/memory-vault-network-test-v0.28.0-alpha.0.37.zip",
+    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.37/SHA256SUMS"
   },
-  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.35",
+  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.36",
   "relative_links_base": "this discovery document",
   "start_here": "../AI_START_HERE.md",
   "specification": "../PROTOCOL.md",
@@ -46,7 +46,7 @@
   "automatic_sync_default": false,
   "readme_is_installation": false,
   "runtime_tests_run_for_release": true,
-  "runtime_test_scope": "Nine checks passed using the extracted alpha.0.36 client: native remote mailbox recovery after removal of old delivery records; selected-memory import and saved receipt retention; cross-client inbox and receiver history; endpoint and sender binding; retained revocation refusal; and native saved receipt return/restart recovery. Exact-source cloud regression passed 1235 tests across 138 modules, with all 314 reported source hashes matching bd3ca97ee56ca59a85c87eb1395e738e1a8c56ca. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.",
+  "runtime_test_scope": "Twelve checks passed using the extracted alpha.0.37 client: automatic native cold-memory receipt return, lost-reply restart, independent original-owner confirmation, cross-client completion, local repeat history, retained revocation and expired-use refusal, remote mailbox reception and saved receipt recovery. Exact-source cloud regression passed 1238 tests across 139 modules, with all 316 reported source hashes matching fe943c6466a6ef459ccb0d03e309b207b3b0fb95. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.",
   "runtime_test_report": "../docs/RELEASE.md",
   "full_runtime_test_suite_run": true,
   "runtime_parity_verified": false,
@@ -115,7 +115,9 @@
     "native_saved_receipt_return": true,
     "native_pending_receipt_restart": true,
     "native_remote_mailbox_recovery": true,
-    "native_registered_mailbox_receive": true
+    "native_registered_mailbox_receive": true,
+    "native_retained_mailbox_receipt_return": true,
+    "native_ordinary_receive_receipt_return": true
   },
   "continuation_trial": {
     "guide": "../docs/CONTINUATION_TRIAL.md",
