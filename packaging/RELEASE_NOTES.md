@@ -1,4 +1,16 @@
-# Memory Vault v0.28.0-alpha.0.35 — native saved receipt return and restart recovery
+# Memory Vault v0.28.0-alpha.0.36 — native remote mailbox memory recovery
+
+Native TypeScript recipients can register an explicitly authorized ordinary
+mailbox and recover messages and selected memories with normal Agent `receive`,
+even after the old delivery records and leases are gone. The client verifies
+original owner/contact/storage authority, the complete encrypted feed, current
+READ permissions and the exact ciphertext before importing through its durable
+inbox. Retained revocations survive restart. Python and TypeScript share receiver
+configuration, status history and saved inbox evidence; either can resume an
+interrupted import. The native path performs its own HTTP and cryptography.
+Saved receipts remain available through independently authorized return requests.
+Native provisioning and replica inbox recovery remain unfinished. See
+`clients/typescript/network/README.md` and `docs/OPEN_NETWORK_CONTACT.md`.
 
 Native TypeScript recipients can return an actually saved message or memory
 receipt through the existing `connect/return_receipt` invitation. The protected
@@ -162,7 +174,7 @@ TypeScript recognizes the mailbox replica proof and status profiles. Participant
 operate their own authorized nodes; no central authority or project-operated
 public seed is required or provided.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.35/docs/OPEN_NETWORK_QUICKSTART.md)
-and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.35/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.36/docs/OPEN_NETWORK_QUICKSTART.md)
+and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.36/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
 Preserve existing identity and state files when installing. The archives contain
 implementation, public documentation and wholly synthetic fixtures only.
