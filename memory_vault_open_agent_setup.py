@@ -27,7 +27,7 @@ from memory_vault_trust import Identity, TrustError, _absolute_path, _safe_paren
 CONFIG_SCHEMA = "memory-vault-open-client-config/v1"
 
 
-def fetch_introductions(signer, endpoints, *, allow_loopback=False):
+def fetch_introductions(signer, endpoints, *, allow_loopback=False, timeout=15):
     """Fetch and challenge 1–2 explicitly selected origins and expected keys.
 
     No redirects, proxy credentials, private destinations or ambient trust are
@@ -45,8 +45,11 @@ def fetch_introductions(signer, endpoints, *, allow_loopback=False):
         checked.append((base.rstrip("/"), key_id))
     if len({key_id for _, key_id in checked}) != len(checked):
         raise MemoryError("open_duplicate_seed")
+    import math
+    if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 0 < timeout <= 15:
+        raise MemoryError("open_invalid_seed_endpoint")
     transport = OpenHTTPTransport(allow_loopback=allow_loopback)
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + timeout
     introductions = []
     try:
         for base, key_id in checked:
