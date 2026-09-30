@@ -1,20 +1,20 @@
 {
   "schema_version": "memory-vault-discovery/v1",
   "name": "Memory Vault",
-  "implementation_version": "0.28.0-alpha.0.29",
+  "implementation_version": "0.28.0-alpha.0.30",
   "implementation_status": "alpha_preview",
   "license": "Apache-2.0",
   "repository": "https://github.com/qh-work/memory-vault-sync",
-  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.29",
+  "release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.30",
   "release_publication_verified": true,
   "release_assets": {
-    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.29/memory-vault-client-v0.28.0-alpha.0.29.zip",
-    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.29/memory-vault-protocol-v0.28.0-alpha.0.29.zip",
-    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.29/memory-vault-review-v0.28.0-alpha.0.29.zip",
-    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.29/memory-vault-network-test-v0.28.0-alpha.0.29.zip",
-    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.29/SHA256SUMS"
+    "client": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.30/memory-vault-client-v0.28.0-alpha.0.30.zip",
+    "protocol": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.30/memory-vault-protocol-v0.28.0-alpha.0.30.zip",
+    "review": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.30/memory-vault-review-v0.28.0-alpha.0.30.zip",
+    "network_trial": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.30/memory-vault-network-test-v0.28.0-alpha.0.30.zip",
+    "checksums": "https://github.com/qh-work/memory-vault-sync/releases/download/v0.28.0-alpha.0.30/SHA256SUMS"
   },
-  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.28",
+  "previous_release": "https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.29",
   "relative_links_base": "this discovery document",
   "start_here": "../AI_START_HERE.md",
   "specification": "../PROTOCOL.md",
@@ -46,7 +46,7 @@
   "automatic_sync_default": false,
   "readme_is_installation": false,
   "runtime_tests_run_for_release": true,
-  "runtime_test_scope": "Four checks passed using the extracted alpha.0.29 client: registered replica recovery through ordinary receive, original delivery and restart recall, pending-receipt fairness, and replica-memory reception followed by independent receipt return. The exact-source cloud regression passed 1177 tests across 126 modules in two exhaustive partitions, with all 286 reported source hashes matching 20b53a5d664b622c01ffe209c65557ea2a1d2d04. Supported Python 3.10 and cross-platform conformance passed, and all eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.",
+  "runtime_test_scope": "Five checks passed using the extracted alpha.0.30 client: ordinary replica memory reception and independent receipt confirmation through the original send; lost-return/restart recovery and reconciliation; explicit cold-mailbox receipt return; approved delivery and restart recall; and pending-receipt fairness. The exact-source cloud regression passed 1179 tests across 127 modules, with all 288 reported source hashes matching bebd7f1b8b9c4a9079a02b233a738dc9cfa2002d. All three supported Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.",
   "runtime_test_report": "../docs/RELEASE.md",
   "full_runtime_test_suite_run": true,
   "runtime_parity_verified": false,
@@ -101,7 +101,9 @@
     "explicit_mailbox_message_replica_reception": true,
     "mailbox_replica_scope": "Python explicit separately reserved and independently consented directory, complete feed-prefix and encrypted-message copies; protected original-key reception through the durable inbox after source loss; retained revocations and restart/retry state; independent receipt return using original ACK authority. Automatic target selection, permission exchange and full native mailbox clients are unfinished.",
     "independent_mailbox_replica_consent_commands": true,
-    "retained_mailbox_replica_ordinary_receive": true
+    "retained_mailbox_replica_ordinary_receive": true,
+    "retained_mailbox_receipt_ordinary_receive": true,
+    "prepared_ack_original_send_confirmation": true
   },
   "continuation_trial": {
     "guide": "../docs/CONTINUATION_TRIAL.md",
