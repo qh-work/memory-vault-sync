@@ -822,6 +822,9 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             self.assertGreater(status_count,0)
             self.assertEqual(recipient_db.execute('SELECT count(*) FROM open_mailbox_setup_statuses').fetchone()[0],status_count)
             self.assertEqual(delivery._inbox(sent['message_id'])['phase'],'saved')
+            # This recovery session is finished before a different runtime
+            # reopens the same recipient state for independent receipt return.
+            recipient_context.close()
 
     def _remote_message_admission(self, source, owner_status, slot, slot_entries, owner, sender_encryption, sent, now, limits, envelope):
         import hashlib

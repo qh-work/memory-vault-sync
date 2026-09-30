@@ -91,7 +91,8 @@ export class SavedAckReceiptPublisher{
     if(['receipt','disclosure','put'].some(name=>!sameEntry(source.inputs[name as keyof typeof source.inputs],entries[name])))fail('repair_saved_corrupt');
     return Object.freeze({source,originals:Object.freeze([...originals.values()].map(e=>Object.freeze({ref:e.ref,get raw(){return Uint8Array.from(e.raw);}}))),from_local_history:true});
   }
-  async publishSaved(baseUrl:string,value:unknown,timeout=30):Promise<PublishedSavedAck>{
+  async publishSaved(baseUrl:string,value:unknown,timeout=30,history:{archiveStatuses?:readonly unknown[];knownDisclosureStatuses?:readonly unknown[]}={}):Promise<PublishedSavedAck>{
+    objectFields(history,[...(Object.hasOwn(history,'archiveStatuses')?['archiveStatuses']:[]),...(Object.hasOwn(history,'knownDisclosureStatuses')?['knownDisclosureStatuses']:[])]);
     if(typeof timeout!=='number'||!Number.isFinite(timeout)||timeout<=0||timeout>60)fail('repair_invalid_deadline');
     const client=this.#client,policy=this.#policy,budget=new RepairBudget(policy),r=this.#request(value,budget);
     const receipt=await this.#delivery.savedReceiptForAck(r.message_id,r.owner,r.envelope_ref),now=client.timestamp;
@@ -157,7 +158,7 @@ export class SavedAckReceiptPublisher{
         db.prepare('UPDATE open_repair_saved_acks SET '+column+'=?,attempted=1 WHERE slot_digest=?').run(raw,slotDigest);
       }));
     };
-    const options={currentStatuses:[...r.current_statuses,entries.status],readUntil:r.read_until,retainUntil:r.retain_until,
+    const options={currentStatuses:[...r.current_statuses,entries.status],archiveStatuses:history.archiveStatuses??[],knownDisclosureStatuses:history.knownDisclosureStatuses??[],readUntil:r.read_until,retainUntil:r.retain_until,
       targetNodeEntry:r.target_node_entry,expectedTarget:r.target,expectedAckSlot:r.ack_slot,expectedOwner:r.owner,expectedMessageId:r.message_id,
       expectedEnvelopeRef:r.envelope_ref,rootEntry:r.root_entry,writeEntry:r.write_entry,bootstrapEntry:r.bootstrap_entry,timeout,journal};
     const result=resume===null?await client.put(baseUrl,entries.receipt,entries.disclosure,entries.put,options):

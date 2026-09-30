@@ -12,6 +12,7 @@ import {verifyMailboxFeedBootstrap} from './open-repair-mailbox-authority.ts';
 import {verifySourceNodeOriginal} from './open-repair-original.ts';
 import {endpoint} from './open-transport.ts';
 import {transaction} from './io.ts';
+import {MailboxReceiptJobs} from './open-mailbox-receipts.ts';
 type Obj=Record<string,any>;
 export const MAILBOX_CONNECT_SCHEMA='memory-vault-open-mailbox-connect/v1';
 function fail(code:string):never{throw new RepairError(code);}
@@ -47,6 +48,8 @@ export class RegisteredMailboxReceivers{
   }
   async receive(limit:number):Promise<Obj>{
     const deadline=performance.now()/1000+60,result=await this.#delivery.receive(limit,{pendingOnly:true,deadline});
+    const jobs=new MailboxReceiptJobs(this.#participant,this.#encryption,this.#delivery),attempted=new Set<string>();
+    await jobs.poll(result,Math.min(deadline,performance.now()/1000+30),attempted);
     const rows=this.#participant.providerStorage(db=>db.prepare('SELECT receiver_id,body FROM open_mailbox_receivers ORDER BY last_attempt,receiver_id LIMIT 17').all()) as Obj[];
     if(rows.length>16)fail('open_mailbox_receiver_capacity');
     for(const row of rows){let remaining=deadline-performance.now()/1000;if(result.messages.length>=limit||remaining<=0)break;
@@ -62,6 +65,7 @@ export class RegisteredMailboxReceivers{
       finally{reader?.close();}
     }
     if(result.messages.length<limit&&performance.now()/1000<deadline){const ordinary=await this.#delivery.receive(limit-result.messages.length,{skipPending:true,deadline});result.messages.push(...ordinary.messages);result.errors.push(...ordinary.errors);result.network_accessed ||=ordinary.network_accessed;}
+    await jobs.poll(result,Math.min(deadline,performance.now()/1000+30),attempted);
     result.errors=result.errors.slice(0,4);return result;
   }
 }
