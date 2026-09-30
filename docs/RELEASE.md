@@ -1,5 +1,11 @@
 # Distribution scope and publication gates
 
+Published **[alpha.0.32](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.32)** is fixed at `f8413a0619e00a7b079591053c3ef74c750559c1`.
+
+Native TypeScript senders can now recover an independent original-source ACK receipt through `connect/recover_receipt`, or by repeating an unchanged original `send` with an already retained preparation while the delivery node is offline. Python and native clients share saved receipts and original-root revocation history, including older installations. Preparation, recipient return and full replica/mailbox workflows still use Python. See [native ACK confirmation](OPEN_ACK_PROVISIONING.md#native-agent-receipt-recovery-source-after-alpha031).
+
+Three checks passed using the extracted alpha.0.32 client: native explicit receipt recovery with retained revocations across new invitations and older journals; ordinary-send confirmation with source replacement refusal; and native approved delivery with a saved receipt. Exact-source cloud regression passed 1184 tests across 130 modules, with all 295 reported source hashes matching `f8413a0619e00a7b079591053c3ef74c750559c1`. All three Python 3.10 suites and cross-platform conformance passed. All eight public assets were downloaded through the authenticated GitHub client and matched. These results do not establish independent external adoption, global reliability or thousand-agent capacity.
+
 Published **[alpha.0.31](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.31)** is fixed at `8ee27f7478388e7611e3293e628e96e481da673f`.
 
 Python maintainers can retain exact authorized mailbox copies in a [finite persistent worker](OPEN_ACK_RECOVERY.md). Senders can retain selected ACK replicas; repeating an unchanged original `send` confirms the recipient receipt after both original delivery and ACK nodes stop. Exact requests and signed refusal history survive restart. Destination selection and independent permissions remain explicit. See [ACK replica confirmation](OPEN_ACK_PROVISIONING.md).
