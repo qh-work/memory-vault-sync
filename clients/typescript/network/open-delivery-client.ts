@@ -140,6 +140,20 @@ export class OpenDeliveryClient{
       return db.prepare('SELECT * FROM open_delivery_outbox WHERE request_id=?').get(row.request_id) as Obj;
     }));
   }
+  acceptRecoveredReceipt(receipt:DocumentInput):Obj{
+    const value=document(receipt,4096) as Obj,messageId=opaqueId(value.payload?.message_id);
+    return this.db(db=>transaction(db,()=>{
+      const row=db.prepare('SELECT * FROM open_delivery_outbox WHERE message_id=?').get(messageId) as Obj|undefined;
+      if(!row||!row.envelope||!row.session)fail('open_delivery_message_not_found');
+      const session=document(row.session,32768) as Obj;
+      verifyRecipientReceipt(value,{recipient_signing_key:OpenDeliveryClient.keys(session).recipient_signing_key,
+        sender_key_id:this.participant.identity.key_id,message_id:messageId,envelope_ref:envelopeRef(row.envelope)});
+      const encoded=canonicalBytes(value);
+      if(row.acknowledgement&&!raw(row.acknowledgement).equals(raw(encoded)))fail('open_delivery_receipt_conflict');
+      db.prepare('UPDATE open_delivery_outbox SET acknowledgement=? WHERE message_id=?').run(encoded,messageId);
+      return {state:'validated_saved',message_id:messageId,request_id:row.request_id,endpoint_validated:true,acknowledgement_pending:false};
+    }));
+  }
   private contactSessions(outgoing:boolean,recipient?:string):Obj[]{
     const rows=this.db(db=>db.prepare(`SELECT a.reference,a.body,b.body AS decision FROM open_contact_local a
       JOIN open_contact_local b ON b.reference=a.reference AND b.category=? WHERE a.category=? AND a.expires_at>? AND b.expires_at>?

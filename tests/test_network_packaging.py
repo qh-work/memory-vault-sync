@@ -49,7 +49,7 @@ TS_NETWORK = {"clients/typescript/network/" + name for name in
                "open-repair-status.ts", "open-repair-mailbox-range.ts",
                "open-repair-ack.ts",
                "open-repair-probe.ts",
-               "open-repair-proof.ts", "open-repair-client.ts", "open-repair-admin.ts", "open-repair-bound.ts", "open-repair-empty.ts", "open-repair-occupied.ts")}
+               "open-repair-proof.ts", "open-repair-client.ts", "open-ack-client.ts", "open-repair-admin.ts", "open-repair-bound.ts", "open-repair-empty.ts", "open-repair-occupied.ts")}
 TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
                      ("nodes", "records", "vault", "peer", "peer_race", "transport", "setup",
                       "retrieval_text", "retrieval", "agent", "agent_network", "topics")}
@@ -102,7 +102,7 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
         self.assertGreaterEqual(len(review), 39)
-        self.assertEqual(len(TS_NETWORK), 54)
+        self.assertEqual(len(TS_NETWORK), 55)
         self.assertTrue(RUNTIME_DATA <= set(documents))
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
@@ -190,7 +190,7 @@ class NetworkPackagingTests(unittest.TestCase):
             "clients/typescript/network/open-repair-mailbox-range.ts",
             "clients/typescript/network/open-repair-ack.ts", "clients/typescript/network/open-capacity.ts",
             "clients/typescript/network/open-repair-probe.ts", "clients/typescript/network/open-repair-proof.ts",
-            "clients/typescript/network/open-repair-client.ts",
+            "clients/typescript/network/open-repair-client.ts", "clients/typescript/network/open-ack-client.ts",
             "clients/typescript/network/open-repair-admin.ts",
             "clients/typescript/network/open-repair-bound.ts", "clients/typescript/network/open-repair-empty.ts", "clients/typescript/network/open-repair-occupied.ts"})
         for name in repair_sources:
