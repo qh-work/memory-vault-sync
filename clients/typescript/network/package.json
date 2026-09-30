@@ -46,7 +46,10 @@
     "./open-repair-mailbox-member": "./open-repair-mailbox-member.ts",
     "./open-repair-mailbox-feed": "./open-repair-mailbox-feed.ts",
     "./open-repair-mailbox-read": "./open-repair-mailbox-read.ts",
-    "./open-repair-mailbox-inbox": "./open-repair-mailbox-inbox.ts"
+    "./open-repair-mailbox-inbox": "./open-repair-mailbox-inbox.ts",
+    "./open-mailbox-client": "./open-mailbox-client.ts",
+    "./open-mailbox-journal": "./open-mailbox-journal.ts",
+    "./open-mailbox-receivers": "./open-mailbox-receivers.ts"
   },
   "types": "./crypto.ts",
   "engines": {

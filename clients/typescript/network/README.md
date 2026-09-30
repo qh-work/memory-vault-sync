@@ -278,22 +278,33 @@ verified status observations across restarts, including failed recovery.
 See [request formats and commands](../../../docs/OPEN_ACK_RECOVERY.md#native-recovery-commands-development-after-alpha019).
 This command entry is development after the frozen alpha.0.19 archives.
 
-### Retained mailbox inbox recovery (development)
+### Registered mailbox recovery (development)
 
-A native `Agent.handle({op: "receive", limit: 1})` can resume an ordinary mailbox transfer
-already durably staged by the Python client in the same protected inbox. It
-rechecks the original owner/contact approvals, activated storage resources,
-complete feed prefix, recipient-encrypted directory and admission core, and
-READ observations recorded at receipt time. A retained revocation or missing
-sender permission blocks the object read. The original memory share then
-uses the existing Vault import and its idempotent transfer receipt. The saved
-receipt remains available to an explicit `connect/return_receipt` request;
-mailbox access does not grant an independent receipt return.
+A native `Agent.handle({op: "connect", invitation})` accepts the existing
+`memory-vault-open-mailbox-connect/v1` `register`, `list`, and `remove` actions.
+Registration retains an explicitly supplied owner slot, READ and maintenance
+grants, feed bootstrap, expected sender/target keys, limits and signed source
+endpoint. Registration itself performs no network requests. Python and native
+clients share the same bounded receiver registry and retained status journal.
 
-`readMailboxIndex` and `readMailboxAdmission` accept a caller-authorized exact
-reference reader. They support asynchronous reads without delegating to Python.
-`verifyMailboxInboxEvidence` reopens the retained ordinary-mailbox format without
-network access. This is historical local recovery, not a claim about current
-source availability. Native discovery/download of a new remote mailbox and the
-replica inbox format remain separate unfinished work; use the Python client for
-those paths. These additions are development source, not yet a public release.
+`Agent.handle({op: "receive", limit: 1})` checks registered ordinary mailboxes,
+downloads and authenticates the complete feed prefix, opens the recipient-encrypted
+directory and admission core, then downloads the exact authorized body. It checks
+current READ permissions before fetching the body and preserves authenticated
+revocations across process restarts. Existing approvals and storage grants remain
+required. A missing ordinary delivery lease does not prevent authorized recovery
+from the mailbox's retained copy.
+
+Downloaded messages use the existing durable inbox and Vault import. A new
+process can also resume an ordinary mailbox transfer staged by either client,
+without network access, rechecking its original approvals and received-time
+permissions. Memory transfers retain their idempotent import receipt. The saved
+recipient receipt is available to explicit `connect/return_receipt` with separate
+return authority; mailbox registration does not supply that authority.
+
+The native SDK exposes `MailboxFeedRecoveryClient` and `MailboxSetupJournal` for
+bounded feed/body recovery, and `readMailboxIndex`, `readMailboxAdmission`, and
+`verifyMailboxInboxEvidence` for exact-reference/local recovery. These paths do
+not delegate to a Python process. Native mailbox provisioning and replica inbox
+recovery remain unfinished; use the Python client for those paths. These additions
+are development source, not yet a public release.

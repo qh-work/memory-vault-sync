@@ -146,7 +146,7 @@ PACKAGE_DOCUMENTS = (
     "clients/typescript/network/open-repair-mailbox-member.ts",
     "clients/typescript/network/open-repair-mailbox-feed.ts",
     "clients/typescript/network/open-repair-mailbox-read.ts",
-    "clients/typescript/network/open-repair-mailbox-inbox.ts",
+    "clients/typescript/network/open-repair-mailbox-inbox.ts", "clients/typescript/network/open-mailbox-client.ts", "clients/typescript/network/open-mailbox-journal.ts", "clients/typescript/network/open-mailbox-receivers.ts",
     "clients/typescript/network/open-repair-ack.ts",
     "clients/typescript/network/open-repair-probe.ts",
     "clients/typescript/network/open-repair-proof.ts",
