@@ -1,4 +1,18 @@
-# Memory Vault v0.28.0-alpha.0.38 — native receiver mailbox authorization
+# Memory Vault v0.28.0-alpha.0.39 — native sender mailbox admission
+
+Native TypeScript senders can prepare and retain an existing outgoing message
+in the recipient-authorized mailbox through Agent `connect`. The sender keeps
+the original ciphertext and persists its exact disclosure, attempt and upload
+request before HTTP. A lost reply, restart or switch to Python reuses those same
+bytes. The source returns signed custody that the client verifies and retains;
+this does not claim the recipient saved the message or acknowledged it.
+
+An optional `ack_request_id` selects an already prepared independent receipt
+permission. Complete signed controls and statuses travel with the message,
+including bounded compressed transport for the larger draft. No new permission
+or storage allocation is inferred. Native source provisioning and replica inbox
+recovery still use Python. See `clients/typescript/network/README.md` and
+`docs/OPEN_NETWORK_CONTACT.md` for the existing invitations.
 
 Native TypeScript recipients can issue an original mailbox destination from
 an explicitly approved contact and a registered mailbox. The receiver signs with
@@ -192,7 +206,7 @@ TypeScript recognizes the mailbox replica proof and status profiles. Participant
 operate their own authorized nodes; no central authority or project-operated
 public seed is required or provided.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.38/docs/OPEN_NETWORK_QUICKSTART.md)
-and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.38/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.39/docs/OPEN_NETWORK_QUICKSTART.md)
+and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.39/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
 Preserve existing identity and state files when installing. The archives contain
 implementation, public documentation and wholly synthetic fixtures only.

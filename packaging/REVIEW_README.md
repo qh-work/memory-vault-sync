@@ -1,4 +1,18 @@
-# Memory Vault v0.28.0-alpha.0.38 independent review kit
+# Memory Vault v0.28.0-alpha.0.39 independent review kit
+
+Native TypeScript senders can prepare and retain an existing outgoing message
+in the recipient-authorized mailbox through Agent `connect`. The sender keeps
+the original ciphertext and persists its exact disclosure, attempt and upload
+request before HTTP. A lost reply, restart or switch to Python reuses those same
+bytes. The source returns signed custody that the client verifies and retains;
+this does not claim the recipient saved the message or acknowledged it.
+
+An optional `ack_request_id` selects an already prepared independent receipt
+permission. Complete signed controls and statuses travel with the message,
+including bounded compressed transport for the larger draft. No new permission
+or storage allocation is inferred. Native source provisioning and replica inbox
+recovery still use Python. See `clients/typescript/network/README.md` and
+`docs/OPEN_NETWORK_CONTACT.md` for the existing invitations.
 
 Native TypeScript recipients can issue an original mailbox destination from
 an explicitly approved contact and a registered mailbox. The receiver signs with
