@@ -197,7 +197,7 @@ export class AckOfferClient{
     const slot=source.custody.payload.ack_slot as Obj,duties=ackReceiptObligations(source,inputs,expected.owner,this.#subject,expected.target,slot,policy,budget);
     const checked=this.#putStatuses(currentEntries,disclosureHistory,duties,source,expected.owner,budget,retained,prepared.current_statuses);
     const handle=prepared.proof.handle.payload as Obj;
-    const expiry=Math.min(handle.expires_at,windows.admitUntil,this.#now()+Math.max(1,Math.floor(timeout-(clock()-started))));
+    const expiry=Math.min(handle.expires_at,windows.admitUntil,...checked.map(item=>item.payload.valid_until as number),this.#now()+Math.max(1,Math.floor(timeout-(clock()-started))));
     if(this.#now()>=expiry||clock()>=started+timeout)fail('repair_access_expired');
     if(budget.snapshot().signature_checks+32>(policy.max_signature_checks??0))fail('repair_over_budget');
     budget.output(16);const useId='use_'+randomBytes(16).toString('hex');

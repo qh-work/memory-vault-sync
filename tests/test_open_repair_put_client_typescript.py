@@ -8,6 +8,7 @@ from tests import test_open_repair_offer_client_typescript as offer_ts
 from tests import test_open_repair_put_client as put_py
 from tests import test_open_repair_probe_typescript as probe_ts
 from tests.test_open_repair_occupied import receipt_inputs
+from tests.open_repair_ack_fixtures import signed_entry
 
 DRIVER=offer_ts.DRIVER.replace("const {AckOfferClient}=", "const {AckReceiptClient}=").replace('new AckOfferClient(', 'new AckReceiptClient(')
 DRIVER=DRIVER.replace("calls.push(JSON.parse(Buffer.from(raw).toString()).payload.kind);","const packet=JSON.parse(Buffer.from(raw).toString());calls.push(packet.payload?.kind??packet.kind);")
@@ -20,6 +21,7 @@ DRIVER=DRIVER.replace("return request(base,raw,...rest);", """const response=awa
 DRIVER=DRIVER.replace("['knownStatuses','archiveStatuses']", "['knownStatuses','archiveStatuses','knownDisclosureStatuses','currentStatuses']")
 DRIVER=DRIVER.replace('const result=await client.preflight(input.base,options);', """options.journal=async(kind,raw)=>{
     journal.push({kind,raw:Buffer.from(raw).toString('base64'),calls:[...calls]});
+    if(input.advanceOnJournal&&kind==='request')input.now=input.advanceOnJournal;
     if(input.failJournal&&kind==='request')throw Error('synthetic journal unavailable');
     if(input.blockJournal&&kind==='request')await new Promise(()=>{});
   };
@@ -41,7 +43,7 @@ class NativePutClientTests(unittest.TestCase):
     def setUp(self):
         self.case=put_py.RepairPutClientTests();self.addCleanup(self.case.doCleanups)
         if self._testMethodName=='test_bad_returned_commit_cannot_claim_verified_storage':
-            # One original finite grant funds both the upload and exact replay.
+            # One original finite grant funds the two actual client exchanges.
             with patch.object(put_py.offer_fixture.RepairOfferClientTests,'fixture_limits',dict(proof_limit=524288),create=True):self.case.setUp()
         else:self.case.setUp()
         self.host=self.case.host;self.f=self.host.f
@@ -81,6 +83,40 @@ class NativePutClientTests(unittest.TestCase):
         result=self.native(self.call(failJournal=True));self.assertFalse(result['ok'])
         self.assertNotIn('ack.put_request',result['calls'])
         self.assertEqual(self.host.source.db.execute('SELECT status FROM open_repair_ack_resources').fetchone()[0],'empty')
+
+    def short_statuses(self,case=None):
+        case=case or self.case
+        signers={signer.key_id:signer for signer in case.host.f['signers'].values()}
+        result=[]
+        for index,item in enumerate(case.inputs[3]['current_statuses']):
+            payload=json.loads(item['raw'])['payload'];payload['revision']+=1;payload['valid_until']=2_000_000_009
+            result.append(signed_entry(payload,signers[payload['signing_key']['key_id']],f'synthetic-short-status-{index}'))
+        return result
+
+    def test_status_expiry_during_journal_write_stops_native_and_python_private_upload(self):
+        # The receiving service still has a live clock; the clients must refuse
+        # before transmitting even if that remote service would accept the put.
+        statuses=self.short_statuses();value=self.call(advanceOnJournal=2_000_000_009)
+        value['options']['currentStatuses']=[probe_ts.encoded(item) for item in statuses]
+        result=self.native(value);self.assertFalse(result['ok']);self.assertEqual(result['code'],'repair_access_expired')
+        self.assertEqual([item['kind'] for item in result['journal']],['request'])
+        self.assertNotIn('ack.put_request',result['calls'])
+        from memory_vault_open_repair_wire import RepairWireError
+        # Each implementation uses its own original finite source; the first
+        # preflight must not consume the second implementation's test budget.
+        other=put_py.RepairPutClientTests();self.addCleanup(other.doCleanups);other.setUp()
+        receipt,disclosure,put,options=other.inputs;client=other.client()
+        def journal(kind,raw):
+            if kind=='request':client.clock=lambda:2_000_000_009
+        calls=[];request=client.transport.request_repair
+        def observed(base,raw,**options):
+            body=json.loads(raw);calls.append(body.get('kind',body.get('payload',{}).get('kind')))
+            return request(base,raw,**options)
+        with patch.object(client.transport,'request_repair',side_effect=observed),self.assertRaisesRegex(RepairWireError,'repair_access_expired'):
+            client.put(other.host.http.base,receipt,disclosure,put,**(options|dict(current_statuses=self.short_statuses(other))),**other.case.args,_journal=journal)
+        self.assertNotIn('ack.put_request',calls)
+        for host in (self.host,other.host):
+            self.assertEqual(host.source.db.execute('SELECT status FROM open_repair_ack_resources').fetchone()[0],'empty')
 
     def test_unfinished_journal_obeys_original_deadline_without_upload(self):
         value=self.call(blockJournal=True);value['options']['timeout']=8
