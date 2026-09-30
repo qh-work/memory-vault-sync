@@ -1,4 +1,13 @@
-# Memory Vault v0.28.0-alpha.0.37 — authorized full client
+# Memory Vault v0.28.0-alpha.0.38 — authorized full client
+
+Native TypeScript recipients can issue an original mailbox destination from
+an explicitly approved contact and a registered mailbox. The receiver signs with
+its own existing identity and exports bounded authorization pages for sender
+admission. Python and native clients reopen the same persisted signed originals;
+conflicting selections and stale revisions fail. Both clients enforce retained
+parent/resource revocations before cached or fresh authorization, even after the
+status expires. Authorization creates no new storage or receipt-return grants.
+See `clients/typescript/network/README.md` and `docs/OPEN_NETWORK_CONTACT.md`.
 
 Native TypeScript recipients can retain an independently authorized receipt
 return for a cold-mailbox message. Ordinary Agent `receive` then returns the
@@ -157,7 +166,7 @@ remain unfinished. There is no project-operated public seed or verified
 thousand-agent/global-availability result. Use the source-bound release record
 for actual validation and compare archive bytes with published checksums.
 
-This full-client package targets **v0.28.0-alpha.0.37 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.38 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

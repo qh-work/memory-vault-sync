@@ -1,4 +1,13 @@
-# Memory Vault v0.28.0-alpha.0.37 independent review kit
+# Memory Vault v0.28.0-alpha.0.38 independent review kit
+
+Native TypeScript recipients can issue an original mailbox destination from
+an explicitly approved contact and a registered mailbox. The receiver signs with
+its own existing identity and exports bounded authorization pages for sender
+admission. Python and native clients reopen the same persisted signed originals;
+conflicting selections and stale revisions fail. Both clients enforce retained
+parent/resource revocations before cached or fresh authorization, even after the
+status expires. Authorization creates no new storage or receipt-return grants.
+See `clients/typescript/network/README.md` and `docs/OPEN_NETWORK_CONTACT.md`.
 
 Native TypeScript recipients can retain an independently authorized receipt
 return for a cold-mailbox message. Ordinary Agent `receive` then returns the
