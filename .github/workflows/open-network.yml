@@ -130,7 +130,7 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: -r requirements-network-lock.txt
       - name: Exercise Agent receipt and mailbox recovery
         if: matrix.suite == 'agents'
-        run: python -B -m unittest -v tests.test_open_repair_copy_occupied.OccupiedReplicaAgentTests tests.test_open_repair_mailbox_message_copy.MailboxMessageCopyTests.test_agent_receives_replica_memory_and_retains_statuses_after_source_loss tests.test_open_repair_mailbox_message_copy.MailboxMessageCopyTests.test_replica_memory_returns_independent_receipt_to_original_sender tests.test_open_mailbox_replica_receive
+        run: python -B -m unittest -v tests.test_open_repair_copy_occupied.OccupiedReplicaAgentTests tests.test_open_repair_mailbox_message_copy.MailboxMessageCopyTests.test_agent_receives_replica_memory_and_retains_statuses_after_source_loss tests.test_open_repair_mailbox_message_copy.MailboxMessageCopyTests.test_replica_memory_returns_independent_receipt_to_original_sender tests.test_open_mailbox_replica_receive tests.test_open_mailbox_copy_jobs
       - name: Exercise ordinary receipt return and original sender confirmation
         if: matrix.suite == 'ordinary-receipts'
         run: python -B -m unittest -v tests.test_open_mailbox_receipt_jobs
