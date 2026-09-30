@@ -30,10 +30,12 @@ DEFAULT_LIMITS = dict(max_probe_bytes=8192, max_proof_bytes=262144, max_proof_it
 # Explicit new-source ceiling for a bind/upload/occupied-recovery workflow.
 # It does not modify previously signed authorities or existing node policy.
 RECEIPT_WORKFLOW_LIMITS = dict(DEFAULT_LIMITS, max_signature_checks=2048, max_proof_bytes=1048576)
-# Opt-in ceiling for a new source funded for one directory publication too.
+# Opt-in ceiling for a new source funded for publication and the subsequent
+# independent owner read. A real bind/return/publication chain exhausts 128
+# shared requests before that final proof completes; fund new grants explicitly.
 # Every request still intersects this with the original signed resource/grant.
 INDEX_WORKFLOW_LIMITS = dict(RECEIPT_WORKFLOW_LIMITS, max_signature_checks=4096,
-    max_proof_bytes=4194304, max_requests=128, max_replay_records=256)
+    max_proof_bytes=4194304, max_requests=256, max_replay_records=256)
 # Explicit whole-prefix metadata closure. Selecting this ceiling never rewrites
 # existing signed grants; those must have funded their own complete proof too.
 MAILBOX_WORKFLOW_LIMITS = dict(INDEX_WORKFLOW_LIMITS, max_proof_items=128)

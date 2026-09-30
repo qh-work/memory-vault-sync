@@ -16,7 +16,7 @@ const MAX_BUNDLE=1048576;
 const SCHEMAS={unbound:'memory-vault-open-ack-recovery-request/v1',empty:'memory-vault-open-ack-empty-recovery-request/v1',occupied:'memory-vault-open-ack-occupied-recovery-request/v1'};
 const PROFILES={unbound:DEFAULT_REPAIR_CLIENT_LIMITS,
   receipt:{...DEFAULT_REPAIR_CLIENT_LIMITS,max_signature_checks:2048,max_proof_bytes:1048576},
-  'receipt-index':{...DEFAULT_REPAIR_CLIENT_LIMITS,max_signature_checks:4096,max_proof_bytes:4194304,max_requests:128,max_replay_records:256}};
+  'receipt-index':{...DEFAULT_REPAIR_CLIENT_LIMITS,max_signature_checks:4096,max_proof_bytes:4194304,max_requests:256,max_replay_records:256}};
 const hash=(raw:Uint8Array)=>createHash('sha256').update(raw).digest('hex');
 const bytes=(value:unknown)=>Buffer.from(canonicalBytes(value,MAX_BUNDLE));
 const equal=(a:Uint8Array,b:Uint8Array)=>Buffer.from(a).equals(Buffer.from(b));

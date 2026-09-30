@@ -1,4 +1,19 @@
-# Memory Vault v0.28.0-alpha.0.32 — independent protocol
+# Memory Vault v0.28.0-alpha.0.33 — independent protocol
+
+Python and native TypeScript Agents can locate an independently retained original
+ACK receipt through an explicitly selected directory using
+`connect/recover_discovered_receipt`. The directory provides signed location
+metadata; the owner performs a separate authorized source read and confirms only
+the actual recipient receipt bound to the original message and ciphertext.
+Directory and source identities, storage epochs, leases, revision floors and
+custody remain checked. Missing facts and mismatched custody cannot confirm a send.
+
+New opt-in `receipt-index` sources fund the complete bind, return, publication and
+owner-read workflow with up to 256 shared requests. Existing signed grants and
+node policies keep their original limits. Directory publication and source
+preparation still require Python and independent consent. Recovery does not
+select replacement directories or republish lost entries. See
+`docs/OPEN_ACK_DIRECTORY.md` for the closed invitation shape.
 
 Native TypeScript Agents can confirm a stored send through its independently
 selected original ACK source while the delivery node is offline. An explicit
@@ -111,7 +126,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.32;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.33;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility

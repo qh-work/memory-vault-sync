@@ -948,15 +948,17 @@ class MailboxStagingHTTPTests(unittest.TestCase):
 
     def test_ack_configuration_survives_mailbox_custody(self):
         from memory_vault_network_crypto import EncryptionIdentity
-        from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS
+        from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS,INDEX_WORKFLOW_LIMITS
         from memory_vault_open_repair_mailbox_activation import ACK_CONFIGURATION_ROLES
+        profile=getattr(self,'ack_repair_profile','receipt')
+        limits=INDEX_WORKFLOW_LIMITS if profile=='receipt-index' else RECEIPT_WORKFLOW_LIMITS
         ack_host=HTTPNodes(self.root/'independent_ack',1);self.addCleanup(ack_host.close)
         self.ack_host=ack_host
         ack_host.stop(0)
         config=json.loads(ack_host.configs[0].read_bytes())
         encryption=EncryptionIdentity.generate();key=self.root/'independent_ack'/'encryption.json';encryption.save(key)
         config.update(encryption_key_path=str(key),provider_policy=dict(enabled=True),
-            repair_policy=dict(enabled=True,limit_policy=RECEIPT_WORKFLOW_LIMITS,remote_setup=dict(enabled=True)))
+            repair_policy=dict(enabled=True,limit_policy=limits,remote_setup=dict(enabled=True)))
         atomic_write(ack_host.configs[0],canonical_bytes(config),replace=True);ack_host.start(0)
         old_call=self.call
         def call(agent,**request):
@@ -966,7 +968,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
                 prepared=old_call(self.a,op='connect',invitation=dict(schema_version=ACK_CONNECT_SCHEMA,action='prepare',
                     request_id=request['request_id'],recipient=self.bi.key_id,text=request['text'],memory_ids=request.get('memory_ids',[]),
                     source_url=ack_host.nodes[0]['payload']['base_url'],source_key_id=ack_host.identities[0].key_id,
-                    repair_profile='receipt',lifetime=3600))
+                    repair_profile=profile,lifetime=3600))
                 with self.a._network() as network:
                     self.ack_configuration=network._mailbox_ack_configuration(request['request_id'],prepared['message_id'])
                 self.assertEqual(set(self.ack_configuration),ACK_CONFIGURATION_ROLES)
@@ -1005,7 +1007,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         from memory_vault_open_delivery_client import OpenDeliveryClient
         write=json.loads(self.ack_configuration['ack.write_grant']['raw'])['payload']
         invitation=dict(schema_version=ACK_CONNECT_SCHEMA,action='return_mailbox_receipt',message_id=write['message_id'],
-            source_url=ack_host.nodes[0]['payload']['base_url'],source_key_id=ack_host.identities[0].key_id,repair_profile='receipt')
+            source_url=ack_host.nodes[0]['payload']['base_url'],source_key_id=ack_host.identities[0].key_id,repair_profile=getattr(self,'ack_repair_profile','receipt'))
         from memory_vault import MemoryError
         from memory_vault_open_transport import OpenHTTPTransport
         original_request=OpenHTTPTransport.request_repair

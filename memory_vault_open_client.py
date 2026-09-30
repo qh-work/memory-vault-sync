@@ -733,7 +733,8 @@ class OpenNetworkClient:
             if value.get('action')=='prepare':return self._ack_prepare(value)
             if value.get('action')=='export_preparation':return self._ack_export_preparation(value)
         except RepairWireError as error:raise MemoryError(error.code) from error
-        object_fields(value,{'schema_version','action','base_url','repair_profile','request'})
+        discovered=value.get('action')=='recover_discovered_receipt'
+        object_fields(value,{'schema_version','action','repair_profile','request'}|(set() if discovered else {'base_url'}))
         profiles={'receipt':RECEIPT_WORKFLOW_LIMITS,'receipt-index':INDEX_WORKFLOW_LIMITS}
         if not isinstance(value['repair_profile'],str) or value['repair_profile'] not in profiles:raise MemoryError('open_invalid_repair_policy')
         request=dict(value['request'])
@@ -753,16 +754,16 @@ class OpenNetworkClient:
                 return dict(state='retained_at_ack_source',message_id=request['message_id'],
                     receipt_ref=result.source.inputs['receipt'].ref.as_dict(),commit_ref=result.source.commit.ref.as_dict(),
                     from_local_history=result.from_local_history,network_accessed=not result.from_local_history)
-            if value['action'] not in ('recover_receipt','recover_replica_receipt'):raise MemoryError('open_invalid_ack_request')
+            if value['action'] not in ('recover_receipt','recover_replica_receipt','recover_discovered_receipt'):raise MemoryError('open_invalid_ack_request')
             replica=value['action']=='recover_replica_receipt'
             from memory_vault_open_repair_client import AckOwnerRecoveryClient,MailboxSetupJournal
-            object_fields(request,{'target_node_entry','expected_target','expected_ack_slot','root_entry','read_entry','bootstrap_entry',
+            object_fields(request,({'expected_directory_node','expected_directory','expected_source_epoch'} if discovered else {'target_node_entry'})|{'expected_target','expected_ack_slot','root_entry','read_entry','bootstrap_entry',
                 'expected_receipt_writer','expected_message_id','expected_envelope_ref'}|({'known_statuses'} if 'known_statuses' in request else set())
                 |({'expected_source','source_storage_epoch','expected_maintainer'} if replica else set()))
             supplied=request.pop('known_statuses',[])
             if type(supplied) is not list or len(supplied)>16:raise MemoryError('open_invalid_ack_request')
             supplied=[decode(entry) for entry in supplied]
-            for name in ('target_node_entry','root_entry','read_entry','bootstrap_entry'):request[name]=decode(request[name])
+            for name in (() if discovered else ('target_node_entry',))+('root_entry','read_entry','bootstrap_entry'):request[name]=decode(request[name])
             binding=('expected_target','expected_ack_slot','expected_receipt_writer','expected_message_id','expected_envelope_ref')
             if replica:binding+=('expected_source','source_storage_epoch','expected_maintainer')
             plan=canonical_bytes(dict(kind='ack.replica_owner_recovery' if replica else 'ack.owner_recovery',owner=self.identity.public_descriptor(),
@@ -784,9 +785,18 @@ class OpenNetworkClient:
                 def observed(value):
                     # Reserve a new journal only after a relevant signed status
                     # is authenticated; malformed invitations consume no slot.
-                    journal.start(key,plan)
-                    journal.observe(key,value)
-                    replica_journal.observe(value)
+                    if discovered:
+                        # Directory recovery performs the synchronous source
+                        # read in a worker thread; SQLite connections stay in
+                        # the thread that created them.
+                        with self.participant.state.db() as observed_db:
+                            observed_journal=MailboxSetupJournal(observed_db).initialize()
+                            observed_journal.start(key,plan);observed_journal.observe(key,value)
+                            _ReplicaStatusJournal(observed_db,request['expected_ack_slot']['root_key'],original_source=True).observe(value)
+                    else:
+                        journal.start(key,plan)
+                        journal.observe(key,value)
+                        replica_journal.observe(value)
                 from memory_vault_open_mailbox_receipt_jobs import ObservedTransport
                 reader=AckOwnerRecoveryClient(self.identity,self.encryption,limit_policy=profiles[value['repair_profile']],
                     transport=ObservedTransport(self.participant.transport,_network_observer,_deadline),
@@ -801,8 +811,15 @@ class OpenNetworkClient:
                     if _deadline is not None:
                         timeout=min(timeout,_deadline-time.monotonic())
                         if timeout<=0:raise MemoryError('open_delivery_budget_exhausted',retryable=True)
-                    recovered=recover(value['base_url'],known_statuses=supplied,archive_statuses=known,
-                        timeout=timeout,**request)
+                    if discovered:
+                        from memory_vault_open_provider_client import OpenProviderClient
+                        from memory_vault_open_repair_index_recovery import DiscoveredAckRecoveryClient
+                        discovery=DiscoveredAckRecoveryClient(OpenProviderClient(self.participant,self.encryption),reader)
+                        recovered=asyncio.run(discovery.recover(known_statuses=supplied,archive_statuses=known,
+                            timeout=timeout,**request)).recovery
+                    else:
+                        recovered=recover(value['base_url'],known_statuses=supplied,archive_statuses=known,
+                            timeout=timeout,**request)
                     source=recovered.replica['source'].event if replica else recovered.source
                     result=self._delivery().accept_recovered_receipt(source.inputs['receipt'].raw)
                     extra=dict(replica_custody_ref=recovered.replica['custody'].ref.as_dict()) if replica else {}
