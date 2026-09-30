@@ -57,6 +57,13 @@ export class OpenContactClient{
     if(!row||Buffer.from(row.body).equals(Buffer.from(LOCAL_RESERVATION)))throw new ContactError('contact_local_missing');
     if(row.expires_at<=now())throw new ContactError('contact_expired');return document(row.body,24576);
   }
+  approvedIncomingOriginals(reference:string):Obj{
+    const incoming=this.load('incoming',reference),decision=this.load('decision',reference).decision;
+    if(decision.payload.decision!=='approved')throw new ContactError('open_delivery_not_authorized');
+    const grant=decision.payload.grant,docs={node:incoming.node,policy:incoming.policy,request:incoming.request,
+      decision,knock_lease:incoming.lease,grant,delivery_lease:grant.payload.resource_lease};
+    return Object.fromEntries(Object.entries(docs).map(([name,value])=>[name,canonicalBytes(value)]));
+  }
   private savePolicy(reservationRef:string,leaseId:string,value:Obj,expires:number):void{
     const raw=canonicalBytes(document(value,24576));
     this.participant.contactStorage(db=>transaction(db,()=>{
