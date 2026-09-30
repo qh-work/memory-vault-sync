@@ -56,7 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [0, 1]
+        partition: [0, 1, 2, 3]
     concurrency:
       group: open-network-light-${{ github.event.pull_request.number || github.ref }}-${{ matrix.partition }}
       cancel-in-progress: false
@@ -66,7 +66,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Record exact source and incomplete status before setup
-        run: python3 scripts/run_open_network_ci.py --mode light --phase initialize --partition-count 2 --partition-index ${{ matrix.partition }} --report-directory reports/open-light
+        run: python3 scripts/run_open_network_ci.py --mode light --phase initialize --partition-count 4 --partition-index ${{ matrix.partition }} --report-directory reports/open-light
       - name: Preserve initial evidence if setup or runner later fails
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
@@ -88,10 +88,10 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: -r requirements-network-server-lock.txt
           npm ci --prefix clients/typescript/network --ignore-scripts --no-audit --no-fund --cache "${RUNNER_TEMP}/open-npm-cache"
       - name: Run open tests including mixed native HTTP, persistent state and private Agent regressions
-        run: python scripts/run_open_network_ci.py --mode light --phase run --partition-count 2 --partition-index ${{ matrix.partition }} --report-directory reports/open-light
+        run: python scripts/run_open_network_ci.py --mode light --phase run --partition-count 4 --partition-index ${{ matrix.partition }} --report-directory reports/open-light
       - name: Refuse empty, skipped or interrupted evidence
         if: always()
-        run: python3 scripts/run_open_network_ci.py --mode light --phase finalize --partition-count 2 --partition-index ${{ matrix.partition }} --report-directory reports/open-light
+        run: python3 scripts/run_open_network_ci.py --mode light --phase finalize --partition-count 4 --partition-index ${{ matrix.partition }} --report-directory reports/open-light
       - name: Preserve only bounded public reports (never fixtures, keys or databases)
         if: always()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
