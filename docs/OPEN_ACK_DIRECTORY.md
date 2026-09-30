@@ -164,3 +164,20 @@ and full keys in `connect/recover_discovered_receipt`. The client independently
 reads the same original ACK source and checks the actual receipt against the
 original send. This explicit workflow works after the old directory stops. It
 does not automatically choose directories, obtain consent, or extend old grants.
+
+## Discover a directory through the network (development after alpha.0.33)
+
+Use `action: recover_routed_receipt` with the same invitation schema and repair
+profile. Its request keeps the original source keys, source epoch, receipt/send
+bindings and original grants listed above, but omits `expected_directory_node`
+and `expected_directory`. It also has no `base_url`. The client uses its existing
+configured seeds and retained routing state to discover up to three directories
+and eight candidate sources within a shared ten-second lookup allowance.
+
+A directory learned through routing contributes signed location metadata only.
+The client still proves the exact originally authorized source's signing and
+encryption keys, performs the independent owner READ, and matches the actual
+receipt commit and original outbox. Existing lease, revision and revocation
+checks remain in force. Routed recovery does not authorize another source or
+storage epoch, publish metadata, obtain publication consent, or enlarge grants.
+The complete Agent call retains the same thirty-second deadline.

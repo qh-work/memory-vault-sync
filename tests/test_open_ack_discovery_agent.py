@@ -123,7 +123,17 @@ class NativeDiscoveredSendTests(unittest.TestCase):
                         histories=list(db.execute('SELECT plan_digest,plan FROM open_repair_index_execution'))
                     self.assertEqual(len(histories),2)
                     self.assertIn(original_history,[tuple(row) for row in histories])
+                if getattr(self,'routed_recovery',False):
+                    router=HTTPNodes(h.root/'discovery_router',1);self.addCleanup(router.close);router.stop(0)
+                    config=json.loads(router.configs[0].read_bytes());config['seeds']=[discovered['request']['expected_directory_node']]
+                    atomic_write(router.configs[0],canonical_bytes(config),replace=True);router.start(0)
+                    config=json.loads(Path(h.a.network_config).read_bytes());config['seeds']=[router.nodes[0]]
+                    atomic_write(Path(h.a.network_config),canonical_bytes(config),replace=True)
+                    discovered=copy.deepcopy(discovered);discovered['action']='recover_routed_receipt'
+                    discovered['request'].pop('expected_directory_node');discovered['request'].pop('expected_directory')
                 result=self.native(h.a,[dict(op='connect',invitation=discovered)])
+                if getattr(self,'routed_recovery',False):
+                    self.assertTrue(any(c['base']==router.nodes[0]['payload']['base_url'] for c in result['calls']))
                 response=result['results'][0];self.assertTrue(response['ok'],dict(response=response,calls=result['calls'],source_failures=self.source_failures))
                 self.assertEqual(response['result']['state'],'validated_saved')
                 # This complete workflow consumed the old signed 128-request
@@ -144,5 +154,9 @@ class NativeDiscoveredSendTests(unittest.TestCase):
     def test_original_send_recovers_after_independent_directory_republication(self):
         self.replace_directory=True
         self.test_directory_read_confirms_original_send_and_shared_memory_after_delivery_node_stops()
+
+    def test_routed_original_send_finds_republished_directory_through_another_router(self):
+        self.routed_recovery=True
+        self.test_original_send_recovers_after_independent_directory_republication()
 
 if __name__=='__main__':unittest.main()

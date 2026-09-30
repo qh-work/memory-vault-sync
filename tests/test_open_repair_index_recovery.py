@@ -77,6 +77,14 @@ class IndexedReceiptRecoveryTests(unittest.TestCase):
         self.assertGreater(result.metrics['discovery']['requests'],2)
         self.assertGreater(result.metrics['recovery']['requests'],2)
 
+    def test_routing_finds_directory_before_independent_owner_read(self):
+        self.host.publish()
+        options={key:value for key,value in self.options.items() if key not in ('expected_directory_node','expected_directory')}
+        result=asyncio.run(self.client.recover_routed(**options))
+        self.assertEqual(result.state,'usable')
+        self.assertEqual(result.recovery.source.inputs['receipt'].raw,self.host.c.f.case.receipt['raw'])
+        self.assertGreater(result.metrics['discovery']['requests'],2)
+
     def test_no_publication_does_not_claim_usable_or_start_private_owner_read(self):
         with patch.object(self.client.recovery,'recover_occupied',side_effect=AssertionError('no index is not usable')):
             with self.assertRaises(wire.RepairWireError) as caught:

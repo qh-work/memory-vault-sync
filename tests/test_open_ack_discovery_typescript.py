@@ -18,8 +18,8 @@ const {OpenProviderClient}=await import('./open-provider-client.ts');
 const {AckOwnerRecoveryClient}=await import('./open-repair-client.ts');
 const {DiscoveredAckRecoveryClient}=await import('./open-ack-discovery.ts');
 const decode=v=>({raw:Buffer.from(v.raw,'base64'),ref:v.ref});
-const p=new OpenParticipant(input.signing,input.state,{seeds:[],allow_loopback:true}),calls=[];
-p.lookupProviderDirectory=async()=>{throw Error('explicit directory lookup must not select another directory');};
+const p=new OpenParticipant(input.signing,input.state,{seeds:input.routed?[input.options.expectedDirectoryNode]:[],allow_loopback:true}),calls=[];
+if(!input.routed)p.lookupProviderDirectory=async()=>{throw Error('explicit directory lookup must not select another directory');};
 for(const n of ['request','requestRepair']){
  const original=p.transport[n].bind(p.transport);p.transport[n]=async(...args)=>{calls.push({method:n,base:args[0]});return original(...args);};
 }
@@ -30,11 +30,14 @@ try{
   const options=input.options,request={expected_directory_node:options.expectedDirectoryNode,expected_directory:options.expectedDirectory,expected_source_epoch:options.expectedSourceEpoch,
     expected_target:options.expectedTarget,expected_ack_slot:options.expectedAckSlot,expected_receipt_writer:options.expectedReceiptWriter,expected_message_id:options.expectedMessageId,expected_envelope_ref:options.expectedEnvelopeRef};
   for(const [snake,camel] of [['root_entry','rootEntry'],['read_entry','readEntry'],['bootstrap_entry','bootstrapEntry']])request[snake]={raw:Buffer.from(options[camel].raw,'base64').toString('utf8'),ref:options[camel].ref};
-  const result=await new Agent(input.client_config,input.network_config).handle({op:'connect',invitation:{schema_version:'memory-vault-open-ack-connect/v1',action:'recover_discovered_receipt',repair_profile:'receipt-index',request}});
+  if(input.routed){delete request.expected_directory_node;delete request.expected_directory;}
+  const result=await new Agent(input.client_config,input.network_config).handle({op:'connect',invitation:{schema_version:'memory-vault-open-ack-connect/v1',action:input.routed?'recover_routed_receipt':'recover_discovered_receipt',repair_profile:'receipt-index',request}});
   process.stdout.write(JSON.stringify({...result,subprocessCalls}));
  }else{
  const options={...input.options,rootEntry:decode(input.options.rootEntry),readEntry:decode(input.options.readEntry),bootstrapEntry:decode(input.options.bootstrapEntry)};
- const r=await new DiscoveredAckRecoveryClient(new OpenProviderClient(p,input.encryption),reader).recover(options);
+ const client=new DiscoveredAckRecoveryClient(new OpenProviderClient(p,input.encryption),reader);
+ if(input.routed){delete options.expectedDirectoryNode;delete options.expectedDirectory;}
+ const r=await (input.routed?client.recoverRouted(options):client.recover(options));
  process.stdout.write(JSON.stringify({ok:true,state:r.state,receipt:Buffer.from(r.recovery.source.inputs.receipt.raw).toString('base64'),
    commit:r.recovery.source.commit.ref,custody:r.fact.payload.custody_id,calls,subprocessCalls}));
  }
@@ -48,7 +51,7 @@ class NativeAckDiscoveryTests(_AdminFixture,unittest.TestCase):
         (cls.fixture/'driver.mjs').write_text(DRIVER)
     def setUp(self):
         self.h=fixtures.IndexedReceiptRecoveryTests();self.h.setUp();self.addCleanup(self.h.doCleanups)
-    def native(self,agent=False):
+    def native(self,agent=False,routed=False):
         h=self.h;c=h.host.c;f=c.f.f;q=h.options
         names={'expectedDirectoryNode':'expected_directory_node','expectedDirectory':'expected_directory',
             'expectedTarget':'expected_target','expectedSourceEpoch':'expected_source_epoch','expectedAckSlot':'expected_ack_slot',
@@ -56,7 +59,7 @@ class NativeAckDiscoveryTests(_AdminFixture,unittest.TestCase):
         options={a:q[b] for a,b in names.items()}
         options.update({a:encoded(q[b]) for a,b in [('rootEntry','root_entry'),('readEntry','read_entry'),('bootstrapEntry','bootstrap_entry')]})
         data=dict(signing=private_signing(f['signers']['owner']),encryption=f['encryption']['owner'].private_document(),
-            now=c.f.at,state=str(Path(c.temp.name).resolve()/'native-discovery'),limits=f['expected']['limit_policy'],options=options,agent=agent,client_config=str(getattr(self,'config','')),network_config=str(getattr(self,'network','')))
+            now=c.f.at,state=str(Path(c.temp.name).resolve()/'native-discovery'),limits=f['expected']['limit_policy'],options=options,agent=agent,routed=routed,client_config=str(getattr(self,'config','')),network_config=str(getattr(self,'network','')))
         process=subprocess.run([self.node,'--experimental-strip-types',str(self.fixture/'driver.mjs')],cwd=self.fixture,
             input=json.dumps(data).encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=45)
         self.assertEqual(process.returncode,0,process.stderr.decode(errors='replace')[-3000:]);result=json.loads(process.stdout)
@@ -66,6 +69,12 @@ class NativeAckDiscoveryTests(_AdminFixture,unittest.TestCase):
         self.assertEqual(base64.b64decode(r['receipt']),self.h.host.c.f.case.receipt['raw'])
         self.assertEqual(r['custody'],'ack_'+r['commit']['raw_sha256'])
         self.assertTrue(any(c['method']=='requestRepair' for c in r['calls']))
+    def test_routed_directory_then_independent_owner_read(self):
+        self.h.host.publish();r=self.native(routed=True);self.assertTrue(r['ok'],r)
+        self.assertEqual(base64.b64decode(r['receipt']),self.h.host.c.f.case.receipt['raw'])
+        self.assertEqual(r['custody'],'ack_'+r['commit']['raw_sha256'])
+        self.assertTrue(any(c['method']=='request' for c in r['calls']))
+
     def test_signed_wrong_custody_is_not_a_receipt_confirmation(self):
         import hashlib
         from memory_vault import canonical_bytes
@@ -86,9 +95,13 @@ class NativeAckDiscoveryTests(_AdminFixture,unittest.TestCase):
         from memory_vault_agent import Agent
         import sqlite3
         self.h.host.publish();self.host=SimpleNamespace(source=self.h.host.c.f.h);self.configure_owner()
-        native=self.native(agent=True);self.assertFalse(native['ok'],native)
+        routed=getattr(self,'routed_facade',False)
+        if routed:
+            config=json.loads(self.network.read_bytes());config['seeds']=[self.h.host.c.node];self.network.write_text(json.dumps(config)+'\n')
+        native=self.native(agent=True,routed=routed);self.assertFalse(native['ok'],native)
         self.assertEqual(native['error']['code'],'open_delivery_message_not_found')
         request=dict(self.h.options)
+        if routed:request.pop('expected_directory_node');request.pop('expected_directory')
         for name in ('root_entry','read_entry','bootstrap_entry'):
             request[name]=dict(raw=request[name]['raw'].decode(),ref=request[name]['ref'])
         from unittest.mock import patch
@@ -97,11 +110,15 @@ class NativeAckDiscoveryTests(_AdminFixture,unittest.TestCase):
         with patch.object(nodes,'RoutingTable',side_effect=lambda *a,**kw:routing(*a,**(kw|dict(now=lambda:self.h.host.c.f.at)))):
             agent=Agent(self.config,self.network)
             result=agent.handle(dict(op='connect',invitation=dict(schema_version='memory-vault-open-ack-connect/v1',
-                action='recover_discovered_receipt',repair_profile='receipt-index',request=request)))
+                action='recover_routed_receipt' if routed else 'recover_discovered_receipt',repair_profile='receipt-index',request=request)))
         self.assertFalse(result['ok'],result);self.assertEqual(result['error']['code'],'open_delivery_message_not_found')
         with sqlite3.connect(self.directory/'transport/network.sqlite3') as db:
             self.assertGreater(db.execute('SELECT count(*) FROM open_ack_replica_statuses').fetchone()[0],0)
             self.assertEqual(db.execute('SELECT count(*) FROM open_delivery_outbox').fetchone()[0],0)
+    def test_both_routed_agent_facades_refuse_a_receipt_without_original_send(self):
+        self.routed_facade=True
+        self.test_both_agent_facades_read_but_refuse_a_receipt_without_the_original_send()
+
     def test_missing_fact_never_starts_private_read(self):
         r=self.native();self.assertFalse(r['ok']);self.assertEqual(r['code'],'repair_index_not_observed')
         self.assertFalse(any(c['method']=='requestRepair' for c in r['calls']))
