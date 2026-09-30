@@ -390,3 +390,51 @@ whose complete raw references match the signed proof manifest are reused locally
 the complete history, signatures and current status checks still run. This avoids
 spending a finite source grant on duplicate downloads. A saved put journal can
 recover a lost successful reply without preparing a different receipt.
+
+## Retain a receipt destination for ordinary receive (source after alpha.0.29)
+
+B can retain one independently selected ACK destination per exact message by
+using the same fields as `return_mailbox_receipt`, with the action changed to
+`register_mailbox_receipt_return`. Registration is local and can precede receipt
+of that message. It creates no source permission: ordinary `receive` attempts
+return only after the actual message is saved, using its retained original ACK
+configuration, original recipient signature and independently checked source.
+
+The protected selection survives restart. Each ordinary receive invocation
+attempts at most two distinct ready returns within its existing sixty-second
+network deadline. One attempt precedes mailbox polling with at most thirty seconds;
+a second can follow reception with at most thirty seconds. The last failure remains available through inspection. An unavailable source
+or lost response leaves the selection pending for a later receive invocation.
+The existing receipt publication journal retains exact requests across retries
+within their original signed expiry. An expired uncertain upload reports
+reconciliation-required rather than making another receipt or renewing access.
+That selection stops polling and remains inspectable; A can use its independent
+recovery permission to determine whether the source retained the receipt.
+Successful results appear in the bounded `receipt_returns` array; failures use
+`errors` with `operation: return_mailbox_receipt`. Completed selections are not
+sent again, and do not claim that the source was checked again.
+
+The ACK connect schema also accepts `list_mailbox_receipt_returns`,
+`inspect_mailbox_receipt_return` and `remove_mailbox_receipt_return`.
+Inspection/removal take `message_id`. At most sixteen selections are retained;
+removal stops future polling without removing inbox contents or the underlying
+frozen receipt-return journal. A changed destination cannot silently replace
+that original journal. Removing a completed selection and registering it again
+may report verified local history instead of transmitting another receipt.
+A still retrieves the original receipt through its independent recovery grant.
+
+When A repeats the same `send` after storage acceptance, an existing successful
+ACK preparation can supply its original owner READ request automatically. A
+checks the exact request, message, ciphertext and recipient before any ACK-source
+network access. It refreshes only the previously selected origin's introduction,
+requiring the same key and storage epoch, then authenticates the original receipt
+through the existing recovery workflow. A changed send under the same request ID
+is refused before this source read.
+
+This recovery has at most twenty seconds and shares the send operation's existing
+sixty-second network deadline. Failure leaves the original delivery result and
+its separate pending state intact, with `ack_recovery_error` describing the failed
+independent read. A confirmed receipt updates the original outbox; subsequent
+identical sends verify that local receipt without contacting either source.
+There is no additional authority when no matching ACK preparation exists, and no
+new source or permission is inferred from a memory or peer message.

@@ -91,13 +91,22 @@ class OpenNetworkClient:
         return {**result, "profile": "open-routing-v1", "network_accessed": True}
 
     def send(self, **arguments):
-        return asyncio.run(self._delivery().send(**arguments))
+        from memory_vault_open_mailbox_receipt_jobs import recover_prepared
+        delivery=self._delivery();deadline=time.monotonic()+60
+        recovered=recover_prepared(self,delivery,arguments,deadline=min(deadline,time.monotonic()+20))
+        result=asyncio.run(delivery.send(**arguments,_deadline=deadline))
+        result['network_accessed'] |= recovered['network_accessed']
+        if recovered.get('state') is not None:result['ack_recovery']=recovered['state']
+        if recovered.get('error') is not None:result['ack_recovery_error']=recovered['error']
+        return result
 
     def receive(self, limit=4):
         from memory_vault_open_repair_wire import RepairWireError
         delivery=self._delivery();deadline=time.monotonic()+60
         result=asyncio.run(delivery.receive(limit=limit,_pending_only=True,_deadline=deadline))
-        if len(result['messages'])>=limit:return result
+        from memory_vault_open_mailbox_receipt_jobs import poll as poll_receipt_returns
+        receipt_attempts=set()
+        poll_receipt_returns(self,result,deadline=min(deadline,time.monotonic()+30),attempted=receipt_attempts)
         from memory_vault_open_mailbox_replica_receive import rows as receiver_rows, receive as receive_replica
         rows=receiver_rows(self)
         for row in rows:
@@ -123,6 +132,7 @@ class OpenNetworkClient:
             legacy=asyncio.run(delivery.receive(limit=limit-len(result['messages']),_skip_pending=True,_deadline=deadline))
             result['messages'].extend(legacy['messages']);result['errors'].extend(legacy['errors'])
             result['network_accessed']|=legacy['network_accessed']
+        poll_receipt_returns(self,result,deadline=min(deadline,time.monotonic()+30),attempted=receipt_attempts)
         result['errors']=result['errors'][:4]
         return result
 
@@ -548,11 +558,10 @@ class OpenNetworkClient:
             message_id=result['message_id'],resource_id=result['resource_id'],preparation_delivery_uploaded=False,preparation_recipient_saved=False,
             from_local_history=cached,network_accessed=not cached,source_rechecked=not cached)
 
-    def _ack_export_preparation(self, value):
-        import base64
+    def _ack_preparation_value(self, request_id, part):
+        value=dict(request_id=request_id,part=part)
         from memory_vault_network_crypto import opaque
         from memory_vault_open_repair_admin import MAX_BUNDLE_BYTES
-        object_fields(value,{'schema_version','action','request_id','part'}|({'cursor'} if 'cursor' in value else set()))
         opaque(value['request_id'])
         if value['part'] not in ('owner_request','recipient_request','owner_invitation','recipient_invitation'):raise MemoryError('open_invalid_ack_request')
         self._ack_preparations_initialize()
@@ -583,6 +592,12 @@ class OpenNetworkClient:
                 exported=dict(schema_version=ACK_CONNECT_SCHEMA,action='recover_receipt',
                     base_url=recipient['base_url'],repair_profile=recipient['repair_profile'],request=request)
         else:exported=prepared[value['part']]
+        return exported
+
+    def _ack_export_preparation(self, value):
+        import base64
+        object_fields(value,{'schema_version','action','request_id','part'}|({'cursor'} if 'cursor' in value else set()))
+        exported=self._ack_preparation_value(value['request_id'],value['part'])
         raw=canonical_bytes(exported);digest=hashlib.sha256(raw).hexdigest();offset=0
         cursor=value.get('cursor')
         if cursor is not None:
@@ -593,7 +608,7 @@ class OpenNetworkClient:
             total_bytes=len(raw),offset=offset,bundle_chunk=base64.b64encode(raw[offset:end]).decode('ascii'),
             next_cursor=None if end==len(raw) else dict(sha256=digest,offset=end),network_accessed=False,source_rechecked=False)
 
-    def _ack_return_mailbox_receipt(self, value):
+    def _ack_return_mailbox_receipt(self, value, *, _deadline=None, _network_observer=None):
         """Return one saved cold receipt using its original mailbox authority."""
         from memory_vault_open_control import coordinate
         from memory_vault_open_transport import endpoint
@@ -603,6 +618,11 @@ class OpenNetworkClient:
         from memory_vault_open_repair_client import _entry
         from memory_vault_open_delivery import _hex
         from memory_vault_open_repair_admin import MAX_BUNDLE_BYTES
+        deadline = time.monotonic()+60 if _deadline is None else _deadline
+        def remaining():
+            value=deadline-time.monotonic()
+            if value<=0:raise MemoryError('open_delivery_budget_exhausted',retryable=True)
+            return min(60,value)
         object_fields(value,{'schema_version','action','message_id','source_url','source_key_id','repair_profile'})
         _hex(value['message_id'],prefix='msg_');coordinate(value['source_key_id'])
         if type(value['repair_profile']) is not str or value['repair_profile'] not in PROFILES:
@@ -628,66 +648,80 @@ class OpenNetworkClient:
             db.execute('CREATE TABLE IF NOT EXISTS open_mailbox_ack_returns(message_id TEXT PRIMARY KEY,binding TEXT NOT NULL,request BLOB NOT NULL,request_sha256 TEXT NOT NULL)')
             held=db.execute('SELECT * FROM open_mailbox_ack_returns WHERE message_id=?',(value['message_id'],)).fetchone()
         accessed=False
+        # Preserve the original bounded carrier retry window. The borrowed
+        # transport independently clamps each exchange to this receive call's
+        # deadline; a short poll must not shorten an already signed carrier.
+        from memory_vault_open_mailbox_receipt_jobs import ObservedTransport
         reader=AckReceiptClient(self.identity,self.encryption,
-            limit_policy=PROFILES[value['repair_profile']],transport=self.participant.transport,
+            limit_policy=PROFILES[value['repair_profile']],transport=ObservedTransport(self.participant.transport,_network_observer,deadline),
             allow_loopback=self.participant.transport.allow_loopback)
-        if held is not None:
-            if held['binding']!=binding:raise MemoryError('open_ack_mailbox_return_conflict')
-            raw=bytes(held['request'])
-            if len(raw)>MAX_BUNDLE_BYTES or hashlib.sha256(raw).hexdigest()!=held['request_sha256']:
-                raise MemoryError('open_ack_mailbox_return_corrupt')
-            request=decode_saved_request(document(raw,maximum=MAX_BUNDLE_BYTES))
-        else:
-            from memory_vault_open_provider_client import OpenProviderClient
-            from memory_vault_open_agent_setup import fetch_introductions
-            async def target_keys():
-                node=(await asyncio.to_thread(fetch_introductions,self.identity,[(base,value['source_key_id'])],
-                    allow_loopback=self.participant.transport.allow_loopback))[0]
-                self.participant._accept(node)
-                target_record=await OpenProviderClient(self.participant,self.encryption).prove_target(node)
-                return node,dict(signing_key=target_record['payload']['signing_key'],encryption_key=target_record['payload']['targetEncryptionKey'])
-            node,target=asyncio.run(target_keys());accessed=True
-            raw=canonical_bytes(node);digest=hashlib.sha256(raw).hexdigest()
-            node_entry=dict(raw=raw,ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw)))
-            statuses={roles['historical.status.'+role]['ref']['raw_sha256']:roles['historical.status.'+role]
-                for role in ('ack_root','ack_write','ack_offer_bootstrap')}
-            prepared=reader.prepare_return(base,target_node_entry=node_entry,expected_target=target,expected_ack_slot=wp['ack_slot'],
-                expected_owner=owner,expected_message_id=value['message_id'],expected_envelope_ref=wp['envelope_ref'],
-                root_entry=root,write_entry=write,bootstrap_entry=bootstrap,known_statuses=list(statuses.values()))
-            request=dict(message_id=value['message_id'],envelope_ref=wp['envelope_ref'],ack_slot=wp['ack_slot'],owner=owner,target=target,
-                target_node_entry=node_entry,root_entry=root,write_entry=write,bootstrap_entry=bootstrap,
-                binding_entry=_entry(prepared.source.binding),current_statuses=[_entry(item) for item in prepared.current_statuses],
-                read_until=prepared.source.read_until,retain_until=prepared.source.retain_until)
-            bundle=dict(schema_version=SAVED_REQUEST_SCHEMA,base_url=base,repair_profile=value['repair_profile'],
-                request={name:([encode_original(item) for item in item_value] if name=='current_statuses' else
-                    encode_original(item_value) if name.endswith('_entry') else item_value) for name,item_value in request.items()})
-            raw=canonical_bytes(bundle)
-            if len(raw)>MAX_BUNDLE_BYTES:raise MemoryError('open_ack_mailbox_return_capacity')
-            with self.participant.state.db() as db:
-                db.execute('BEGIN IMMEDIATE')
-                old=db.execute('SELECT binding,request,request_sha256 FROM open_mailbox_ack_returns WHERE message_id=?',(value['message_id'],)).fetchone()
-                if old is not None:
-                    if old['binding']!=binding:raise MemoryError('open_ack_mailbox_return_conflict')
-                    previous=bytes(old['request'])
-                    if len(previous)>MAX_BUNDLE_BYTES or hashlib.sha256(previous).hexdigest()!=old['request_sha256']:
-                        raise MemoryError('open_ack_mailbox_return_corrupt')
-                    request=decode_saved_request(document(previous,maximum=MAX_BUNDLE_BYTES))
-                else:
-                    if db.execute('SELECT count(*) FROM open_mailbox_ack_returns').fetchone()[0]>=16:
-                        raise MemoryError('open_ack_mailbox_return_capacity')
-                    db.execute('INSERT INTO open_mailbox_ack_returns VALUES(?,?,?,?)',
-                        (value['message_id'],binding,raw,hashlib.sha256(raw).hexdigest()))
-        result=SavedAckReceiptPublisher(delivery,reader).publish_saved(base,request)
-        return dict(state='retained_at_ack_source',message_id=value['message_id'],
-            receipt_ref=result.source.inputs['receipt'].ref.as_dict(),commit_ref=result.source.commit.ref.as_dict(),
-            from_local_history=result.from_local_history,network_accessed=accessed or not result.from_local_history)
+        try:
+            if held is not None:
+                if held['binding']!=binding:raise MemoryError('open_ack_mailbox_return_conflict')
+                raw=bytes(held['request'])
+                if len(raw)>MAX_BUNDLE_BYTES or hashlib.sha256(raw).hexdigest()!=held['request_sha256']:
+                    raise MemoryError('open_ack_mailbox_return_corrupt')
+                request=decode_saved_request(document(raw,maximum=MAX_BUNDLE_BYTES))
+            else:
+                from memory_vault_open_provider_client import OpenProviderClient
+                from memory_vault_open_agent_setup import fetch_introductions
+                async def target_keys():
+                    node=(await asyncio.to_thread(fetch_introductions,self.identity,[(base,value['source_key_id'])],
+                        allow_loopback=self.participant.transport.allow_loopback,timeout=min(15,remaining())))[0]
+                    self.participant._accept(node)
+                    from memory_vault_open_routing import LookupBudget
+                    target_record=await OpenProviderClient(self.participant,self.encryption).prove_target(node,
+                        LookupBudget(maximum_seconds=min(10,remaining())))
+                    return node,dict(signing_key=target_record['payload']['signing_key'],encryption_key=target_record['payload']['targetEncryptionKey'])
+                if _network_observer is not None:_network_observer()
+                node,target=asyncio.run(target_keys());accessed=True
+                raw=canonical_bytes(node);digest=hashlib.sha256(raw).hexdigest()
+                node_entry=dict(raw=raw,ref=dict(namespace='meta',key=digest,raw_sha256=digest,size=len(raw)))
+                statuses={roles['historical.status.'+role]['ref']['raw_sha256']:roles['historical.status.'+role]
+                    for role in ('ack_root','ack_write','ack_offer_bootstrap')}
+                remaining()
+                prepared=reader.prepare_return(base,target_node_entry=node_entry,expected_target=target,expected_ack_slot=wp['ack_slot'],
+                    expected_owner=owner,expected_message_id=value['message_id'],expected_envelope_ref=wp['envelope_ref'],
+                    root_entry=root,write_entry=write,bootstrap_entry=bootstrap,known_statuses=list(statuses.values()),timeout=30)
+                request=dict(message_id=value['message_id'],envelope_ref=wp['envelope_ref'],ack_slot=wp['ack_slot'],owner=owner,target=target,
+                    target_node_entry=node_entry,root_entry=root,write_entry=write,bootstrap_entry=bootstrap,
+                    binding_entry=_entry(prepared.source.binding),current_statuses=[_entry(item) for item in prepared.current_statuses],
+                    read_until=prepared.source.read_until,retain_until=prepared.source.retain_until)
+                bundle=dict(schema_version=SAVED_REQUEST_SCHEMA,base_url=base,repair_profile=value['repair_profile'],
+                    request={name:([encode_original(item) for item in item_value] if name=='current_statuses' else
+                        encode_original(item_value) if name.endswith('_entry') else item_value) for name,item_value in request.items()})
+                raw=canonical_bytes(bundle)
+                if len(raw)>MAX_BUNDLE_BYTES:raise MemoryError('open_ack_mailbox_return_capacity')
+                with self.participant.state.db() as db:
+                    db.execute('BEGIN IMMEDIATE')
+                    old=db.execute('SELECT binding,request,request_sha256 FROM open_mailbox_ack_returns WHERE message_id=?',(value['message_id'],)).fetchone()
+                    if old is not None:
+                        if old['binding']!=binding:raise MemoryError('open_ack_mailbox_return_conflict')
+                        previous=bytes(old['request'])
+                        if len(previous)>MAX_BUNDLE_BYTES or hashlib.sha256(previous).hexdigest()!=old['request_sha256']:
+                            raise MemoryError('open_ack_mailbox_return_corrupt')
+                        request=decode_saved_request(document(previous,maximum=MAX_BUNDLE_BYTES))
+                    else:
+                        if db.execute('SELECT count(*) FROM open_mailbox_ack_returns').fetchone()[0]>=16:
+                            raise MemoryError('open_ack_mailbox_return_capacity')
+                        db.execute('INSERT INTO open_mailbox_ack_returns VALUES(?,?,?,?)',
+                            (value['message_id'],binding,raw,hashlib.sha256(raw).hexdigest()))
+            remaining()
+            result=SavedAckReceiptPublisher(delivery,reader).publish_saved(base,request,timeout=30)
+            return dict(state='retained_at_ack_source',message_id=value['message_id'],
+                receipt_ref=result.source.inputs['receipt'].ref.as_dict(),commit_ref=result.source.commit.ref.as_dict(),
+                from_local_history=result.from_local_history,network_accessed=accessed or not result.from_local_history)
+        finally:
+            reader.close()
 
-    def _ack_connect(self, invitation):
+    def _ack_connect(self, invitation, *, _deadline=None, _network_observer=None):
         """Explicit original-grant operations through the existing Agent facade."""
         from memory_vault_open_repair_wire import RepairWireError
         from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS,INDEX_WORKFLOW_LIMITS
         value=document(invitation,maximum=65536)
         try:
+            from memory_vault_open_mailbox_receipt_jobs import ACTIONS, connect as receipt_job_connect
+            if value.get('action') in ACTIONS:return receipt_job_connect(self,value)
             if value.get('action')=='return_mailbox_receipt':return self._ack_return_mailbox_receipt(value)
             if value.get('action')=='prepare':return self._ack_prepare(value)
             if value.get('action')=='export_preparation':return self._ack_export_preparation(value)
@@ -738,17 +772,22 @@ class OpenNetworkClient:
                     # is authenticated; malformed invitations consume no slot.
                     journal.start(key,plan)
                     journal.observe(key,value)
+                from memory_vault_open_mailbox_receipt_jobs import ObservedTransport
                 reader=AckOwnerRecoveryClient(self.identity,self.encryption,limit_policy=profiles[value['repair_profile']],
-                    transport=self.participant.transport,allow_loopback=self.participant.transport.allow_loopback,
-                    status_observer=observed)
+                    transport=ObservedTransport(self.participant.transport,_network_observer,_deadline),
+                    allow_loopback=self.participant.transport.allow_loopback,status_observer=observed)
                 try:
                     recover=reader.recover_replica_occupied if replica else reader.recover_occupied
                     # Replica recovery authenticates the source histories plus
                     # independent copy/return authority. Give this complete
                     # Agent workflow the same finite 60s window as mailbox
                     # replica reception; signed expiry may still end it sooner.
+                    timeout=60 if replica else 30
+                    if _deadline is not None:
+                        timeout=min(timeout,_deadline-time.monotonic())
+                        if timeout<=0:raise MemoryError('open_delivery_budget_exhausted',retryable=True)
                     recovered=recover(value['base_url'],known_statuses=supplied,archive_statuses=known,
-                        timeout=60 if replica else 30,**request)
+                        timeout=timeout,**request)
                     source=recovered.replica['source'].event if replica else recovered.source
                     result=self._delivery().accept_recovered_receipt(source.inputs['receipt'].raw)
                     extra=dict(replica_custody_ref=recovered.replica['custody'].ref.as_dict()) if replica else {}

@@ -1,4 +1,18 @@
-# Memory Vault v0.28.0-alpha.0.29 — authorized full client
+# Memory Vault v0.28.0-alpha.0.30 — authorized full client
+
+Python recipients can retain an independently selected ACK destination for an
+exact message with `register_mailbox_receipt_return`. Ordinary `receive` then
+returns its actual saved receipt using the original authority, retaining
+exact requests across lost replies and restarts. Expired uncertain uploads
+stop for reconciliation; completed returns are not transmitted again.
+
+When the sender repeats its original stored send, a matching earlier ACK
+preparation can recover the independent receipt automatically. The current
+source key/epoch, original READ grant, message and ciphertext must match.
+Changed requests are refused before source access, and confirmed repeats
+use local history. These steps share the ordinary operations' network
+deadlines and do not create new source or memory permissions. See
+`docs/OPEN_ACK_PROVISIONING.md`.
 
 Python recipients can register an already authorized message replica through
 `connect` with `action: register_replica`. Ordinary `receive` then polls the
@@ -56,7 +70,7 @@ remain unfinished. There is no project-operated public seed or verified
 thousand-agent/global-availability result. Use the source-bound release record
 for actual validation and compare archive bytes with published checksums.
 
-This full-client package targets **v0.28.0-alpha.0.29 open-delivery source**,
+This full-client package targets **v0.28.0-alpha.0.30 open-delivery source**,
 not a stable-release or complete runtime-certification claim. Existing published
 versions remain immutable. Match the artifact's source and hashes to its
 manifest; this README does not establish installation or publication. The plugin is under

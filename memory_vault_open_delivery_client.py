@@ -345,10 +345,11 @@ class OpenDeliveryClient:
             raise MemoryError("open_delivery_envelope_mismatch")
         return frozen
 
-    async def send(self, request_id, recipients, text="", memory_ids=None, control=None):
+    async def send(self, request_id, recipients, text="", memory_ids=None, control=None, *, _deadline=None):
         input_sha, selected = self._send_input(request_id, recipients, text, memory_ids, control)
         row = self._prepare_outbox(request_id, recipients[0], input_sha, text, selected)
         budget = _DeliveryBudget()
+        if _deadline is not None:budget.deadline=min(budget.deadline,_deadline)
         if row["session"] is None:
             session = await self._sending_session(recipients[0], budget)
             row = self._encrypt_outbox(row, session)

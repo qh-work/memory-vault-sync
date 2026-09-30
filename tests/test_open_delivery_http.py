@@ -564,8 +564,10 @@ class MailboxStagingHTTPTests(unittest.TestCase):
             client=MailboxFeedRecoveryClient(self.bi,owner_encryption,policy=replace(DEFAULT_POLICY,max_signature_checks=512),
                 limit_policy=limits,allow_loopback=True,status_observer=observed.append)
             self.addCleanup(client.close)
-            recipient_network=self.enterContext(self.b._network())
-            recipient_db=self.enterContext(recipient_network.participant.state.db())
+            from contextlib import ExitStack
+            recipient_context=ExitStack();self.addCleanup(recipient_context.close)
+            recipient_network=recipient_context.enter_context(self.b._network())
+            recipient_db=recipient_context.enter_context(recipient_network.participant.state.db())
             client_options=dict(target_node_entry=node_entry,expected_target=source.target,expected_sender=member_args['expected_sender'],
                 expected_slot=slot,slot_entries={name:slot_entries[name] for name in ('slot','read','maintenance','bootstrap')},
                 journal=MailboxSetupJournal(recipient_db))
@@ -949,6 +951,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         from memory_vault_open_repair_state import RECEIPT_WORKFLOW_LIMITS
         from memory_vault_open_repair_mailbox_activation import ACK_CONFIGURATION_ROLES
         ack_host=HTTPNodes(self.root/'independent_ack',1);self.addCleanup(ack_host.close)
+        self.ack_host=ack_host
         ack_host.stop(0)
         config=json.loads(ack_host.configs[0].read_bytes())
         encryption=EncryptionIdentity.generate();key=self.root/'independent_ack'/'encryption.json';encryption.save(key)
@@ -958,6 +961,7 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         old_call=self.call
         def call(agent,**request):
             if request['op']=='send' and agent is self.a and not hasattr(self,'ack_configuration'):
+                self.ack_original_send_request=dict(request)
                 from memory_vault_open_client import ACK_CONNECT_SCHEMA
                 prepared=old_call(self.a,op='connect',invitation=dict(schema_version=ACK_CONNECT_SCHEMA,action='prepare',
                     request_id=request['request_id'],recipient=self.bi.key_id,text=request['text'],memory_ids=request.get('memory_ids',[]),
