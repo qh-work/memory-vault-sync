@@ -103,6 +103,18 @@ class OpenRepairClientTypeScriptTests(unittest.TestCase):
             stored=self.http.source.state.read_local_original(self.http.source.resource_id,ref)
             self.assertEqual(raw,stored)
 
+    def test_native_client_accepts_shorter_authorized_challenge(self):
+        until=self.http.source.now[0]+20;current=[]
+        for role,signer in (('owner_status','owner'),('target_status','target')):
+            payload=copy.deepcopy(self.f['docs'][role]['payload'])
+            payload.update(revision=2,valid_until=until)
+            current.append(signed_entry(payload,self.f['signers'][signer],'short_'+role))
+        self.assertTrue(self.http.fixture.observe(current).allowed)
+        result=self.ts(self.call())
+        self.assertTrue(result['ok'],result)
+        row=self.http.source.db.execute('SELECT expires_at FROM open_repair_bootstrap_challenges').fetchone()
+        self.assertEqual(row[0],until)
+
     def test_async_inputs_are_snapshotted_before_mutation(self):
         result=self.ts(self.call(mutate=True))
         self.assertTrue(result['ok'],result)

@@ -180,6 +180,35 @@ class OpenNetworkCITests(unittest.TestCase):
             reports.status('passed',passed=True,complete=result['complete'])
             self.assertTrue(ci.finalize(reports))
 
+    def test_partitions_cover_every_module_once_and_reject_invalid_selection(self):
+        for count in (1,2,3,8):
+            parts=[ci.selected_modules(index,count) for index in range(count)]
+            flat=[name for part in parts for name in part]
+            self.assertEqual(len(flat),len(ci.MODULES))
+            self.assertEqual(set(flat),set(ci.MODULES))
+            self.assertEqual(len(flat),len(set(flat)))
+            for index,part in enumerate(parts):self.assertEqual(part,ci.MODULES[index::count])
+        for index,count in ((-1,2),(2,2),(0,0),(0,9),(True,2),(0,True)):
+            with self.assertRaises(ci.InvalidReport):ci.selected_modules(index,count)
+
+    def test_partition_runtime_cannot_use_another_partition_report(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            reports=ci.Reports(temporary);ci.initialize(reports,'light',17,1,2)
+            settings=json.loads((Path(temporary)/'settings.json').read_text())
+            self.assertEqual(settings['test_modules'],list(ci.MODULES[1::2]))
+            self.assertEqual((settings['partition_index'],settings['partition_count']),(1,2))
+            with self.assertRaises(ci.InvalidReport):ci.record_runtime(reports,'light',17,0,2)
+            self.assertFalse(ci.finalize(reports))
+
+    def test_light_loads_exact_partition_and_still_requires_all_its_cases(self):
+        class Passing(unittest.TestCase):
+            def runTest(self):pass
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(unittest.defaultTestLoader,'loadTestsFromNames',return_value=unittest.TestSuite([Passing()])) as loader, \
+                mock.patch('sys.__stdout__',io.StringIO()):
+            reports=ci.Reports(temporary);self.assertTrue(ci.run_light(reports,1,2))
+            loader.assert_called_once_with(ci.MODULES[1::2])
+
     def test_scale_command_and_progress_capture_use_only_tiny_fake_child(self):
         original=subprocess.Popen;seen=[];value=synthetic_report()
         progress={"seed":17,"elapsed_seconds":1.0,"phase":"healthy","queries_completed":100,"failures":0,"requests":200}

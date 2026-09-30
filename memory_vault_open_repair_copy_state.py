@@ -24,6 +24,7 @@ class RepairCopyState(RepairCopyResources):
         with self.source._transaction():
             for sql in (
                 'CREATE TABLE IF NOT EXISTS open_repair_copy_objects(resource_id TEXT NOT NULL,ref_digest TEXT NOT NULL,raw BLOB NOT NULL,ref BLOB NOT NULL,PRIMARY KEY(resource_id,ref_digest))',
+                'CREATE TABLE IF NOT EXISTS open_repair_copy_bodies(resource_id TEXT PRIMARY KEY,ref_digest TEXT NOT NULL,raw BLOB NOT NULL,ref BLOB NOT NULL)',
                 'CREATE TABLE IF NOT EXISTS open_repair_copy_commits(resource_id TEXT PRIMARY KEY,input_digest TEXT NOT NULL,manifest BLOB NOT NULL,manifest_ref BLOB NOT NULL,custody BLOB NOT NULL,custody_ref BLOB NOT NULL,metadata_bytes INTEGER NOT NULL)',
                 'CREATE TABLE IF NOT EXISTS open_repair_copy_observations(resource_id TEXT NOT NULL,root_digest TEXT NOT NULL,raw_digest TEXT NOT NULL,raw BLOB NOT NULL,ref BLOB NOT NULL,PRIMARY KEY(resource_id,raw_digest))',
                 'CREATE TABLE IF NOT EXISTS open_repair_copy_blocks(resource_id TEXT PRIMARY KEY,root_digest TEXT NOT NULL,reason TEXT NOT NULL)',
@@ -35,6 +36,9 @@ class RepairCopyState(RepairCopyResources):
         total=len(row['request'])+len(row['request_ref'])+len(row['offer'])+len(row['offer_ref'])+5*ROW_CHARGE
         for table in ('objects','observations'):
             total+=self.db.execute('SELECT coalesce(sum(length(raw)+length(ref)+?),0) FROM open_repair_copy_'+table+' WHERE resource_id=?',(ROW_CHARGE,rid)).fetchone()[0]
+        # Ciphertext uses the separately reserved live-byte allowance. Its
+        # locator and physical row remain metadata, including during reads.
+        total+=self.db.execute('SELECT coalesce(sum(length(ref)+?),0) FROM open_repair_copy_bodies WHERE resource_id=?',(ROW_CHARGE,rid)).fetchone()[0]
         held=self.source._one('SELECT * FROM open_repair_copy_commits WHERE resource_id=?',(rid,))
         if held:total+=sum(len(held[name]) for name in ('manifest','manifest_ref','custody','custody_ref'))+ROW_CHARGE
         # Service rows use this same reservation; no separate uncharged store.
@@ -50,6 +54,9 @@ class RepairCopyState(RepairCopyResources):
             if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
                 total+=self.db.execute('SELECT coalesce(sum('+columns+'+?),0) FROM '+table+' WHERE resource_id=?',(ROW_CHARGE,rid)).fetchone()[0]
         return total
+
+    def _live_bytes(self,row):
+        return self.db.execute('SELECT coalesce(sum(length(raw)),0) FROM open_repair_copy_bodies WHERE resource_id=?',(row['resource_id'],)).fetchone()[0]
 
     def _observe_single(self,row,caps,root_digest,item):
         # Persist before any later source/status/pack check can fail. Capacity
@@ -108,8 +115,22 @@ class RepairCopyState(RepairCopyResources):
             current_statuses=current_statuses,at=s._now(),limit_policy=limit_policy,policy=policy,budget=budget,
             on_observed=lambda item:self._observe_single(row,caps,root_digest,item),source_state=source_state,bound=bound,
             recipient_reservation_entry=recipient_reservation_entry,recipient_disclosure_entry=recipient_disclosure_entry)
+        return self._store_copy_plan(row,plan,resolver,
+            source_histories=copy_source.source_histories(plan.source,manifest_entry),source_custody=plan.source.custody,
+            recipient_disclosure=plan.disclosures[2] if copy_source.occupied_source(plan.source) else None)
+
+    def _store_copy_plan(self,row,plan,resolver,*,source_histories,source_custody,recipient_disclosure=None,extra_edges=(),additional=(),live_originals=()):
+        """Commit an internally authenticated exact closure under local capacity.
+
+        Public operation methods authenticate their own typed source graph and
+        retain status observations before reaching this shared transaction.
+        """
+        s=self.source;budget=resolver.budget;policy=s._budget_policy(budget)
+        parsed=wire.parse_new_wire(s._saved(row,'offer')['raw'],policy,budget).value['payload']
+        rid=row['resource_id'];caps=parsed['budget']
+        root_digest=budget._hash(wire._canonical(parsed['intent']['root_key'],budget))
         root=plan.assignment.payload['root_key']
-        objects={};roles=[];edges=[]
+        objects={};roles=[];edges=list(extra_edges)
         def add(role,entry):
             if hasattr(entry,'raw'):entry=dict(raw=entry.raw,ref=entry.ref.as_dict())
             ref=wire.raw_ref(entry['ref']);raw=entry['raw']
@@ -118,10 +139,18 @@ class RepairCopyState(RepairCopyResources):
             if key in objects and objects[key]!=(raw,ref_bytes):wire._fail('repair_ref_conflict')
             objects[key]=(raw,ref_bytes);roles.append(dict(role=role,ref=ref.as_dict()))
         for item in plan.originals:add(item.role,item.original)
+        for role,item in live_originals:
+            if (role!='message.envelope' or parsed['intent']['purpose']!='message_replica'
+                    or item.ref.namespace!='object' or item.ref.as_dict()!=parsed['intent']['scope']['envelope_ref']):
+                wire._fail('repair_copy_scope')
+            add(role,item)
+        live_keys={budget._hash(canonical_bytes(item.ref.as_dict())) for _,item in live_originals}
+        if len(live_keys)>1:wire._fail('repair_copy_scope')
         for name,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
                 ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):add(name,item)
-        if copy_source.occupied_source(plan.source):add('copy.recipient_disclosure',plan.disclosures[2])
-        for role,entry,source_manifest in copy_source.source_histories(plan.source,manifest_entry):
+        if recipient_disclosure is not None:add('copy.recipient_disclosure',recipient_disclosure)
+        for role,item in additional:add(role,item)
+        for role,entry,source_manifest in source_histories:
             add(role,entry)
             for member in source_manifest.manifest.value['roles']:
                 packed=resolver.resolve(member['pack_ref']);add('history.raw_pack',packed)
@@ -146,7 +175,15 @@ class RepairCopyState(RepairCopyResources):
             blocked=s._one('SELECT reason FROM open_repair_copy_blocks WHERE root_digest=?',(root_digest,))
             if blocked:denial=denial or blocked['reason']
             previous=[]
+            authenticated={(item.raw,item.ref):item for item in plan.statuses}
             for raw,ref in self.db.execute('SELECT raw,ref FROM open_repair_copy_observations WHERE root_digest=?',(root_digest,)):
+                # These exact bytes and full locator were authenticated by
+                # this operation's typed COPY verifier. Reuse that result
+                # within this call only; a replay still verifies afresh and
+                # every older/different observation follows the usual path.
+                cached=authenticated.get((bytes(raw),wire.raw_ref(json.loads(bytes(ref)))))
+                if cached is not None:
+                    previous.append(cached);continue
                 p=wire.parse_new_wire(bytes(raw),policy,budget).value['payload']
                 previous.append(status.authenticate_status_original(dict(raw=bytes(raw),ref=json.loads(bytes(ref))),
                     expected_root=root,expected_signing_key=p['signing_key'],at=p['issued_at'],
@@ -176,8 +213,9 @@ class RepairCopyState(RepairCopyResources):
                 else:
                     for key in stable_keys:
                         raw,ref_raw=objects[key]
-                        stored=s._one('SELECT raw,ref FROM open_repair_copy_objects WHERE resource_id=? AND ref_digest=?',(rid,key))
-                        if stored is None:stored=s._one('SELECT raw,ref FROM open_repair_copy_observations WHERE resource_id=? AND raw_digest=?',(rid,json.loads(ref_raw)['raw_sha256']))
+                        table='open_repair_copy_bodies' if key in live_keys else 'open_repair_copy_objects'
+                        stored=s._one('SELECT raw,ref FROM '+table+' WHERE resource_id=? AND ref_digest=?',(rid,key))
+                        if stored is None and key not in live_keys:stored=s._one('SELECT raw,ref FROM open_repair_copy_observations WHERE resource_id=? AND raw_digest=?',(rid,json.loads(ref_raw)['raw_sha256']))
                         if stored is None or bytes(stored['raw'])!=raw or bytes(stored['ref'])!=ref_raw:
                             denial='repair_copy_objects_missing';break
                     if denial is None:
@@ -189,7 +227,7 @@ class RepairCopyState(RepairCopyResources):
                     physical_objects=roles,edges=edges))
                 sha=budget._hash(manifest);mref=dict(namespace='meta',key=sha,raw_sha256=sha,size=len(manifest))
                 custody=s._sign(dict(schema_version=resource.SCHEMA,kind='replica.custody',signing_key=s.identity.public_descriptor(),
-                    root_key=root,scope=plan.assignment.payload['scope'],original_custody_ref=plan.source.custody.ref.as_dict(),
+                    root_key=root,scope=plan.assignment.payload['scope'],original_custody_ref=source_custody.ref.as_dict(),
                     replica_manifest_ref=mref,assignment_ref=plan.assignment.ref.as_dict(),resource_offer_ref=plan.offer.ref.as_dict(),
                     resource=parsed['resource'],reservation_generation=1,stored_at=now,
                     read_until=plan.read_until,retain_until=plan.retain_until),'copy_custody',budget)
@@ -199,10 +237,13 @@ class RepairCopyState(RepairCopyResources):
                     observed=s._one('SELECT raw,ref FROM open_repair_copy_observations WHERE resource_id=? AND raw_digest=?',(rid,ref['raw_sha256']))
                     if observed is None or bytes(observed['raw'])!=raw or bytes(observed['ref'])!=ref_raw:
                         pending[key]=(raw,ref_raw)
-                size=self._metadata(row)+sum(len(raw)+len(ref)+ROW_CHARGE for raw,ref in pending.values())+len(manifest)+len(canonical_bytes(mref))+len(custody['raw'])+len(canonical_bytes(custody['ref']))+ROW_CHARGE
-                if size>caps['max_meta_bytes'] or len(objects)>caps['max_items']:denial='repair_copy_capacity'
+                live_size=sum(len(raw) for key,(raw,ref) in pending.items() if key in live_keys)
+                size=self._metadata(row)+sum(len(raw)+len(ref)+ROW_CHARGE for raw,ref in pending.values())-live_size+len(manifest)+len(canonical_bytes(mref))+len(custody['raw'])+len(canonical_bytes(custody['ref']))+ROW_CHARGE
+                if size>caps['max_meta_bytes'] or live_size>caps['max_live_bytes'] or len(objects)>caps['max_items']:denial='repair_copy_capacity'
                 else:
-                    for key,(raw,ref_raw) in pending.items():self.db.execute('INSERT INTO open_repair_copy_objects VALUES(?,?,?,?)',(rid,key,raw,ref_raw))
+                    for key,(raw,ref_raw) in pending.items():
+                        table='open_repair_copy_bodies' if key in live_keys else 'open_repair_copy_objects'
+                        self.db.execute('INSERT INTO '+table+' VALUES(?,?,?,?)',(rid,key,raw,ref_raw))
                     self.db.execute('INSERT INTO open_repair_copy_commits VALUES(?,?,?,?,?,?,?)',
                         (rid,input_digest,manifest,canonical_bytes(mref),custody['raw'],canonical_bytes(custody['ref']),size))
                     result=custody
@@ -231,23 +272,28 @@ class RepairCopyState(RepairCopyResources):
                 or value['root_key']!=p['intent']['root_key'] or value['scope']!=p['intent']['scope']
                 or value['physical_objects']!=value['original_roles']):wire._fail('repair_copy_commit_mismatch')
         if not 1<=len(value['original_roles'])<=128:wire._fail('repair_copy_capacity')
-        entries={};previous=None;used_objects=set()
+        entries={};previous=None;used_objects=set();used_bodies=set()
         for item in value['original_roles']:
             wire.object_fields(item,{'role','ref'});ref=wire.raw_ref(item['ref'])
             if type(item['role']) is not str:wire._fail('repair_copy_commit_mismatch')
             order=item['role'],*history._ref_tuple(ref)
             if previous is not None and order<=previous:wire._fail('repair_copy_commit_mismatch')
             previous=order;key=budget._hash(canonical_bytes(ref.as_dict()))
-            stored=s._one('SELECT raw,ref FROM open_repair_copy_objects WHERE resource_id=? AND ref_digest=?',(rid,key))
-            if stored is not None:used_objects.add(key)
-            else:stored=s._one('SELECT raw,ref FROM open_repair_copy_observations WHERE resource_id=? AND raw_digest=?',(rid,ref.raw_sha256))
+            body=item['role']=='message.envelope'
+            if body and (p['intent']['purpose']!='message_replica' or ref.as_dict()!=p['intent']['scope']['envelope_ref']):wire._fail('repair_copy_scope')
+            table='open_repair_copy_bodies' if body else 'open_repair_copy_objects'
+            stored=s._one('SELECT raw,ref FROM '+table+' WHERE resource_id=? AND ref_digest=?',(rid,key))
+            if stored is not None:(used_bodies if body else used_objects).add(key)
+            elif not body:stored=s._one('SELECT raw,ref FROM open_repair_copy_observations WHERE resource_id=? AND raw_digest=?',(rid,ref.raw_sha256))
             if stored is None or json.loads(bytes(stored['ref']))!=ref.as_dict():wire._fail('repair_copy_objects_missing')
             raw=bytes(stored['raw']);budget._bytes('input_bytes',len(raw))
             if len(raw)!=ref.size or budget._hash(raw)!=ref.raw_sha256:wire._fail('repair_ref_mismatch')
             entries.setdefault(item['role'],[]).append(dict(raw=raw,ref=ref.as_dict()))
         object_count=self.db.execute('SELECT count(*) FROM open_repair_copy_objects WHERE resource_id=?',(rid,)).fetchone()[0]
+        body_count=self.db.execute('SELECT count(*) FROM open_repair_copy_bodies WHERE resource_id=?',(rid,)).fetchone()[0]
         expected_count=len({canonical_bytes(item['ref']) for item in value['original_roles']})
-        if object_count!=len(used_objects) or expected_count>p['budget']['max_items'] or self._metadata(row)>p['budget']['max_meta_bytes']:
+        if (object_count!=len(used_objects) or body_count!=len(used_bodies) or expected_count>p['budget']['max_items'] or self._metadata(row)>p['budget']['max_meta_bytes']
+                or self._live_bytes(row)>p['budget']['max_live_bytes']):
             wire._fail('repair_copy_commit_mismatch')
         stable=[item for item in value['original_roles'] if item['role']!='copy.current_status']
         if budget._hash(canonical_bytes(stable))!=held['input_digest'] or not entries.get('copy.current_status'):
@@ -365,13 +411,18 @@ class RepairCopyState(RepairCopyResources):
             expected_source=expected_source,expected_maintainer=expected_maintainer,expected_target=s.target,
             target_storage_epoch=s.node['payload']['storage_epoch'],current_statuses=current_statuses,at=s._now(),
             action=action,policy=policy,budget=budget,on_observed=lambda item:self._observe_single(row,caps,root_digest,item))
+        return self._finish_copy_read(resource_id,replica,plan,root_digest,budget,
+            source_statuses=replica['source'].statuses,action=action,_include_replica=_include_replica)
+
+    def _finish_copy_read(self,resource_id,replica,plan,root_digest,budget,*,source_statuses,action,_include_replica):
+        s=self.source;policy=s._budget_policy(budget);root=replica['custody'].payload['root_key']
         denial=plan['denial_code']
         # These originals were fully authenticated in this same reconstruction.
         # Match the exact stored raw bytes AND complete reference before reuse.
         # Unknown historical observations still undergo signature verification;
         # no cache or pre-authenticated object crosses a request boundary.
         authenticated={(item.raw,canonical_bytes(item.ref.as_dict())):item for item in
-            (*replica['source'].statuses,*replica['authority'].statuses,*plan['statuses'])}
+            (*source_statuses,*replica['authority'].statuses,*plan['statuses'])}
         with s._transaction() as now:
             row,current=self._committed(resource_id)
             if s._saved(current,'custody')['raw']!=replica['custody'].raw:wire._fail('repair_copy_commit_mismatch')
@@ -409,6 +460,7 @@ class RepairCopyState(RepairCopyResources):
         parts=[tuple(row.items()),tuple(held.items()),canonical_bytes(s.node),canonical_bytes(s.limits)]
         for table,where,value,order in (
                 ('open_repair_copy_objects','resource_id',resource_id,'ref_digest'),
+                ('open_repair_copy_bodies','resource_id',resource_id,'ref_digest'),
                 ('open_repair_copy_observations','root_digest',root_digest,'resource_id,raw_digest'),
                 ('open_repair_copy_blocks','root_digest',root_digest,'resource_id')):
             parts.append(tuple(tuple(r) for r in self.db.execute('SELECT * FROM '+table+' WHERE '+where+'=? ORDER BY '+order,(value,))))

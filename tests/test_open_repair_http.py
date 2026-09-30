@@ -4,6 +4,7 @@ import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import socket
 import stat
 import threading
 import time
@@ -143,6 +144,60 @@ class RepairHTTPTests(unittest.TestCase):
                 descriptor=self.source.fixture["docs"]["descriptor"], repair_policy=dict(enabled=True))
         self.assertEqual(caught.exception.code,"open_repair_identity_required")
         self.assertFalse((self.directory / "missing-key").exists())
+
+    def test_complete_request_allows_bounded_slow_authenticated_response(self):
+        first = self.fixture.make_probe()
+        handle = self.participant.handle_repair
+        def slow(raw):
+            time.sleep(3.2)
+            return handle(raw)
+        with patch.object(self.participant, "handle_repair", side_effect=slow):
+            challenge = self.control(self.transport.request_repair(self.base,
+                first.original.raw, deadline=time.monotonic()+8))
+        answer = self.fixture.solve(first, challenge)
+        response = wire.parse_new_wire(self.send(answer.raw), self.fixture.local,
+            wire.RepairBudget(self.fixture.local))
+        self.fixture.authenticate_response(response, first, challenge, answer)
+
+    def test_complete_request_response_still_has_an_absolute_deadline(self):
+        finished = threading.Event()
+        def stalled(raw):
+            try:
+                time.sleep(.5)
+                return b"{}", False
+            finally:
+                finished.set()
+        with patch("memory_vault_open_node.REPAIR_RESPONSE_SECONDS", .15), \
+                patch.object(self.participant, "handle_repair", side_effect=stalled):
+            raw = self.fixture.make_probe().original.raw
+            started = time.monotonic()
+            with self.assertRaisesRegex(MemoryError, "open_network_unavailable"):
+                self.transport.request_repair(self.base, raw, deadline=started+2)
+            self.assertLess(time.monotonic()-started, 1.5)
+            self.assertTrue(finished.wait(2))
+
+    def test_incomplete_repair_headers_and_body_keep_the_input_deadline(self):
+        for headers_done in (False, True):
+            with self.subTest(headers_done=headers_done), \
+                    patch("memory_vault_open_node.HTTP_REQUEST_SECONDS", .2), \
+                    patch.object(self.participant, "handle_repair") as handle:
+                with socket.create_connection(self.server.server_address, timeout=2) as connection:
+                    prefix = ("POST " + REPAIR_PATH + " HTTP/1.0\r\nContent-Type: application/json\r\n"
+                        "Content-Length: 1000\r\n").encode()
+                    connection.sendall(prefix + (b"\r\n" if headers_done else b"X-slow: "))
+                    started = time.monotonic()
+                    for _ in range(20):
+                        time.sleep(.02)
+                        try:
+                            connection.sendall(b"x")
+                        except OSError:
+                            break
+                    try:
+                        self.assertEqual(connection.recv(1), b"")
+                    except ConnectionResetError:
+                        pass
+                    self.assertLess(time.monotonic()-started, 1)
+                handle.assert_not_called()
 
     def test_wrong_key_answer_and_premature_child_never_obtain_proof(self):
         first = self.fixture.make_probe()

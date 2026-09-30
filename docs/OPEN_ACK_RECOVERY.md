@@ -659,3 +659,227 @@ same carrier while its original use/handle remains valid. It does not probe for
 an empty slot again, generate new consent, or clear the source's budget. After
 that window expires it reports that reconciliation is required; A can use the
 independent occupied recovery path instead of assuming the upload failed.
+
+## Mailbox replica capacity reservation (development after alpha.0.26)
+
+The maintainer can now request a real destination reservation with
+`copy-reserve-root`, `copy-reserve-feed`, or `copy-reserve-message` before upload.
+The destination operator must enable `--enable-remote-mailbox-copy` alongside
+repair and provider services. The client verifies the destination keys and
+storage epoch before sending the consented opaque intent.
+
+```sh
+python -B memory_vault_open_repair_admin.py copy-reserve-message \
+  --network-config /absolute/private/maintainer/open.json \
+  --request /absolute/private/message-reservation.json \
+  --output /absolute/private/message-reservation-result.json --repair-profile mailbox
+```
+
+The request schema is `memory-vault-open-mailbox-<kind>-copy-reservation-request/v1`,
+where `<kind>` is `root`, `feed`, or `message`. All three require `node`, `root_key`,
+`owner`, `source`, `source_storage_epoch`, `manifest`, `custody`, `reservation`,
+`intent`, `originals`, and `current_statuses`. Feed and message requests also
+require `slot_key`, `sender`, and `sender_reservation`; message requests additionally
+require the exact `envelope_ref`. Entries use the `{raw_base64url, ref}` format
+below. `originals` contains the original source history packs.
+
+Owner and sender reservation consents must already bind the exact intent, original
+custody and selected destination. Authenticated revocations remain effective after
+restart, including when another input fails. A successful result has state
+`capacity_reserved_and_assigned` and includes the real `allocation`, destination
+`offer`, and maintainer `assignment` entries for the corresponding upload bundle.
+Assignments authorize only COPY, READ and RETAIN. Independent disclosures and
+replica-return consents remain separate steps; reservation itself copies no
+messages or memories. Repeating the exact request reuses the existing reservation
+within its original finite window. Output files are private and never overwritten.
+
+## Mailbox directory replica commands (development after alpha.0.25)
+
+The Python client can upload an explicitly selected mailbox directory replica,
+install its independent return consents, and recover the original directory
+after the source goes offline. These commands use existing identities and
+protected transport storage. They do not open the content Vault. A directory
+contains catalog and slot references; it does not contain a copied message feed
+or authorize reading message ciphertexts.
+
+The destination must already have the exact mailbox copy reservation. Remote
+mailbox reservations require the separate `--enable-remote-mailbox-copy` node
+option alongside enabled repair/provider services. An ACK copy reservation or
+directory lease cannot substitute for that reservation. The upload bundle must
+contain the real destination offer, maintainer assignment, and independently
+signed owner/source disclosures; this command does not create those permissions.
+
+```sh
+python -B memory_vault_open_repair_admin.py copy-upload-root \
+  --network-config /absolute/private/maintainer/open.json \
+  --request /absolute/private/root-copy.json \
+  --output /absolute/private/root-copy-result.json --repair-profile receipt-index
+
+python -B memory_vault_open_repair_admin.py configure-replica-root \
+  --node-config /absolute/private/replica/node.json \
+  --request /absolute/private/root-return.json \
+  --output /absolute/private/root-return-result.json
+
+python -B memory_vault_open_repair_admin.py recover-replica-root \
+  --network-config /absolute/private/recipient/open.json \
+  --request /absolute/private/root-recovery.json \
+  --output /absolute/private/root-originals.json --repair-profile receipt-index
+```
+
+Each original entry is `{ "raw_base64url": "...", "ref": RawRef }`. Requests are
+private JSON files. Outputs are new private files, never overwritten. The
+explicit client profile is an acceptance ceiling and cannot enlarge signed
+source limits, resource budgets, or permission windows.
+
+| Command | Request schema and required fields |
+| --- | --- |
+| `copy-upload-root` | `memory-vault-open-mailbox-root-copy-request/v1`: `node`, `root_key`, `owner`, `source`, `source_storage_epoch`, `target`, `target_storage_epoch`, `manifest`, `custody`, `allocation`, `offer`, `assignment`, `reservation`, `owner_disclosure`, `source_disclosure`, `originals` (source history packs), `current_statuses` |
+| `configure-replica-root` | `memory-vault-open-mailbox-root-replica-read-config/v1`: `resource_id`, `context`, `consents` (`owner`, `source`, `maintainer`), `current_statuses`. Context contains `expected_root`, `expected_owner`, `expected_source`, `source_storage_epoch`, `expected_maintainer`; each consent is an independently signed `mailbox.replica_return_consent` original. |
+| `recover-replica-root` | `memory-vault-open-mailbox-root-replica-recovery-request/v1`: `node`, `root_key`, `target`, `source`, `source_storage_epoch`, `maintainer`, original owner `root`, `read`, `bootstrap`, `known_statuses`, `archive_statuses` |
+
+Upload verifies the destination's signing and encryption key possession before
+disclosing originals. Its durable journal replays exact requests after a lost
+reply and restart, within the original finite window. The destination commits
+the whole authenticated directory graph and actual reserved storage before
+issuing custody. Recovery independently verifies that graph, original owner
+authority, current READ permissions and all three return consents. Revocations
+and status revision floors remain in the recipient's transport database across
+failed recovery and restart. `mailbox_root_replica_recovered` means the exact
+directory originals were recovered; it is not a saved-message receipt.
+
+## Message index replica commands (development after alpha.0.25)
+
+`copy-upload-feed`, `configure-replica-feed`, and `recover-replica-feed` provide
+the same explicit destination workflow for one complete nonempty feed prefix.
+Recovery verifies the original admission history and decrypts its sealed index
+for the existing recipient. It works after the original node goes offline and
+the replica restarts. The original message ciphertexts have separate resources
+and permissions; these commands do not copy or recover their bodies.
+
+Use `--repair-profile mailbox` for these client commands and for new nodes that
+accept complete feed proofs. This explicit ceiling allows 128 proof items,
+4 MiB of proof bytes, 4,096 signature checks and 128 requests. Existing signed
+grants still impose their own smaller limits. In particular, a previously
+signed 64-item bootstrap grant cannot serve a larger closure merely because
+the client or node selects this profile. Fund the complete original bootstrap
+and resource budgets when establishing the mailbox.
+
+The exact private bundle schemas are:
+
+| Command | Request fields |
+| --- | --- |
+| `copy-upload-feed` | `memory-vault-open-mailbox-feed-copy-request/v1`; the root-copy fields above plus `slot_key`, `sender`, `sender_reservation`, `sender_disclosure`. The manifest/custody are the original feed's, and `originals` contains its complete feed and member history packs. |
+| `configure-replica-feed` | `memory-vault-open-mailbox-feed-replica-read-config/v1`; `resource_id`, `context`, `consents`, `current_statuses`. Context uses `expected_slot` and `expected_sender` instead of `expected_root`, alongside owner/source/epoch/maintainer fields. Consents contain independently signed `owner`, `source`, `maintainer`, and `sender` entries. |
+| `recover-replica-feed` | `memory-vault-open-mailbox-feed-replica-recovery-request/v1`; `node`, `root_key`, `slot_key`, `sender`, `target`, `source`, `source_storage_epoch`, `maintainer`, `slot_entries` (original `slot`, `read`, `maintenance`, `bootstrap` entries), `known_statuses`, `archive_statuses`. |
+
+B's selected-slot maintenance root delegates the exact existing feed scope to
+P with COPY/READ/RETAIN only. Independent B and A
+`mailbox.feed_copy_reservation_consent` originals bind the exact reservation
+intent before disclosure. B, original source S and A each sign
+`mailbox.feed_copy_disclosure` over their complete exact original/ref inventory
+and permitted status scopes after the real offer and assignment exist. Every
+original message consent in the prefix must still permit COPY. Directory
+authority cannot replace any of these selected-slot or sender permissions.
+
+The upload profile is `mailbox_copy_feed`; completion returns the compact
+`mailbox.feed_copy_committed` carrier with `manifest_ref` and the signed custody
+original. The sender reconstructs the entire canonical manifest from its
+verified upload originals, including every dependency edge, and independently
+verifies the custody signature and exact manifest hash. This keeps completion
+within the unchanged control-message limit. A lost completion response replays
+the exact committed event after both sides restart.
+
+Reading is separate: the four `mailbox.feed_replica_return_consent` originals
+permit returning this exact graph to B. Current selected-slot and A READ
+authority, M's assignment, P's actual retained resource and its status must all
+remain valid. The explicit `replica_feed` proof profile preserves the original
+source identity and epoch even though the serving node is P. Authenticated
+revocations survive denial and restart. The private output contains the exact
+originals and decrypted member references; it neither imports memories nor
+claims a saved-message receipt. Automatic target selection and partial-range
+replication remain separate work.
+
+## Receive messages and shared memories from a replica (development after alpha.0.25)
+
+The Python commands can copy one exact encrypted message and receive it after
+the original node stops. The complete original feed prefix and admission graph
+travel with that message; the recipient keeps its existing keys and trust rules.
+The destination retains ciphertext in separately reserved live storage and
+charges its proof metadata and upload journal separately. A feed reservation
+cannot pay for or authorize a message copy.
+
+```sh
+python -B memory_vault_open_repair_admin.py copy-upload-message \
+  --network-config /absolute/private/maintainer/open.json \
+  --request /absolute/private/message-copy.json \
+  --output /absolute/private/message-copy-result.json --repair-profile mailbox --timeout 60
+
+python -B memory_vault_open_repair_admin.py configure-replica-message \
+  --node-config /absolute/private/replica/node.json \
+  --request /absolute/private/message-return.json \
+  --output /absolute/private/message-return-result.json
+
+python -B memory_vault_open_repair_admin.py receive-replica-message \
+  --network-config /absolute/private/recipient/open.json \
+  --request /absolute/private/message-recovery.json \
+  --output /absolute/private/message-received.json --repair-profile mailbox --timeout 60
+```
+
+| Command | Private request |
+| --- | --- |
+| `copy-upload-message` | `memory-vault-open-mailbox-message-copy-request/v1`; the feed-copy fields plus `envelope`, an exact `{raw_base64url,ref}` entry. The separate allocation, offer, assignment, reservations and disclosures must all bind this message and its original `message.custody`. |
+| `configure-replica-message` | `memory-vault-open-mailbox-message-replica-read-config/v1`; the feed-return fields, with `context.expected_envelope_ref` and four independent message return consents. |
+| `receive-replica-message` | `memory-vault-open-mailbox-message-replica-recovery-request/v1`; the feed-recovery fields plus `envelope_ref`, matching the selected original message. |
+
+B and A sign `mailbox.message_copy_reservation_consent`; B, S and A sign
+`mailbox.message_copy_disclosure`. These bind the selected message, complete
+original graph, original message custody, independent resource and current
+status scopes. COPY, READ and RETAIN remain distinct. The four B/S/M/A
+`mailbox.message_replica_return_consent` originals independently authorize
+return to B. The proof profile is `replica_message`; it carries metadata, while
+protected body requests retrieve the exact ciphertext under the same finite
+bootstrap handle and current permissions.
+
+Successful reception verifies original signatures and custody, decrypts the
+message, and uses the normal durable inbox. A shared-memory payload is imported
+only under the recipient's existing import policy. Staged reception resumes
+after restart without another network read; repeated processing does not import
+the same memory twice. The result reports `mailbox_message_replica_received`,
+the actual saved result, and a recipient-signed receipt. That receipt is retained
+for the existing independent return workflow; this command does not claim it
+has reached the sender. A failed permission check retains authenticated status
+observations and cannot import a memory.
+
+Upload retries replay the same persisted requests and completion after either
+side restarts. The receipt is issued only after exact ciphertext and all
+required originals commit atomically. Existing original grants still bound the
+entire recovery; neither selecting the mailbox profile nor restarting renews
+them. Automatic destination selection, consent exchange and replacement remain
+separate work. Native TypeScript supports the proof/status wire profiles, but
+these mailbox copy and receive commands currently require Python.
+
+The existing Python Agent also accepts this recovery through `connect`:
+
+```python
+agent.handle({"op": "connect", "invitation": {
+    "schema_version": "memory-vault-open-mailbox-connect/v1",
+    "action": "receive_replica", "base_url": selected_replica_url,
+    "repair_profile": "mailbox", "request": recovery_request,
+}})
+```
+
+`recovery_request` contains `expected_slot`, `expected_sender`, `expected_target`
+(the replica), `expected_source`, `source_storage_epoch`, `expected_maintainer`,
+`expected_envelope_ref`, `target_node_entry`, `slot_entries`, `known_statuses`
+and `archive_statuses`. Entries here use `{raw,ref}`, where `raw` is the exact
+original UTF-8 string; `slot_entries` contains `slot`, `read`, `maintenance` and
+`bootstrap`. These are the same retained grants and selections as the command,
+without a private output file. The Agent returns the ordinary inbox result and
+retains authenticated status observations in its existing protected database.
+Repeated recovery preserves the saved receipt and does not import memory twice.
+
+When the original message carries independently prepared ACK authority, the
+recipient can then call the existing ACK `return_mailbox_receipt` action. The
+sender uses `recover_receipt` to update its original send record after the
+message source has stopped. Both actions use the retained original grants;
+receiving from a replica does not create or renew ACK permission.

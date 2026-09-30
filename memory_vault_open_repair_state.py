@@ -34,6 +34,9 @@ RECEIPT_WORKFLOW_LIMITS = dict(DEFAULT_LIMITS, max_signature_checks=2048, max_pr
 # Every request still intersects this with the original signed resource/grant.
 INDEX_WORKFLOW_LIMITS = dict(RECEIPT_WORKFLOW_LIMITS, max_signature_checks=4096,
     max_proof_bytes=4194304, max_requests=128, max_replay_records=256)
+# Explicit whole-prefix metadata closure. Selecting this ceiling never rewrites
+# existing signed grants; those must have funded their own complete proof too.
+MAILBOX_WORKFLOW_LIMITS = dict(INDEX_WORKFLOW_LIMITS, max_proof_items=128)
 DEFAULT_POLICY = wire.RepairPolicy(524288, 16000000, 400000, 64, 262144,
                                   16000000, 2000, 2000, 16000000, 64)
 ROW_CHARGE = 4096

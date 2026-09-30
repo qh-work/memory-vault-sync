@@ -1,5 +1,6 @@
 """Approved delivery and denied authority over disposable, real loopback HTTP."""
 import asyncio
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import sqlite3
@@ -16,6 +17,29 @@ from memory_vault_storage import atomic_write
 from memory_vault_trust import TrustStore
 from tests.test_open_agent import configured_agent
 from tests.test_open_node import HTTPNodes
+
+
+@contextmanager
+def repair_failure_diagnostics():
+    """Keep the actual socket failure visible in synthetic Agent assertions."""
+    import sys
+    import time
+    import traceback
+    from unittest.mock import patch
+    from memory_vault import MemoryError
+    from memory_vault_open_transport import OpenHTTPTransport
+    exchange=OpenHTTPTransport._exchange
+    def observed(self,*args,**kwargs):
+        started=time.monotonic()
+        try:return exchange(self,*args,**kwargs)
+        except MemoryError as error:
+            if error.code=='open_network_unavailable':
+                cause=error.__context__
+                print('synthetic_repair_transport_failure',dict(seconds=time.monotonic()-started,
+                    cause=type(cause).__name__,detail=str(cause)[:160],
+                    frames=[(f.name,f.lineno) for f in traceback.extract_tb(cause.__traceback__)] if cause else []),file=sys.stderr)
+            raise
+    with patch.object(OpenHTTPTransport,'_exchange',new=observed):yield
 
 
 class DeliveryHTTPTests(unittest.TestCase):
@@ -459,6 +483,10 @@ class MailboxStagingHTTPTests(unittest.TestCase):
         self.assertEqual(payload['historical_manifest_ref'],feed_history['manifest']['ref'])
         self.assertEqual(payload['covered_interval'],dict(start=0,end=1))
         self.assertEqual(db.execute('SELECT count(*) FROM open_mailbox_feed_custody').fetchone()[0],1)
+        inspect_snapshot = getattr(self, 'inspect_committed_mailbox', None)
+        if inspect_snapshot is not None:
+            inspect_snapshot(staging, slot, admitted['head']['ref'])
+            return
         from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_source_event
         budget=RepairBudget(DEFAULT_POLICY);resolver=wire.LocalRawResolver(DEFAULT_POLICY,budget)
         for value in (saved['pack'],feed_history['pack']):resolver.put('meta',value['ref']['key'],value['raw'])

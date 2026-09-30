@@ -49,12 +49,16 @@ env:
 
 jobs:
   light:
-    name: Open protocol and real local HTTP regression
+    name: Open protocol and real local HTTP regression (${{ matrix.partition }})
     if: github.event_name != 'pull_request' || github.event.action != 'labeled'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [0, 1]
     concurrency:
-      group: open-network-light-${{ github.event.pull_request.number || github.ref }}
+      group: open-network-light-${{ github.event.pull_request.number || github.ref }}-${{ matrix.partition }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,11 +66,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Record exact source and incomplete status before setup
-        run: python3 scripts/run_open_network_ci.py --mode light --phase initialize --report-directory reports/open-light
+        run: python3 scripts/run_open_network_ci.py --mode light --phase initialize --partition-count 2 --partition-index ${{ matrix.partition }} --report-directory reports/open-light
       - name: Preserve initial evidence if setup or runner later fails
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: open-light-initial-${{ github.run_id }}-${{ github.run_attempt }}
+          name: open-light-initial-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.partition }}
           path: |
             reports/open-light/settings.json
             reports/open-light/status.json
@@ -84,15 +88,15 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: -r requirements-network-server-lock.txt
           npm ci --prefix clients/typescript/network --ignore-scripts --no-audit --no-fund --cache "${RUNNER_TEMP}/open-npm-cache"
       - name: Run open tests including mixed native HTTP, persistent state and private Agent regressions
-        run: python scripts/run_open_network_ci.py --mode light --phase run --report-directory reports/open-light
+        run: python scripts/run_open_network_ci.py --mode light --phase run --partition-count 2 --partition-index ${{ matrix.partition }} --report-directory reports/open-light
       - name: Refuse empty, skipped or interrupted evidence
         if: always()
-        run: python3 scripts/run_open_network_ci.py --mode light --phase finalize --report-directory reports/open-light
+        run: python3 scripts/run_open_network_ci.py --mode light --phase finalize --partition-count 2 --partition-index ${{ matrix.partition }} --report-directory reports/open-light
       - name: Preserve only bounded public reports (never fixtures, keys or databases)
         if: always()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: open-light-final-${{ github.run_id }}-${{ github.run_attempt }}
+          name: open-light-final-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.partition }}
           path: |
             reports/open-light/settings.json
             reports/open-light/status.json
@@ -103,12 +107,16 @@ jobs:
           retention-days: 1
 
   repair-python310:
-    name: ACK recovery on supported Python 3.10
+    name: Receipt and mailbox recovery on supported Python 3.10 (${{ matrix.suite }})
     if: github.event_name != 'pull_request' || github.event.action != 'labeled'
     runs-on: ubuntu-24.04
-    # The original 36 cases already take almost four minutes on this runner;
-    # the added durable replica and Agent cases need their own bounded time.
+    # Proof/state cases take about five minutes; full Agent receipt and mailbox
+    # round trips get a separate runner. Both retain the same finite deadline.
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [agents, proof-and-state]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -120,8 +128,12 @@ jobs:
       - name: Install the locked client dependency profile
         run: |
           python -m pip install --require-hashes --only-binary=:all: -r requirements-network-lock.txt
-      - name: Exercise original proof and real HTTP recovery command
-        run: python -B -m unittest -v tests.test_open_repair_proof tests.test_open_repair_admin tests.test_open_repair_copy_occupied.OccupiedCopyStateTests tests.test_open_repair_copy_occupied.OccupiedReplicaAgentTests
+      - name: Exercise Agent receipt and mailbox recovery
+        if: matrix.suite == 'agents'
+        run: python -B -m unittest -v tests.test_open_repair_copy_occupied.OccupiedReplicaAgentTests tests.test_open_repair_mailbox_message_copy.MailboxMessageCopyTests.test_agent_receives_replica_memory_and_retains_statuses_after_source_loss tests.test_open_repair_mailbox_message_copy.MailboxMessageCopyTests.test_replica_memory_returns_independent_receipt_to_original_sender
+      - name: Exercise proof, HTTP deadlines and durable state
+        if: matrix.suite == 'proof-and-state'
+        run: python -B -m unittest -v tests.test_open_transport tests.test_open_repair_http tests.test_open_repair_proof tests.test_open_repair_admin tests.test_open_repair_copy_occupied.OccupiedCopyStateTests
 
   scale:
     name: Synthetic routing seed ${{ matrix.seed }}

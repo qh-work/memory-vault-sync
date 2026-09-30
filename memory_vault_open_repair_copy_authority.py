@@ -41,15 +41,7 @@ def verify_occupied_replica_event(*args,expected_receipt_writer,expected_message
         expected_envelope_ref=expected_envelope_ref))
 
 
-def _verify_replica_event(manifest_entry,resolver,custody_entry,*,expected_ack_slot,
-        expected_owner,expected_source,source_storage_epoch,expected_maintainer,expected_target,
-        target_storage_epoch,limit_policy,policy,budget,source_state,bound):
-    """Reconstruct P's historical copy event from exact originals on any client.
-
-    No database, local identity, network or current serving authority is assumed.
-    P's signature never substitutes for the original R event or A-to-M-to-P
-    authority. A caller must separately establish live READ and disclosure rights.
-    """
+def _replica_container(manifest_entry,resolver,custody_entry,*,expected_target,target_storage_epoch,policy,budget,deferred_object=None):
     wire._context(policy,budget)
     if resolver.policy is not policy or resolver.budget is not budget:
         wire._fail('repair_invalid_context')
@@ -82,8 +74,26 @@ def _verify_replica_event(manifest_entry,resolver,custody_entry,*,expected_ack_s
         reference=wire.raw_ref(row['ref']);key=(row['role'],*history._ref_tuple(reference))
         if previous is not None and key<=previous:wire._fail('repair_copy_commit_mismatch')
         previous=key
+        if deferred_object is not None and row['role']=='message.envelope':
+            if reference!=wire.raw_ref(deferred_object) or reference.namespace!='object':wire._fail('repair_copy_commit_mismatch')
+            continue
         item=resolver.resolve(reference)
         entries.setdefault(row['role'],[]).append(dict(raw=item.raw,ref=item.ref.as_dict()))
+    return target,custody,value,entries
+
+
+def _verify_replica_event(manifest_entry,resolver,custody_entry,*,expected_ack_slot,
+        expected_owner,expected_source,source_storage_epoch,expected_maintainer,expected_target,
+        target_storage_epoch,limit_policy,policy,budget,source_state,bound):
+    """Reconstruct P's historical copy event from exact originals on any client.
+
+    No database, local identity, network or current serving authority is assumed.
+    P's signature never substitutes for the original R event or A-to-M-to-P
+    authority. A caller must separately establish live READ and disclosure rights.
+    """
+    target,custody,value,entries=_replica_container(manifest_entry,resolver,custody_entry,
+        expected_target=expected_target,target_storage_epoch=target_storage_epoch,policy=policy,budget=budget)
+    p=custody.payload;stored_at=p['stored_at']
     def one(role):
         values=entries.get(role,())
         if len(values)!=1:wire._fail('repair_copy_commit_mismatch')
@@ -100,20 +110,42 @@ def _verify_replica_event(manifest_entry,resolver,custody_entry,*,expected_ack_s
         recipient_reservation_entry=one('copy.recipient_reservation_consent') if source_state=='occupied' else None,
         recipient_disclosure_entry=one('copy.recipient_disclosure') if source_state=='occupied' else None)
     if plan.denial_code:wire._fail(plan.denial_code)
+    _check_replica_closure(p,value,plan,source_custody=plan.source.custody,
+        source_histories=copy_source.source_histories(plan.source,one(source_history)),
+        additional=(('copy.recipient_disclosure',plan.disclosures[2]),) if copy_source.occupied_source(plan.source) else ())
+    return dict(state='historical_replica',custody=custody,source=plan.source,authority=plan,
+        entries=MappingProxyType({role:tuple(values) for role,values in entries.items()}))
+
+
+def _check_replica_closure(p,value,plan,*,source_custody,source_histories,additional=(),extra_edges=(),extra_references=()):
     if (p['assignment_ref']!=plan.assignment.ref.as_dict()
-            or p['original_custody_ref']!=plan.source.custody.ref.as_dict()
+            or p['original_custody_ref']!=source_custody.ref.as_dict()
             or p['resource_offer_ref']!=plan.offer.ref.as_dict() or p['resource']!=plan.offer.payload['resource']
             or p['root_key']!=plan.assignment.payload['root_key'] or p['scope']!=plan.assignment.payload['scope']
             or p['read_until']!=plan.read_until or p['retain_until']!=plan.retain_until):
         wire._fail('repair_copy_commit_mismatch')
+    expected = _replica_manifest_value(plan, source_histories=source_histories, additional=additional, extra_edges=extra_edges,
+        extra_references=extra_references)
+    if (value != expected
+            or len({history._ref_tuple(item['ref']) for item in value['original_roles']})>plan.offer.payload['budget']['max_items']):
+        wire._fail('repair_copy_commit_mismatch')
+
+
+def _replica_manifest_value(plan, *, source_histories, additional=(), extra_edges=(), extra_references=()):
+    """Canonical unsigned copy graph derived only from complete original inputs.
+
+    This grants no authority. The custody verifier still checks its full hash,
+    actual target signature, original source graph and all operation premises.
+    """
     roles={(item.role,*history._ref_tuple(item.original.ref)) for item in plan.originals}
     for role,item in (('copy.allocation',plan.allocation),('copy.offer',plan.offer),('copy.assignment',plan.assignment),
             ('copy.owner_disclosure',plan.disclosures[0]),('copy.source_disclosure',plan.disclosures[1])):
         roles.add((role,*history._ref_tuple(item.ref)))
-    if copy_source.occupied_source(plan.source):roles.add(('copy.recipient_disclosure',*history._ref_tuple(plan.disclosures[2].ref)))
+    for role,item in additional:roles.add((role,*history._ref_tuple(item.ref)))
+    for role,reference in extra_references:roles.add((role,*history._ref_tuple(reference)))
     roles.update(('copy.current_status',*history._ref_tuple(item.ref)) for item in plan.statuses)
-    edges=[]
-    for role,entry,source_manifest in copy_source.source_histories(plan.source,one(source_history)):
+    edges=list(extra_edges)
+    for role,entry,source_manifest in source_histories:
         roles.add((role,*history._ref_tuple(entry['ref'])))
         for item in source_manifest.manifest.value['roles']:
             roles.add(('history.raw_pack',*history._ref_tuple(item['pack_ref'])))
@@ -121,12 +153,10 @@ def _verify_replica_event(manifest_entry,resolver,custody_entry,*,expected_ack_s
                 edges.append(dict(parent_ref=entry['ref'],relation='manifest-member',child_ref=child))
     edge_key=lambda e:(*history._ref_tuple(e['parent_ref']),e['relation'],*history._ref_tuple(e['child_ref']))
     edges=sorted({edge_key(e):e for e in edges}.values(),key=edge_key)
-    if (roles!={(item['role'],*history._ref_tuple(item['ref'])) for item in value['original_roles']}
-            or value['edges']!=edges
-            or len({history._ref_tuple(item['ref']) for item in value['original_roles']})>plan.offer.payload['budget']['max_items']):
-        wire._fail('repair_copy_commit_mismatch')
-    return dict(state='historical_replica',custody=custody,source=plan.source,authority=plan,
-        entries=MappingProxyType({role:tuple(values) for role,values in entries.items()}))
+    originals=[dict(role=role,ref=dict(namespace=namespace,key=key,raw_sha256=digest,size=size))
+        for role,namespace,key,digest,size in sorted(roles)]
+    return dict(schema_version=resource.SCHEMA,kind='replica.manifest',root_key=plan.assignment.payload['root_key'],
+        scope=plan.assignment.payload['scope'],original_roles=originals,physical_objects=originals,edges=edges)
 
 
 def source_inventory(source, reservation, policy, budget, recipient_reservation=None):
@@ -347,7 +377,7 @@ def copy_return_permissions(plan, issuer, policy, budget):
     root=plan.assignment.payload['root_key']
     for row in rows.values():
         item=row.original;kind=wire.parse_new_wire(item.raw,policy,budget).value['payload']['kind']
-        if kind in ('ack.copy_reservation_consent','ack.copy_recipient_reservation_consent','ack.copy_disclosure'):
+        if kind in ('ack.copy_reservation_consent','ack.copy_recipient_reservation_consent','ack.copy_disclosure','mailbox.copy_reservation_consent','mailbox.copy_disclosure'):
             scopes.append(dict(scope_kind='authority',scope_id=index._authority(root,item,policy,budget)))
         elif kind=='maintenance.assignment':
             scopes.append(dict(scope_kind='assignment',scope_id=status.status_scope(root,'assignment',

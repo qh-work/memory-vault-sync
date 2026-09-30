@@ -197,7 +197,8 @@ class RemoteCopyAllocationTests(unittest.TestCase):
         for attempt in range(2):
             participant=OpenParticipant(state.identity,directory,seeds=[],descriptor=descriptor,
                 encryption_identity=state.encryption_identity,allow_loopback=True,
-                repair_policy=dict(enabled=True,remote_copy=self.policy,limit_policy=h.f['expected']['limit_policy']))
+                repair_policy=dict(enabled=True,limit_policy=h.f['expected']['limit_policy'],
+                    **{getattr(self,'allocation_policy_name','remote_copy'):self.policy}))
             if attempt:
                 with patch('socket.getfqdn',return_value='localhost'):server=OpenHTTPServer(address,participant)
             else:server.participant=participant

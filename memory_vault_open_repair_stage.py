@@ -59,7 +59,14 @@ OCCUPIED_COPY_ROLES=frozenset(('history.ack_unbound','history.ack_empty',
     'copy.offer','copy.assignment','copy.reservation_consent','copy.owner_disclosure',
     'copy.source_disclosure','copy.recipient_reservation_consent','copy.recipient_disclosure',
     'copy.current_status'))
-CONSUMERS = frozenset(("index_admit", "ack_copy_unbound", "ack_copy_empty", "ack_copy_occupied"))
+ROOT_COPY_SINGLE_ROLES = frozenset(('history.mailbox_root', 'root.custody', 'copy.allocation',
+    'copy.offer', 'copy.assignment', 'copy.reservation_consent', 'copy.owner_disclosure', 'copy.source_disclosure'))
+ROOT_COPY_ROLES = ROOT_COPY_SINGLE_ROLES | {'history.raw_pack', 'copy.current_status'}
+FEED_COPY_SINGLE_ROLES = frozenset(('history.mailbox_feed', 'feed.custody', 'copy.allocation', 'copy.offer',
+    'copy.assignment', 'copy.reservation_consent', 'copy.sender_reservation_consent',
+    'copy.owner_disclosure', 'copy.source_disclosure', 'copy.sender_disclosure'))
+FEED_COPY_ROLES = FEED_COPY_SINGLE_ROLES | {'history.raw_pack', 'copy.current_status'}
+CONSUMERS = frozenset(("index_admit", "ack_copy_unbound", "ack_copy_empty", "ack_copy_occupied", "mailbox_copy_root", "mailbox_copy_feed", "mailbox_copy_message"))
 
 
 def _fail(code="repair_invalid_stage"):
@@ -149,7 +156,13 @@ def _manifest(value, policy, budget, expected_consumer=None):
     copying=value["consumer"] in ("ack_copy_unbound","ack_copy_empty","ack_copy_occupied")
     copying_empty=value["consumer"]=="ack_copy_empty"
     copying_occupied=value["consumer"]=="ack_copy_occupied"
-    if copying:
+    copying_root=value["consumer"]=="mailbox_copy_root"
+    copying_feed=value["consumer"]=="mailbox_copy_feed"
+    copying_message=value["consumer"]=="mailbox_copy_message"
+    if copying_root or copying_feed or copying_message:
+        from memory_vault_open_repair_mailbox_copy import mailbox_copy_scope
+        mailbox_copy_scope(value['scope'], value['root_key'], 'message_replica' if copying_message else 'feed_replica' if copying_feed else 'root_replica')
+    elif copying:
         from memory_vault_open_repair_copy_resources import ack_copy_scope
         ack_copy_scope(value["scope"],value["root_key"])
         if value["scope"]["kind"]!=value['consumer'].replace('ack_copy_','ack_'):_fail()
@@ -158,13 +171,13 @@ def _manifest(value, policy, budget, expected_consumer=None):
     children = value["children"]
     if type(children) is not wire._DraftList or not 1 <= len(children) <= min(MAX_STAGE_ITEMS, policy.max_entries):
         _fail("repair_stage_capacity")
-    previous, locators, counts, total = None, {}, {}, 0
+    previous, locators, counts, total, body_bytes = None, {}, {}, 0, 0
     for index, child in enumerate(children):
         _fields(child, {"index", "role", "ref"})
         if wire.u53(child["index"]) != index:
             _fail()
         role = child["role"]
-        allowed_roles=OCCUPIED_COPY_ROLES if copying_occupied else EMPTY_COPY_ROLES if copying_empty else COPY_STAGE_ROLES if copying else STAGE_ROLES
+        allowed_roles=FEED_COPY_ROLES|{'message.envelope'} if copying_message else FEED_COPY_ROLES if copying_feed else ROOT_COPY_ROLES if copying_root else OCCUPIED_COPY_ROLES if copying_occupied else EMPTY_COPY_ROLES if copying_empty else COPY_STAGE_ROLES if copying else STAGE_ROLES
         if type(role) is not str or role not in allowed_roles:_fail()
         counts[role] = counts.get(role, 0) + 1
         ref = wire.raw_ref(child["ref"])
@@ -172,8 +185,13 @@ def _manifest(value, policy, budget, expected_consumer=None):
         if previous is not None and pair <= previous:
             _fail()
         previous = pair
-        if ref.namespace != "meta":_fail()
-        if ref.size > policy.max_document_bytes:
+        body=copying_message and role=='message.envelope'
+        if ref.namespace != ('object' if body else 'meta'):_fail()
+        if body:
+            from memory_vault_open_delivery import MAX_ENVELOPE_BYTES
+            if ref.as_dict()!=value['scope']['envelope_ref'] or not 0<ref.size<=MAX_ENVELOPE_BYTES:_fail()
+            body_bytes+=ref.size
+        if not body and ref.size > policy.max_document_bytes:
             _fail("repair_stage_capacity")
         location = (ref.namespace, ref.key)
         if location in locators and locators[location] != ref:
@@ -182,9 +200,14 @@ def _manifest(value, policy, budget, expected_consumer=None):
             _fail()
         locators[location] = ref
         total += ref.size
-        if total > min(MAX_STAGE_BYTES, policy.max_retained_bytes, wire.U53_MAX):
+        if total-body_bytes > MAX_STAGE_BYTES or total > min(policy.max_retained_bytes, wire.U53_MAX):
             _fail("repair_stage_capacity")
-    if copying_occupied:
+    if copying_root or copying_feed or copying_message:
+        if (any(counts.get(role)!=1 for role in (FEED_COPY_SINGLE_ROLES if copying_feed or copying_message else ROOT_COPY_SINGLE_ROLES))
+                or copying_message and counts.get('message.envelope')!=1
+                or not (2 if copying_feed or copying_message else 1)<=counts.get('history.raw_pack',0)<=16
+                or not 1<=counts.get('copy.current_status',0)<=16):_fail()
+    elif copying_occupied:
         single=OCCUPIED_COPY_ROLES-{'copy.current_status','history.raw_pack'}
         if (any(counts.get(role)!=1 for role in single)
                 or not 3<=counts.get('history.raw_pack',0)<=len(ack.ROLES|empty.ROLES|occupied.ROLES)
@@ -408,9 +431,15 @@ def _range(intent, index, offset):
     if index >= len(children):
         _fail("repair_stage_mismatch")
     ref = wire.raw_ref(children[index]["ref"])
-    if offset >= ref.size or offset % STAGE_CHUNK_BYTES:
+    chunk_bytes=stage_chunk_bytes(intent.payload['manifest']['consumer'],children[index]['role'])
+    if offset >= ref.size or offset % chunk_bytes:
         _fail("repair_stage_range")
-    return ref, min(STAGE_CHUNK_BYTES, ref.size - offset)
+    return ref, min(chunk_bytes, ref.size - offset)
+
+
+def stage_chunk_bytes(consumer, role):
+    # Only the closed ciphertext role uses the existing binary blob ceiling.
+    return blob.MAX_BLOB_CHUNK_BYTES if consumer=='mailbox_copy_message' and role=='message.envelope' else STAGE_CHUNK_BYTES
 
 
 def _encode_frame(header, chunk, budget):

@@ -537,7 +537,8 @@ class OccupiedReplicaAgentTests(unittest.TestCase):
             repair_profile='receipt-index',request=request)
         config=ClientConfig.load(self.sender.client_config)
         unchanged={path:path.read_bytes() for path in (config.identity_path,config.trust_path,config.vault_path,self.sender.network_config)}
-        result=self.delivery.call(self.sender,op='connect',invitation=invitation)
+        from tests.test_open_delivery_http import repair_failure_diagnostics
+        with repair_failure_diagnostics():result=self.delivery.call(self.sender,op='connect',invitation=invitation)
         self.assertEqual(result['state'],'validated_saved');self.assertTrue(result['endpoint_validated'])
         self.assertFalse(result['acknowledgement_pending']);self.assertEqual(result['commit_ref'],f.result['commit']['ref'])
         self.assertEqual(result['replica_custody_ref'],copied['custody']['ref'])

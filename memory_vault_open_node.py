@@ -39,6 +39,8 @@ from memory_vault_trust import Identity, _absolute_path, _atomic_write_private, 
 NODE_CONFIG = "memory-vault-open-node-config/v1"
 NODE_PATH = "/open/v1/node"
 RENEW_BEFORE_SECONDS = 300
+HTTP_REQUEST_SECONDS = 3
+REPAIR_RESPONSE_SECONDS = 60
 
 
 class _TransportState(NetworkClient):
@@ -169,7 +171,7 @@ class OpenParticipant:
         if repair_policy is not None and type(repair_policy) is not dict:
             raise MemoryError("open_invalid_repair_policy")
         self.repair_policy = dict(repair_policy or {})
-        if (set(self.repair_policy) - {"enabled", "limit_policy", "capacity_policy", "remote_setup", "remote_copy"}
+        if (set(self.repair_policy) - {"enabled", "limit_policy", "capacity_policy", "remote_setup", "remote_copy", "remote_mailbox_copy"}
                 or type(self.repair_policy.get("enabled", False)) is not bool):
             raise MemoryError("open_invalid_repair_policy")
         if "remote_setup" in self.repair_policy:
@@ -177,11 +179,12 @@ class OpenParticipant:
             self.repair_policy["remote_setup"] = remote_policy(self.repair_policy["remote_setup"])
             if self.repair_policy["remote_setup"]["enabled"] and not self.repair_policy.get("enabled", False):
                 raise MemoryError("open_invalid_repair_policy")
-        if "remote_copy" in self.repair_policy:
-            from memory_vault_open_repair_copy_resources import remote_copy_policy
-            self.repair_policy["remote_copy"] = remote_copy_policy(self.repair_policy["remote_copy"])
-            if self.repair_policy["remote_copy"]["enabled"] and not self.repair_policy.get("enabled", False):
-                raise MemoryError("open_invalid_repair_policy")
+        for family in ("remote_copy", "remote_mailbox_copy"):
+            if family in self.repair_policy:
+                from memory_vault_open_repair_copy_resources import remote_copy_policy
+                self.repair_policy[family] = remote_copy_policy(self.repair_policy[family])
+                if self.repair_policy[family]["enabled"] and not self.repair_policy.get("enabled", False):
+                    raise MemoryError("open_invalid_repair_policy")
         if self.repair_policy.get("limit_policy") is not None:
             from memory_vault_open_repair_bootstrap import _limits
             from memory_vault_open_repair_state import DEFAULT_POLICY
@@ -243,6 +246,9 @@ class OpenParticipant:
                     if self.repair_policy.get("remote_copy", {}).get("enabled", False):
                         from memory_vault_open_repair_copy_resources import RepairRemoteCopyAllocation
                         RepairRemoteCopyAllocation(self._repair_service(db).state,policy=self.repair_policy['remote_copy']).initialize()
+                    if self.repair_policy.get("remote_mailbox_copy", {}).get("enabled", False):
+                        from memory_vault_open_repair_mailbox_copy import MailboxRemoteCopyAllocation
+                        MailboxRemoteCopyAllocation(self._repair_service(db).state,policy=self.repair_policy['remote_mailbox_copy']).initialize()
 
     def _repair_remote_setup_service(self, db):
         from memory_vault_open_repair_remote_setup import RepairRemoteSetupService
@@ -285,6 +291,9 @@ class OpenParticipant:
             if packet_payload.get("consumer") in ("mailbox_root","mailbox_feed"):
                 if packet_payload.get("kind") not in ("bootstrap.probe","bootstrap.answer","bootstrap.proof_child_request","mailbox.body_read"):
                     raise MemoryError("open_invalid_repair_request")
+                from memory_vault_open_repair_mailbox_copy_service import root_replica_service_for_packet
+                replica = root_replica_service_for_packet(state, packet_payload)
+                if replica is not None: return replica
                 from memory_vault_open_repair_mailbox_resources import RepairMailboxResources
                 from memory_vault_open_repair_mailbox_root import MailboxRootActivation
                 from memory_vault_open_repair_mailbox_source import MailboxRootSource, MailboxRecoveryService
@@ -319,6 +328,12 @@ class OpenParticipant:
             from memory_vault_open_repair_copy_resources import RepairRemoteCopyAllocation
             with self.state.db() as db:
                 service=RepairRemoteCopyAllocation(self._repair_service(db).state,policy=self.repair_policy.get('remote_copy'))
+                service.initialize()
+                return service.handle(parsed.raw),False
+        if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "mailbox.copy_allocate":
+            from memory_vault_open_repair_mailbox_copy import MailboxRemoteCopyAllocation
+            with self.state.db() as db:
+                service=MailboxRemoteCopyAllocation(self._repair_service(db).state,policy=self.repair_policy.get('remote_mailbox_copy'))
                 service.initialize()
                 return service.handle(parsed.raw),False
         if type(parsed.value) is repair_wire._DraftDict and parsed.value.get("kind") == "mailbox.source_allocate":
@@ -363,19 +378,19 @@ class OpenParticipant:
             with self.state.db() as db:
                 return self._repair_remote_setup_service(db).handle(parsed.raw), False
         from memory_vault_open_repair_index_service import KINDS as INDEX_KINDS
-        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "mailbox.body_read", "ack.bind_request", "ack.copy_commit", "ack.copy_empty_commit", "ack.copy_occupied_commit") and kind not in INDEX_KINDS:
+        if kind not in ("bootstrap.probe", "bootstrap.answer", "bootstrap.proof_child_request", "mailbox.body_read", "ack.bind_request", "ack.copy_commit", "ack.copy_empty_commit", "ack.copy_occupied_commit", "mailbox.root_copy_commit","mailbox.feed_copy_commit","mailbox.message_copy_commit") and kind not in INDEX_KINDS:
             raise MemoryError("open_invalid_repair_request")
         digest = meter._hash(parsed.raw)
         packet = dict(raw=parsed.raw, ref=dict(namespace="meta", key=digest, raw_sha256=digest, size=len(parsed.raw)))
         with self.state.db() as db:
-            if kind in INDEX_KINDS or kind in ("ack.copy_commit","ack.copy_empty_commit","ack.copy_occupied_commit"):
-                from memory_vault_open_repair_copy_upload import RepairCopyUpload, copy_upload_resource
+            if kind in INDEX_KINDS or kind in ("ack.copy_commit","ack.copy_empty_commit","ack.copy_occupied_commit","mailbox.root_copy_commit","mailbox.feed_copy_commit","mailbox.message_copy_commit"):
+                from memory_vault_open_repair_copy_upload import copy_upload_service, copy_upload_resource
                 rid=copy_upload_resource(db,payload)
                 if rid is not None:
-                    service=RepairCopyUpload(self._repair_service(db).state);service.initialize()
-                    method={'proof.stage_intent':'intent','proof.stage_answer':'answer','proof.stage_close':'close','ack.copy_commit':'commit_request','ack.copy_empty_commit':'commit_request','ack.copy_occupied_commit':'commit_request'}[kind]
+                    service=copy_upload_service(self._repair_service(db).state,rid)
+                    method={'proof.stage_intent':'intent','proof.stage_answer':'answer','proof.stage_close':'close','ack.copy_commit':'commit_request','ack.copy_empty_commit':'commit_request','ack.copy_occupied_commit':'commit_request','mailbox.root_copy_commit':'commit_request','mailbox.feed_copy_commit':'commit_request','mailbox.message_copy_commit':'commit_request'}[kind]
                     return getattr(service,method)(rid,packet)['raw'],False
-                if kind in ("ack.copy_commit","ack.copy_empty_commit","ack.copy_occupied_commit"):raise MemoryError("open_invalid_repair_request")
+                if kind in ("ack.copy_commit","ack.copy_empty_commit","ack.copy_occupied_commit","mailbox.root_copy_commit","mailbox.feed_copy_commit","mailbox.message_copy_commit"):raise MemoryError("open_invalid_repair_request")
                 return self._repair_index_service(db).handle(kind, packet).raw, False
             service = self._repair_service(db, payload)
             if payload.get("consumer") in ("mailbox_root","mailbox_feed"):
@@ -791,10 +806,10 @@ class OpenParticipant:
                 raise MemoryError("open_repair_closed")
             from memory_vault_open_blob import decode_blob_frame, encode_blob_frame
             with self.state.db() as db:
-                from memory_vault_open_repair_copy_upload import RepairCopyUpload, copy_upload_resource
+                from memory_vault_open_repair_copy_upload import copy_upload_service, copy_upload_resource
                 rid=copy_upload_resource(db,payload)
                 if rid is not None:
-                    service=RepairCopyUpload(self._repair_service(db).state);service.initialize()
+                    service=copy_upload_service(self._repair_service(db).state,rid)
                     raw=service.child(rid,encode_blob_frame(request,chunk))
                 else:
                     raw = self._repair_index_service(db).handle_blob(encode_blob_frame(request, chunk))
@@ -871,19 +886,39 @@ class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
 
     def setup(self):
-        self.request.settimeout(3)
+        self.request.settimeout(HTTP_REQUEST_SECONDS)
         super().setup()
         self.rfile = _HeaderBudget(self.rfile)
-        # Limit the whole incoming exchange, including a drip-fed header/body.
-        self._deadline = threading.Timer(3, self._abort)
+        # Bound the complete incoming headers/body, including drip-fed input.
+        self._deadline_lock = threading.Lock()
+        self._deadline_at = time.monotonic() + HTTP_REQUEST_SECONDS
+        self._deadline = threading.Timer(HTTP_REQUEST_SECONDS, self._abort)
         self._deadline.daemon = True
         self._deadline.start()
 
+    def _begin_repair_response(self):
+        # Input is complete. Proof construction may outlast the input timeout,
+        # but this response stays finite; signed access/work limits still apply
+        # inside the service and the client retains its absolute deadline.
+        with self._deadline_lock:
+            if time.monotonic() >= self._deadline_at:
+                raise TimeoutError("open_request_timeout")
+            self._deadline.cancel()
+            self.request.settimeout(REPAIR_RESPONSE_SECONDS)
+            self._deadline_at = time.monotonic() + REPAIR_RESPONSE_SECONDS
+            self._deadline = threading.Timer(REPAIR_RESPONSE_SECONDS, self._abort)
+            self._deadline.daemon = True
+            self._deadline.start()
+
     def _abort(self):
-        try:
-            self.request.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass
+        with self._deadline_lock:
+            # A cancelled input timer may already be waiting on this lock.
+            if time.monotonic() < self._deadline_at:
+                return
+            try:
+                self.request.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
     def finish(self):
         try:
@@ -945,6 +980,7 @@ class _Handler(BaseHTTPRequestHandler):
                 raise MemoryError("open_invalid_http_request")
             is_child = False
             if is_repair:
+                self._begin_repair_response()
                 encoded, is_child = self.server.participant.handle_repair(raw)
             elif is_blob:
                 from memory_vault_open_blob import decode_blob_frame, encode_blob_frame

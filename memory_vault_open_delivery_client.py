@@ -824,6 +824,45 @@ class OpenDeliveryClient:
             feed = recovery_client.recover(base_url, **options)
         return await self._receive_mailbox_feed(recovery_client, feed, recovery_options, limit, _deadline=deadline)
 
+    async def receive_mailbox_replica(self, recovery_client, base_url, **recovery_options):
+        """Recover one independently authorized body into the ordinary inbox."""
+        self._replica_reader(recovery_client)
+        deadline=time.monotonic()+recovery_options.get('timeout',60)
+        recovered=recovery_client.recover(base_url,**recovery_options)
+        remaining=min(30,deadline-time.monotonic())
+        if remaining<=0:raise MemoryError('open_delivery_budget_exhausted',retryable=True)
+        body=recovery_client.read_message(base_url,recovered,timeout=remaining)
+        return self.receive_recovered_mailbox_replica(recovery_client,recovered,body,
+            target_node_entry=recovery_options['target_node_entry'])
+
+    def _replica_reader(self,client):
+        from memory_vault_open_repair_mailbox_copy_client import MailboxMessageReplicaRecoveryClient
+        if (not isinstance(client,MailboxMessageReplicaRecoveryClient)
+                or client.identity.public_descriptor()!=self.identity.public_descriptor()
+                or client.encryption_identity.public_descriptor()!=self.encryption.public_descriptor()):
+            raise MemoryError('open_delivery_key_binding_mismatch')
+
+    def receive_recovered_mailbox_replica(self,client,recovered,body,*,target_node_entry):
+        """Durably stage verified bytes; reopening independently checks the proof."""
+        from memory_vault_open_repair_mailbox_message_inbox import message_replica_inbox_evidence
+        self._replica_reader(client)
+        roles=body['setup']['roles'];message_id=body['core']['message_id']
+        authority={name:document(roles[role]['raw']) for name,role in (('request','contact.request'),('policy','contact.policy'))}
+        session=dict(authority=authority,source_node=document(target_node_entry['raw']),
+            mailbox=message_replica_inbox_evidence(recovered,limits=client.limits,received_at=int(time.time())))
+        from memory_vault_open_repair_client import verify_mailbox_inbox_evidence
+        verified=verify_mailbox_inbox_evidence(session['mailbox'],body['envelope'],owner=client.subject,
+            encryption_identity=self.encryption,staged_at=int(time.time()))
+        if verified['core']['message_id']!=message_id:raise MemoryError('network_inbox_identity_conflict')
+        frozen=body['envelope'];plain=decrypt_envelope(frozen,encryption_identity=self.encryption,**self._keys(session))
+        prior=self._inbox(message_id);fresh=prior is None or prior['phase']=='staged'
+        self._stage_inbox(message_id=message_id,sender_key_id=recovered.context['expected']['sender']['signing_key']['key_id'],
+            envelope=frozen,body=plain,session=session)
+        result=self._finish_inbox(message_id)
+        if result['state']=='validated_saved':self._saved_receipt(message_id)
+        return dict(messages=[result] if fresh else [],errors=[],state='observed',body_transport='mailbox_message_replica',
+            receipt_state='retained_for_independent_return')
+
     async def _receive_mailbox_feed(self, client, feed, options, limit, *, _deadline=None):
         from memory_vault_open_repair_client import verify_mailbox_admission, mailbox_inbox_evidence
         from memory_vault_open_repair_wire import raw_ref

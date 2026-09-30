@@ -27,6 +27,14 @@ def _entry(item):
     return dict(raw=item.raw, ref=item.ref.as_dict())
 
 
+def _answer_expiry(raw, requested, policy, budget):
+    # This preview only reduces a requested window. The challenge solver still
+    # authenticates the complete challenge and both possession proofs.
+    signed=wire.object_fields(wire.parse_new_wire(raw,policy,budget).value,{'payload','proof'})
+    value=probe._fields(signed['payload'],probe._FIELDS['challenge'])
+    return min(requested,wire.u53(value['expires_at']))
+
+
 def _fail(code):
     raise wire.RepairWireError(code)
 
@@ -195,7 +203,8 @@ class AckOwnerRecoveryClient:
         challenge_digest = budget._hash(challenge_raw)
         challenge = dict(raw=challenge_raw,ref=wire.RawRef("meta",challenge_digest,challenge_digest,len(challenge_raw)).as_dict())
         answer = probe.solve_bootstrap_challenge(_entry(outgoing.original),challenge,signer=self.identity,
-            encryption_identity=self.encryption_identity,target_nonce=outgoing.nonce,**binding,at=self._now(),expires_at=expiry)
+            encryption_identity=self.encryption_identity,target_nonce=outgoing.nonce,**binding,at=self._now(),
+            expires_at=_answer_expiry(challenge_raw,expiry,self.policy,budget))
         response = request(answer.raw)
         held = proof.verify_bootstrap_proof_response(response,expected_subject=self.subject,expected_target=expected["target"],
             target_storage_epoch=node.payload["storage_epoch"],selector=grant["selector"],bootstrap_grant_ref=setup.originals["bootstrap"].ref.as_dict(),
@@ -349,11 +358,11 @@ class AckOwnerRecoveryClient:
             timeout=timeout,empty_expected=dict(receipt_writer=expected_receipt_writer,
                 message_id=expected_message_id,envelope_ref=expected_envelope_ref),_source_state="occupied")
 
-    def _known_replica(self, entries, root, parties, budget):
+    def _known_replica(self, entries, root, parties, budget, *, _allow_role_aliases=False):
         # Retained facts establish lower bounds only. Accept signatures only
         # from independently supplied parties; no returned key becomes trusted.
         signers={p["signing_key"]["key_id"]:p["signing_key"] for p in parties}
-        if len(parties) not in (4,5) or len(signers)!=len(parties):_fail("repair_replica_read_distinct_parties_required")
+        if len(parties) not in (4,5) or not _allow_role_aliases and len(signers)!=len(parties):_fail("repair_replica_read_distinct_parties_required")
         checked=[]
         for entry in entries:
             raw,ref=ack._entry(entry)
@@ -667,7 +676,7 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
         challenge_raw=request(outgoing.original.raw);digest=budget._hash(challenge_raw)
         challenge=dict(raw=challenge_raw,ref=wire.RawRef("meta",digest,digest,len(challenge_raw)).as_dict())
         answer=probe.solve_bootstrap_challenge(_entry(outgoing.original),challenge,signer=self.identity,encryption_identity=self.encryption_identity,
-            target_nonce=outgoing.nonce,**binding,at=self._now(),expires_at=expiry)
+            target_nonce=outgoing.nonce,**binding,at=self._now(),expires_at=_answer_expiry(challenge_raw,expiry,self.policy,budget))
         response=request(answer.raw)
         held=proof.verify_bootstrap_proof_response(response,expected_subject=self.subject,expected_target=target,
             target_storage_epoch=node_payload["storage_epoch"],selector=grant["selector"],bootstrap_grant_ref=bootstrap_original.ref.as_dict(),
@@ -706,7 +715,18 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
         # history resolver validates full pack membership and all opaque refs;
         # it grants no authority. Signatures, source events, current status and
         # exact role closure are still verified by recover() below.
-        history_role="history.mailbox_root" if source_state=="root" else "history.mailbox_feed"
+        if source_state in ('replica_root', 'replica_feed', 'replica_message'):
+            packed_child=next(item for item in children if item['role']=='replica.read_pack')
+            download(packed_child);reference=wire.raw_ref(packed_child['ref'])
+            read_pack=wire.parse_raw_pack(originals[reference],reference,self.policy,budget)
+            wanted={wire.raw_ref(item['ref']) for item in children if item['role'] in proof.replica_read_pack_roles(source_state)}
+            members={(item.raw_sha256,item.size):i for i,item in enumerate(read_pack.entries)}
+            if set(members)!={(ref.raw_sha256,ref.size) for ref in wanted}:_fail('repair_proof_mismatch')
+            for ref in wanted:
+                raw=read_pack.entry(members[(ref.raw_sha256,ref.size)],ref).raw
+                if ref in available and available[ref]!=raw:_fail('repair_ref_conflict')
+                available[ref]=raw
+        history_role="history.mailbox_root" if source_state in ("root","replica_root") else "history.mailbox_feed"
         for item in children:
             if item["role"] in ("history.raw_pack",history_role):download(item)
         packed=wire.LocalRawResolver(self.policy,budget)
@@ -720,7 +740,7 @@ class MailboxRootRecoveryClient(AckOwnerRecoveryClient):
             for prior in tree.predecessors:reuse(prior)
         for reference in roles.get(history_role,()):
             tree=history.resolve_historical_inputs(originals[reference],packed,self.policy,budget)
-            if tree.manifest.value['variant']!=('mailbox_root' if source_state=='root' else 'mailbox_feed'):_fail('repair_proof_mismatch')
+            if tree.manifest.value['variant']!=('mailbox_root' if source_state in ('root','replica_root') else 'mailbox_feed'):_fail('repair_proof_mismatch')
             reuse(tree)
         # Reuse only the complete RawRef advertised by the proof, never a hash-
         # only alias. Logical proof-byte limits include every reused original.
@@ -1725,12 +1745,20 @@ def read_mailbox_admission(member, *, read_original, policy=DEFAULT_POLICY, budg
     return dict(verified,envelope=raw,originals=MappingProxyType(originals))
 
 
-def verify_mailbox_admission(member, *, expected_slot, expected_signing_key,
+def verify_mailbox_admission(member, *, current_statuses, known_statuses=(), on_status_authenticated=None,
+        status_obligations=(), policy=DEFAULT_POLICY, budget=None, **options):
+    budget=budget or wire.RepairBudget(policy)
+    checked=_verify_mailbox_admission_metadata(member,policy=policy,budget=budget,**options)
+    current=verify_mailbox_member_current(checked['setup'],current_statuses,known_entries=known_statuses,at=options['at'],
+        policy=policy,budget=budget,on_authenticated=on_status_authenticated,additional_obligations=status_obligations)
+    return dict(checked,current_statuses=current)
+
+
+def _verify_mailbox_admission_metadata(member, *, expected_slot, expected_signing_key,
                            expected_owner, expected_sender, expected_target,
-                           encryption_identity, read_original, at, current_statuses, known_statuses=(),
-                           on_status_authenticated=None, limit_policy=DEFAULT_LIMITS,
-                           status_obligations=(), policy=DEFAULT_POLICY, budget=None):
-    """Verify admission metadata and current READ authority without fetching E.
+                           encryption_identity, read_original, at, limit_policy=DEFAULT_LIMITS,
+                           policy=DEFAULT_POLICY, budget=None):
+    """Verify admission history and decrypt its core without current authority.
 
     The enclosing feed custody must be checked by the caller. Splitting this
     phase permits an asynchronous body transport without weakening that order.
@@ -1814,10 +1842,8 @@ def verify_mailbox_admission(member, *, expected_slot, expected_signing_key,
         p=setup['resources'][name]['active'].payload
         deadlines.extend(p['windows'][field] for field in ('read_until','retain_until'))
     if core['enum_until']>min(deadlines):_fail('repair_mailbox_member_mismatch')
-    current=verify_mailbox_member_current(setup,current_statuses,known_entries=known_statuses,at=at,
-        policy=policy,budget=budget,on_authenticated=on_status_authenticated,additional_obligations=status_obligations)
     return dict(core=core,link=link,checkpoint=checkpoint,history=resolved,setup=setup,
-        current_statuses=current,originals=MappingProxyType(originals))
+        originals=MappingProxyType(originals))
 
 
 def verify_mailbox_member_current(setup, entries, *, known_entries=(), at,
@@ -1922,6 +1948,9 @@ def verify_mailbox_inbox_evidence(evidence, envelope, *, owner, encryption_ident
     """
     from dataclasses import replace
     from memory_vault_network_crypto import object_fields, unb64url
+    from memory_vault_open_repair_mailbox_message_inbox import SCHEMA, verify_message_replica_inbox_evidence
+    if isinstance(evidence,dict) and evidence.get('schema_version')==SCHEMA:
+        return verify_message_replica_inbox_evidence(evidence,envelope,owner=owner,encryption_identity=encryption_identity,staged_at=staged_at)
     from memory_vault_open_repair_mailbox_activation import verify_mailbox_feed_source_event
     value=object_fields(evidence,{'schema_version','received_at','slot','sender','target','limits','member',
         'manifest_ref','custody_ref','originals','status_refs'})

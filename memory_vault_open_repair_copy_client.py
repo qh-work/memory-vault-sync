@@ -28,6 +28,7 @@ def _entry(item):
 
 
 class AckCopyUploadClient:
+    journal_type=AckCopyPreparation
     # These helpers use only identity, target keys/epoch, the finite deadline and
     # this client's own durable _step. No index allocation/publication is used.
     _provider_rpc=AckIndexPublicationClient._provider_rpc
@@ -37,7 +38,7 @@ class AckCopyUploadClient:
     _prove_directory=AckIndexPublicationClient._prove_directory
 
     def __init__(self,journal,*,encryption_identity,transport=None,allow_loopback=False):
-        if type(journal) is not AckCopyPreparation or encryption_identity.public_descriptor()!=journal.keys['encryption_key']:
+        if type(journal) is not self.journal_type or encryption_identity.public_descriptor()!=journal.keys['encryption_key']:
             wire._fail('repair_invalid_context')
         self.journal,self.db,self.policy=journal,journal.db,journal.policy
         self.identity,self.encryption=journal.identity,encryption_identity
@@ -49,6 +50,7 @@ class AckCopyUploadClient:
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_client_sessions(job_id TEXT PRIMARY KEY,raw BLOB NOT NULL)')
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_client_steps(job_id TEXT NOT NULL,step INTEGER NOT NULL,mode TEXT NOT NULL,request BLOB NOT NULL,response BLOB,PRIMARY KEY(job_id,step))')
             self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_client_work(id TEXT PRIMARY KEY,job_id TEXT NOT NULL,wire_bytes INTEGER NOT NULL,signature_checks INTEGER,network INTEGER NOT NULL)')
+            self.db.execute('CREATE TABLE IF NOT EXISTS ack_copy_client_body_bytes(job_id TEXT NOT NULL,step INTEGER NOT NULL,bytes INTEGER NOT NULL,PRIMARY KEY(job_id,step))')
 
     def close(self):
         if self.own_transport:self.transport.close()
@@ -68,8 +70,10 @@ class AckCopyUploadClient:
             target_storage_epoch=self.plan.intent['target_storage_epoch'],expected_consumer='ack_copy_'+self.source_state,
             at=self._now(),policy=self.policy,budget=budget)
 
-    def _step(self,number,build,check_request,verify,*,mode='repair',response_allowance=8192):
+    def _step(self,number,build,check_request,verify,*,mode='repair',response_allowance=8192,body_bytes=0):
         if mode not in ('provider','repair','blob') or not 0<=number<68:wire._fail('repair_invalid_context')
+        wire.u53(body_bytes)
+        if body_bytes and (mode!='blob' or self.plan.intent['purpose']!='message_replica' or body_bytes>blob.MAX_BLOB_CHUNK_BYTES):wire._fail('repair_invalid_context')
         budget=self._budget();ticket=secrets.token_hex(16);sent=False;response=None;request=None
         with self.journal._upload_transaction():
             self._guard()
@@ -80,6 +84,8 @@ class AckCopyUploadClient:
         try:
             saved=self.db.execute('SELECT mode,request,response FROM ack_copy_client_steps WHERE job_id=? AND step=?',(self.job,number)).fetchone()
             if saved is not None and saved[0]!=mode:wire._fail('repair_copy_upload_conflict')
+            charged=self.db.execute('SELECT bytes FROM ack_copy_client_body_bytes WHERE job_id=? AND step=?',(self.job,number)).fetchone()
+            if saved is not None and (charged[0] if charged else 0)!=body_bytes:wire._fail('repair_copy_upload_conflict')
             request=bytes(saved[1]) if saved is not None else build(budget)
             check_request(request,budget)
             if saved is not None and saved[2] is not None:
@@ -89,6 +95,7 @@ class AckCopyUploadClient:
                 self._guard()
                 if saved is None:
                     self.db.execute('INSERT INTO ack_copy_client_steps VALUES(?,?,?,?,NULL)',(self.job,number,mode,request))
+                    if body_bytes:self.db.execute('INSERT INTO ack_copy_client_body_bytes VALUES(?,?,?)',(self.job,number,body_bytes))
                 count,used=self.db.execute('SELECT coalesce(sum(network),0),coalesce(sum(wire_bytes),0) FROM ack_copy_client_work WHERE job_id=?',(self.job,)).fetchone()
                 reserve=len(request)+response_allowance
                 if count>=min(68,self.plan.intent['budget']['max_requests']) or used+reserve>4*self.plan.intent['budget']['max_job_bytes']:
@@ -126,6 +133,10 @@ class AckCopyUploadClient:
         size=self.db.execute('SELECT coalesce(sum(length(request)+coalesce(length(response),0)+128),0) FROM ack_copy_client_steps WHERE job_id=?',(self.job,)).fetchone()[0]
         size+=self.db.execute('SELECT count(*)*128 FROM ack_copy_client_work WHERE job_id=?',(self.job,)).fetchone()[0]
         size+=self.db.execute('SELECT coalesce(sum(length(raw)),0) FROM ack_copy_client_sessions WHERE job_id=?',(self.job,)).fetchone()[0]
+        bodies=self.db.execute('SELECT coalesce(sum(bytes),0),count(*) FROM ack_copy_client_body_bytes WHERE job_id=?',(self.job,)).fetchone()
+        if bodies[0] and (self.plan.intent['purpose']!='message_replica' or bodies[0]>min(self.plan.intent['scope']['envelope_ref']['size'],self.plan.intent['budget']['max_job_bytes'])):
+            wire._fail('repair_copy_journal_capacity')
+        size+=bodies[1]*128-bodies[0]
         if size>self.plan.intent['budget']['max_meta_bytes']:wire._fail('repair_copy_journal_capacity')
 
     def upload(self,base,*args,target_node_entry,timeout=60,**context):
@@ -136,6 +147,17 @@ class AckCopyUploadClient:
 
     def upload_occupied(self,base,*args,target_node_entry,timeout=60,**context):
         return self._upload(base,*args,target_node_entry=target_node_entry,timeout=timeout,source_state='occupied',**context)
+
+    def _upload_context_keys(self,source_state):
+        names=('expected_ack_slot','expected_owner','expected_source','source_storage_epoch','expected_target','target_storage_epoch','limit_policy')
+        if source_state in ('empty','occupied'):names+=('expected_receipt_writer','expected_message_id','expected_envelope_ref')
+        return names
+
+    def _upload_preparer(self,source_state):
+        return {'unbound':self.journal.prepare_upload_unbound,'empty':self.journal.prepare_upload_empty,'occupied':self.journal.prepare_upload_occupied}[source_state]
+
+    def _accept_prepared(self, prepared):
+        pass
 
     def _upload(self,base,*args,target_node_entry,timeout,source_state,**context):
         """Use the originals for the selected source generation, except at.
@@ -148,11 +170,11 @@ class AckCopyUploadClient:
             self.source_state=source_state
             self.deadline=time.monotonic()+timeout
             budget=self._budget()
-            names=('expected_ack_slot','expected_owner','expected_source','source_storage_epoch','expected_target','target_storage_epoch','limit_policy')
-            if source_state in ('empty','occupied'):names+=('expected_receipt_writer','expected_message_id','expected_envelope_ref')
+            names=self._upload_context_keys(source_state)
             self.context=wire.build_new_wire({k:context[k] for k in names},self.policy,budget).value
-            prepare={'unbound':self.journal.prepare_upload_unbound,'empty':self.journal.prepare_upload_empty,'occupied':self.journal.prepare_upload_occupied}[source_state]
+            prepare=self._upload_preparer(source_state)
             prepared=prepare(*args,at=self._now(),**dict(context,**self.context))
+            self._accept_prepared(prepared)
             allocation_entry=next(e['entry'] for e in prepared['children'] if e['role']=='copy.allocation')
             allocation=wire.parse_new_wire(allocation_entry['raw'],self.policy,budget).value['payload']
             self.plan=SimpleNamespace(intent=allocation['intent']);self.job=self.plan.intent['job_id']
@@ -193,6 +215,14 @@ class AckCopyUploadClient:
         return self._reserve(base,manifest_entry,resolver,custody_entry,consent_entry,intent,
             target_node_entry=target_node_entry,timeout=timeout,source_state='occupied',**context)
 
+    reservation_request_kind = 'ack.copy_allocate'
+    reservation_response_kind = 'ack.copy_allocation'
+
+    def _reservation_preparer(self, source_state):
+        return {'unbound': self.journal.prepare_reservation_unbound,
+            'empty': self.journal.prepare_reservation_empty,
+            'occupied': self.journal.prepare_reservation_occupied}[source_state]
+
     def _reserve(self,base,manifest_entry,resolver,custody_entry,consent_entry,intent,*,target_node_entry,timeout,source_state,**context):
         """Obtain a remote offer after original reservation-disclosure checks.
 
@@ -207,7 +237,7 @@ class AckCopyUploadClient:
         with self.lock:
             self.source_state=source_state
             self.deadline=time.monotonic()+timeout
-            prepare={'unbound':self.journal.prepare_reservation_unbound,'empty':self.journal.prepare_reservation_empty,'occupied':self.journal.prepare_reservation_occupied}[source_state]
+            prepare=self._reservation_preparer(source_state)
             prepared=prepare(manifest_entry,resolver,custody_entry,consent_entry,intent,
                 at=self._now(),budget=resolver.budget,**context)
             self.intent=allocation=prepared['allocation'];self.status_stamp=prepared['status_stamp']
@@ -217,14 +247,14 @@ class AckCopyUploadClient:
             # namespace cannot collide with an upload's original job ID.
             self.job='\0reservation:'+self.plan.intent['job_id']
             self._open_network(base,target_node_entry,budget)
-            request=wire.build_new_wire(dict(schema_version=resource.SCHEMA,kind='ack.copy_allocate',
+            request=wire.build_new_wire(dict(schema_version=resource.SCHEMA,kind=self.reservation_request_kind,
                 caller=self.journal.keys,allocation=encode_entry(allocation)),self.policy,budget).raw
             def check(raw,b):
                 if raw!=request:wire._fail('repair_copy_upload_conflict')
             def verify(raw,q,b):
                 value=wire.parse_new_wire(raw,self.policy,b).value
                 wire.object_fields(value,{'schema_version','kind','offer'})
-                if value['schema_version']!=resource.SCHEMA or value['kind']!='ack.copy_allocation':wire._fail('repair_invalid_response')
+                if value['schema_version']!=resource.SCHEMA or value['kind']!=self.reservation_response_kind:wire._fail('repair_invalid_response')
                 offered=decode_entry(value['offer'],self.policy,b)
                 offer=index._signed(offered,self.plan.intent['target']['signing_key'],'resource.offer',index.OFFER_FIELDS,self.policy,b)
                 o=offer.payload;i=self.plan.intent
@@ -253,13 +283,15 @@ class AckCopyUploadClient:
         step=4
         for i,row in enumerate(self.children):
             child=row['entry']
-            for offset in range(0,len(child['raw']),stage.STAGE_CHUNK_BYTES):
-                chunk=child['raw'][offset:offset+stage.STAGE_CHUNK_BYTES]
+            chunk_bytes=stage.stage_chunk_bytes(self._expected(self._budget())['expected_consumer'],row['role'])
+            for offset in range(0,len(child['raw']),chunk_bytes):
+                chunk=child['raw'][offset:offset+chunk_bytes]
                 def build(b):return stage.make_stage_child_frame(intent,_entry(handle),signer=self.identity,child_index=i,offset=offset,chunk=chunk,expires_at=self.until,**self._expected(b))
                 def check(raw,b):
                     item=stage.verify_stage_child_frame(raw,intent,_entry(handle),**self._expected(b))
                     if item.child_index!=i or item.offset!=offset or item.chunk!=chunk or item.child_ref!=wire.raw_ref(child['ref']):wire._fail('repair_stage_mismatch')
-                self._step(step,build,check,lambda raw,q,b:stage.verify_stage_child_response_frame(raw,q,intent,_entry(handle),**self._expected(b)),mode='blob')
+                self._step(step,build,check,lambda raw,q,b:stage.verify_stage_child_response_frame(raw,q,intent,_entry(handle),**self._expected(b)),mode='blob',
+                    body_bytes=len(chunk) if self.plan.intent['purpose']=='message_replica' and row['role']=='message.envelope' else 0)
                 step+=1
         _,_,result=self._step(step,lambda b:stage.make_stage_close(intent,_entry(handle),signer=self.identity,expires_at=self.until,**self._expected(b)).raw,
             lambda raw,b:stage.verify_stage_close(_raw_entry(raw,b),intent,_entry(handle),**self._expected(b)),

@@ -455,6 +455,22 @@ ACK_CONFIGURATION_ROLES = frozenset(('ack.root_authority','ack.write_grant','boo
     'historical.status.ack_root','historical.status.ack_write','historical.status.ack_offer_bootstrap'))
 
 
+def _status_once(checked, entry, **options):
+    """Reuse an exact status only under identical checks in this invocation."""
+    import memory_vault_open_repair_status as status
+    policy, budget = options['policy'], options['budget']
+    raw = wire._snapshot(entry['raw'], policy, budget)
+    ref = wire.raw_ref(entry['ref'])
+    context = wire.build_new_wire({name: value for name, value in options.items()
+        if name not in ('policy', 'budget')}, policy, budget).raw
+    identity = (budget, ref, raw, context)
+    if identity not in checked:
+        observed = status.verify_status_original(dict(raw=raw, ref=ref.as_dict()), **options)
+        budget._retain(len(raw) + len(context) + len(canonical_bytes(ref.as_dict())))
+        checked[identity] = observed
+    return checked[identity]
+
+
 def verify_mailbox_ack_configuration(entries, *, sender, recipient, message_id, envelope_ref, at, policy, budget):
     """Authenticate A's lookup configuration, never an ACK service promise."""
     import memory_vault_open_repair_bound as bound
@@ -474,7 +490,7 @@ def verify_mailbox_ack_configuration(entries, *, sender, recipient, message_id, 
         duties.append(dict(role=role,scope_kind='authority',scope_id=status.status_scope(root,'authority',
             dict(authority_kind=item.payload['kind'],authority_sha256=item.ref.raw_sha256),policy,budget),
             document_revision=item.payload['revision'],operation_mask=mask))
-    revisions={};floors={};observations=[]
+    revisions={};floors={};observations=[];checked_statuses={}
     for duty in duties:
         entry=entries['historical.status.'+duty['role']]
         preview=status._fields(original.parse_original_control(entry['raw'],policy,budget).value['payload'],status._PAYLOAD)
@@ -483,7 +499,7 @@ def verify_mailbox_ack_configuration(entries, *, sender, recipient, message_id, 
         required=[{k:v[k] for k in ('scope_kind','scope_id','document_revision','operation_mask')}
             for v in duties if (v['scope_kind'],v['scope_id']) in present]
         if (duty['scope_kind'],duty['scope_id']) not in present:wire._fail('repair_status_missing')
-        observed=status.verify_status_original(entry,expected_root=root,expected_signing_key=sender['signing_key'],at=at,
+        observed=_status_once(checked_statuses,entry,expected_root=root,expected_signing_key=sender['signing_key'],at=at,
             allowed_scopes=[{k:v[k] for k in ('scope_kind','scope_id')} for v in duties],required=required,policy=policy,budget=budget)
         revision=observed.payload['revision']
         if revision in revisions and revisions[revision]!=observed.canonical_sha256:wire._fail('repair_status_conflict')
@@ -584,7 +600,7 @@ def verify_mailbox_member_inputs(resolved, *, expected_slot, expected_owner, exp
     for name in ('data','metadata'):
         p=graph['resources'][name]['active'].payload
         add(name+'_resource','resource',p['resource'],p['reservation_generation'],65,expected_target['signing_key'])
-    statuses=[];revisions={};floors={}
+    statuses=[];revisions={};floors={};checked_statuses={}
     for obligation in obligations:
         signer=obligation['signer'];permitted=[v for v in obligations if v['signer']==signer]
         entry=roles['historical.status.'+obligation['role']]
@@ -594,7 +610,7 @@ def verify_mailbox_member_inputs(resolved, *, expected_slot, expected_owner, exp
         requirements=[{k:v[k] for k in ('scope_kind','scope_id','document_revision','operation_mask')}
             for v in permitted if (v['scope_kind'],v['scope_id']) in present]
         if required not in requirements:wire._fail('repair_status_missing')
-        observed=status.verify_status_original(entry,expected_root=root,expected_signing_key=signer,at=at,
+        observed=_status_once(checked_statuses,entry,expected_root=root,expected_signing_key=signer,at=at,
             allowed_scopes=[{k:v[k] for k in ('scope_kind','scope_id')} for v in permitted],required=requirements,policy=policy,budget=budget)
         identity=(signer['key_id'],observed.payload['revision'])
         if identity in revisions and revisions[identity]!=observed.canonical_sha256:wire._fail('repair_status_conflict')
@@ -729,7 +745,7 @@ def verify_mailbox_feed_history_inputs(resolved, *, expected_slot, expected_owne
             p=setup['originals'][name].payload;deadlines.append(p['expires_at'])
             if 'windows' in p:deadlines.extend(p['windows'][field] for field in ('read_until','retain_until'))
         p=setup['resources']['metadata']['active'].payload;deadlines.extend(p['windows'][field] for field in ('read_until','retain_until'))
-    covered=set();statuses=[];revisions={}
+    covered=set();statuses=[];revisions={};checked_statuses={}
     for (role,ref),entry in by_ref.items():
         if not role.startswith('historical.status.'):continue
         p=original.parse_original_control(entry.raw,policy,budget).value['payload'];issuer=p['signing_key']['key_id']
@@ -739,7 +755,7 @@ def verify_mailbox_feed_history_inputs(resolved, *, expected_slot, expected_owne
         if not matches:_mismatch()
         required=[{name:v[name] for name in ('scope_kind','scope_id','document_revision','operation_mask')}
             for identity,v in obligations.items() if identity[0]==issuer and (v['scope_kind'],v['scope_id']) in present]
-        observed=status.verify_status_original(dict(raw=entry.raw,ref=ref.as_dict()),expected_root=key['root_key'],
+        observed=_status_once(checked_statuses,dict(raw=entry.raw,ref=ref.as_dict()),expected_root=key['root_key'],
             expected_signing_key=matches[0][1]['signer'],at=at,allowed_scopes=[dict(scope_kind=v['scope_kind'],scope_id=v['scope_id'])
                 for identity,v in allowed.items() if identity[0]==issuer],required=required,policy=policy,budget=budget)
         identity=(issuer,observed.payload['revision'])

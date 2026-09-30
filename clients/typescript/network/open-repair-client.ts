@@ -133,8 +133,12 @@ export class AckOwnerRecoveryClient{
     if(outgoingRaw.length>grant.limits.max_probe_bytes)fail('repair_over_budget');
     const challengeRaw=await request(outgoingRaw),challengeDigest=budget.hash(challengeRaw);
     const challenge={raw:challengeRaw,ref:rawRef({namespace:'meta',key:challengeDigest,raw_sha256:challengeDigest,size:challengeRaw.length})};
+    // Preview only narrows the window; solveBootstrapChallenge authenticates
+    // the entire challenge and both possession proofs before signing.
+    const challengeValue=fields(parseNewWire(challengeRaw,policy,budget).value,['payload','proof']);
+    const answerExpiry=Math.min(expiry,u53((challengeValue.payload as Obj)?.expires_at));
     const answer=await solveBootstrapChallenge({raw:outgoingRaw,ref:outgoing.original.ref},challenge,
-      {...binding,signer:this.#identity,encryptionIdentity:this.#encryption,targetNonce:outgoing.nonce,at:this.#now(),expiresAt:expiry});
+      {...binding,signer:this.#identity,encryptionIdentity:this.#encryption,targetNonce:outgoing.nonce,at:this.#now(),expiresAt:answerExpiry});
     const response=await request(answer.raw),held=verifyBootstrapProofResponse(response,{expectedSubject:this.#subject,expectedTarget:expected.target,
       targetStorageEpoch:node.payload.storage_epoch as string,selector:grant.selector,bootstrapGrantRef:setup.originals.bootstrap.ref,
       probeRef:outgoing.original.ref,challengeRef:challenge.ref,answerRef:answer.ref,at:this.#now(),maxProofItems:grant.limits.max_proof_items,

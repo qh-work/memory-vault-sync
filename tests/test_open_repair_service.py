@@ -155,6 +155,23 @@ class RepairServiceTests(unittest.TestCase):
         row = self.source.db.execute("SELECT requests,signatures,proof_bytes,replays FROM open_repair_bootstrap_usage").fetchone()
         return row or (0,0,0,0)
 
+    def test_challenge_shortens_to_actual_authority_and_retains_deadline_after_restart(self):
+        self.start();until=self.source.now[0]+20
+        current=[]
+        for role,signer in (('owner_status','owner'),('target_status','target')):
+            payload=copy.deepcopy(self.source.fixture['docs'][role]['payload'])
+            payload.update(revision=2,valid_until=until)
+            current.append(signed_entry(payload,self.source.fixture['signers'][signer],'short_'+role))
+        first=self.make_probe()
+        challenge=self.service.challenge(entry(first.original),current_statuses=current)
+        self.assertEqual(challenge.payload['expires_at'],until)
+        self.restart()
+        answer=self.solve(first,challenge)
+        accepted=self.authenticate_response(self.service.answer(entry(answer)),first,challenge,answer)
+        self.assertLessEqual(accepted.handle.payload['expires_at'],until)
+        self.source.now[0]=until
+        with self.assertRaises(wire.RepairWireError):self.service.child(entry(self.child(accepted,0,0)))
+
     def test_real_handshake_restart_fetches_complete_remote_historical_closure(self):
         self.start()
         first = self.make_probe()

@@ -19,6 +19,7 @@ class MailboxSourceTests(unittest.TestCase):
             from tests.open_repair_ack_fixtures import LIMITS
             self.host.bootstrap_limits = dict(LIMITS,max_probe_bytes=8192,max_signature_checks=512,max_proof_bytes=524288)
             self.host.owner_budget_overrides = dict(max_requests=512,max_job_bytes=524288,max_meta_bytes=524288)
+            self.host.owner_budget_overrides.update(getattr(self, 'owner_budget_overrides', {}))
             from memory_vault_open_repair_state import DEFAULT_LIMITS
             self.host.source_limit_policy = dict(DEFAULT_LIMITS,max_proof_bytes=524288)
         self.host.setUp();self.addCleanup(self.host.doCleanups)

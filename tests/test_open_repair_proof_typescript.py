@@ -95,6 +95,24 @@ class OpenRepairProofTypeScriptTests(unittest.TestCase):
         self.assertTrue(result["ok"],result)
         self.assertEqual(result["result"]["manifest"],manifest)
 
+    def test_mailbox_root_replica_profile_is_explicit_in_python_and_native(self):
+        import memory_vault_open_repair_proof as proof
+        manifest, options = self.py.mailbox_manifest()
+        reference = self.py.fixture['entries']['root']['ref']
+        packed = self.py.fixture['packs'][0]['ref']
+        rows = [dict(role=role, ref=packed if role == 'replica.read_pack' else reference)
+            for role in sorted(proof.MAILBOX_ROOT_REPLICA_ROLES)]
+        rows.append(dict(role='history.raw_pack', ref=packed))
+        manifest['children'] = [dict(index=i, **row) for i, row in enumerate(rows)]
+        raw = self.py.response(manifest).raw
+        self.py.verify(raw, **dict(options, expected_source_state='replica_root'))
+        call = self.call(); call['raw'] = base64.b64encode(raw).decode()
+        call['options'].update(consumer='mailbox_root', expectedSourceState='replica_root', selector=options['selector'])
+        old = copy.deepcopy(call); old['options']['expectedSourceState'] = 'root'
+        good, bad = self.ts([call, old])
+        self.assertTrue(good['ok'], good); self.assertEqual(good['result']['manifest'], manifest)
+        self.assertFalse(bad['ok'])
+
     def test_mailbox_feed_manifest_native_python_parity(self):
         manifest,options=self.py.mailbox_feed_manifest()
         call=self.call();call['raw']=base64.b64encode(self.py.response(manifest).raw).decode()
@@ -102,6 +120,23 @@ class OpenRepairProofTypeScriptTests(unittest.TestCase):
         result=self.ts([call])[0]
         self.assertTrue(result['ok'],result)
         self.assertEqual(result['result']['manifest'],manifest)
+
+    def test_mailbox_feed_replica_profile_preserves_explicit_state_in_both_clients(self):
+        manifest,options=self.py.mailbox_feed_manifest()
+        reference=self.py.fixture['entries']['root']['ref']
+        packs=[v['ref'] for v in manifest['children'] if v['role']=='history.raw_pack']
+        rows=[dict(role=role,ref=packs[0] if role=='replica.read_pack' else reference)
+            for role in sorted(proof.MAILBOX_FEED_REPLICA_ROLES)]
+        rows.extend(dict(role='history.raw_pack',ref=ref) for ref in packs)
+        manifest['children']=[dict(index=i,**row) for i,row in enumerate(rows)]
+        raw=self.py.response(manifest).raw
+        self.py.verify(raw,**dict(options,expected_source_state='replica_feed'))
+        call=self.call();call['raw']=base64.b64encode(raw).decode()
+        call['options'].update(consumer='mailbox_feed',expectedSourceState='replica_feed',selector=options['selector'])
+        old=copy.deepcopy(call);old['options']['expectedSourceState']='feed'
+        good,bad=self.ts([call,old])
+        self.assertTrue(good['ok'],good);self.assertEqual(good['result']['manifest'],manifest)
+        self.assertFalse(bad['ok'])
 
     def test_mailbox_ack_configuration_roles_native_python_parity(self):
         manifest,options=self.py.mailbox_feed_with_ack_manifest()
@@ -112,6 +147,21 @@ class OpenRepairProofTypeScriptTests(unittest.TestCase):
         manifest['children'].pop()
         rejected=self.ts([self.make_call(manifest)])[0]
         self.assertFalse(rejected['ok']);self.assertEqual(rejected['code'],'repair_invalid_proof')
+
+    def test_message_replica_cannot_be_mistaken_for_metadata_only_feed_replica(self):
+        manifest,options=self.py.mailbox_feed_manifest()
+        reference=self.py.fixture['entries']['root']['ref']
+        packs=[v['ref'] for v in manifest['children'] if v['role']=='history.raw_pack']
+        rows=[dict(role=role,ref=packs[0] if role=='replica.read_pack' else reference)
+            for role in sorted(proof.MAILBOX_FEED_REPLICA_ROLES|{'message.custody'})]
+        rows.extend(dict(role='history.raw_pack',ref=ref) for ref in packs)
+        manifest['children']=[dict(index=i,**row) for i,row in enumerate(rows)]
+        raw=self.py.response(manifest).raw
+        self.py.verify(raw,**dict(options,expected_source_state='replica_message'))
+        call=self.call();call['raw']=base64.b64encode(raw).decode()
+        call['options'].update(consumer='mailbox_feed',expectedSourceState='replica_message',selector=options['selector'])
+        wrong=copy.deepcopy(call);wrong['options']['expectedSourceState']='replica_feed'
+        good,bad=self.ts([call,wrong]);self.assertTrue(good['ok'],good);self.assertFalse(bad['ok'])
 
     def test_native_mailbox_body_request_is_python_verifiable(self):
         manifest,options=self.py.mailbox_feed_manifest()

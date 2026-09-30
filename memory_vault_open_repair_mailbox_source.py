@@ -450,27 +450,34 @@ class MailboxRecoveryService:
             JOIN open_mailbox_feed_custody c ON c.slot_digest=r.slot_digest
             WHERE r.owner=? AND json_extract(r.inputs,'$.bootstrap.ref.raw_sha256')=? LIMIT 2''',(owner,grant_digest)).fetchall()
 
-    def _resource_inputs(self, rid, budget):
+    def _resource_inputs(self, rid, budget, *, head_ref=None):
         s=self.source
         if self.consumer=='mailbox_root':
+            if head_ref is not None:wire._fail('repair_invalid_context')
             row=s._one('SELECT * FROM open_repair_mailbox_roots WHERE resource_id=?',(rid,))
             custody=s._one('SELECT * FROM open_repair_mailbox_root_custody WHERE resource_id=?',(rid,))
         else:
             row=s._one('SELECT * FROM open_repair_mailbox_slot_activations WHERE metadata_resource_id=?',(rid,))
             if row is None:wire._fail('repair_service_unavailable')
-            held=s._one("SELECT * FROM open_mailbox_feed_custody WHERE slot_digest=? ORDER BY json_extract(custody,'$.payload.covered_interval.end') DESC LIMIT 1",(row['slot_digest'],))
+            selected=None if head_ref is None else wire.raw_ref(head_ref)
+            if selected is not None and selected.namespace!='meta':wire._fail('repair_ref_mismatch')
+            held=(s._one('SELECT * FROM open_mailbox_feed_custody WHERE slot_digest=? AND head_digest=?',(row['slot_digest'],selected.raw_sha256))
+                if selected is not None else s._one("SELECT * FROM open_mailbox_feed_custody WHERE slot_digest=? ORDER BY json_extract(custody,'$.payload.covered_interval.end') DESC LIMIT 1",(row['slot_digest'],)))
             if held is None:wire._fail('repair_service_unavailable')
             entry=s._saved(held,'custody');custody=wire.parse_new_wire(entry['raw'],budget.policy,budget).value['payload']
+            if selected is not None and custody['feed_head_ref']!=selected.as_dict():wire._fail('repair_ref_mismatch')
             marker=s._one('SELECT value FROM open_repair_state WHERE name=?',('mailbox_feed_custody:'+row['slot_digest']+':'+held['head_digest'],))
             if marker is None or marker['value']!=s._expected_binding()+'|'+entry['ref']['raw_sha256']:wire._fail('repair_storage_corrupt')
         if row is None or custody is None:wire._fail('repair_service_unavailable')
         return wire.parse_new_wire(bytes(row['inputs']),budget.policy,budget).value,custody
 
-    def _owner_guard(self, rid):
-        if self.consumer=='mailbox_root':return self.mailbox.root.owner_status_guard(rid)
+    def _owner_guard(self, rid, *, head_ref=None):
+        if self.consumer=='mailbox_root':
+            if head_ref is not None:wire._fail('repair_invalid_context')
+            return self.mailbox.root.owner_status_guard(rid)
         from memory_vault_open_repair_mailbox_status import MailboxStatusLedger
         from memory_vault_open_repair_bind import decode_entry
-        s=self.source;budget=wire.RepairBudget(s.policy);inputs,custody=self._resource_inputs(rid,budget)
+        s=self.source;budget=wire.RepairBudget(s.policy);inputs,custody=self._resource_inputs(rid,budget,head_ref=head_ref)
         slot=wire.parse_new_wire(inputs['slot']['raw'].encode(),s.policy,budget).value['payload'];key=slot['slot_key']
         requirements=[];deadlines=[custody['read_until'],custody['retain_until']]
         def authority(raw,reference,mask):

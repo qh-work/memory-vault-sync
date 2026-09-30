@@ -34,6 +34,14 @@ class _Reply(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Length", "65537")
             self.end_headers()
+        elif self.server.mode == 'repair_slow':
+            time.sleep(3.2)
+            self.send_response(200)
+            self.send_header('Content-Type','application/json')
+            self.send_header('Content-Length','11')
+            self.end_headers()
+            try:self.wfile.write(b'{"ok":true}')
+            except OSError:pass
         else:
             self.send_response(200)
             self.send_header("Content-Length", "11")
@@ -42,6 +50,18 @@ class _Reply(BaseHTTPRequestHandler):
 
 
 class OpenTransportTests(unittest.TestCase):
+    def test_repair_proof_can_finish_after_connect_timeout_within_caller_deadline(self):
+        _,base=self.server('repair_slow')
+        transport=OpenHTTPTransport(allow_loopback=True);self.addCleanup(transport.close)
+        self.assertEqual(transport.request_repair(base,b'{}',deadline=time.monotonic()+6),b'{"ok":true}')
+
+    def test_repair_drip_headers_still_end_at_absolute_deadline(self):
+        _,base=self.server('drip')
+        transport=OpenHTTPTransport(allow_loopback=True);self.addCleanup(transport.close)
+        started=time.monotonic()
+        with self.assertRaises(MemoryError):transport.request_repair(base,b'{}',deadline=started+.2)
+        self.assertLess(time.monotonic()-started,1.5)
+
     def server(self, mode):
         server = ThreadingHTTPServer(("127.0.0.1", 0), _Reply)
         server.mode, server.seen, server.daemon_threads = mode, [], True
