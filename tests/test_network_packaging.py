@@ -49,7 +49,7 @@ TS_NETWORK = {"clients/typescript/network/" + name for name in
                "open-repair-status.ts", "open-repair-mailbox-range.ts",
                "open-repair-ack.ts",
                "open-repair-probe.ts",
-               "open-repair-proof.ts", "open-repair-client.ts", "open-ack-client.ts", "open-ack-status.ts", "open-ack-discovery.ts", "open-repair-admin.ts", "open-repair-bound.ts", "open-repair-empty.ts", "open-repair-occupied.ts")}
+               "open-repair-proof.ts", "open-repair-client.ts", "open-ack-client.ts", "open-ack-status.ts", "open-ack-discovery.ts", "open-repair-admin.ts", "open-repair-bound.ts", "open-repair-empty.ts", "open-repair-occupied.ts", "open-repair-offer-client.ts", "open-repair-receipt.ts")}
 TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
                      ("nodes", "records", "vault", "peer", "peer_race", "transport", "setup",
                       "retrieval_text", "retrieval", "agent", "agent_network", "topics")}
@@ -102,7 +102,7 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
         self.assertGreaterEqual(len(review), 39)
-        self.assertEqual(len(TS_NETWORK), 57)
+        self.assertEqual(len(TS_NETWORK), 59)
         self.assertTrue(RUNTIME_DATA <= set(documents))
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
@@ -125,6 +125,7 @@ class NetworkPackagingTests(unittest.TestCase):
                          "tests/test_open_repair_copy_prepare.py", "tests/test_open_repair_copy_state.py", "tests/test_open_repair_copy_service.py", "tests/test_open_repair_copy_upload.py", "tests/test_open_repair_copy_empty.py", "tests/test_open_repair_mailbox_activation.py", "tests/test_open_repair_mailbox_range.py", "tests/test_open_repair_mailbox_root.py", "tests/test_open_repair_mailbox_status.py", "tests/test_open_repair_mailbox_source.py", "tests/test_open_repair_mailbox_snapshot.py", "tests/test_open_repair_mailbox_copy.py", "tests/test_open_repair_mailbox_copy_authority.py", "tests/test_open_repair_mailbox_copy_upload.py", "tests/test_open_repair_mailbox_reservation.py", "tests/test_open_repair_mailbox_consent.py", "tests/test_open_mailbox_replica_receive.py", "tests/test_open_mailbox_receipt_jobs.py", "tests/test_open_ack_replica_send.py", "tests/test_open_mailbox_copy_jobs.py", "tests/test_open_repair_mailbox_copy_admin.py", "tests/test_open_repair_mailbox_feed_copy.py", "tests/test_open_repair_mailbox_message_copy.py",
                          "tests/test_open_repair_probe.py",
                          "tests/test_open_repair_probe_typescript.py",
+                         "tests/test_open_repair_offer_client_typescript.py", "tests/test_open_repair_put_client_typescript.py", "tests/test_open_repair_receipt_typescript.py",
                          "tests/test_open_repair_proof.py",
                          "tests/test_open_repair_proof_typescript.py",
                          "tests/test_open_repair_access.py",
@@ -192,7 +193,8 @@ class NetworkPackagingTests(unittest.TestCase):
             "clients/typescript/network/open-repair-probe.ts", "clients/typescript/network/open-repair-proof.ts",
             "clients/typescript/network/open-repair-client.ts", "clients/typescript/network/open-ack-client.ts", "clients/typescript/network/open-ack-status.ts", "clients/typescript/network/open-ack-discovery.ts",
             "clients/typescript/network/open-repair-admin.ts",
-            "clients/typescript/network/open-repair-bound.ts", "clients/typescript/network/open-repair-empty.ts", "clients/typescript/network/open-repair-occupied.ts"})
+            "clients/typescript/network/open-repair-bound.ts", "clients/typescript/network/open-repair-empty.ts", "clients/typescript/network/open-repair-occupied.ts",
+            "clients/typescript/network/open-repair-offer-client.ts", "clients/typescript/network/open-repair-receipt.ts"})
         for name in repair_sources:
             self.assertTrue((ROOT / name).is_file())
         for name in ("docs/NATIVE_OPEN_PROVIDER.md", "docs/CONTINUATION_TRIAL.md", "docs/OPEN_NETWORK_QUICKSTART.md"):
