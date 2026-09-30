@@ -438,3 +438,40 @@ independent read. A confirmed receipt updates the original outbox; subsequent
 identical sends verify that local receipt without contacting either source.
 There is no additional authority when no matching ACK preparation exists, and no
 new source or permission is inferred from a memory or peer message.
+
+### Retain an ACK replica for the original send (source after alpha.0.30)
+
+The sender can retain the same explicitly selected replica request accepted by
+`recover_replica_receipt`, using `register_replica_receipt` instead. Registration
+is local and requires the actual original outbox message, its exact ciphertext,
+recipient signing/encryption keys, and the sender's original READ/bootstrap
+permission. It does not create a replica or grant another party access.
+
+```python
+selected = dict(replica_recovery_invitation, action="register_replica_receipt")
+agent.handle({"op": "connect", "invitation": selected})
+# After restart, repeat the identical original request_id and send arguments.
+confirmed = agent.handle(original_send_request)
+```
+
+A repeated original send selects one registered destination, checks a fresh node
+introduction against the retained key/origin/epoch and revision, and retrieves
+the actual recipient receipt through the existing original-history verifier.
+It checks the unchanged send before any source read. A valid receipt updates
+the original outbox; subsequent repeats use local history. The result includes
+`ack_recovery`, `ack_replica_id`, `ack_commit_ref` and
+`ack_replica_custody_ref` when recovery succeeds. Failure leaves confirmation
+pending and reports `ack_recovery_error`.
+
+Up to sixteen selections may be retained, with at most two destinations per
+message. One is attempted per send invocation, rotating by last attempt; it
+shares that send's existing sixty-second network deadline. A selected replica
+takes precedence over original-source recovery in that invocation. The caller
+can retry the same send to try its other explicitly selected destination.
+
+Use `list_replica_receipts`, `inspect_replica_receipt` (with `replica_id`, and
+optional paging `cursor`) and `remove_replica_receipt` through the ACK connect
+schema. Inspection includes the last failure. Removal retains the original
+outbox and authenticated status history; switching destinations does not erase
+an earlier revocation. Existing explicit replica recovery uses that same
+root-scoped history as well.

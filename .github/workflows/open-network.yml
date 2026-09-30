@@ -133,7 +133,7 @@ jobs:
         run: python -B -m unittest -v tests.test_open_repair_copy_occupied.OccupiedReplicaAgentTests tests.test_open_repair_mailbox_message_copy.MailboxMessageCopyTests.test_agent_receives_replica_memory_and_retains_statuses_after_source_loss tests.test_open_repair_mailbox_message_copy.MailboxMessageCopyTests.test_replica_memory_returns_independent_receipt_to_original_sender tests.test_open_mailbox_replica_receive tests.test_open_mailbox_copy_jobs
       - name: Exercise ordinary receipt return and original sender confirmation
         if: matrix.suite == 'ordinary-receipts'
-        run: python -B -m unittest -v tests.test_open_mailbox_receipt_jobs
+        run: python -B -m unittest -v tests.test_open_mailbox_receipt_jobs tests.test_open_ack_replica_send
       - name: Exercise proof, HTTP deadlines and durable state
         if: matrix.suite == 'proof-and-state'
         run: python -B -m unittest -v tests.test_open_transport tests.test_open_repair_http tests.test_open_repair_proof tests.test_open_repair_admin tests.test_open_repair_copy_occupied.OccupiedCopyStateTests tests.test_open_repair_mailbox_consent
