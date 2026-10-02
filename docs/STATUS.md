@@ -1,5 +1,7 @@
 # Memory Vault development status
 
+Published **[v0.28.0-alpha.0.40](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.40)** includes bounded delivery distribution and native message-replica recovery. [Final-source CI](https://github.com/qh-work/memory-vault-sync/actions/runs/37045141611) passed 1270 tests across 147 modules; three Python 3.10 suites and three-platform protocol conformance passed. Eight release assets were downloaded and matched, including an anonymous client download. Release source: `431ee0d2588273ecb2d8305b82ad73a3ce0375c7`. Same-host capacity results and slow, finite-work cold recovery remain experimental; independent-host/WAN and thousand-agent capacity are unverified.
+
 Alpha.0.40 adds bounded HTTP admission, WAL read concurrency, separately approved resource distribution and native full message-replica COPY/READ recovery. The isolated 48-Memory/2-per-second workload completes 39 → 48 chains; this proves authorized quota use, not a CPU/SQLite ceiling. Replica cold reads remain slow and stop at the existing finite work allowance. See [capacity evidence and limits](CAPACITY_HANDOFF.md).
 
 Alpha.0.40 candidate assets are validated against their exact source commit by `release-manifest.json` and `SHA256SUMS`; use the [release record](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.40) for publication and CI evidence. Earlier release results below remain historical.
