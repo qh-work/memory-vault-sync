@@ -98,6 +98,9 @@ ALLOWED_MODULES = {
 }
 REQUIRED_MODULES = ALLOWED_MODULES
 MAX_MODULE_BYTES = 1024 * 1024
+# The closed 153-module inventory exceeds 16 KiB with ordinary indentation.
+# Bound metadata independently; module names, file set and every hash stay strict.
+MAX_INVENTORY_BYTES = 32 * 1024
 
 
 def _regular(path: Path) -> bool:
@@ -140,7 +143,7 @@ def main() -> int:
     try:
         if not _regular(Path(__file__).absolute()):
             raise ValueError("runtime_not_built")
-        inventory = json.loads(_read(manifest, 16 * 1024).decode("utf-8"), object_pairs_hook=_unique)
+        inventory = json.loads(_read(manifest, MAX_INVENTORY_BYTES).decode("utf-8"), object_pairs_hook=_unique)
         if not isinstance(inventory, dict) or set(inventory) != {"schema_version", "modules"} or inventory["schema_version"] != "memory-vault-client-runtime/v1":
             raise ValueError("invalid_runtime_inventory")
         modules = inventory["modules"]

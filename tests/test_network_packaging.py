@@ -340,7 +340,10 @@ class NetworkPackagingTests(unittest.TestCase):
                 data = (ROOT / name).read_bytes()
                 (runtime / name).write_bytes(data)
                 hashes[name] = hashlib.sha256(data).hexdigest()
-            (runtime / "MANIFEST.json").write_text(json.dumps({"schema_version": "memory-vault-client-runtime/v1", "modules": hashes}))
+            manifest = runtime / "MANIFEST.json"
+            manifest.write_text(json.dumps({"schema_version": "memory-vault-client-runtime/v1", "modules": hashes}, indent=2))
+            inventory_bytes = manifest.read_bytes()
+            self.assertGreater(len(inventory_bytes), 16 * 1024)
             config = root / "must-not-be-created.json"
             command = [sys.executable, "-I", "-S", "-B", str(launcher), "--config", str(config), "agent", "request"]
             def launch():
@@ -353,6 +356,11 @@ class NetworkPackagingTests(unittest.TestCase):
             self.assertTrue(answer["ok"], answer)
             self.assertFalse(answer["result"]["network_accessed"])
             self.assertFalse(config.exists())
+            # The full ordinary builder inventory must launch, while an
+            # oversized metadata document still fails before application code.
+            manifest.write_bytes(inventory_bytes + b" " * (32 * 1024 + 1 - len(inventory_bytes)))
+            self.assertEqual(launch().returncode, 1)
+            manifest.write_bytes(inventory_bytes)
             # The packaged client's new recovery command must be reachable
             # without reading a config or installing network/server extras.
             help_result = subprocess.run(command[:-2] + ["network-recovery", "--help"],
