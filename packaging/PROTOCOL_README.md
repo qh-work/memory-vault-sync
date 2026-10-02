@@ -1,4 +1,44 @@
-# Memory Vault v0.28.0-alpha.0.37 — independent protocol
+# Memory Vault v0.28.0-alpha.0.40 — independent protocol
+
+Alpha.0.40 distributes new messages across separately approved item and byte
+resources in Python and native TypeScript. Existing frozen ciphertext is never
+retargeted. Receive polling rotates across approved sessions; bounded HTTP
+admission and concurrent SQLite reads preserve the existing execution limits.
+
+Native recipients can recover an explicitly selected message replica after its
+original source disappears, with complete historical COPY and current READ
+verification, retained revocation and independent receipt confirmation.
+Source provisioning and native ACK/root/feed replica reception still use Python.
+
+In the synthetic same-host workload, 48 selected Memories offered at 2/second
+complete 39 to 48 chains; each approved node completes 24. This measures use of
+authorized capacity, not maximum throughput. Cold replica recovery remains
+about 17.9 seconds and the existing 64-work allowance remains finite. Independent
+hosts, WAN capacity and automatic universal repair are unverified. See
+`docs/CAPACITY_HANDOFF.md` for the workload and explicit limits.
+
+Native TypeScript senders can prepare and retain an existing outgoing message
+in the recipient-authorized mailbox through Agent `connect`. The sender keeps
+the original ciphertext and persists its exact disclosure, attempt and upload
+request before HTTP. A lost reply, restart or switch to Python reuses those same
+bytes. The source returns signed custody that the client verifies and retains;
+this does not claim the recipient saved the message or acknowledged it.
+
+An optional `ack_request_id` selects an already prepared independent receipt
+permission. Complete signed controls and statuses travel with the message,
+including bounded compressed transport for the larger draft. No new permission
+or storage allocation is inferred. Native source provisioning and ACK/root/feed replica inbox
+recovery still use Python. See `clients/typescript/network/README.md` and
+`docs/OPEN_NETWORK_CONTACT.md` for the existing invitations.
+
+Native TypeScript recipients can issue an original mailbox destination from
+an explicitly approved contact and a registered mailbox. The receiver signs with
+its own existing identity and exports bounded authorization pages for sender
+admission. Python and native clients reopen the same persisted signed originals;
+conflicting selections and stale revisions fail. Both clients enforce retained
+parent/resource revocations before cached or fresh authorization, even after the
+status expires. Authorization creates no new storage or receipt-return grants.
+See `clients/typescript/network/README.md` and `docs/OPEN_NETWORK_CONTACT.md`.
 
 Native TypeScript recipients can retain an independently authorized receipt
 return for a cold-mailbox message. Ordinary Agent `receive` then returns the
@@ -18,7 +58,7 @@ inbox. Retained revocations survive restart. Python and TypeScript share receive
 configuration, status history and saved inbox evidence; either can resume an
 interrupted import. The native path performs its own HTTP and cryptography.
 Saved receipts remain available through independently authorized return requests.
-Native provisioning and replica inbox recovery remain unfinished. See
+Native provisioning and ACK/root/feed replica inbox recovery remain unfinished. See
 `clients/typescript/network/README.md` and `docs/OPEN_NETWORK_CONTACT.md`.
 
 Native TypeScript recipients can return an actually saved message or memory
@@ -174,7 +214,7 @@ require independently configured providers; reading metadata cannot grant
 authority or enroll keys.
 
 The complete Python client and executable synthetic review kit are separate
-artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.37;
+artifacts described in `docs/RELEASE.md`. This package targets v0.28.0-alpha.0.40;
 previous published versions remain immutable. The optional native network adds
 communication around existing records without changing canonical record/v1 or
 share-v1. It has no MCP, A2A, Matrix, Nostr or Graphiti adapter or compatibility

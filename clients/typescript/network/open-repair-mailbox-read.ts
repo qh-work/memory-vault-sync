@@ -105,6 +105,18 @@ function currentRead(setup:Obj,entries:readonly unknown[],known:readonly unknown
 /** Authenticate/decrypt metadata and check present authority before fetching
  * the envelope. The enclosing verified feed determines which member to select. */
 export async function readMailboxAdmission(member:unknown,options:MailboxAdmissionReadOptions):Promise<Readonly<Obj>>{
+  const metadata=await verifyMailboxAdmissionMetadata(member,options);
+  const {policy,budget}=options;
+  const statuses=currentRead(metadata.setup,options.currentStatuses,options.knownStatuses,options.statusObligations,options.at,policy,budget,options.onStatusAuthenticated);
+  const ref=rawRef(metadata.core.envelope_ref),raw=await options.readOriginal(ref);
+  if(!isUint8Array(raw)||ref.namespace!=='object'||ref.size>6291456||raw.length!==ref.size||budget.hash(raw)!==ref.raw_sha256)fail('repair_ref_mismatch');
+  budget.input(raw.length);budget.retain(raw.length);const envelope=Uint8Array.from(raw);
+  return Object.freeze({...metadata,current_statuses:statuses,originals:Object.freeze([...metadata.originals,{ref,raw:envelope}]),get envelope(){budget.output(envelope.length);return Uint8Array.from(envelope);}});
+}
+/** Original source authentication and recipient decryption, without asserting
+ * current source READ. Replica callers must establish independent live READ
+ * before fetching the envelope; this function performs no object fetch. */
+export async function verifyMailboxAdmissionMetadata(member:unknown,options:MailboxAdmissionReadOptions):Promise<Readonly<Obj>>{
   const names=['expectedSlot','expectedSigningKey','encryptionIdentity','readOriginal','at','policy','budget','expectedOwner','expectedSender','expectedTarget','limitPolicy','currentStatuses','knownStatuses','statusObligations'];
   const a=fields(options,Object.hasOwn(options,'onStatusAuthenticated')?[...names,'onStatusAuthenticated']:names),{policy,budget}=a;
   const e=buildNewWire({slot:a.expectedSlot,key:a.expectedSigningKey,owner:a.expectedOwner,sender:a.expectedSender,target:a.expectedTarget,limits:a.limitPolicy,at:a.at,identity:a.encryptionIdentity,member},policy,budget).value as Obj;
@@ -144,8 +156,6 @@ export async function readMailboxAdmission(member:unknown,options:MailboxAdmissi
   for(const n of ['slot','read','maintenance','bootstrap']){const p=setup.originals[n].payload;deadlines.push(p.expires_at);if(p.windows)deadlines.push(p.windows.read_until,p.windows.retain_until);if(n==='bootstrap')deadlines.push(p.probe_until,p.proof_until,p.upload_until);}
   for(const n of ['data','metadata']){const p=setup.resources[n].active.payload;deadlines.push(p.windows.read_until,p.windows.retain_until);}
   if(core.enum_until>Math.min(...deadlines))fail('repair_mailbox_member_mismatch');
-  const statuses=currentRead(setup,a.currentStatuses,a.knownStatuses,a.statusObligations,e.at,policy,budget,a.onStatusAuthenticated);
-  const envelope=await load(core.envelope_ref,'object');
   const retained=Object.freeze([...originals.values()].map(v=>Object.freeze({ref:v.ref,get raw(){budget.output(v.raw.length);return Uint8Array.from(v.raw);}})));
-  return Object.freeze({core,link,checkpoint,setup,history:manifest,current_statuses:statuses,originals:retained,get envelope(){budget.output(envelope.length);return Uint8Array.from(envelope);}});
+  return Object.freeze({core,link,checkpoint,setup,history:manifest,originals:retained});
 }

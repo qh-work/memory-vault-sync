@@ -84,23 +84,33 @@ class OpenIndex:
         self.connection.execute("DELETE FROM open_contact_floors WHERE retain_until<=? AND owner NOT IN (SELECT owner FROM open_contacts)", (now,))
         self.connection.execute("DELETE FROM open_index_replay WHERE retain_until<=?", (now,))
 
-    def _capacity(self) -> None:
+    def _capacity(self, *, now: int | None = None) -> None:
         db = self.connection
-        records = db.execute("SELECT count(*) FROM open_contact_floors").fetchone()[0]
-        replays = db.execute("SELECT count(*) FROM open_index_replay").fetchone()[0]
+        # A read snapshot applies the same logical expiry as _prune without
+        # turning every directory lookup into a serialized garbage-collection
+        # write. Allocation still prunes and checks physical obligations.
+        floors_where = "" if now is None else " WHERE retain_until>? OR owner IN (SELECT owner FROM open_contacts WHERE expires_at>?)"
+        floor_args = () if now is None else (now, now)
+        replay_where = "" if now is None else " WHERE retain_until>?"
+        contact_where = "" if now is None else " WHERE expires_at>?"
+        live_args = () if now is None else (now,)
+        records = db.execute("SELECT count(*) FROM open_contact_floors" + floors_where, floor_args).fetchone()[0]
+        replays = db.execute("SELECT count(*) FROM open_index_replay" + replay_where, live_args).fetchone()[0]
         # Reserve two maximum descriptors per floor so observing a same-revision
         # fork can always invalidate a previously accepted contact, even when
         # all unreserved capacity is full. This is reserved capacity, not a
         # claim that padding or two records physically exist on disk.
         floors = records * (2 * 4096 + 512)
-        contacts = db.execute("SELECT coalesce(sum(length(record)+length(lease)+256),0) FROM open_contacts").fetchone()[0]
-        replay_bytes = db.execute("SELECT coalesce(sum(length(response)+256),0) FROM open_index_replay").fetchone()[0]
+        contacts = db.execute("SELECT coalesce(sum(length(record)+length(lease)+256),0) FROM open_contacts" + contact_where, live_args).fetchone()[0]
+        replay_bytes = db.execute("SELECT coalesce(sum(length(response)+256),0) FROM open_index_replay" + replay_where, live_args).fetchone()[0]
         if records > self.maximum_records or replays > self.maximum_replays or floors + contacts + replay_bytes > self.maximum_bytes:
             raise OpenControlError("open_index_capacity", retryable=True)
 
     def _get(self, key: str, now: int) -> dict[str, Any]:
         floor = self.connection.execute(
-            "SELECT owner,status FROM open_contact_floors WHERE lookup_key=?", (key,)).fetchone()
+            """SELECT owner,status FROM open_contact_floors WHERE lookup_key=? AND
+            (retain_until>? OR owner IN (SELECT owner FROM open_contacts WHERE expires_at>?))""",
+            (key, now, now)).fetchone()
         if floor is None:
             return {"state": "not_found"}
         if floor[1] in {"revoked", "conflict"}:
@@ -141,17 +151,18 @@ class OpenIndex:
             db = self.connection
             if db.in_transaction:
                 raise OpenControlError("open_storage_transaction")
-            db.execute("BEGIN IMMEDIATE")
+            reading = checked["action"] == "get"
+            db.execute("BEGIN" if reading else "BEGIN IMMEDIATE")
             try:
                 # A wait for the writer lock must not extend request authority.
                 current = int(time.time()) if now is None else integer(now)
                 checked = verify_request(signed_request, node=self.node, now=current)
-                self._prune(current)
-                if checked["action"] == "get":
+                if reading:
                     result = self._get(checked["body"]["key"], current)
                 else:
+                    self._prune(current)
                     result, failure = self._write(signed_request, checked, current)
-                self._capacity()
+                self._capacity(now=current if reading else None)
                 db.commit()
             except BaseException:
                 db.rollback()

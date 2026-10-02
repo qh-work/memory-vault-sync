@@ -90,6 +90,12 @@ function ackConfiguration(roles:Obj,e:Obj,m:Obj,policy:RepairPolicy,budget:Repai
     duties.push({role,scope_kind:'authority',scope_id:statusScope(root,'authority',{authority_kind:item.payload.kind,authority_sha256:item.ref.raw_sha256},policy,budget),document_revision:item.payload.revision,operation_mask:mask,signer:e.sender.signing_key});}
   return Object.freeze({originals:checked.originals,statuses:historicalStatuses(roles,duties,root,e.at,policy,budget)});
 }
+/** Sender preparation verifies the same complete independent receipt originals. */
+export function verifyMailboxAckConfiguration(roles:Obj,options:{sender:Obj;recipient:Obj;messageId:string;envelopeRef:unknown;at:number;policy:RepairPolicy;budget:RepairBudget}):Obj{
+  if(!roleSet(roles,ACK))fail('repair_original_missing');
+  return ackConfiguration(roles,{sender:options.sender,owner:options.recipient,at:options.at},
+    {message_id:options.messageId,envelope_ref:options.envelopeRef},options.policy,options.budget);
+}
 function member(resolved:DraftHistoryInputs,e:Obj,policy:RepairPolicy,budget:RepairBudget):Obj{
   const graph=setup(resolved,e,policy,budget),{roles,originals}=graph,m=resolved.manifest.value as Obj,root=m.root_key,key=m.slot_key,at=e.at;
   if(!roleSet(roles,BASE)&&!roleSet(roles,[...BASE,...ACK]))fail();

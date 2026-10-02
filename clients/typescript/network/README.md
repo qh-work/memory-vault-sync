@@ -1,5 +1,7 @@
 # Independent network-v1 endpoint candidate
 
+Alpha.0.40 adds bounded HTTP admission, WAL read concurrency, separately approved resource distribution and native full message-replica COPY/READ recovery. The isolated 48-Memory/2-per-second workload completes 39 → 48 chains; this proves authorized quota use, not a CPU/SQLite ceiling. Replica cold reads remain slow and stop at the existing finite work allowance. See [capacity evidence and limits](../../../docs/CAPACITY_HANDOFF.md).
+
 This optional Node TypeScript package implements the existing Memory Vault
 network-v1 envelope without invoking Python. It is separate from the zero
 dependency HTTP SDK in the parent directory. It uses `jose` 6.2.10 for X25519
@@ -332,3 +334,55 @@ history. Re-registering a completed selection can reuse authenticated local
 history without another upload. Direct `return_mailbox_receipt` supports the same
 message and source selection. Native replica inbox support remains unfinished.
 These additions are development source after the frozen alpha.0.36 candidate.
+
+### Receiver-issued mailbox authorization (development after alpha.0.37)
+
+After registering an already provisioned mailbox and explicitly approving the
+sender's contact request, a native recipient can export the existing mailbox
+admission invitation with ordinary `connect`:
+
+```ts
+await agent.handle({op: 'connect', invitation: {
+  schema_version: 'memory-vault-open-mailbox-connect/v1', action: 'authorize',
+  receiver_id, contact_request_ref, expires_at, status_revision, status_until
+}});
+```
+
+Choose the expiry windows within the original contact and mailbox permissions.
+The owner supplies and coordinates `status_revision`; a new selection must not
+reuse or roll back an issued revision. Authorization binds the exact approved
+contact, sender and recipient keys, mailbox slot, selected source and existing
+storage resources. It does not reserve new storage or create ACK-return grants.
+The native client signs with the recipient's own existing identity and persists
+the exact destination and status originals before returning them.
+
+The response supplies a base64 `authorization_chunk` of at most 3,072 bytes,
+`authorization_sha256`, `total_bytes`, `offset`, and `next_cursor`. Repeat the
+same invitation with `cursor: next_cursor` until it is null, join decoded chunks
+in order, and verify the complete byte count and SHA-256 before parsing the
+sender's `retain` authorization. A cursor cannot be reused for different bytes.
+`inspect` with `receiver_id` similarly pages `configuration_chunk` with
+`configuration_sha256`; both operations reauthenticate the retained receiver
+and perform no HTTP requests.
+
+Python and native clients share the bounded destination journal. Restarting or
+switching clients returns the same signed originals; a conflicting request or
+reused older revision fails. Both clients reauthenticate retained receive-status
+observations inside the signing transaction. Revoked slot, parent permission or
+storage-resource authority blocks both cached output and fresh issuance even
+after that status expires; higher remembered document floors also remain in force. A completed local authorization does not prove that
+the source is currently available or that a message was delivered. The sender
+must still prepare and admit its exact ciphertext under current source checks;
+source provisioning currently uses Python. The native sender supports the same
+`prepare`, `admit`, and combined `retain` invitations in development after
+alpha.0.38. It freezes the original outbox ciphertext, disclosure and attempt in
+the shared Python/native journal before HTTP. A lost reply or restart reuses the
+same request, and changed selections fail instead of silently renewing grants.
+
+Pass `ack_request_id` to `prepare` or `retain` only when selecting an existing
+independently prepared receipt destination. Its six complete original controls
+and statuses are authenticated and carried in the mailbox member. The node
+still performs current permission, storage and resource checks before admission.
+`retained_at_mailbox` means the source signed actual custody;
+`recipient_acknowledged` remains false until a separate saved receipt is verified.
+Neither local preparation nor source custody means the recipient saved a memory.

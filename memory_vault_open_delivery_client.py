@@ -351,11 +351,12 @@ class OpenDeliveryClient:
         budget = _DeliveryBudget()
         if _deadline is not None:budget.deadline=min(budget.deadline,_deadline)
         if row["session"] is None:
-            session = await self._sending_session(recipients[0], budget)
-            row = self._encrypt_outbox(row, session)
+            session = await self._sending_session(recipients[0], budget, row=row)
+            row = self._outbox(request_id)
         else:
             session = document(bytes(row["session"]), maximum=MAX_SESSION_BYTES)
-        self._encrypt_outbox(row, session)
+        row = self._encrypt_outbox(row, session)
+        session = document(bytes(row["session"]), maximum=MAX_SESSION_BYTES)
         node, pending_code = None, None
         if row["result"] is None:
             # Recover a committed upload even if its final response was lost
@@ -515,7 +516,7 @@ class OpenDeliveryClient:
                 "recipient_signing_key": policy["signing_key"],
                 "recipient_encryption_key": policy["encryption_key"]}
 
-    async def _sending_session(self, recipient, budget):
+    async def _sending_session(self, recipient, budget, *, row=None):
         sessions = self._contact_sessions(outgoing=True, recipient=recipient)
         if not sessions:
             # Fetch only an existing explicit request's decision. This neither
@@ -543,13 +544,101 @@ class OpenDeliveryClient:
                     budget.merge_routing(route_budget)
                 break
             sessions = self._contact_sessions(outgoing=True, recipient=recipient)
+        eligible, unavailable = [], []
         for session in sessions:
             try:
-                return await self._checked_session(session, budget)
+                checked = await self._checked_session(session, budget)
+                if row is None:
+                    # Repair callers retain their original first valid choice.
+                    return checked
+                eligible.append(checked)
             except ContactError as exc:
-                if exc.code not in {"contact_expired", "contact_policy_mismatch"}:
+                if exc.code in {"contact_expired", "contact_policy_mismatch"}:
+                    continue
+                if row is not None and exc.code == "contact_resource_unresolved":
+                    unavailable.append(exc)
+                    continue
+                else:
                     raise
-        raise MemoryError("open_contact_approval_required")
+        if not eligible:
+            if unavailable:
+                raise unavailable[0]
+            raise MemoryError("open_contact_approval_required")
+        frozen = self._freeze_dispatch(row, eligible)
+        return document(bytes(frozen["session"]), maximum=MAX_SESSION_BYTES)
+
+    @staticmethod
+    def _session_scope(session):
+        """The exact signed resource lease; aliases cannot multiply its quota."""
+        lease = session["decision"]["payload"]["grant"]["payload"]["resource_lease"]
+        return hashlib.sha256(canonical_bytes(lease)).hexdigest()
+
+    def _freeze_dispatch(self, row, sessions):
+        """Atomically place a new immutable envelope in a finite approved slot.
+
+        Count every local frozen send, including unfinished uploads, against its
+        exact grant. The server independently rechecks live authority and quota.
+        Existing frozen sends never move to a different node on retry or failure.
+        """
+        keys = self._keys(sessions[0])
+        # Preserve the formerly selected recipient key incarnation. Never pool
+        # approvals for different encryption identities under one ciphertext.
+        sessions = [session for session in sessions if self._keys(session) == keys]
+        envelope = create_envelope(bytes(row["body"]), signer=self.identity,
+            sender_encryption_key=self.encryption.public_descriptor(),
+            recipient_signing_key=keys["recipient_signing_key"],
+            recipient_encryption_key=keys["recipient_encryption_key"],
+            message_id=row["message_id"], object_key=secrets.token_hex(32), created_at=row["created_at"])
+        encoded = canonical_bytes(document(envelope, maximum=MAX_ENVELOPE_BYTES))
+        with self.participant.state.db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            prior = db.execute("SELECT * FROM open_delivery_outbox WHERE request_id=?", (row["request_id"],)).fetchone()
+            if prior is None:
+                raise MemoryError("open_delivery_outbox_missing")
+            if prior["envelope"] is not None:
+                return dict(prior)
+            used = {}
+            # MAX_OUTBOX_RECORDS is enforced before admission; no new roster or
+            # unbounded historical archive is introduced by this local scan.
+            for saved in db.execute("SELECT session,length(envelope) AS bytes FROM open_delivery_outbox WHERE session IS NOT NULL LIMIT ?", (MAX_OUTBOX_RECORDS,)):
+                session = document(bytes(saved["session"]), maximum=MAX_SESSION_BYTES)
+                scope = self._session_scope(session)
+                items, size = used.get(scope, (0, 0))
+                used[scope] = (items+1, size+(saved["bytes"] or MAX_ENVELOPE_BYTES))
+            available = []
+            for session in sessions:
+                lease = session["decision"]["payload"]["grant"]["payload"]["resource_lease"]["payload"]
+                scope = self._session_scope(session)
+                items, size = used.get(scope, (0, 0))
+                if items < lease["max_items"] and size+len(encoded) <= lease["max_bytes"]:
+                    available.append((items/lease["max_items"], size/lease["max_bytes"], scope, session))
+            if not available:
+                if all(len(encoded) > session["decision"]["payload"]["grant"]["payload"]["resource_lease"]["payload"]["max_bytes"] for session in sessions):
+                    raise MemoryError("open_delivery_approval_bytes_insufficient")
+                raise MemoryError("open_delivery_approval_capacity")
+            session = min(available, key=lambda x: x[:3])[3]
+            proof = canonical_bytes(document(session, maximum=MAX_SESSION_BYTES))
+            _, size = self._local_size(db, "open_delivery_outbox")
+            if size-MAX_ENVELOPE_BYTES-MAX_SESSION_BYTES+len(encoded)+len(proof) > MAX_LOCAL_BYTES:
+                raise MemoryError("network_outbox_capacity")
+            db.execute("UPDATE open_delivery_outbox SET envelope=?,session=? WHERE request_id=?", (encoded,proof,row["request_id"]))
+            return dict(db.execute("SELECT * FROM open_delivery_outbox WHERE request_id=?", (row["request_id"],)).fetchone())
+
+    def _receiving_sessions(self):
+        sessions = self._contact_sessions(outgoing=False)
+        with self.participant.state.db() as db:
+            row = db.execute("SELECT body FROM open_delivery_client_state WHERE key='receive_session_cursor'").fetchone()
+        if row is not None:
+            previous = bytes(row[0]).decode("ascii")
+            for index, session in enumerate(sessions):
+                if self._session_scope(session) == previous:
+                    return sessions[index+1:]+sessions[:index+1]
+        return sessions
+
+    def _advance_receiving_session(self, session):
+        with self.participant.state.db() as db:
+            db.execute("INSERT INTO open_delivery_client_state VALUES('receive_session_cursor',?) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
+                       (self._session_scope(session).encode("ascii"),))
 
     def _encrypt_outbox(self, row, session):
         if row["envelope"] is not None:
@@ -955,7 +1044,7 @@ class OpenDeliveryClient:
                 self._advance_pending_receipt(pending_row)
         if _pending_only:
             return dict(messages=messages,errors=errors[:4],network_accessed=budget.requests>0)
-        for candidate in self._contact_sessions(outgoing=False):
+        for candidate in self._receiving_sessions():
             if len(messages) >= limit:
                 break
             try:
@@ -994,6 +1083,8 @@ class OpenDeliveryClient:
                 errors.append({"code": exc.code, "retryable": exc.retryable})
                 if len(errors) >= 4:
                     break
+            finally:
+                self._advance_receiving_session(candidate)
         return {"messages": messages, "errors": errors[:4], "network_accessed": budget.requests > 0}
 
     def read_message(self, message_id, offset=0):

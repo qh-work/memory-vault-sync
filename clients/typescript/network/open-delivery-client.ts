@@ -3,6 +3,8 @@
  */
 import {randomBytes} from 'node:crypto';
 import {verifyMailboxInboxEvidence} from './open-repair-mailbox-inbox.ts';
+import {MailboxMessageReplicaRecoveryClient} from './open-mailbox-replica-client.ts';
+import type {MessageReplicaRecoverOptions} from './open-mailbox-replica-client.ts';
 import {MailboxFeedRecoveryClient} from './open-mailbox-client.ts';
 import type {MailboxRecoverOptions} from './open-mailbox-client.ts';
 import {performance} from 'node:perf_hooks';
@@ -188,7 +190,7 @@ export class OpenDeliveryClient{
     const checked=verifyDecision(session.decision,{request:session.request,policy:session.policy,lease:session.lease,node});
     if(checked.decision!=='approved'||!checked.grant)fail('open_contact_approval_required');return {...session,node};
   }
-  private async sendingSession(recipient:string,budget:DeliveryBudget):Promise<Obj>{
+  private async sendingSession(recipient:string,budget:DeliveryBudget,row?:Obj):Promise<Obj>{
     let sessions=this.contactSessions(true,recipient);
     if(!sessions.length){
       const rows=this.db(db=>db.prepare("SELECT body FROM open_contact_local WHERE category='outgoing' AND expires_at>? ORDER BY expires_at DESC,reference LIMIT 128").all(now())) as Obj[];
@@ -208,8 +210,58 @@ export class OpenDeliveryClient{
         }finally{budget.merge(child);}break;
       }sessions=this.contactSessions(true,recipient);
     }
-    for(const session of sessions){try{return await this.checkedSession(session,budget);}catch(error){if(!['contact_expired','contact_policy_mismatch'].includes((error as any)?.code))throw error;}}
-    fail('open_contact_approval_required');
+    const eligible:Obj[]=[],unavailable:unknown[]=[];
+    for(const session of sessions){try{const checked=await this.checkedSession(session,budget);
+      if(!row)return checked;eligible.push(checked);
+    }catch(error){const code=(error as any)?.code;
+      if(['contact_expired','contact_policy_mismatch'].includes(code))continue;
+      if(row&&code==='contact_resource_unresolved'){unavailable.push(error);continue;}throw error;}}
+    if(!eligible.length){if(unavailable.length)throw unavailable[0];fail('open_contact_approval_required');}
+    const frozen=await this.freezeDispatch(row!,eligible);return document(frozen.session,MAX_SESSION_BYTES) as Obj;
+  }
+  private static sessionScope(session:Obj):string{
+    // Exact signed resource lease, identical to Python. Aliases share a quota.
+    return sha256(canonicalBytes(session.decision.payload.grant.payload.resource_lease));
+  }
+  private async freezeDispatch(row:Obj,sessions:Obj[]):Promise<Obj>{
+    const keys=OpenDeliveryClient.keys(sessions[0]);
+    sessions=sessions.filter(session=>same(OpenDeliveryClient.keys(session),keys));
+    const envelope=await createEnvelope(row.body,{signer:this.participant.identity,
+      sender_encryption_key:validateEncryptionIdentity(this.encryption),
+      recipient_signing_key:keys.recipient_signing_key,recipient_encryption_key:keys.recipient_encryption_key,
+      message_id:row.message_id,object_key:randomBytes(32).toString('hex'),created_at:row.created_at});
+    const encoded=canonicalBytes(envelope,MAX_ENVELOPE_BYTES);
+    return this.db(db=>transaction(db,()=>{
+      const prior=db.prepare('SELECT * FROM open_delivery_outbox WHERE request_id=?').get(row.request_id) as Obj|undefined;
+      if(!prior)fail('open_delivery_outbox_missing');if(prior.envelope)return prior;
+      const used=new Map<string,{items:number;bytes:number}>();
+      // Admission already limits the local outbox to 1024 records.
+      for(const saved of db.prepare('SELECT session,length(envelope) AS bytes FROM open_delivery_outbox WHERE session IS NOT NULL LIMIT 1024').all() as Obj[]){
+        const scope=OpenDeliveryClient.sessionScope(document(saved.session,MAX_SESSION_BYTES) as Obj),count=used.get(scope)??{items:0,bytes:0};
+        used.set(scope,{items:count.items+1,bytes:count.bytes+(saved.bytes||MAX_ENVELOPE_BYTES)});
+      }
+      const available=sessions.map(session=>{const lease=session.decision.payload.grant.payload.resource_lease.payload,
+        scope=OpenDeliveryClient.sessionScope(session),count=used.get(scope)??{items:0,bytes:0};
+        return {session,scope,lease,count};
+      }).filter(v=>v.count.items<v.lease.max_items&&v.count.bytes+encoded.length<=v.lease.max_bytes);
+      if(!available.length){if(sessions.every(session=>encoded.length>session.decision.payload.grant.payload.resource_lease.payload.max_bytes))fail('open_delivery_approval_bytes_insufficient');
+        fail('open_delivery_approval_capacity');}
+      available.sort((a,b)=>a.count.items/a.lease.max_items-b.count.items/b.lease.max_items||
+        a.count.bytes/a.lease.max_bytes-b.count.bytes/b.lease.max_bytes||(a.scope<b.scope?-1:a.scope>b.scope?1:0));
+      const proof=canonicalBytes(document(available[0].session,MAX_SESSION_BYTES)),size=this.size(db,'open_delivery_outbox');
+      if(size.bytes-MAX_ENVELOPE_BYTES-MAX_SESSION_BYTES+encoded.length+proof.length>MAX_LOCAL_BYTES)fail('network_outbox_capacity');
+      db.prepare('UPDATE open_delivery_outbox SET envelope=?,session=? WHERE request_id=?').run(encoded,proof,row.request_id);
+      return db.prepare('SELECT * FROM open_delivery_outbox WHERE request_id=?').get(row.request_id) as Obj;
+    }));
+  }
+  private receivingSessions():Obj[]{
+    const sessions=this.contactSessions(false),row=this.db(db=>db.prepare("SELECT body FROM open_delivery_client_state WHERE key='receive_session_cursor'").get()) as Obj|undefined;
+    if(row){const previous=raw(row.body).toString('ascii'),index=sessions.findIndex(session=>OpenDeliveryClient.sessionScope(session)===previous);
+      if(index>=0)return [...sessions.slice(index+1),...sessions.slice(0,index+1)];}
+    return sessions;
+  }
+  private advanceReceivingSession(session:Obj):void{
+    this.db(db=>db.prepare("INSERT INTO open_delivery_client_state VALUES('receive_session_cursor',?) ON CONFLICT(key) DO UPDATE SET body=excluded.body").run(Buffer.from(OpenDeliveryClient.sessionScope(session),'ascii')));
   }
   private uploadIntent(row:Obj,session:Obj):Obj{
     if(row.intent){const prior=document(row.intent,MAX_INTENT_BYTES) as Obj;if(prior.payload.expires_at>now())return prior;}
@@ -281,7 +333,7 @@ export class OpenDeliveryClient{
   }
   private async sendInternal(requestId:string,recipient:string,hash:string,text:string,memoryIds:string[],recoverAck?:AckRecovery):Promise<Obj>{
     let row=this.prepareOutbox(requestId,recipient,hash,text,memoryIds);const budget=new DeliveryBudget();let session:Obj;
-    if(!row.session){session=await this.sendingSession(recipient,budget);row=await this.encryptOutbox(row,session);}
+    if(!row.session){session=await this.sendingSession(recipient,budget,row);row=this.outbox(requestId)!;}
     session=document(row.session,MAX_SESSION_BYTES) as Obj;row=await this.encryptOutbox(row,session);
     let recovery:Obj={network_accessed:false};
     if(row.result&&!row.acknowledgement&&recoverAck){
@@ -478,6 +530,21 @@ export class OpenDeliveryClient{
       return {messages,errors:[],state:'observed',body_transport:'mailbox_retained_copy',receipt_state:'retained_for_independent_return'};
     });
   }
+  async receiveMailboxReplica(reader:MailboxMessageReplicaRecoveryClient,baseUrl:string,options:MessageReplicaRecoverOptions):Promise<Obj>{
+    if(!(reader instanceof MailboxMessageReplicaRecoveryClient)||!same(reader.subject,{signing_key:validateSigningIdentity(this.participant.identity),encryption_key:validateEncryptionIdentity(this.encryption)}))fail('open_delivery_key_binding_mismatch');
+    return this.serial(async()=>{
+      const deadline=performance.now()/1000+(options.timeout??60),recovered=await reader.recover(baseUrl,options),selected=recovered.replica.source.message_scope.envelope_ref;
+      const message=recovered.replica.source.graph.members.find((v:Obj)=>same(v.attempt.envelope_ref,selected))?.attempt.message_id??(recovered.replica.source.custody.payload.message_id as string);
+      const prior=this.inbox(message);let result:Obj,fresh:boolean;
+      if(prior){if(prior.envelope_sha256!==selected.raw_sha256)fail('network_inbox_identity_conflict');fresh=prior.phase==='staged';result=await this.finishInbox(message);}
+      else{
+        const remaining=Math.min(30,deadline-performance.now()/1000);if(remaining<=0)fail('open_delivery_budget_exhausted',true);const verified=await reader.readMessage(baseUrl,recovered,remaining),roles=verified.setup.roles;
+        const authority=Object.fromEntries([['request','contact.request'],['policy','contact.policy']].map(([n,r])=>[n,document(roles[r].raw)])),session={authority,source_node:document((options.targetNodeEntry as Obj).raw),mailbox:reader.inboxEvidence(recovered)},envelope=verified.envelope;
+        const body=await decryptEnvelope(envelope,{...OpenDeliveryClient.keys(session),encryption_identity:this.encryption} as any);this.stageInbox(message,authority.request.payload.signing_key.key_id,envelope,body,session);result=await this.finishInbox(message);fresh=true;
+      }
+      if(result.state==='validated_saved')this.savedReceipt(message);return {messages:fresh?[result]:[],errors:[],state:'observed',network_accessed:true,body_transport:'mailbox_message_replica',receipt_state:'retained_for_independent_return'};
+    });
+  }
   private pendingReceiptBatch():Obj[]{return this.db(db=>{
     const select="SELECT message_id,phase,created_at FROM open_delivery_inbox WHERE (phase='staged' OR (phase='saved' AND receipt_sent=0))",
       order=' ORDER BY created_at,message_id LIMIT ?',
@@ -500,7 +567,7 @@ export class OpenDeliveryClient{
       if(result.state==='validated_saved')await this.sendReceipt(row.message_id,budget);}catch(error){errors.push({message_id:row.message_id,...errorData(error)});}
       finally{this.advancePendingReceipt(row);}}
     if(options.pendingOnly)return {messages,errors:errors.slice(0,4),network_accessed:budget.requests>0};
-    for(const candidate of this.contactSessions(false)){if(messages.length>=limit)break;
+    for(const candidate of this.receivingSessions()){if(messages.length>=limit)break;
       try{const session=await this.checkedSession(candidate,budget),node=session.node,leaseId=session.decision.payload.grant.payload.resource_lease.payload.lease_id;
         let [key,after]=this.cursor(session);const intent=readerIntent('list',{lease_id:leaseId,caller_key_id:this.participant.keyId});
         const prepared=await this.call(node,'list.prepare',{lease_id:leaseId},budget),challenge=prepared.challenge,answer=await this.answer(challenge,intent,node);
@@ -511,7 +578,8 @@ export class OpenDeliveryClient{
           const [result,fresh]=await this.receiveEntry(session,entry,budget);after=entry.sequence;this.advance(key,after);if(fresh)messages.push(result);
           if(result.state==='validated_saved')try{await this.sendReceipt(entry.message_id,budget,node);}catch(error){errors.push({message_id:entry.message_id,...errorData(error)});}}
         if(safeInteger(listing.next_sequence)!==after)fail('open_delivery_sequence_mismatch');
-      }catch(error){errors.push(errorData(error));if(errors.length>=4)break;}}
+      }catch(error){errors.push(errorData(error));if(errors.length>=4)break;}
+      finally{this.advanceReceivingSession(candidate);}}
     return {messages,errors:errors.slice(0,4),network_accessed:budget.requests>0};
   }
   readMessage(messageId:string,offset=0):Obj{

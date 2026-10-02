@@ -6,6 +6,7 @@ import {absolutePath,readPrivate,NetworkError} from './io.ts';
 import {loadClient} from './client-config.ts';
 import type {Client} from './client-config.ts';
 import {OpenDeliveryClient} from './open-delivery-client.ts';
+import {MailboxSender,MAILBOX_SEND_ACTIONS} from './open-mailbox-send.ts';
 import {RegisteredMailboxReceivers,MAILBOX_CONNECT_SCHEMA} from './open-mailbox-receivers.ts';
 import {MailboxReceiptJobs,MAILBOX_RECEIPT_ACTIONS,returnMailboxReceipt} from './open-mailbox-receipts.ts';
 import {OpenParticipant} from './open-participant.ts';
@@ -38,8 +39,10 @@ export class OpenNetworkClient{
   private result(value:Record<string,any>):Record<string,any>{if(canonicalBytes(value).length>8192)fail('network_response_too_large');return value;}
   async connect(invitation?:unknown,requestId?:string):Promise<Record<string,any>>{
     if(invitation!=null){
-      if(typeof invitation==='object'&&!Array.isArray(invitation)&&(invitation as any).schema_version===MAILBOX_CONNECT_SCHEMA)
-        return this.result(new RegisteredMailboxReceivers(this.participant,this.encryption,this.delivery()).connect(invitation));
+      if(typeof invitation==='object'&&!Array.isArray(invitation)&&(invitation as any).schema_version===MAILBOX_CONNECT_SCHEMA){
+        const delivery=this.delivery();
+        return this.result(MAILBOX_SEND_ACTIONS.has((invitation as any).action)?await new MailboxSender(this.participant,this.encryption).connect(invitation):await new RegisteredMailboxReceivers(this.participant,this.encryption,delivery).connect(invitation));
+      }
       if(typeof invitation==='object'&&!Array.isArray(invitation)&&(invitation as any).schema_version===ACK_CONNECT_SCHEMA){
         if(MAILBOX_RECEIPT_ACTIONS.has((invitation as any).action))return this.result((invitation as any).action==='return_mailbox_receipt'?await returnMailboxReceipt(this.participant,this.encryption,this.delivery(),invitation):new MailboxReceiptJobs(this.participant,this.encryption,this.delivery()).connect(invitation));
         return this.result(await ((invitation as any).action==='return_receipt'?returnSavedReceipt:recoverReceipt)(this.participant,this.encryption,this.delivery(),invitation));

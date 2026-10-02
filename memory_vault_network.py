@@ -287,22 +287,30 @@ class NetworkClient:
                 CREATE TABLE IF NOT EXISTS quarantine(message_id TEXT PRIMARY KEY,digest TEXT NOT NULL UNIQUE,
                     sender TEXT NOT NULL,envelope BLOB NOT NULL,code TEXT NOT NULL);
             """)
-            with connection:
-                connection.execute("BEGIN IMMEDIATE")
-                if "recipients" not in {row[1] for row in connection.execute("PRAGMA table_info(outbox)")}:
-                    # Older completely offline rows did not preserve routing.
-                    # Keep them intact; only their original caller can supply
-                    # missing recipients when no frozen envelope exists.
-                    connection.execute("ALTER TABLE outbox ADD COLUMN recipients BLOB")
-                binding = connection.execute("SELECT value FROM state WHERE key='configuration_binding'").fetchone()
-                if binding is None:
-                    occupied = any(connection.execute("SELECT 1 FROM " + table + " LIMIT 1").fetchone()
-                                   for table in ("state", "outbox", "inbox", "acknowledgements", "quarantine"))
-                    if occupied:
-                        raise MemoryError("network_state_binding_missing")
-                    connection.execute("INSERT INTO state VALUES('configuration_binding',?)", (canonical_bytes(self._binding).decode(),))
-                elif strict_json_loads(binding["value"]) != self._binding:
-                    raise MemoryError("network_state_configuration_mismatch")
+            binding = connection.execute("SELECT value FROM state WHERE key='configuration_binding'").fetchone()
+            migrated = "recipients" in {row[1] for row in connection.execute("PRAGMA table_info(outbox)")}
+            if binding is not None and strict_json_loads(binding["value"]) != self._binding:
+                raise MemoryError("network_state_configuration_mismatch")
+            # Normal opens verify the current durable binding without becoming
+            # writers. Initialization/migration still rechecks under the writer
+            # lock so two first opens cannot admit different configurations.
+            if binding is None or not migrated:
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    if "recipients" not in {row[1] for row in connection.execute("PRAGMA table_info(outbox)")}:
+                        # Older completely offline rows did not preserve routing.
+                        # Keep them intact; only their original caller can supply
+                        # missing recipients when no frozen envelope exists.
+                        connection.execute("ALTER TABLE outbox ADD COLUMN recipients BLOB")
+                    binding = connection.execute("SELECT value FROM state WHERE key='configuration_binding'").fetchone()
+                    if binding is None:
+                        occupied = any(connection.execute("SELECT 1 FROM " + table + " LIMIT 1").fetchone()
+                                       for table in ("state", "outbox", "inbox", "acknowledgements", "quarantine"))
+                        if occupied:
+                            raise MemoryError("network_state_binding_missing")
+                        connection.execute("INSERT INTO state VALUES('configuration_binding',?)", (canonical_bytes(self._binding).decode(),))
+                    elif strict_json_loads(binding["value"]) != self._binding:
+                        raise MemoryError("network_state_configuration_mismatch")
             with connection:
                 yield connection
         finally:

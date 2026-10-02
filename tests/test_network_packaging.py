@@ -46,8 +46,8 @@ TS_NETWORK = {"clients/typescript/network/" + name for name in
                "open-repair-original.ts",
                "open-repair-resource.ts",
                "open-repair-bootstrap.ts",
-               "open-repair-status.ts", "open-repair-mailbox-range.ts", "open-repair-mailbox-authority.ts", "open-repair-mailbox-member.ts", "open-repair-mailbox-feed.ts", "open-repair-mailbox-read.ts", "open-repair-mailbox-inbox.ts", "open-mailbox-client.ts", "open-mailbox-journal.ts", "open-mailbox-receivers.ts", "open-mailbox-receipts.ts",
-               "open-repair-ack.ts",
+               "open-repair-status.ts", "open-repair-mailbox-range.ts", "open-repair-mailbox-authority.ts", "open-repair-mailbox-member.ts", "open-repair-mailbox-feed.ts", "open-repair-mailbox-read.ts", "open-repair-mailbox-inbox.ts", "open-mailbox-client.ts", "open-mailbox-journal.ts", "open-mailbox-receivers.ts", "open-mailbox-receipts.ts", "open-mailbox-destination.ts", "open-mailbox-send.ts",
+               "open-repair-mailbox-replica.ts", "open-mailbox-replica-client.ts", "open-repair-mailbox-replica-inbox.ts", "open-mailbox-replicas.ts", "open-repair-ack.ts",
                "open-repair-probe.ts",
                "open-repair-proof.ts", "open-repair-client.ts", "open-ack-client.ts", "open-ack-status.ts", "open-ack-discovery.ts", "open-repair-admin.ts", "open-repair-bound.ts", "open-repair-empty.ts", "open-repair-occupied.ts", "open-repair-offer-client.ts", "open-repair-receipt.ts")}
 TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
@@ -102,7 +102,7 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
         self.assertGreaterEqual(len(review), 39)
-        self.assertEqual(len(TS_NETWORK), 68)
+        self.assertEqual(len(TS_NETWORK), 74)
         self.assertTrue(RUNTIME_DATA <= set(documents))
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
@@ -122,7 +122,7 @@ class NetworkPackagingTests(unittest.TestCase):
                          "tests/test_open_repair_status.py", "tests/test_open_repair_status_typescript.py",
                          "tests/open_repair_ack_fixtures.py", "tests/test_open_repair_ack.py",
                          "tests/test_open_repair_ack_typescript.py", "tests/test_open_repair_state.py", "tests/test_open_repair_mailbox_resources.py", "tests/test_open_repair_copy_resources.py",
-                         "tests/test_open_repair_copy_prepare.py", "tests/test_open_repair_copy_state.py", "tests/test_open_repair_copy_service.py", "tests/test_open_repair_copy_upload.py", "tests/test_open_repair_copy_empty.py", "tests/test_open_repair_mailbox_activation.py", "tests/test_open_repair_mailbox_range.py", "tests/test_open_repair_mailbox_authority_typescript.py", "tests/test_open_repair_mailbox_member_typescript.py", "tests/test_open_mailbox_client_typescript.py", "tests/test_open_mailbox_receipts_typescript.py", "tests/test_open_repair_mailbox_root.py", "tests/test_open_repair_mailbox_status.py", "tests/test_open_repair_mailbox_source.py", "tests/test_open_repair_mailbox_snapshot.py", "tests/test_open_repair_mailbox_copy.py", "tests/test_open_repair_mailbox_copy_authority.py", "tests/test_open_repair_mailbox_copy_upload.py", "tests/test_open_repair_mailbox_reservation.py", "tests/test_open_repair_mailbox_consent.py", "tests/test_open_mailbox_replica_receive.py", "tests/test_open_mailbox_receipt_jobs.py", "tests/test_open_ack_replica_send.py", "tests/test_open_mailbox_copy_jobs.py", "tests/test_open_repair_mailbox_copy_admin.py", "tests/test_open_repair_mailbox_feed_copy.py", "tests/test_open_repair_mailbox_message_copy.py",
+                         "tests/test_open_repair_copy_prepare.py", "tests/test_open_repair_copy_state.py", "tests/test_open_repair_copy_service.py", "tests/test_open_repair_copy_upload.py", "tests/test_open_repair_copy_empty.py", "tests/test_open_repair_mailbox_activation.py", "tests/test_open_repair_mailbox_range.py", "tests/test_open_repair_mailbox_authority_typescript.py", "tests/test_open_repair_mailbox_member_typescript.py", "tests/test_open_mailbox_client_typescript.py", "tests/test_open_mailbox_receipts_typescript.py", "tests/test_open_mailbox_destination_typescript.py", "tests/test_open_mailbox_send_typescript.py", "tests/test_open_repair_mailbox_root.py", "tests/test_open_repair_mailbox_status.py", "tests/test_open_repair_mailbox_source.py", "tests/test_open_repair_mailbox_snapshot.py", "tests/test_open_repair_mailbox_copy.py", "tests/test_open_repair_mailbox_copy_authority.py", "tests/test_open_repair_mailbox_copy_upload.py", "tests/test_open_repair_mailbox_reservation.py", "tests/test_open_repair_mailbox_consent.py", "tests/test_open_mailbox_replica_receive.py", "tests/test_open_mailbox_receipt_jobs.py", "tests/test_open_ack_replica_send.py", "tests/test_open_mailbox_copy_jobs.py", "tests/test_open_repair_mailbox_copy_admin.py", "tests/test_open_repair_mailbox_feed_copy.py", "tests/test_open_repair_mailbox_message_copy.py",
                          "tests/test_open_repair_probe.py",
                          "tests/test_open_repair_probe_typescript.py",
                          "tests/test_open_repair_offer_client_typescript.py", "tests/test_open_repair_put_client_typescript.py", "tests/test_open_repair_receipt_typescript.py",
@@ -188,8 +188,8 @@ class NetworkPackagingTests(unittest.TestCase):
             "clients/typescript/network/open-repair-wire.ts", "clients/typescript/network/open-repair-history.ts",
             "clients/typescript/network/open-repair-original.ts", "clients/typescript/network/open-repair-resource.ts",
             "clients/typescript/network/open-repair-bootstrap.ts", "clients/typescript/network/open-repair-status.ts",
-            "clients/typescript/network/open-repair-mailbox-range.ts", "clients/typescript/network/open-repair-mailbox-authority.ts", "clients/typescript/network/open-repair-mailbox-member.ts", "clients/typescript/network/open-repair-mailbox-feed.ts", "clients/typescript/network/open-repair-mailbox-read.ts", "clients/typescript/network/open-repair-mailbox-inbox.ts", "clients/typescript/network/open-mailbox-client.ts", "clients/typescript/network/open-mailbox-journal.ts", "clients/typescript/network/open-mailbox-receivers.ts", "clients/typescript/network/open-mailbox-receipts.ts",
-            "clients/typescript/network/open-repair-ack.ts", "clients/typescript/network/open-capacity.ts",
+            "clients/typescript/network/open-repair-mailbox-range.ts", "clients/typescript/network/open-repair-mailbox-authority.ts", "clients/typescript/network/open-repair-mailbox-member.ts", "clients/typescript/network/open-repair-mailbox-feed.ts", "clients/typescript/network/open-repair-mailbox-read.ts", "clients/typescript/network/open-repair-mailbox-inbox.ts", "clients/typescript/network/open-mailbox-client.ts", "clients/typescript/network/open-mailbox-journal.ts", "clients/typescript/network/open-mailbox-receivers.ts", "clients/typescript/network/open-mailbox-receipts.ts", "clients/typescript/network/open-mailbox-destination.ts", "clients/typescript/network/open-mailbox-send.ts",
+            "clients/typescript/network/open-repair-mailbox-replica.ts", "clients/typescript/network/open-mailbox-replica-client.ts", "clients/typescript/network/open-repair-mailbox-replica-inbox.ts", "clients/typescript/network/open-mailbox-replicas.ts", "clients/typescript/network/open-repair-ack.ts", "clients/typescript/network/open-capacity.ts",
             "clients/typescript/network/open-repair-probe.ts", "clients/typescript/network/open-repair-proof.ts",
             "clients/typescript/network/open-repair-client.ts", "clients/typescript/network/open-ack-client.ts", "clients/typescript/network/open-ack-status.ts", "clients/typescript/network/open-ack-discovery.ts",
             "clients/typescript/network/open-repair-admin.ts",
@@ -340,7 +340,10 @@ class NetworkPackagingTests(unittest.TestCase):
                 data = (ROOT / name).read_bytes()
                 (runtime / name).write_bytes(data)
                 hashes[name] = hashlib.sha256(data).hexdigest()
-            (runtime / "MANIFEST.json").write_text(json.dumps({"schema_version": "memory-vault-client-runtime/v1", "modules": hashes}))
+            manifest = runtime / "MANIFEST.json"
+            manifest.write_text(json.dumps({"schema_version": "memory-vault-client-runtime/v1", "modules": hashes}, indent=2))
+            inventory_bytes = manifest.read_bytes()
+            self.assertGreater(len(inventory_bytes), 16 * 1024)
             config = root / "must-not-be-created.json"
             command = [sys.executable, "-I", "-S", "-B", str(launcher), "--config", str(config), "agent", "request"]
             def launch():
@@ -353,6 +356,11 @@ class NetworkPackagingTests(unittest.TestCase):
             self.assertTrue(answer["ok"], answer)
             self.assertFalse(answer["result"]["network_accessed"])
             self.assertFalse(config.exists())
+            # The full ordinary builder inventory must launch, while an
+            # oversized metadata document still fails before application code.
+            manifest.write_bytes(inventory_bytes + b" " * (32 * 1024 + 1 - len(inventory_bytes)))
+            self.assertEqual(launch().returncode, 1)
+            manifest.write_bytes(inventory_bytes)
             # The packaged client's new recovery command must be reachable
             # without reading a config or installing network/server extras.
             help_result = subprocess.run(command[:-2] + ["network-recovery", "--help"],
