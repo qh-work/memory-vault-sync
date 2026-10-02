@@ -6,9 +6,10 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from memory_vault import MemoryError, canonical_bytes
-from memory_vault_open_control import coordinate, issue_node, sign_response, verify_request
+from memory_vault_open_control import coordinate, issue_node, sign_response, verify_request, verify_response
 from memory_vault_open_node import OpenParticipant
 from memory_vault_open_routing import LookupBudget
 from memory_vault_trust import Identity
@@ -43,8 +44,9 @@ class NeighborTests(unittest.TestCase):
             body = {"node": self.nodes[index]}
         else:
             body = {"nodes": self.reply_nodes if self.reply_nodes is not None else [self.nodes[(index+1) % 3]]}
+        now = int(time.time())
         response = sign_response(self.identities[index], request=request, node=self.nodes[index], body=body,
-            issued_at=int(time.time()), expires_at=int(time.time())+60)
+            issued_at=now, expires_at=min(now+60, checked["expires_at"]))
         if index in self.bad_proofs:
             response = copy.deepcopy(response)
             response["payload"]["expires_at"] -= 1
@@ -52,6 +54,16 @@ class NeighborTests(unittest.TestCase):
 
     def step(self, **kwargs):
         return asyncio.run(self.client.find_neighbors(self.target, **kwargs))
+
+    def test_response_after_second_boundary_retains_original_request_deadline(self):
+        request = self.client._request(self.nodes[0], "find", {"target": self.target, "view": "general"})
+        now = request["payload"]["issued_at"] + 1
+        # Only the synthetic responder clock moves; protocol verification stays live.
+        with patch("tests.test_open_neighbors.time", SimpleNamespace(time=lambda: now)):
+            reply = self.request(self.nodes[0]["payload"]["base_url"], request, deadline=float("inf"))
+        response = verify_response(reply.response, request=request, node=self.nodes[0], now=now)
+        self.assertEqual(response["issued_at"], now)
+        self.assertEqual(response["expires_at"], request["payload"]["expires_at"])
 
     def test_new_neighbor_is_challenged_then_used_without_injecting_members(self):
         first = self.step(view="directory")
