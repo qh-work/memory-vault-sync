@@ -45,7 +45,7 @@
   "automatic_sync_default": false,
   "readme_is_installation": false,
   "runtime_tests_run_for_release": true,
-  "runtime_test_scope": "63 local targeted cases passed; isolated native 48-message/2-per-second trial completed 39 -> 48 chains. Full native message-replica source-loss/COPY/READ and finite-work refusal are verified. See release CI and capacity report for final exact-source validation. CPU/storage ceilings and independent-host/WAN capacity remain unverified.",
+  "runtime_test_scope": "Published [v0.28.0-alpha.0.40](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.40) includes bounded delivery distribution and native message-replica recovery. [Final-source CI](https://github.com/qh-work/memory-vault-sync/actions/runs/37045141611) passed 1270 tests across 147 modules; three Python 3.10 suites and three-platform protocol conformance passed. Eight release assets were downloaded and matched, including an anonymous client download. Release source: 431ee0d2588273ecb2d8305b82ad73a3ce0375c7. Same-host capacity results and slow, finite-work cold recovery remain experimental; independent-host/WAN and thousand-agent capacity are unverified.",
   "runtime_test_report": "../docs/RELEASE.md",
   "full_runtime_test_suite_run": true,
   "runtime_parity_verified": false,
