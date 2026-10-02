@@ -15,6 +15,7 @@ from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import secrets
+import queue
 import socket
 from socketserver import TCPServer
 import sqlite3
@@ -24,7 +25,7 @@ from typing import Any, Mapping
 
 from memory_vault import MemoryError, canonical_bytes
 from memory_vault_network import NetworkClient, _read_private
-from memory_vault_network_crypto import document, document_sha256, integer, object_fields
+from memory_vault_network_crypto import document, document_sha256, integer, object_fields, digest
 from memory_vault_open_control import (
     contact_key, coordinate, issue_node, sign_request, sign_response,
     verify_contact, verify_node, verify_response, verify_request,
@@ -220,6 +221,9 @@ class OpenParticipant:
         self._publication = None
         self._maintenance_cycle = 0
         self._seed_refresh_after = 0.0
+        self._neighbor_lock = threading.Lock()
+        self._neighbor_cursor = 0
+        self._neighbor_probe_after = 0.0
         with self.state.db() as db:
             OpenCheckpoints(db).initialize()
             db.execute("CREATE TABLE IF NOT EXISTS open_peer_cache (key_id TEXT PRIMARY KEY,node BLOB NOT NULL,seen_at INTEGER NOT NULL)")
@@ -557,6 +561,73 @@ class OpenParticipant:
         result["partial"] = result["partial"] or bool(refresh_errors)
         return result
 
+    async def find_neighbors(self, target: str, *, view="general", budget=None):
+        """One distributed routing step, returning introductions, not a contact.
+
+        Repeated callers share a bounded, endpoint-proven router pool instead
+        of pinning every routing query to the initial seed. A reply can introduce
+        one new router for a fresh hello proof, at most once per five seconds.
+        This does not replace iterative lookup or its multi-shard contact checks.
+        No remote node receives the caller's authority or private message data.
+        """
+        digest(target)
+        if view not in ("general", "directory"):
+            raise MemoryError("open_invalid_view")
+        budget = budget or LookupBudget()
+        errors = await self._refresh_seed_introductions(budget)
+        introductions = [node for lane in self._initial(target, "general") for node in lane]
+        proven = {node["payload"]["signing_key"]["key_id"]: node for node in introductions
+                  if "router" in node["payload"]["roles"] and self.table.has_verified(node)}
+        nodes = sorted(proven.values(), key=lambda n: n["payload"]["signing_key"]["key_id"])
+        with self._neighbor_lock:
+            offset = self._neighbor_cursor % len(nodes) if nodes else 0
+            self._neighbor_cursor += 1
+        nodes = nodes[offset:] + nodes[:offset]
+        # Cold starts and failed pools retain independently configured/cache
+        # introductions. They still need a valid response from the exact peer.
+        seen = set(proven)
+        for node in introductions:
+            key = node["payload"]["signing_key"]["key_id"]
+            if key not in seen and "router" in node["payload"]["roles"]:
+                nodes.append(node)
+                seen.add(key)
+        for node in nodes[:3]:
+            try:
+                body = await self._call(node, "find", {"target": target, "view": view}, budget)
+            except (MemoryError, OSError, TimeoutError) as exc:
+                self.table.mark_failed(node["payload"]["signing_key"]["key_id"])
+                errors.append(getattr(exc, "code", "open_rpc_unreachable"))
+                continue
+            # The responder's proof never transfers to a returned descriptor.
+            # Use normal checkpoint and source/bucket limits on each new proof.
+            # An empty/fully proven reply must not consume the five-second
+            # probe allowance before a joining peer becomes discoverable.
+            candidates = []
+            for introduced in sorted(body["nodes"], key=lambda n:
+                    n["payload"]["signing_key"]["key_id"] in seen):
+                try:
+                    if (introduced["payload"]["signing_key"]["key_id"] != self.identity.key_id
+                            and "router" in introduced["payload"]["roles"]
+                            and not self.table.has_verified(introduced)):
+                        candidates.append(introduced)
+                except MemoryError:
+                    continue
+            with self._neighbor_lock:
+                probe = bool(candidates) and time.monotonic() >= self._neighbor_probe_after
+                if probe:
+                    self._neighbor_probe_after = time.monotonic() + 5
+            if probe:
+                try:
+                    await self._call(candidates[0], "hello", {"node": None}, budget)
+                except (MemoryError, OSError, TimeoutError) as exc:
+                    errors.append(getattr(exc, "code", "open_rpc_unreachable"))
+            return {"state": "introduced", "responder": node, "nodes": body["nodes"],
+                    "metrics": self._metrics(budget), "errors": errors,
+                    "introductions_verified": False, "discovery_grants_access": False}
+        return {"state": "unreachable", "responder": None, "nodes": [],
+                "metrics": self._metrics(budget), "errors": errors,
+                "introductions_verified": False, "discovery_grants_access": False}
+
     @staticmethod
     def _metrics(budget):
         return {"requests": budget.requests, "request_bytes": budget.request_bytes,
@@ -829,7 +900,11 @@ class OpenParticipant:
 
 
 class OpenHTTPServer(ThreadingHTTPServer):
-    """Bounded HTTP admission. No plaintext, HTTP redirects or secret logging."""
+    """Eight fixed workers and a finite queue; no per-connection worker spawn.
+
+    Queue time is part of the existing input deadline. Overload is an explicit
+    retryable HTTP refusal, never a signed acceptance or a new protocol grant.
+    """
     daemon_threads = True
     request_queue_size = 16
 
@@ -841,27 +916,85 @@ class OpenHTTPServer(ThreadingHTTPServer):
 
     def __init__(self, address, participant):
         self.participant = participant
-        self._slots = threading.BoundedSemaphore(8)
+        self._requests = queue.Queue(maxsize=16)
+        self._closing = threading.Event()
+        self._deadlines = {}
+        self._deadlines_lock = threading.Lock()
+        self._workers = []
         self._rate_lock = threading.Lock()
         self._rate = OrderedDict()
         self._global_rate = (0, 0)
         super().__init__(address, _Handler)
+        self._workers = [threading.Thread(target=self._work, daemon=True) for _ in range(8)]
+        for worker in self._workers:
+            worker.start()
 
     def process_request(self, request, client_address):
-        if not self._slots.acquire(blocking=False):
-            request.close()
+        if self._closing.is_set():
+            self.shutdown_request(request)
             return
         try:
-            super().process_request(request, client_address)
-        except BaseException:
-            self._slots.release()
-            raise
+            self._requests.put_nowait((request, client_address, time.monotonic() + HTTP_REQUEST_SECONDS))
+        except queue.Full:
+            self._busy(request)
 
-    def process_request_thread(self, request, client_address):
+    def _busy(self, request):
+        # A tiny fixed response, bounded send time, no input parsing or echo.
         try:
-            super().process_request_thread(request, client_address)
+            request.settimeout(.05)
+            request.sendall(b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                            b"Retry-After: 1\r\nConnection: close\r\n\r\n")
+            request.shutdown(socket.SHUT_WR)
+            # Closing with a normal client's unread upload can turn the 503
+            # into a TCP reset. Drain only bytes already buffered, with a fixed
+            # ceiling; a peer cannot make admission wait for more input.
+            request.setblocking(False)
+            for _ in range(4):
+                if not request.recv(4096):
+                    break
+        except OSError:
+            pass
         finally:
-            self._slots.release()
+            self.shutdown_request(request)
+
+    def _work(self):
+        while not self._closing.is_set():
+            try:
+                request, address, deadline = self._requests.get(timeout=.1)
+            except queue.Empty:
+                continue
+            try:
+                if self._closing.is_set() or time.monotonic() >= deadline:
+                    self._busy(request)
+                    continue
+                with self._deadlines_lock:
+                    self._deadlines[request] = deadline
+                self.process_request_thread(request, address)
+            finally:
+                with self._deadlines_lock:
+                    self._deadlines.pop(request, None)
+                self._requests.task_done()
+
+    def input_deadline(self, request):
+        with self._deadlines_lock:
+            return self._deadlines[request]
+
+    def server_close(self):
+        self._closing.set()
+        super().server_close()
+        while True:
+            try:
+                request, _, _ = self._requests.get_nowait()
+            except queue.Empty:
+                break
+            self.shutdown_request(request)
+            self._requests.task_done()
+        # Idle workers stop promptly. Active finite handlers retain the same
+        # daemon/timeout semantics as the previous server.
+        deadline = time.monotonic() + .2
+        for worker in self._workers:
+            if worker is not threading.current_thread():
+                worker.join(max(0, deadline-time.monotonic()))
 
     def admitted(self, address):
         now = int(time.monotonic())
@@ -886,13 +1019,17 @@ class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
 
     def setup(self):
-        self.request.settimeout(HTTP_REQUEST_SECONDS)
+        deadline = self.server.input_deadline(self.request)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("open_request_timeout")
+        self.request.settimeout(remaining)
         super().setup()
         self.rfile = _HeaderBudget(self.rfile)
         # Bound the complete incoming headers/body, including drip-fed input.
         self._deadline_lock = threading.Lock()
-        self._deadline_at = time.monotonic() + HTTP_REQUEST_SECONDS
-        self._deadline = threading.Timer(HTTP_REQUEST_SECONDS, self._abort)
+        self._deadline_at = deadline
+        self._deadline = threading.Timer(remaining, self._abort)
         self._deadline.daemon = True
         self._deadline.start()
 

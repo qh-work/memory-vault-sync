@@ -71,6 +71,10 @@ export function statusScope(expectedRoot:unknown,kind:unknown,subject:unknown,
   }else if(value.scope_kind==='catalog'){
     fields(s,['root_key']);if(r.root_kind!=='mailbox'||!same(s.root_key,r))fail();
     payload={kind:'catalog',root_key:r};
+  }else if(value.scope_kind==='assignment'){
+    fields(s,['assignment_kind','assignment_sha256']);
+    if(s.assignment_kind!=='maintenance.assignment')fail();digest(s.assignment_sha256);
+    payload={kind:'assignment',root_key:r,assignment_kind:s.assignment_kind,assignment_sha256:s.assignment_sha256};
   }else fail();
   return budget.hash(canonicalOriginalControl(payload,budget));
 }

@@ -14,9 +14,9 @@ function fail(code:string):never{throw new NetworkError(code);}
  * Transactions are synchronous and finish before any network await. */
 export class OriginalAckStatusJournal{
   readonly root:Buffer;readonly key:string;private readonly participant:OpenParticipant;
-  constructor(participant:OpenParticipant,root:unknown){
+  constructor(participant:OpenParticipant,root:unknown,originalSource=true){
     this.participant=participant;
-    this.root=bytes(root);this.key=hash(Buffer.concat([Buffer.from('original-source\0'),this.root]));
+    this.root=bytes(root);this.key=hash(originalSource?Buffer.concat([Buffer.from('original-source\0'),this.root]):this.root);
     participant.providerStorage(db=>db.exec(`
       CREATE TABLE IF NOT EXISTS open_ack_replica_roots(root_id TEXT PRIMARY KEY,root BLOB NOT NULL,blocked INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS open_ack_replica_statuses(root_id TEXT NOT NULL,ref_id TEXT NOT NULL,issuer TEXT NOT NULL,raw BLOB NOT NULL,ref BLOB NOT NULL,PRIMARY KEY(root_id,ref_id));`));
@@ -78,4 +78,8 @@ export class OriginalAckStatusJournal{
     }));
     if(full)fail('repair_status_history_capacity');
   }
+}
+/** Exact Python replica domain; selection removal cannot erase observations. */
+export class ReplicaStatusJournal extends OriginalAckStatusJournal{
+  constructor(participant:OpenParticipant,root:unknown){super(participant,root,false);}
 }

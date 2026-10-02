@@ -6,12 +6,14 @@ import {decodeBase64url} from './crypto.ts';
 import type {EncryptionIdentityDocument} from './crypto.ts';
 import {verifyMailboxFeedSourceEvent} from './open-repair-mailbox-feed.ts';
 import {readMailboxIndex,readMailboxAdmission} from './open-repair-mailbox-read.ts';
+import {verifyMailboxReplicaInboxEvidence} from './open-repair-mailbox-replica-inbox.ts';
 type Obj=Record<string,any>;
 const fields=(v:unknown,n:readonly string[]):Obj=>objectFields(v,n);
 const key=(value:unknown)=>{const r=rawRef(value);return [r.namespace,r.key,r.raw_sha256,r.size].join(':');};
 function fail(code:string):never{throw new RepairError(code);}
 function same(a:unknown,b:unknown):boolean{if(a===b)return true;if(!a||!b||typeof a!=='object'||typeof b!=='object'||Array.isArray(a)!==Array.isArray(b))return false;const keys=Object.keys(a);return keys.length===Object.keys(b).length&&keys.every(k=>Object.hasOwn(b,k)&&same((a as Obj)[k],(b as Obj)[k]));}
 export async function verifyMailboxInboxEvidence(evidence:unknown,envelope:Uint8Array,options:{owner:unknown;encryptionIdentity:EncryptionIdentityDocument;stagedAt:number}):Promise<Readonly<Obj>>{
+  if((evidence as Obj)?.schema_version==='memory-vault-mailbox-replica-inbox/v1')return verifyMailboxReplicaInboxEvidence(evidence,envelope,options);
   const a=fields(options,['owner','encryptionIdentity','stagedAt']);
   const value=fields(evidence,['schema_version','received_at','slot','sender','target','limits','member','manifest_ref','custody_ref','originals','status_refs']);
   if(value.schema_version!=='memory-vault-mailbox-inbox/v1')fail('repair_invalid_context');

@@ -1,0 +1,1818 @@
+{
+  "synthetic": true,
+  "real_models": 0,
+  "physical_hosts": 1,
+  "cpu_count": 8,
+  "python": "3.12.0b4 (v3.12.0b4:97a6a41816, Jul 11 2023, 11:19:02) [Clang 13.0.0 (clang-1300.0.29.30)]",
+  "platform": "macOS-27.2-arm64-arm-64bit",
+  "scope": "independently approved direct message storage, encrypted read, recipient saved receipt, Vault import/recall",
+  "source_hashes": {
+    "memory_vault_network.py": "a83d457d41d305048f1277f735a29af061607ef53c6e4eca5c585d812ea5063b",
+    "memory_vault_open_node.py": "aad46af7bbdfef59b9317bb9732322a323afbbd9783dad36d1a6bbe359ce38a4",
+    "memory_vault_open_delivery_client.py": "14a72a6926163e41a9ae0a051d0e39992921382a49e1796e5a99c0cc77e4fcad",
+    "memory_vault_open_delivery_state.py": "cc473f5b102523b16cc3352bf25042e8ae0b86b80eb3f4f641b84d54be4d8d07",
+    "memory_vault_open_index.py": "c637cc96eba5a83653d2d368b4198906d7448a3f30c388f563af99452dd13367",
+    "clients/typescript/network/agent.ts": "4e2610e314c63fb6e33c3baae96ff6c96d33808277614c52001ddc7164b296b9",
+    "clients/typescript/network/client-config.ts": "c414ccdb6c95d099c670c5c8fb5582239d7ec9d179e7a318069cc997cf113817",
+    "clients/typescript/network/content.ts": "dd214415cf8eee1a26d5f0c6b3e08ca8f5b63066fc0ab0f627f6671611402212",
+    "clients/typescript/network/control.ts": "0ad7cf773ba5be25ab67b31c11dcbe65d89f38d6d8cd0c9664e8c548b49e0f1c",
+    "clients/typescript/network/crypto.ts": "7b538dd6d334cb2c42ea24103e6930d38063440d16eafc455716b3570fee438a",
+    "clients/typescript/network/hints.ts": "cc42d41c87544ae3374359cbcba4b3ab14e7d82738fab2629c5991d2d3c96562",
+    "clients/typescript/network/io.ts": "8be85ce42d1d68ba9169e1a639e10c77f3dffa274094638446bd3821215a805b",
+    "clients/typescript/network/nodes.ts": "f77c5b901ef43b3d8d4f2813af6c9c0ad61372900c07e416cd5232b23c71988b",
+    "clients/typescript/network/open-ack-client.ts": "d923bda9bd53462c22432d5c3e0f202f8426924189a341037456a25165fbfe3a",
+    "clients/typescript/network/open-ack-discovery.ts": "8afad511e4eb1645b62caafc5c22fc2284c94c965e8f15f5e6ea0390fc530a21",
+    "clients/typescript/network/open-ack-status.ts": "ab56e0bb37057060910da4b140e2f278c74ff67243d989c23299e80e2afddde0",
+    "clients/typescript/network/open-blob.ts": "00d9f845f34d8d309ed8910c46177df3c0aeb1939e35fb26a6dfa23584433fbd",
+    "clients/typescript/network/open-capacity.ts": "514a163013cc1bf20551dba9bd858a56c0fa1abd720054e61048e3101d4522e8",
+    "clients/typescript/network/open-client.ts": "087b28d765c6b946ee6a38d428082db0f7a63f36d376e92c8b758515cb79c4eb",
+    "clients/typescript/network/open-contact-client.ts": "bbd520337e54c1e5fea656129cabc8c0e6879ee4f03326ff920ccf665ab70068",
+    "clients/typescript/network/open-contact-state.ts": "d7deef9625f140edc8c31d2b7b1480db3da9f5967820a29ca7a605de0592167c",
+    "clients/typescript/network/open-contact.ts": "38fc88aea51e9fbcaf3f7c19c25a5cf0704660dcbd54fca02191d2ec629371da",
+    "clients/typescript/network/open-control.ts": "863f9a0a29d9bd85cec16dfd87f331198fd44ef7dce8e93620f6cd15a39d2b0e",
+    "clients/typescript/network/open-delivery-client.ts": "9aba3143c937cdfe806a2528241cd82b4f1a36becffee4607de85f684de41885",
+    "clients/typescript/network/open-delivery-control.ts": "839fd6106e851e2a722e9c394c09e7acab9d2505d0c40eb76e91085656b9e970",
+    "clients/typescript/network/open-delivery.ts": "6582e3de1909ceb65c1dbe35aefe9f08cee0270b745927459ecbaf3c1df43892",
+    "clients/typescript/network/open-mailbox-client.ts": "01a27d6f8abd8a9ebe229b11b7dfcd08b95c38b74d6ceec0373a82c476c41dc9",
+    "clients/typescript/network/open-mailbox-destination.ts": "7f5c3c515f51c7bfb676068abbb43db7b1beb696ec748f788f636cc28adaec09",
+    "clients/typescript/network/open-mailbox-journal.ts": "0929088f3f4c1b647b6599f57be23cb921f70db2e5fc97dc36a853217979b3a0",
+    "clients/typescript/network/open-mailbox-receipts.ts": "a3df0b7aac2701001b6672dde6d11ce5e885c7f2d9554d431b5a2bbe8cb4c86e",
+    "clients/typescript/network/open-mailbox-receivers.ts": "6b7e7cf14f43e4be27a61bb8d97221e73d216b8c2c96bad28a8cded908230fb1",
+    "clients/typescript/network/open-mailbox-replica-client.ts": "57c869cfbb88dadb2f10e525a20b2068cdddc91e39ce6f9bcb3c729cbdd35cc4",
+    "clients/typescript/network/open-mailbox-replicas.ts": "58130254ff4bafcf9cd190f5f9d19c73a22ad8a810adc73552115702aa71adaa",
+    "clients/typescript/network/open-mailbox-send.ts": "560ad4a9b49a6070cb7381ef851fe7f555b45745f1cdb97f2ce8d09749164cae",
+    "clients/typescript/network/open-node.ts": "4d5326f2ebb63fee44f268125d25697ccb47b448357cd6ea1a7209bb497de417",
+    "clients/typescript/network/open-participant.ts": "20327310486a282274b501a29f2ec67794df25bfe97b0820b1fe7e312bc1cc67",
+    "clients/typescript/network/open-provider-client.ts": "0dda9dc2e48f3d05fc9cb77a02f75267c5b1d9b5cabc4924ec821c64fac3cc05",
+    "clients/typescript/network/open-provider.ts": "7f382152585b133d4ef91491b238b109b8fe8b1648ebf923d0ee038b606b37ee",
+    "clients/typescript/network/open-repair-ack.ts": "312e27ff0e0729a3ee34306f44ad3de3414323cf54b8902b74d035613005ab01",
+    "clients/typescript/network/open-repair-admin.ts": "3bf9f2c4826b9cf4b305cdfb36e6d1e077435bc9899e0fac61067dcb71716b64",
+    "clients/typescript/network/open-repair-bootstrap.ts": "b8831454095299d7ed34c8d56e43aaf55cf6f38ec4e94fad57886e506eaf82ca",
+    "clients/typescript/network/open-repair-bound.ts": "e762e43fb2c0d570227f38b20dbcbebf078134c414693472c6ff2d18a6857fbb",
+    "clients/typescript/network/open-repair-client.ts": "73f439160f9a597f2b94a43a9d5abda734efcf236b14eae5e421b8898144e4ee",
+    "clients/typescript/network/open-repair-empty.ts": "309547b4b281b34ac8a9ce84f5d434d3e5cb72dccba0585ddca0a57d6897ef93",
+    "clients/typescript/network/open-repair-history.ts": "5f88d2335c552b4edb3eaa84f397ab6ce294261f1a98e97810800346914c7bf2",
+    "clients/typescript/network/open-repair-mailbox-authority.ts": "2098c3eaa3af6636751781c2f9129e8ab96b660437cc080742f68a98bf4dd1be",
+    "clients/typescript/network/open-repair-mailbox-feed.ts": "3996efc4e76fa199ae0ea109e31cc5702a65db282d54334d1777d1ef8d9d4ad6",
+    "clients/typescript/network/open-repair-mailbox-inbox.ts": "89f3ebc2d98233786b80713228dc02adc746b3c011d2bb89988060aed600b9ba",
+    "clients/typescript/network/open-repair-mailbox-member.ts": "25d16b4437bed2c3984116487088e94b51a75259ab9a9bc36a0408e7274c7784",
+    "clients/typescript/network/open-repair-mailbox-range.ts": "c6d6b6078f8632784abc5ee8b52dd2ed7e531d1631b68491c568c9a5646c9527",
+    "clients/typescript/network/open-repair-mailbox-read.ts": "4498b2b33d5d0a02d028ac80d3c3c733f28620f2545bdf5f2b14e0a1bacb3039",
+    "clients/typescript/network/open-repair-mailbox-replica-inbox.ts": "ea4394a6e2abcaf9c79c50fc4b363ef8fbc6daa5de9fa043556c6ba7ee5ae70c",
+    "clients/typescript/network/open-repair-mailbox-replica.ts": "61d90adcf745e864359566c22e9a0512af1a1fce98f4c7d67fd6e5f014c88533",
+    "clients/typescript/network/open-repair-occupied.ts": "9c43836e6957dfe7319dad7deffabe87730ec4190c3fc921b94b75c0239c6fb1",
+    "clients/typescript/network/open-repair-offer-client.ts": "8e0ec6d63b4c26274d709c76ca9f396d0c6863292324bb9c05b179c208265d21",
+    "clients/typescript/network/open-repair-original.ts": "d289733c05d0b6a0691fdfe7458aac4fb0b577a9297676d05cafe245eff4aa01",
+    "clients/typescript/network/open-repair-probe.ts": "3720d5a45b1354a4c0e7f6cb8cbb4e8a8d6ec998c1ac52f883fe90621420eb7b",
+    "clients/typescript/network/open-repair-proof.ts": "40ee00f74fd3147434bb54a7f978340d06da9ef448177b4d2d2b6aa288b88502",
+    "clients/typescript/network/open-repair-receipt.ts": "25e345006f8e5cd1f8a807c024c2319ef1aad9177582975ea2d91a05b7bd0a36",
+    "clients/typescript/network/open-repair-resource.ts": "b42c85fddd32672687cb3d2a613b11b223dcc04d9326b70967da43fc20484b43",
+    "clients/typescript/network/open-repair-status.ts": "21880a57c7523664e58b43c705558df5a4aaee0dd18aab2730b037709a8def36",
+    "clients/typescript/network/open-repair-wire.ts": "82f92918da5ba4975e22a9021e5985ed7760ba9145ba359c6578e311f7c02862",
+    "clients/typescript/network/open-routing.ts": "ce59007a2b3703fab81d97a01d298ea825e34884ef0b694600f6af206a3e880b",
+    "clients/typescript/network/open-state.ts": "00d37b59b8db9b5d7749249d535e53ea2f2e0a0d0722ab9dae03579f9065801c",
+    "clients/typescript/network/open-transport.ts": "64b765bb76427375ad07e84d8ae2e3ce17d580593ef5e89ef2def6ab3fba949f",
+    "clients/typescript/network/peer.ts": "1e6e1614aa51584db194582f819af6cbc8d2179c3e803da8406c4dd58c4ac781",
+    "clients/typescript/network/privacy.ts": "b4a21f3d95f2fdb16518e881dc930be764f8cd52b96991e6eab41feb231d52af",
+    "clients/typescript/network/ranking_math.ts": "b509bec4360d23c39429d17d491766ed172334f10ca71667659eb9b7e5c1af6b",
+    "clients/typescript/network/records.ts": "6e0f2d66f128db7593e9ca4b53bba2b037ae682f32cc852660c1cfe5af76408c",
+    "clients/typescript/network/retrieval.ts": "ee5baa5fddbf6d780ce5a3ef27bb91cd98985693040852bf484b425e5b6cd47d",
+    "clients/typescript/network/retrieval_text.ts": "98e007279ad065aea7bdc29ebbb846a1709205016143cc75860b583feaca041f",
+    "clients/typescript/network/setup.ts": "5bce583aaf60f164f5fad2e694c0f88f6cfe4cc5be3c3e2402ed20754425da44",
+    "clients/typescript/network/topics.ts": "b1ae2e39490b3126f2b2090a6fbea3dcf3828192dab8545f88193f909e7e3fae",
+    "clients/typescript/network/transport-state.ts": "814ea3808a1242cba010df02272c4a12b836e515820b82c6b0af21663ef63323",
+    "clients/typescript/network/transport.ts": "ff986ed1378bcb531773257e5857798d58d3bf3fb80178a36fdcaf98d42430df",
+    "clients/typescript/network/vault.ts": "8a0465bbd6aa7dae73d80b3ccc0e6ee43ae1690587024e46c60c7f141be42adc"
+  },
+  "result": {
+    "mode": "approved_resource_distribution",
+    "agent_runtime": "native",
+    "native_before": [
+      {
+        "cpu": {
+          "user": 704530,
+          "system": 97998
+        },
+        "rss": 139575296,
+        "subprocessCalls": 0,
+        "distribution": true
+      },
+      {
+        "cpu": {
+          "user": 469817,
+          "system": 23781
+        },
+        "rss": 122912768,
+        "subprocessCalls": 0,
+        "distribution": true
+      }
+    ],
+    "native_after": [
+      {
+        "cpu": {
+          "user": 7143337,
+          "system": 596788
+        },
+        "rss": 159645696,
+        "subprocessCalls": 0,
+        "distribution": true
+      },
+      {
+        "cpu": {
+          "user": 5167527,
+          "system": 418393
+        },
+        "rss": 129499136,
+        "subprocessCalls": 0,
+        "distribution": true
+      }
+    ],
+    "offered_messages": 48,
+    "offered_messages_per_second": 2,
+    "offer_window_seconds": 24.0,
+    "elapsed_including_drain": 24.01034599999548,
+    "successful_chains": 48,
+    "success_rate": 1.0,
+    "successful_chains_per_second": 1.9991382048392405,
+    "statuses": {
+      "ok": 48
+    },
+    "successful_p95_ms": 365.48066698014736,
+    "successful_p99_ms": 386.7010419780854,
+    "all_p95_ms": 365.48066698014736,
+    "all_p99_ms": 386.7010419780854,
+    "offer_lag_p99_ms": 10.209166997810826,
+    "successful_by_node": {
+      "0": 24,
+      "1": 24
+    },
+    "recipient_saved_inbox": 48,
+    "recipient_vault_memories": 48,
+    "per_node": [
+      {
+        "node": 0,
+        "counts": {
+          "http_requests": 363,
+          "second_1790947809": 0,
+          "admitted": 363,
+          "rpc_lease": 0,
+          "request_bytes": 1099546,
+          "response_bytes": 1047124,
+          "rpc_policy.put": 0,
+          "rpc_find": 14,
+          "rpc_put": 1,
+          "rpc_get": 2,
+          "rpc_policy.get": 0,
+          "rpc_challenge": 0,
+          "rpc_submit": 0,
+          "rpc_poll": 0,
+          "rpc_decide": 0,
+          "rpc_result": 0,
+          "second_1790947810": 12,
+          "rpc_prepare": 24,
+          "rpc_start": 24,
+          "blob_upload.chunk": 24,
+          "blob_input_bytes": 169602,
+          "blob_output_bytes": 169602,
+          "rpc_commit": 24,
+          "rpc_receipt.get": 48,
+          "rpc_list.prepare": 48,
+          "rpc_list": 48,
+          "rpc_read.prepare": 24,
+          "rpc_read.start": 24,
+          "blob_download.chunk": 24,
+          "rpc_receipt.put": 24,
+          "second_1790947811": 24,
+          "second_1790947812": 24,
+          "second_1790947813": 24,
+          "second_1790947814": 24,
+          "second_1790947815": 24,
+          "second_1790947816": 29,
+          "rpc_hello": 10,
+          "second_1790947817": 30,
+          "second_1790947818": 6,
+          "second_1790947819": 4,
+          "second_1790947820": 6,
+          "second_1790947821": 4,
+          "second_1790947822": 5,
+          "second_1790947823": 5,
+          "second_1790947824": 4,
+          "second_1790947825": 16,
+          "second_1790947826": 14,
+          "second_1790947827": 16,
+          "second_1790947828": 14,
+          "second_1790947829": 16,
+          "second_1790947830": 14,
+          "second_1790947831": 15,
+          "second_1790947832": 15,
+          "second_1790947833": 16,
+          "second_1790947834": 2
+        },
+        "peak_http_requests_per_second": 30,
+        "stored_items": 24,
+        "stored_ciphertext_bytes": 169602,
+        "saved_receipts": 24,
+        "delivery_leases": [
+          {
+            "lease_id": "lease_e47eb55d44a406d04303aa271a93f541f99e3b5aa80c5950e669434444399130",
+            "max_items": 24,
+            "max_bytes": 2097152
+          }
+        ],
+        "user_cpu_seconds": 2.4404559999999997,
+        "system_cpu_seconds": 0.49677099999999996,
+        "max_rss_bytes": 46104576
+      },
+      {
+        "node": 1,
+        "counts": {
+          "http_requests": 342,
+          "second_1790947816": 4,
+          "admitted": 342,
+          "rpc_lease": 2,
+          "request_bytes": 1059323,
+          "response_bytes": 1001747,
+          "rpc_policy.put": 1,
+          "rpc_find": 12,
+          "rpc_put": 1,
+          "second_1790947817": 16,
+          "rpc_hello": 10,
+          "rpc_get": 1,
+          "rpc_policy.get": 1,
+          "rpc_challenge": 2,
+          "rpc_submit": 1,
+          "rpc_poll": 1,
+          "rpc_decide": 1,
+          "rpc_list.prepare": 34,
+          "rpc_list": 34,
+          "rpc_result": 1,
+          "second_1790947818": 24,
+          "rpc_prepare": 24,
+          "rpc_start": 24,
+          "blob_upload.chunk": 24,
+          "blob_input_bytes": 169632,
+          "blob_output_bytes": 169632,
+          "rpc_commit": 24,
+          "rpc_receipt.get": 48,
+          "rpc_read.prepare": 24,
+          "rpc_read.start": 24,
+          "blob_download.chunk": 24,
+          "rpc_receipt.put": 24,
+          "second_1790947819": 26,
+          "second_1790947820": 24,
+          "second_1790947821": 26,
+          "second_1790947822": 24,
+          "second_1790947823": 26,
+          "second_1790947824": 24,
+          "second_1790947825": 16,
+          "second_1790947826": 14,
+          "second_1790947827": 16,
+          "second_1790947828": 14,
+          "second_1790947829": 16,
+          "second_1790947830": 14,
+          "second_1790947831": 16,
+          "second_1790947832": 14,
+          "second_1790947833": 16,
+          "second_1790947834": 12
+        },
+        "peak_http_requests_per_second": 26,
+        "stored_items": 24,
+        "stored_ciphertext_bytes": 169632,
+        "saved_receipts": 24,
+        "delivery_leases": [
+          {
+            "lease_id": "lease_ccdebdd9c93d367f1e9204c096bd961256586d5b3cede101a631ca1827abc994",
+            "max_items": 24,
+            "max_bytes": 2097152
+          }
+        ],
+        "user_cpu_seconds": 2.5197089999999998,
+        "system_cpu_seconds": 0.49668999999999996,
+        "max_rss_bytes": 46399488
+      }
+    ],
+    "join": {
+      "started_seconds": 6.0085583749751095,
+      "authorized_seconds": 7.262500332988566
+    },
+    "join_errors": [],
+    "setup_attempts": [
+      {
+        "node": 0,
+        "attempt": 1,
+        "ok": true,
+        "code": null,
+        "time": 251363.438165
+      },
+      {
+        "node": 1,
+        "attempt": 1,
+        "ok": false,
+        "code": "contact_unavailable",
+        "time": 251370.853902333
+      },
+      {
+        "node": 1,
+        "attempt": 2,
+        "ok": true,
+        "code": null,
+        "time": 251371.562567041
+      }
+    ],
+    "requests": [
+      {
+        "index": 0,
+        "offered_seconds": 0.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 0.23058298393152654,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_8f68eae307b23e62a9e746c40719579102c5c7b04228839cbbc8ca844440991a",
+        "latency_ms": 334.8842079867609,
+        "completed_seconds": 0.3348869579785969
+      },
+      {
+        "index": 1,
+        "offered_seconds": 0.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 9.003916988149285,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_a20adb9b55fd9960821d04bf9d57bc908624fc7d78e73ae09eacc8031b007b33",
+        "latency_ms": 330.7371669798158,
+        "completed_seconds": 0.8307382499915548
+      },
+      {
+        "index": 2,
+        "offered_seconds": 1.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 6.948791997274384,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_51079f314b955ec3103a3f847d027de7e735306ad8ff18099f00b8cffdcfb7b9",
+        "latency_ms": 318.36741699953564,
+        "completed_seconds": 1.3183682499802671
+      },
+      {
+        "index": 3,
+        "offered_seconds": 1.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 0.6570419936906546,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_dfbed31a8f6f121ff0808ee23c757724d64c3a189cc7fa9ccbeb232724af3de2",
+        "latency_ms": 311.82333297329023,
+        "completed_seconds": 1.8118242499767803
+      },
+      {
+        "index": 4,
+        "offered_seconds": 2.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 7.732582977041602,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_3edd694af8280f7edef9f9a62308979ba9109356e4b51e47036e817f64a5d842",
+        "latency_ms": 320.5242079857271,
+        "completed_seconds": 2.3205252079933416
+      },
+      {
+        "index": 5,
+        "offered_seconds": 2.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 8.429207984590903,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_e13f90410bdd501b9ebd568f46207f63e59e6ee81f98c32ecd70b979dae22c61",
+        "latency_ms": 319.3186249991413,
+        "completed_seconds": 2.8193196669744793
+      },
+      {
+        "index": 6,
+        "offered_seconds": 3.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 4.502374998992309,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_1d876059381da1350cad3c0f33f85388d1004b9d5cc62019057eadc2860690b5",
+        "latency_ms": 314.9886249739211,
+        "completed_seconds": 3.314989666978363
+      },
+      {
+        "index": 7,
+        "offered_seconds": 3.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.13999999850057,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_a06f50a0f1662bf7153ff79a54583330a944209c6d3ca7f25d1ae0a5594b16c8",
+        "latency_ms": 307.65933298971504,
+        "completed_seconds": 3.8076602079963777
+      },
+      {
+        "index": 8,
+        "offered_seconds": 4.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.20937497378327,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_437d398340428d1bc9cc96c72a59151431fd9b9c460cb4dca53cd9e962003c23",
+        "latency_ms": 323.81549998535775,
+        "completed_seconds": 4.32381637499202
+      },
+      {
+        "index": 9,
+        "offered_seconds": 4.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 1.7387080006301403,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_74d30a671f3e7932eb972ed34a79e81633a07b0539a645a6037054ad4c514763",
+        "latency_ms": 310.2499999804422,
+        "completed_seconds": 4.810250916983932
+      },
+      {
+        "index": 10,
+        "offered_seconds": 5.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 8.471124980133027,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_666863c7897d3ef1d9bfa220f8678d2e4f132881abb9b856b18a7026c67ade8d",
+        "latency_ms": 317.6245829963591,
+        "completed_seconds": 5.317625457973918
+      },
+      {
+        "index": 11,
+        "offered_seconds": 5.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 4.97562499367632,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_ab0e453dcbc6ba073f28d6c3e56b800062303ac20ee77072a566fd3cb157ccfa",
+        "latency_ms": 314.9044999736361,
+        "completed_seconds": 5.8149053329834715
+      },
+      {
+        "index": 12,
+        "offered_seconds": 6.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 8.762874989770353,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_185bc8a1475c8286182ae633ab3ab9622dedede9cc537618df2604e3a62e3c60",
+        "latency_ms": 436.67341698892415,
+        "completed_seconds": 6.436678541998845
+      },
+      {
+        "index": 13,
+        "offered_seconds": 6.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 1.6159169899765402,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_eccee2dba147170d42d905510d4819fe56a69d6dd3787f2bd62fa755f359df98",
+        "latency_ms": 286.38141698320396,
+        "completed_seconds": 6.786382332997164
+      },
+      {
+        "index": 14,
+        "offered_seconds": 7.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 8.336291997693479,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_d457b6417293e17eaf841912b3633f7d0993675137b3a24ec2bc2b16995fe1fc",
+        "latency_ms": 375.04083299427293,
+        "completed_seconds": 7.375041624996811
+      },
+      {
+        "index": 15,
+        "offered_seconds": 7.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 8.000207977602258,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_9a82c3138b7ab7cde245d54f6e54a2939bd9611f2f1493881d8e1c642d5848fc",
+        "latency_ms": 341.68499999213964,
+        "completed_seconds": 7.84168591699563
+      },
+      {
+        "index": 16,
+        "offered_seconds": 8.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.140082973521203,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_db4116acef9632bc77f6dc15d7796d5233605daab42a4c90bb0477c5e0185b44",
+        "latency_ms": 354.4743749953341,
+        "completed_seconds": 8.354475332977017
+      },
+      {
+        "index": 17,
+        "offered_seconds": 8.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.117749974597245,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_d7bc3a1c9907d5b186d1eb26f873d807b6177f84b633c1d2cc362d06058dee2a",
+        "latency_ms": 348.2023329997901,
+        "completed_seconds": 8.8482033329783
+      },
+      {
+        "index": 18,
+        "offered_seconds": 9.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.097541991854087,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_d1374b1b2b4e2fd9bbbab84c290cd381b0f8a7ce0a146887c2b4711de84d4ca6",
+        "latency_ms": 347.0013329933863,
+        "completed_seconds": 9.347002291993704
+      },
+      {
+        "index": 19,
+        "offered_seconds": 9.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.111124982358888,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_f2a1e86139017dc37294a4cb1c89f363c439c3e3ee44fe5b6df7b0d28743da7e",
+        "latency_ms": 349.66454198001884,
+        "completed_seconds": 9.849665666988585
+      },
+      {
+        "index": 20,
+        "offered_seconds": 10.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.102916974574327,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_a3e6c6bf3fc10432ced2c9fbe7bf2fde9c36d9ab62b41d3fa1b8079537d5ded1",
+        "latency_ms": 350.2269579912536,
+        "completed_seconds": 10.350228041992523
+      },
+      {
+        "index": 21,
+        "offered_seconds": 10.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.118999984115362,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_6e87e5a518bc8cdbea2b2a8220b32db0a094912e260ecde73d1a62641388afff",
+        "latency_ms": 351.75004199845716,
+        "completed_seconds": 10.851750874979189
+      },
+      {
+        "index": 22,
+        "offered_seconds": 11.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 9.16408299235627,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_7f227c080877002396eb0e9a83f17f1b76c66491e8c8c801598565d89f3330c6",
+        "latency_ms": 341.4394579885993,
+        "completed_seconds": 11.341440124990186
+      },
+      {
+        "index": 23,
+        "offered_seconds": 11.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 9.105499979341403,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_d71270a81ecc6d594150ed1669067a2937709e19882afdf9d9a81d690a54e04b",
+        "latency_ms": 351.6734579752665,
+        "completed_seconds": 11.851674374978757
+      },
+      {
+        "index": 24,
+        "offered_seconds": 12.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.098082973854616,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_f952404541296c0a4036fab199361db41f6146c345411608652b374939113b60",
+        "latency_ms": 338.92299997387454,
+        "completed_seconds": 12.33892383298371
+      },
+      {
+        "index": 25,
+        "offered_seconds": 12.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 1.5290829760488123,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_a0db30f5dca9e51aee7fe8151d23666aada67ad9e15f2e4f47164ad6c48900fe",
+        "latency_ms": 321.081541973399,
+        "completed_seconds": 12.82108229197911
+      },
+      {
+        "index": 26,
+        "offered_seconds": 13.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.068291972856969,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_f0cf4c7bc0c9756d98a011bc8eae4ff89c8f56c729141ff095760f3dfd045871",
+        "latency_ms": 323.6810419766698,
+        "completed_seconds": 13.323682082991581
+      },
+      {
+        "index": 27,
+        "offered_seconds": 13.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.209166997810826,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_6506b47c00f7685c1bff3a0658ff88859ca2a0c75bc50c2ab83fc8ab27a5d3d2",
+        "latency_ms": 355.78766698017716,
+        "completed_seconds": 13.855788499990012
+      },
+      {
+        "index": 28,
+        "offered_seconds": 14.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.111332987435162,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_c1dabd6c8184279b63ffc1c7b7cb888e34103b506cc704d4f2c18744137c93a5",
+        "latency_ms": 347.3817919730209,
+        "completed_seconds": 14.347383041982539
+      },
+      {
+        "index": 29,
+        "offered_seconds": 14.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 1.191874995129183,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_46c69a1fa56547ea5c353ba2e210733f5dfad0f0c2d0567d5583c03cb63fd5c5",
+        "latency_ms": 312.5214579922613,
+        "completed_seconds": 14.812522291991627
+      },
+      {
+        "index": 30,
+        "offered_seconds": 15.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 4.433541995240375,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_6805fc3863c762d2988954bb5b2588403550cefc514d1fbafede2404940ccb39",
+        "latency_ms": 311.48958299309015,
+        "completed_seconds": 15.311490457999753
+      },
+      {
+        "index": 31,
+        "offered_seconds": 15.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.173249989748001,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_c1de781e9558e17e27a59a984b779d93cfb83c5a5251c376db6f708173bd1e03",
+        "latency_ms": 365.48066698014736,
+        "completed_seconds": 15.865481666987762
+      },
+      {
+        "index": 32,
+        "offered_seconds": 16.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 0.7221669948194176,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_bdf3be969ae3e676cec9ced950867c0f130076956d4c6221f8b951836dda5daa",
+        "latency_ms": 337.5981249846518,
+        "completed_seconds": 16.337599041988142
+      },
+      {
+        "index": 33,
+        "offered_seconds": 16.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 3.206166991731152,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_4d350be3cf68164789467efc6d25f65324683058239b9f7d8169bb3bbdb655bb",
+        "latency_ms": 323.84795797406696,
+        "completed_seconds": 16.82384895798168
+      },
+      {
+        "index": 34,
+        "offered_seconds": 17.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 2.369875001022592,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_8176c9a2c7f13b73b53353445943e51aee0ff76a96e021f3169ac49a468339ce",
+        "latency_ms": 351.5385829959996,
+        "completed_seconds": 17.35153962500044
+      },
+      {
+        "index": 35,
+        "offered_seconds": 17.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 9.737457992741838,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_c771ff07892bceeac3c7b648d07f68b41296fdeaab47172cfe9d39f08194e571",
+        "latency_ms": 356.5667919756379,
+        "completed_seconds": 17.85656783299055
+      },
+      {
+        "index": 36,
+        "offered_seconds": 18.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 5.107457982376218,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_e5935d16e1a9053be726018013e44f3f454079369c914a3e2b9027b233069e2c",
+        "latency_ms": 350.6079579819925,
+        "completed_seconds": 18.350609332992462
+      },
+      {
+        "index": 37,
+        "offered_seconds": 18.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.139416990568861,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_49897b1f107b99444bf140af62fa23635698b6e720c23288525fbf73811a4045",
+        "latency_ms": 361.6230829793494,
+        "completed_seconds": 18.861624041979667
+      },
+      {
+        "index": 38,
+        "offered_seconds": 19.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 0.8077919774223119,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_3f89f102c6a4dff46454691697648ddb1639e22dc846ab0db4177ae8c477a831",
+        "latency_ms": 346.1954579979647,
+        "completed_seconds": 19.346196250000503
+      },
+      {
+        "index": 39,
+        "offered_seconds": 19.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.125082975719124,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_c51c7f08e63f50cc1e9b8ae7dea171b9febb7e396c6a75456e0e7ec0d33aae5c",
+        "latency_ms": 360.6920829915907,
+        "completed_seconds": 19.86069299999508
+      },
+      {
+        "index": 40,
+        "offered_seconds": 20.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 10.09474997408688,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_e2271f1b38b54cb74d21e99e28af38ecfa549ee4a6a18183fbb3fb1f9a02389c",
+        "latency_ms": 360.6581249914598,
+        "completed_seconds": 20.36065904199495
+      },
+      {
+        "index": 41,
+        "offered_seconds": 20.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 1.5711249725427479,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_b32986ba3cd178923c9f1dfb711eb22d3c927691473949aa17ab641bdc174fba",
+        "latency_ms": 346.64495798642747,
+        "completed_seconds": 20.84664570799214
+      },
+      {
+        "index": 42,
+        "offered_seconds": 21.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 8.437416981905699,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_f40a17272dc974685cff2229dab923559598c5930a1c6629616bb039ecbb4cb4",
+        "latency_ms": 386.7010419780854,
+        "completed_seconds": 21.38670187498792
+      },
+      {
+        "index": 43,
+        "offered_seconds": 21.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 8.386374975088984,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_9a2e7d1fb91c564012172c1287a8405da148a336d0680e9f306a39a8b7d44665",
+        "latency_ms": 344.43137497873977,
+        "completed_seconds": 21.8444319999835
+      },
+      {
+        "index": 44,
+        "offered_seconds": 22.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 8.440041972789913,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_dbc8bee6be4d2cedbe47fcfc5ce72f54284f27b85d91320403bd62f0e4380256",
+        "latency_ms": 356.54854198219255,
+        "completed_seconds": 22.356549457996152
+      },
+      {
+        "index": 45,
+        "offered_seconds": 22.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 1.5702499949838966,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_79bf32db7b9431366d577281c686f5f40e7699b700c76ff2695d34e2d148ec38",
+        "latency_ms": 347.0553749939427,
+        "completed_seconds": 22.847056332975626
+      },
+      {
+        "index": 46,
+        "offered_seconds": 23.0,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 6.759124982636422,
+        "node": 0,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_d1780a59fe8cb4327cc3be7d8789c3cdd97bb390d18c362028c36a81fa2d069f",
+        "latency_ms": 360.992832982447,
+        "completed_seconds": 23.36099383299006
+      },
+      {
+        "index": 47,
+        "offered_seconds": 23.5,
+        "status": "ok",
+        "stages": [
+          {
+            "stage": "send",
+            "ok": true,
+            "code": null
+          },
+          {
+            "stage": "receive",
+            "ok": true,
+            "errors": []
+          },
+          {
+            "stage": "receipt",
+            "ok": true,
+            "code": null
+          }
+        ],
+        "offer_lag_ms": 8.816749992547557,
+        "node": 1,
+        "storage_accepted": true,
+        "saved_receipt": true,
+        "local_read": true,
+        "memory_recalled": true,
+        "message_id": "msg_c563d592118349ab32caea80477955621fd04f8b5ce12e5d961781f5c0519384",
+        "latency_ms": 350.80141699290834,
+        "completed_seconds": 23.850802332977764
+      }
+    ],
+    "driver": {
+      "user_cpu_seconds": 0.14187100000000002,
+      "system_cpu_seconds": 0.07647099999999998,
+      "max_rss_bytes": 44007424
+    }
+  }
+}

@@ -20,10 +20,10 @@ from typing import Sequence
 MAX_SOURCE_BYTES = 2 * 1024 * 1024
 MAX_TREE_BYTES = 2 * 1024 * 1024
 MAX_TREE_ENTRIES = 8192
-# The explicit native mailbox runtime/review inventory adds eleven files
-# to the alpha35 inventory and now exceeds 624 selected source files.
-# Keep a finite source-count ceiling independent of the unchanged byte caps.
-MAX_SELECTED_FILES = 640
+# Alpha40's explicit native replica modules, tests, benchmark adapters and
+# evidence bring the declared review inventory to 649 files. Keep a finite
+# count ceiling independent of the unchanged per-file/tree/aggregate byte caps.
+MAX_SELECTED_FILES = 664
 MAX_SELECTED_BYTES = 32 * 1024 * 1024
 GIT_TIMEOUT_SECONDS = 15
 _SHA = re.compile(r"[0-9a-f]{40}")

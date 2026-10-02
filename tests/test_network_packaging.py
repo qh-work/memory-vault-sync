@@ -47,7 +47,7 @@ TS_NETWORK = {"clients/typescript/network/" + name for name in
                "open-repair-resource.ts",
                "open-repair-bootstrap.ts",
                "open-repair-status.ts", "open-repair-mailbox-range.ts", "open-repair-mailbox-authority.ts", "open-repair-mailbox-member.ts", "open-repair-mailbox-feed.ts", "open-repair-mailbox-read.ts", "open-repair-mailbox-inbox.ts", "open-mailbox-client.ts", "open-mailbox-journal.ts", "open-mailbox-receivers.ts", "open-mailbox-receipts.ts", "open-mailbox-destination.ts", "open-mailbox-send.ts",
-               "open-repair-ack.ts",
+               "open-repair-mailbox-replica.ts", "open-mailbox-replica-client.ts", "open-repair-mailbox-replica-inbox.ts", "open-mailbox-replicas.ts", "open-repair-ack.ts",
                "open-repair-probe.ts",
                "open-repair-proof.ts", "open-repair-client.ts", "open-ack-client.ts", "open-ack-status.ts", "open-ack-discovery.ts", "open-repair-admin.ts", "open-repair-bound.ts", "open-repair-empty.ts", "open-repair-occupied.ts", "open-repair-offer-client.ts", "open-repair-receipt.ts")}
 TS_ENDPOINT_TESTS = {"tests/test_network_typescript_" + name + ".py" for name in
@@ -102,7 +102,7 @@ class NetworkPackagingTests(unittest.TestCase):
         self.assertEqual(len(documents), len(set(documents)))
         self.assertEqual(len(review), len(set(review)))
         self.assertGreaterEqual(len(review), 39)
-        self.assertEqual(len(TS_NETWORK), 70)
+        self.assertEqual(len(TS_NETWORK), 74)
         self.assertTrue(RUNTIME_DATA <= set(documents))
         self.assertTrue(TS_NETWORK <= set(documents))
         self.assertTrue(TS_ENDPOINT_TESTS <= set(review))
@@ -189,7 +189,7 @@ class NetworkPackagingTests(unittest.TestCase):
             "clients/typescript/network/open-repair-original.ts", "clients/typescript/network/open-repair-resource.ts",
             "clients/typescript/network/open-repair-bootstrap.ts", "clients/typescript/network/open-repair-status.ts",
             "clients/typescript/network/open-repair-mailbox-range.ts", "clients/typescript/network/open-repair-mailbox-authority.ts", "clients/typescript/network/open-repair-mailbox-member.ts", "clients/typescript/network/open-repair-mailbox-feed.ts", "clients/typescript/network/open-repair-mailbox-read.ts", "clients/typescript/network/open-repair-mailbox-inbox.ts", "clients/typescript/network/open-mailbox-client.ts", "clients/typescript/network/open-mailbox-journal.ts", "clients/typescript/network/open-mailbox-receivers.ts", "clients/typescript/network/open-mailbox-receipts.ts", "clients/typescript/network/open-mailbox-destination.ts", "clients/typescript/network/open-mailbox-send.ts",
-            "clients/typescript/network/open-repair-ack.ts", "clients/typescript/network/open-capacity.ts",
+            "clients/typescript/network/open-repair-mailbox-replica.ts", "clients/typescript/network/open-mailbox-replica-client.ts", "clients/typescript/network/open-repair-mailbox-replica-inbox.ts", "clients/typescript/network/open-mailbox-replicas.ts", "clients/typescript/network/open-repair-ack.ts", "clients/typescript/network/open-capacity.ts",
             "clients/typescript/network/open-repair-probe.ts", "clients/typescript/network/open-repair-proof.ts",
             "clients/typescript/network/open-repair-client.ts", "clients/typescript/network/open-ack-client.ts", "clients/typescript/network/open-ack-status.ts", "clients/typescript/network/open-ack-discovery.ts",
             "clients/typescript/network/open-repair-admin.ts",

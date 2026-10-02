@@ -15,6 +15,7 @@ import {transaction} from './io.ts';
 import {prepareMailboxDestination,mailboxPage} from './open-mailbox-destination.ts';
 import {OpenContactClient} from './open-contact-client.ts';
 import {MailboxReceiptJobs} from './open-mailbox-receipts.ts';
+import {RegisteredMailboxReplicas} from './open-mailbox-replicas.ts';
 type Obj=Record<string,any>;
 export const MAILBOX_CONNECT_SCHEMA='memory-vault-open-mailbox-connect/v1';
 function fail(code:string):never{throw new RepairError(code);}
@@ -38,8 +39,9 @@ export class RegisteredMailboxReceivers{
     const node=verifySourceNodeOriginal(raw,{expectedSigningKey:value.expected_target.signing_key,expectedStorageEpoch:value.expected_slot.writer_storage_epoch,at,policy,budget});
     if(!same(endpoint(value.base_url,this.#participant.transport.allow_loopback),endpoint(node.payload.base_url,this.#participant.transport.allow_loopback)))fail('open_invalid_mailbox_receiver');return options;
   }
-  connect(invitation:unknown):Obj{
+  async connect(invitation:unknown):Promise<Obj>{
     const value=document(invitation as any,65536) as Obj;if(value.schema_version!==MAILBOX_CONNECT_SCHEMA)fail('open_invalid_mailbox_receiver');
+    if(['register_replica','receive_replica','list_replicas','remove_replica','inspect_replica'].includes(value.action))return new RegisteredMailboxReplicas(this.#participant,this.#encryption,this.#delivery).connect(value);
     if(value.action==='list'){objectFields(value,['schema_version','action']);const rows=this.#participant.providerStorage(db=>db.prepare('SELECT receiver_id FROM open_mailbox_receivers ORDER BY receiver_id LIMIT 17').all()) as Obj[];if(rows.length>16)fail('open_mailbox_receiver_capacity');return {state:'configured',mailboxes:rows.map(v=>v.receiver_id),network_accessed:false};}
     if(value.action==='remove'){objectFields(value,['schema_version','action','receiver_id']);opaqueId(value.receiver_id);this.#participant.providerStorage(db=>db.prepare('DELETE FROM open_mailbox_receivers WHERE receiver_id=?').run(value.receiver_id));return {state:'removed',receiver_id:value.receiver_id,network_accessed:false};}
     if(value.action==='inspect'||value.action==='authorize'){
@@ -66,12 +68,18 @@ export class RegisteredMailboxReceivers{
     const deadline=performance.now()/1000+60,result=await this.#delivery.receive(limit,{pendingOnly:true,deadline});
     const jobs=new MailboxReceiptJobs(this.#participant,this.#encryption,this.#delivery),attempted=new Set<string>();
     await jobs.poll(result,Math.min(deadline,performance.now()/1000+30),attempted);
-    const rows=this.#participant.providerStorage(db=>db.prepare('SELECT receiver_id,body FROM open_mailbox_receivers ORDER BY last_attempt,receiver_id LIMIT 17').all()) as Obj[];
-    if(rows.length>16)fail('open_mailbox_receiver_capacity');
+    const replicas=new RegisteredMailboxReplicas(this.#participant,this.#encryption,this.#delivery);
+    const rows=this.#participant.providerStorage(db=>db.prepare(`SELECT receiver_id,body,receiver_kind,body_sha256 FROM (SELECT receiver_id,body,last_attempt,'original' AS receiver_kind,NULL AS body_sha256 FROM open_mailbox_receivers UNION ALL
+      SELECT receiver_id,body,last_attempt,'replica' AS receiver_kind,body_sha256 FROM open_mailbox_replica_receivers AS r WHERE NOT EXISTS(
+        SELECT 1 FROM open_delivery_inbox AS i WHERE i.envelope_sha256=r.envelope_sha256 AND i.phase!='staged')) ORDER BY last_attempt,receiver_id LIMIT 4`).all()) as Obj[];
     for(const row of rows){let remaining=deadline-performance.now()/1000;if(result.messages.length>=limit||remaining<=0)break;
-      this.#participant.providerStorage(db=>db.prepare('UPDATE open_mailbox_receivers SET last_attempt=? WHERE receiver_id=?').run(BigInt(Date.now())*1000000n,row.receiver_id));
+      this.#participant.providerStorage(db=>db.prepare('UPDATE '+(row.receiver_kind==='replica'?'open_mailbox_replica_receivers':'open_mailbox_receivers')+' SET last_attempt=? WHERE receiver_id=?').run(BigInt(Date.now())*1000000n,row.receiver_id));
       let reader:MailboxFeedRecoveryClient|undefined;
       try{
+        if(row.receiver_kind==='replica'){
+          if(sha256(row.body)!==row.body_sha256)fail('open_invalid_mailbox_receiver');
+          const received=await replicas.receive(document(row.body,65536) as Obj,deadline,()=>{result.network_accessed=true;});result.messages.push(...received.messages);result.errors.push(...received.errors);continue;
+        }
         const config=document(row.body,65536) as Obj;if(row.receiver_id!=='mailbox_'+sha256(canonicalBytes(config.expected_slot)))fail('open_invalid_mailbox_receiver');
         const options=this.#validate(config),journal=new MailboxSetupJournal(this.#participant);
         reader=new MailboxFeedRecoveryClient(this.#participant.identity,this.#encryption,{limitPolicy:config.limit_policy,allowLoopback:this.#participant.transport.allow_loopback,transport:this.#participant.transport,networkObserver:()=>{result.network_accessed=true;}});

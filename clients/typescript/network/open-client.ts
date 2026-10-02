@@ -41,7 +41,7 @@ export class OpenNetworkClient{
     if(invitation!=null){
       if(typeof invitation==='object'&&!Array.isArray(invitation)&&(invitation as any).schema_version===MAILBOX_CONNECT_SCHEMA){
         const delivery=this.delivery();
-        return this.result(MAILBOX_SEND_ACTIONS.has((invitation as any).action)?await new MailboxSender(this.participant,this.encryption).connect(invitation):new RegisteredMailboxReceivers(this.participant,this.encryption,delivery).connect(invitation));
+        return this.result(MAILBOX_SEND_ACTIONS.has((invitation as any).action)?await new MailboxSender(this.participant,this.encryption).connect(invitation):await new RegisteredMailboxReceivers(this.participant,this.encryption,delivery).connect(invitation));
       }
       if(typeof invitation==='object'&&!Array.isArray(invitation)&&(invitation as any).schema_version===ACK_CONNECT_SCHEMA){
         if(MAILBOX_RECEIPT_ACTIONS.has((invitation as any).action))return this.result((invitation as any).action==='return_mailbox_receipt'?await returnMailboxReceipt(this.participant,this.encryption,this.delivery(),invitation):new MailboxReceiptJobs(this.participant,this.encryption,this.delivery()).connect(invitation));

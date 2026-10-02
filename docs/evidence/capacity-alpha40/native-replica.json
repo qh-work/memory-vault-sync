@@ -1,0 +1,52 @@
+{
+  "synthetic_replica_closure": {
+    "message_id": "msg_2ebb8cf80c810667c7b47075c6c7f7d98c8868f06d29a9b4920c427ab5c56a6d",
+    "envelope_sha256": "a5ef1acfee4e12d00904e9fe3dccdb18b832fc5b8b1aeb127a71e03681b558d1",
+    "copied_ciphertext_bytes": 7059,
+    "recipient_saved": true,
+    "native_offline_recall": true,
+    "retained_revocation_code": "repair_authority_revoked",
+    "revoked_repair_http_calls": 0,
+    "recipient_runtime": "native",
+    "cold_known_message_load": [
+      {
+        "offered": 1,
+        "completed": 1,
+        "elapsed_ms": 17902.777874987805,
+        "repair_http_calls": 12,
+        "copy_work_before": 46,
+        "copy_work_after": 58,
+        "copied_ciphertext_bytes": 7059,
+        "subprocess_calls": 0
+      },
+      {
+        "offered": 1,
+        "completed": 0,
+        "elapsed_ms": 9330.418333003763,
+        "repair_http_calls": 7,
+        "copy_work_before": 58,
+        "copy_work_after": 64,
+        "copied_ciphertext_bytes": 0,
+        "subprocess_calls": 0,
+        "errors": [
+          "open_request_rejected"
+        ]
+      },
+      {
+        "offered": 1,
+        "completed": 0,
+        "elapsed_ms": 577.4701249902137,
+        "repair_http_calls": 1,
+        "copy_work_before": 64,
+        "copy_work_after": 64,
+        "copied_ciphertext_bytes": 0,
+        "subprocess_calls": 0,
+        "errors": [
+          "open_request_rejected"
+        ]
+      }
+    ]
+  },
+  "original_send_native_confirmed": true,
+  "frozen_send_replay_network_calls": 0
+}

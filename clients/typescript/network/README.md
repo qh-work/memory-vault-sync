@@ -1,5 +1,7 @@
 # Independent network-v1 endpoint candidate
 
+Alpha.0.40 adds bounded HTTP admission, WAL read concurrency, separately approved resource distribution and native full message-replica COPY/READ recovery. The isolated 48-Memory/2-per-second workload completes 39 → 48 chains; this proves authorized quota use, not a CPU/SQLite ceiling. Replica cold reads remain slow and stop at the existing finite work allowance. See [capacity evidence and limits](../../../docs/CAPACITY_HANDOFF.md).
+
 This optional Node TypeScript package implements the existing Memory Vault
 network-v1 envelope without invoking Python. It is separate from the zero
 dependency HTTP SDK in the parent directory. It uses `jose` 6.2.10 for X25519

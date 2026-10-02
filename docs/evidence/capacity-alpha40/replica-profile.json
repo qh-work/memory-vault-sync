@@ -1,0 +1,115 @@
+{
+  "synthetic": true,
+  "real_models": 0,
+  "physical_hosts": 1,
+  "cpu": "Apple M1",
+  "scope": "additional known-message demand; full COPY and current READ preparation only; timing-only instrumentation; excludes HTTP/packing/Node client CPU",
+  "request_work_ceiling": 64,
+  "passed": true,
+  "requests": [
+    {
+      "kind": "challenge",
+      "wall_seconds": 1.1301507920143194,
+      "thread_cpu_seconds": 1.1269313749999998
+    },
+    {
+      "kind": "proof",
+      "wall_seconds": 1.122289249993628,
+      "thread_cpu_seconds": 1.120069167
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.1198066660144832,
+      "thread_cpu_seconds": 1.117508125
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.1400847500190139,
+      "thread_cpu_seconds": 1.1351167920000003
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.1360727910068817,
+      "thread_cpu_seconds": 1.1338473750000002
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.1336871660023462,
+      "thread_cpu_seconds": 1.1317049999999993
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.137808249972295,
+      "thread_cpu_seconds": 1.1355606670000005
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.1339372500078753,
+      "thread_cpu_seconds": 1.1312616249999996
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.132088250014931,
+      "thread_cpu_seconds": 1.1297155830000003
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.1340743750042748,
+      "thread_cpu_seconds": 1.1320607919999999
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.1349039579799864,
+      "thread_cpu_seconds": 1.1327826250000004
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.1311838749970775,
+      "thread_cpu_seconds": 1.1274406659999998
+    },
+    {
+      "kind": "challenge",
+      "wall_seconds": 1.1351207080006134,
+      "thread_cpu_seconds": 1.132373167
+    },
+    {
+      "kind": "proof",
+      "wall_seconds": 1.127089750021696,
+      "thread_cpu_seconds": 1.1238766670000002
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.128002541983733,
+      "thread_cpu_seconds": 1.1249620420000008
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.127287166978931,
+      "thread_cpu_seconds": 1.1240482500000004
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.12175745802233,
+      "thread_cpu_seconds": 1.1187367499999992
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 1.1303392910049297,
+      "thread_cpu_seconds": 1.1272125830000004
+    },
+    {
+      "kind": "child",
+      "wall_seconds": 0.0043163750087842345,
+      "thread_cpu_seconds": 0.004315875000000524
+    },
+    {
+      "kind": "challenge",
+      "wall_seconds": 0.004289208009140566,
+      "thread_cpu_seconds": 0.004282499999999523
+    }
+  ],
+  "total_server_thread_cpu_seconds": 20.313807626000003,
+  "total_server_request_wall_seconds": 20.36428987205727,
+  "first_successful_cold_read_server_preparation_thread_cpu_seconds": 13.553999792,
+  "first_successful_cold_read_server_preparation_wall_seconds": 13.586087373027112
+}

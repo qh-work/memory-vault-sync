@@ -52,7 +52,11 @@
     "./open-mailbox-receivers": "./open-mailbox-receivers.ts",
     "./open-mailbox-receipts": "./open-mailbox-receipts.ts",
     "./open-mailbox-destination": "./open-mailbox-destination.ts",
-    "./open-mailbox-send": "./open-mailbox-send.ts"
+    "./open-mailbox-send": "./open-mailbox-send.ts",
+    "./open-repair-mailbox-replica": "./open-repair-mailbox-replica.ts",
+    "./open-mailbox-replica-client": "./open-mailbox-replica-client.ts",
+    "./open-repair-mailbox-replica-inbox": "./open-repair-mailbox-replica-inbox.ts",
+    "./open-mailbox-replicas": "./open-mailbox-replicas.ts"
   },
   "types": "./crypto.ts",
   "engines": {

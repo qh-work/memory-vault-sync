@@ -1,5 +1,9 @@
 # Memory Vault development status
 
+Alpha.0.40 adds bounded HTTP admission, WAL read concurrency, separately approved resource distribution and native full message-replica COPY/READ recovery. The isolated 48-Memory/2-per-second workload completes 39 → 48 chains; this proves authorized quota use, not a CPU/SQLite ceiling. Replica cold reads remain slow and stop at the existing finite work allowance. See [capacity evidence and limits](CAPACITY_HANDOFF.md).
+
+Alpha.0.40 candidate assets are validated against their exact source commit by `release-manifest.json` and `SHA256SUMS`; use the [release record](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.40) for publication and CI evidence. Earlier release results below remain historical.
+
 Published **[alpha.0.37](https://github.com/qh-work/memory-vault-sync/releases/tag/v0.28.0-alpha.0.37)** is fixed at `fe943c6466a6ef459ccb0d03e309b207b3b0fb95`.
 
 Native TypeScript recipients can now retain an explicitly authorized receipt destination for a cold-mailbox message. Ordinary Agent `receive` returns its actual saved receipt, reusing the exact upload after a lost reply or restart. Python and TypeScript share jobs and completed history; revocation stops retries and expired uncertain uploads stop for reconciliation. See [native mailbox receipt returns](../clients/typescript/network/README.md).
