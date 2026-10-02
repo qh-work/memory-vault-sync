@@ -1,4 +1,21 @@
-# Memory Vault v0.28.0-alpha.0.39 — native sender mailbox admission
+# Memory Vault v0.28.0-alpha.0.40 — bounded delivery distribution and native message replicas
+
+Alpha.0.40 distributes new messages across separately approved item and byte
+resources in Python and native TypeScript. Existing frozen ciphertext is never
+retargeted. Receive polling rotates across approved sessions; bounded HTTP
+admission and concurrent SQLite reads preserve the existing execution limits.
+
+Native recipients can recover an explicitly selected message replica after its
+original source disappears, with complete historical COPY and current READ
+verification, retained revocation and independent receipt confirmation.
+Source provisioning and native ACK/root/feed replica reception still use Python.
+
+In the synthetic same-host workload, 48 selected Memories offered at 2/second
+complete 39 to 48 chains; each approved node completes 24. This measures use of
+authorized capacity, not maximum throughput. Cold replica recovery remains
+about 17.9 seconds and the existing 64-work allowance remains finite. Independent
+hosts, WAN capacity and automatic universal repair are unverified. See
+`docs/CAPACITY_HANDOFF.md` for the workload and explicit limits.
 
 Native TypeScript senders can prepare and retain an existing outgoing message
 in the recipient-authorized mailbox through Agent `connect`. The sender keeps
@@ -10,7 +27,7 @@ this does not claim the recipient saved the message or acknowledged it.
 An optional `ack_request_id` selects an already prepared independent receipt
 permission. Complete signed controls and statuses travel with the message,
 including bounded compressed transport for the larger draft. No new permission
-or storage allocation is inferred. Native source provisioning and replica inbox
+or storage allocation is inferred. Native source provisioning and ACK/root/feed replica inbox
 recovery still use Python. See `clients/typescript/network/README.md` and
 `docs/OPEN_NETWORK_CONTACT.md` for the existing invitations.
 
@@ -41,7 +58,7 @@ inbox. Retained revocations survive restart. Python and TypeScript share receive
 configuration, status history and saved inbox evidence; either can resume an
 interrupted import. The native path performs its own HTTP and cryptography.
 Saved receipts remain available through independently authorized return requests.
-Native provisioning and replica inbox recovery remain unfinished. See
+Native provisioning and ACK/root/feed replica inbox recovery remain unfinished. See
 `clients/typescript/network/README.md` and `docs/OPEN_NETWORK_CONTACT.md`.
 
 Native TypeScript recipients can return an actually saved message or memory
@@ -206,7 +223,7 @@ TypeScript recognizes the mailbox replica proof and status profiles. Participant
 operate their own authorized nodes; no central authority or project-operated
 public seed is required or provided.
 
-Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.39/docs/OPEN_NETWORK_QUICKSTART.md)
-and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.39/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
+Use the [quickstart](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.40/docs/OPEN_NETWORK_QUICKSTART.md)
+and [mailbox replica guide](https://github.com/qh-work/memory-vault-sync/blob/v0.28.0-alpha.0.40/docs/OPEN_ACK_RECOVERY.md#receive-messages-and-shared-memories-from-a-replica-development-after-alpha025).
 Preserve existing identity and state files when installing. The archives contain
 implementation, public documentation and wholly synthetic fixtures only.
