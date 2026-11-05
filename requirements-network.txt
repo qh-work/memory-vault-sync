@@ -2,5 +2,5 @@
 # Versions used for the 0.26 alpha synthetic checks; install from official PyPI.
 -r requirements-integrations.txt
 cryptography==50.0.1
-joserfc==1.7.5
+joserfc==1.7.6
 httpx==0.28.1
